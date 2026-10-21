@@ -183,6 +183,90 @@
       "bytes": 20882
     },
     {
+      "item": "motion-director",
+      "source": "registry/motion/director-types.ts",
+      "target": "src/components/motion/director-types.ts",
+      "sha256": "e6e848c516afc18d16eb9a35b2dd619338812688d2d0c6d277327eaa72d14ead",
+      "bytes": 5231
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-validation.ts",
+      "target": "src/components/motion/director-validation.ts",
+      "sha256": "cc777e448d09368cd9125db7de6a7db9bb5953ce1233d85be7a3667df8d625a2",
+      "bytes": 13015
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-schedule.ts",
+      "target": "src/components/motion/director-schedule.ts",
+      "sha256": "532ba5e99ecfac6c55024346f60b420e6f7f1bcfdbf7df2b1639635d1b279d01",
+      "bytes": 7190
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-authoring.ts",
+      "target": "src/components/motion/director-authoring.ts",
+      "sha256": "2af540a47e84c9b11d7b5fff44700f84e71f199db5f1202df99642d0757cdd86",
+      "bytes": 6100
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-recipes.ts",
+      "target": "src/components/motion/director-recipes.ts",
+      "sha256": "b15eea880b74ad659d94d797895b4669223af84ee389e0754e0b231b13d72487",
+      "bytes": 8169
+    },
+    {
+      "item": "camera-stage",
+      "source": "registry/motion/camera.ts",
+      "target": "src/components/motion/camera.ts",
+      "sha256": "b136f98159602c7e2f75c44a47b01396d8d991b7d6bea8a718694ed217a110ca",
+      "bytes": 6354
+    },
+    {
+      "item": "camera-stage",
+      "source": "registry/motion/camera-stage.tsx",
+      "target": "src/components/motion/camera-stage.tsx",
+      "sha256": "91734d0a3a9a8dee0f7b85749bcde8070ca783e92bf2e2ba38178041573badbe",
+      "bytes": 2305
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation.ts",
+      "target": "src/components/motion/visual-transformation.ts",
+      "sha256": "6c003bd708b639d1eff4ee7da54b66b46764610b86dbd7729b8ee294a3c710a4",
+      "bytes": 29564
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation-types.ts",
+      "target": "src/components/motion/visual-transformation-types.ts",
+      "sha256": "95a504f27bf2724407b6cb8437161f417588296f184c4d8f8ce30ccd507389f5",
+      "bytes": 4412
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation-scene.ts",
+      "target": "src/components/motion/visual-transformation-scene.ts",
+      "sha256": "61a4db3d0f456d47c69ff249943da4bd5d45906ef6d952d81d00a1b57f8ced5b",
+      "bytes": 9245
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation-react.tsx",
+      "target": "src/components/motion/visual-transformation-react.tsx",
+      "sha256": "b2a341060a12e4bd2c2d33df0f52796e558bcb032aeeeb9e7cd0679fa3d48f43",
+      "bytes": 5260
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/transformation-recipes.ts",
+      "target": "src/components/motion/transformation-recipes.ts",
+      "sha256": "da12169e5aebdfaf9b62a98b8aa78046c63feebf8cbb7c9b6d27ae1cc5afcfd6",
+      "bytes": 7501
+    },
+    {
       "item": "styles",
       "source": "src/styles/tokens.css",
       "target": "src/styles/kumiki/tokens.css",
