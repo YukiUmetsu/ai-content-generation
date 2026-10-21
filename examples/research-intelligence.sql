@@ -1,5 +1,5 @@
 -- PROPOSED additive schema for research, SEO intelligence and analytics.
--- Requires the baseline entities in docs/05-data-schema.md; NOT an applied migration.
+-- Requires the baseline entities in examples/core-schema.sql; NOT an applied migration.
 -- Use ordered, versioned migrations in actual Rust implementation.
 PRAGMA foreign_keys = ON;
 
