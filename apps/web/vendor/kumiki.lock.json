@@ -519,6 +519,90 @@
       "bytes": 18633
     },
     {
+      "item": "motion-react",
+      "source": "registry/motion/react.tsx",
+      "target": "src/components/motion/react.tsx",
+      "sha256": "16ef6a7c5aee1da0b4f02561a79a4d23dc39e7329e4b8cb4e9abaf432f1f4973",
+      "bytes": 23990
+    },
+    {
+      "item": "motion-react",
+      "source": "registry/motion/graphic-composition.tsx",
+      "target": "src/components/motion/graphic-composition.tsx",
+      "sha256": "c4897df8d6fa5a40c02e1a7df452004962772585c798d860426d18af3e2ffe1d",
+      "bytes": 15732
+    },
+    {
+      "item": "motion-react",
+      "source": "registry/motion/svg-mask.tsx",
+      "target": "src/components/motion/svg-mask.tsx",
+      "sha256": "399c7698f5fa2ed93f60406af70b7f402d8ccb7a1382fba120d91c45c9c890b7",
+      "bytes": 1685
+    },
+    {
+      "item": "video-platform-presets",
+      "source": "registry/video/platform-presets.ts",
+      "target": "src/components/video/platform-presets.ts",
+      "sha256": "8f24e7eeb20f9913c42a1652bc635f39e0966c83217e387afd6a1e0848d36241",
+      "bytes": 3548
+    },
+    {
+      "item": "video-platform-presets",
+      "source": "registry/video/platform-presets.json",
+      "target": "src/components/video/platform-presets.json",
+      "sha256": "2e9dcfa69ad9d12020e9defb7c67c5ae15863084bf6334cb83692c7af50ce9fd",
+      "bytes": 4993
+    },
+    {
+      "item": "motion-path",
+      "source": "registry/motion/paths.ts",
+      "target": "src/components/motion/paths.ts",
+      "sha256": "ec1263b89bbcff2278b2e75f9ad3c225cf617b5083a3f9fd85a77b52da7b5a2d",
+      "bytes": 10095
+    },
+    {
+      "item": "motion-path",
+      "source": "registry/motion/trim.ts",
+      "target": "src/components/motion/trim.ts",
+      "sha256": "fe46b412c623a63be6c99bbd690f2f5b24dde77e04716de26db8b53603676a75",
+      "bytes": 5915
+    },
+    {
+      "item": "mask-reveal",
+      "source": "registry/motion/masks.ts",
+      "target": "src/components/motion/masks.ts",
+      "sha256": "caeaafcc1c1a70d2178d5157404539230cc87ef918159440e05bc1537c30d03b",
+      "bytes": 9075
+    },
+    {
+      "item": "shape-morph",
+      "source": "registry/motion/morph.ts",
+      "target": "src/components/motion/morph.ts",
+      "sha256": "765e695385eb8a84fadc9532d854fdbea94bc5462dc9a1fc72118b44d0e94eb9",
+      "bytes": 14686
+    },
+    {
+      "item": "shared-element",
+      "source": "registry/motion/shared-element.ts",
+      "target": "src/components/motion/shared-element.ts",
+      "sha256": "3ff1e09bd7fab5ce1a52b1f4a58e56de97af36bc7e3e2519644ad1baba9c5bb2",
+      "bytes": 8232
+    },
+    {
+      "item": "animated-text",
+      "source": "registry/motion/kinetic-text.ts",
+      "target": "src/components/motion/kinetic-text.ts",
+      "sha256": "fb7783892ae4d79dcaa0adb81cbeaa1027e4dbfa1f54404a745ecee60e489db0",
+      "bytes": 10598
+    },
+    {
+      "item": "slider",
+      "source": "registry/ui/slider.tsx",
+      "target": "src/components/ui/slider.tsx",
+      "sha256": "5dd24fd9947aff5ac5fb013a84852b60bee3acd3db2fa4605445fab7edf8d436",
+      "bytes": 8840
+    },
+    {
       "item": "styles",
       "source": "src/styles/tokens.css",
       "target": "src/styles/kumiki/tokens.css",
