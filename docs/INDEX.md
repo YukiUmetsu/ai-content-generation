@@ -16,10 +16,15 @@
 | [10-build-plan](10-build-plan.md) | Priority order, acceptance fixtures, agent handoff | Every milestone |
 | [12-brand-studio](12-brand-studio.md) | BrandKit, curated style presets, visual/sonic identity, consistency and platform layouts | Multi-brand video systems and brand authoring |
 | [13-audio-production](13-audio-production.md) | Swappable TTS/alignment, sound event bank, music, mix/master, audio QA | Narration, SFX, soundtrack, captions |
+| [16-creative-pattern-library](16-creative-pattern-library.md) | Title/thumbnail compositions, hooks, story engines, palette and semantic animation patterns | Coding agent video composition recipes and QA |
+| [15-video-performance-system](15-video-performance-system.md) | Trend/opportunity evidence, distinct title+thumbnail hypotheses, hook/short/long story grammar, analytics feedback | Creative strategy, high-retention explainers |
+| [2026-10-21 market scan](research/2026-10-21-video-market-scan.md) | Dated performance examples, surveys, platform trend evidence, topic opportunities | Refreshing current topic hypotheses |
 | [14-kumiki-integration](14-kumiki-integration.md) | Implemented Kumiki registry/video handshake and unimplemented boundary | Visual scenes, motion, renderer adapters |
 | [11-tools](11-tools.md) | Swappable tool candidates, benchmarks and primary references | New dependencies |
 
 **Code-adjacent fixtures:** [`../examples/core-schema.sql`](../examples/core-schema.sql), [`../examples/research-intelligence.sql`](../examples/research-intelligence.sql), and example JSON for provider profiles, jobs, research, articles/SEO, design tokens, graphics, thumbnails, characters and release manifests. Examples are contracts to adapt and test, **not automatically applied migrations or confirmed third-party APIs**.
+
+**Creative workflow path:** 05,08,12,15 + dated market scan; Kumiki scene compilation → 14; TTS/SFX → 13; validated research snapshots → 04. Never turn public views into a fake CTR/retention/revenue or a causal "viral score."
 
 **Video-first task path:** brand creation → 03,06–08,12; audio → 02,03,08,13; visual/video integration → 06,08,14 and Kumiki's pinned source contracts; platform adaptation → 05,09,12,14.
 

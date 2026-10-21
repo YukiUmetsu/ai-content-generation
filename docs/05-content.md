@@ -12,6 +12,10 @@ Persist typed `ArticleDoc` with language, canonical slug, title/description, sec
 
 **Editorial rules:** useful question answered early, strong examples and original experiments; clear progressive explanation, compact paragraphs, meaningful section headings, correct technical claims, contextual calls to action (disclose self-interest), no keyword stuffing or inflated text length. SEO metadata and sourced claims are validated separately. A reviewer can mark `verified`, `disputed`, `needs_source`, `estimate`, `opinion`; unsupported security promises block publishing. Store side-by-side changes and selective regeneration.
 
+## Performance-oriented original storytelling
+
+Audience-backed titles and thumbnails must be developed together as testable hypotheses **before** full script/video generation, and verified payoff/event IDs must trace through hook, explanation and recap. Use distinct long/short narrative structures and authentic factual mechanisms rather than copying competitor thumbnails, repeating generic AI scripts or enforcing arbitrary visual cut counts. See [15 Creative Intelligence](15-video-performance-system.md) and dated [market scan](research/2026-10-21-video-market-scan.md).
+
 ## Brand-aware narrative content
 
 A visual content brief resolves to a pinned approved BrandKit (editorial voice, factual policy, art direction, narration persona, sound palette and motion grammar) before storyboard compilation. Episode mood can vary within approved bounds; platform versions adapt script structure, opening, shot pacing and layout rather than only truncating or cropping. Do not replace provenance with a stylish graphic. See [12](12-brand-studio.md).

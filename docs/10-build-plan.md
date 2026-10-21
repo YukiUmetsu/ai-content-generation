@@ -17,6 +17,10 @@
 | **K. Growth and reuse (P1)** | performance imports, SEO experiments, English/JA adaptations, scheduled briefs, stale-source impact detection, safe PR publishing | one content topic → article/Short/infographic; source change produces review queue; dated metrics retain completeness; publishing gated |
 | **L. Interactive products (P1/P2)** | course objectives/prerequisites, exercises/simulations, packaged lessons, offerings and optional future commerce | complete objective → lesson → exercise with verifiable test → immutable course release; no payment dependency |
 
+## Creative-performance gate (add to the video-first fast lane)
+
+Before V3 video production, add a thin `Creative Intelligence` slice with dated MarketSignalSnapshot, source-backed OpportunityBrief, three materially different title+thumbnail+opening hypotheses and one evidence-backed payoff. Validate with a household-cost explainer that uses *three different visual concepts* (cost reversal, physical cutaway, comparative break-even), not three palette swaps. Each must render a small-format thumbnail, a meaningful first ten seconds and a complete ending. Import analytics later through authorized interfaces; do not predict virality. See [15](15-video-performance-system.md). Real YouTube native A/B title/thumbnail testing uses watch-time share and is not supported for Shorts.
+
 ## Approved video-first fast lane (parallel to article-first A–L plan)
 
 This fast lane reflects current multi-brand monetized explainers while preserving the broader article/research roadmap. Keep a vertical slice complete before implementing numerous media components:
