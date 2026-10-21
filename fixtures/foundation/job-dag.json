@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "job": {
+    "schemaVersion": 1,
+    "id": "job_foundation_fixture_v1",
+    "jobKind": "foundation-fixture",
+    "state": "RUNNING",
+    "idempotencyKey": "job-foundation-fixture-v1",
+    "createdAt": "2026-10-21T00:00:00Z",
+    "updatedAt": "2026-10-21T00:01:01Z"
+  },
+  "nodes": [
+    {
+      "schemaVersion": 1,
+      "id": "node_research_fixture",
+      "jobId": "job_foundation_fixture_v1",
+      "nodeKey": "research-evidence",
+      "nodeKind": "research",
+      "state": "SUCCEEDED",
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "idempotencyKey": "node-research-fixture-v1",
+      "input": {},
+      "output": {
+        "sourceVersionId": "srcv_house_cost_fixture_1"
+      },
+      "createdAt": "2026-10-21T00:00:00Z",
+      "updatedAt": "2026-10-21T00:01:00Z"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "node_packaging_fixture",
+      "jobId": "job_foundation_fixture_v1",
+      "nodeKey": "creative-packaging",
+      "nodeKind": "creative",
+      "state": "RUNNING",
+      "attemptCount": 1,
+      "maxAttempts": 3,
+      "idempotencyKey": "node-packaging-fixture-v1",
+      "input": {},
+      "output": null,
+      "createdAt": "2026-10-21T00:00:00Z",
+      "updatedAt": "2026-10-21T00:01:01Z"
+    },
+    {
+      "schemaVersion": 1,
+      "id": "node_render_fixture",
+      "jobId": "job_foundation_fixture_v1",
+      "nodeKey": "jobs-render",
+      "nodeKind": "jobs",
+      "state": "PENDING",
+      "attemptCount": 0,
+      "maxAttempts": 2,
+      "idempotencyKey": "node-render-fixture-v1",
+      "input": {},
+      "output": null,
+      "createdAt": "2026-10-21T00:00:00Z",
+      "updatedAt": "2026-10-21T00:00:00Z"
+    }
+  ],
+  "edges": [
+    {
+      "jobId": "job_foundation_fixture_v1",
+      "fromNodeId": "node_research_fixture",
+      "toNodeId": "node_packaging_fixture",
+      "edgeKind": "dependency",
+      "createdAt": "2026-10-21T00:00:00Z"
+    },
+    {
+      "jobId": "job_foundation_fixture_v1",
+      "fromNodeId": "node_packaging_fixture",
+      "toNodeId": "node_render_fixture",
+      "edgeKind": "dependency",
+      "createdAt": "2026-10-21T00:00:00Z"
+    }
+  ],
+  "attempts": [
+    {
+      "id": "attempt_research_fixture_1",
+      "nodeId": "node_research_fixture",
+      "attemptNumber": 1,
+      "idempotencyKey": "attempt-research-fixture-1",
+      "state": "SUCCEEDED",
+      "startedAt": "2026-10-21T00:00:01Z",
+      "finishedAt": "2026-10-21T00:01:00Z",
+      "createdAt": "2026-10-21T00:00:01Z"
+    },
+    {
+      "id": "attempt_packaging_fixture_1",
+      "nodeId": "node_packaging_fixture",
+      "attemptNumber": 1,
+      "idempotencyKey": "attempt-packaging-fixture-1",
+      "state": "RUNNING",
+      "startedAt": "2026-10-21T00:01:01Z",
+      "finishedAt": null,
+      "createdAt": "2026-10-21T00:01:01Z"
+    }
+  ]
+}
