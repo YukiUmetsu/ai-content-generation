@@ -55,7 +55,7 @@ src/
   features/
     registry.ts        feature ids, metadata and the FeatureSlotProps contract
     slots.tsx          id -> slot component map (the only shared registration)
-    brand-appearance/  placeholder slot
+    brand-appearance/  local appearance editor and scoped creative previews
     thumbnail-composer/
     storyboard-planner/
     motion-gallery/
@@ -246,7 +246,9 @@ expected shell integration.
 
 ## Current scope and known gaps
 
-- Five slots are placeholders by design.
+- Brand Appearance provides a local palette/preset/typography editor with
+  JSON import/export and three scoped previews. The other four slots remain
+  placeholders.
 - No router or backend persistence; section and active tool are in-memory,
   preferences are local storage.
 - The pre-existing Research, Jobs/QA and packaging screens are outside this

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "brand-kit-appearance",
+  "id": "brand_house_math",
+  "revision": 1,
+  "name": "House Math",
+  "artDirection": {
+    "presetId": "modern-analytical",
+    "traits": ["architectural", "calm", "precise"],
+    "materialLanguage": "architectural linework and understated paper"
+  },
+  "visual": {
+    "tokenVersion": "dtcg-example-v1",
+    "palette": {
+      "canvas": "#101A22",
+      "surface": "#1D2A33",
+      "textPrimary": "#F2F5F6",
+      "textSecondary": "#BED0D6",
+      "accent": "#E8A95B",
+      "positive": "#8BC4A1",
+      "negative": "#D97777"
+    },
+    "typography": {
+      "display": { "family": "Newsreader", "weight": 600 },
+      "body": { "family": "Geist", "weight": 450 },
+      "numbers": { "family": "Geist", "weight": 650 }
+    },
+    "texture": "subtle architectural drafting lines",
+    "spacing": "spacious",
+    "cornerRadius": "low"
+  }
+}

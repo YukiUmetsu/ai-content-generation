@@ -1,11 +1,11 @@
 import type { FeatureSlotProps } from "@/features/registry";
-import { FEATURE_METADATA } from "@/features/registry";
-import { FeatureSlotShell } from "@/app/feature-slot-shell";
+import { BrandAppearanceStudio } from "./BrandAppearanceStudio";
+
+export { BrandAppearanceStudio } from "./BrandAppearanceStudio";
 
 export default function BrandAppearanceSlot(props: FeatureSlotProps) {
   return (
-    <FeatureSlotShell
-      meta={FEATURE_METADATA["brand-appearance"]}
+    <BrandAppearanceStudio
       locale={props.locale}
       className={props.className}
     />
