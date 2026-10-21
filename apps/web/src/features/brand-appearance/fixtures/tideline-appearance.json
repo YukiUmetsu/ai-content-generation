@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "brand-kit-appearance",
+  "id": "brand_tideline",
+  "revision": 1,
+  "name": "Tideline",
+  "artDirection": {
+    "presetId": "calm-editorial",
+    "traits": ["ample whitespace", "readable serif headlines", "quiet diagram fills"],
+    "materialLanguage": "warm paper and hairline rules"
+  },
+  "visual": {
+    "tokenVersion": "dtcg-example-v1",
+    "palette": {
+      "canvas": "#F2EEE4",
+      "surface": "#FCFAF4",
+      "textPrimary": "#1F2A2A",
+      "textSecondary": "#53605C",
+      "accent": "#1F6F5C",
+      "positive": "#3E8367",
+      "negative": "#B04E3F"
+    },
+    "typography": {
+      "display": { "family": "Newsreader", "weight": 500 },
+      "body": { "family": "Geist", "weight": 400 },
+      "numbers": { "family": "Geist", "weight": 600 }
+    },
+    "texture": "none",
+    "spacing": "spacious",
+    "cornerRadius": "low"
+  }
+}

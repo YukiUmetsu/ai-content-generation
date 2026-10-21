@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "brand-kit-appearance",
+  "id": "brand_long_japanese_name",
+  "revision": 1,
+  "name": "非常に長いブランド名が途切れないことを確認するためのテスト専用ブランド",
+  "artDirection": {
+    "presetId": "calm-editorial",
+    "traits": ["wide labels", "text wrapping", "no truncation"],
+    "materialLanguage": "warm paper and hairline rules"
+  },
+  "visual": {
+    "tokenVersion": "dtcg-example-v1",
+    "palette": {
+      "canvas": "#F3EEE5",
+      "surface": "#FBF8F1",
+      "textPrimary": "#23241F",
+      "textSecondary": "#5F6157",
+      "accent": "#2F6350",
+      "positive": "#3F7A5B",
+      "negative": "#A64F3C"
+    },
+    "typography": {
+      "display": { "family": "Newsreader", "weight": 500 },
+      "body": { "family": "Geist", "weight": 400 },
+      "numbers": { "family": "Newsreader", "weight": 600 }
+    },
+    "texture": "none",
+    "spacing": "spacious",
+    "cornerRadius": "low"
+  }
+}
