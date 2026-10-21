@@ -379,9 +379,9 @@ CREATE TABLE video_release_revisions (
  caption_artifact_id TEXT REFERENCES artifacts(id) ON DELETE RESTRICT,
  release_manifest_json TEXT NOT NULL CHECK(json_valid(release_manifest_json)),
  manifest_sha256 TEXT NOT NULL CHECK(length(manifest_sha256)=64),
- state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','approved','released')),
+ state TEXT NOT NULL DEFAULT 'draft' CHECK(state IN ('draft','approved')),
  approved_at TEXT, created_at TEXT NOT NULL,
- CHECK(state='draft' OR approved_at IS NOT NULL)
+ CHECK((state='approved') = (approved_at IS NOT NULL))
 );
 CREATE TRIGGER release_provenance_insert BEFORE INSERT ON video_release_revisions BEGIN
  SELECT RAISE(ABORT, 'release must select hypothesis from same story and project') WHERE NOT EXISTS (
@@ -403,10 +403,19 @@ CREATE TRIGGER release_provenance_update BEFORE UPDATE OF project_id,render_id,s
     AND h.id=NEW.selected_hypothesis_id AND r.status='succeeded'
  );
 END;
+-- Approval requires every explicitly referenced release asset to have current
+-- approved rights evidence. Completeness (all used assets listed) is checked
+-- by the application release manifest validator, not provable from JSON here.
+CREATE TRIGGER release_assets_rights_approval BEFORE UPDATE OF state ON video_release_revisions
+ WHEN OLD.state='draft' AND NEW.state='approved' AND EXISTS (
+  SELECT 1 FROM video_release_assets ra
+  LEFT JOIN asset_rights_reviews rr ON rr.id=ra.rights_review_id
+  WHERE ra.release_id=NEW.id AND (ra.rights_review_id IS NULL OR rr.rights_state<>'approved')
+ ) BEGIN SELECT RAISE(ABORT, 'release assets require approved license reviews'); END;
 CREATE TRIGGER video_release_frozen_update BEFORE UPDATE ON video_release_revisions
- WHEN OLD.state IN ('approved','released') BEGIN SELECT RAISE(ABORT, 'approved video release is immutable'); END;
+ WHEN OLD.state='approved' BEGIN SELECT RAISE(ABORT, 'approved video release is immutable'); END;
 CREATE TRIGGER video_release_frozen_delete BEFORE DELETE ON video_release_revisions
- WHEN OLD.state IN ('approved','released') BEGIN SELECT RAISE(ABORT, 'approved video release cannot be deleted'); END;
+ WHEN OLD.state='approved' BEGIN SELECT RAISE(ABORT, 'approved video release cannot be deleted'); END;
 CREATE TABLE video_release_assets (
  release_id TEXT NOT NULL REFERENCES video_release_revisions(id) ON DELETE RESTRICT,
  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE RESTRICT,
@@ -422,12 +431,34 @@ CREATE TRIGGER video_asset_review_update BEFORE UPDATE OF artifact_id,rights_rev
  SELECT 1 FROM asset_rights_reviews rr WHERE rr.id=NEW.rights_review_id AND rr.artifact_id=NEW.artifact_id)
  BEGIN SELECT RAISE(ABORT, 'release rights review refers to another asset'); END;
 CREATE TRIGGER video_asset_approved_insert BEFORE INSERT ON video_release_assets
- WHEN (SELECT state FROM video_release_revisions WHERE id=NEW.release_id) IN ('approved','released')
+ WHEN (SELECT state FROM video_release_revisions WHERE id=NEW.release_id) IN ('approved')
  BEGIN SELECT RAISE(ABORT, 'approved release assets are immutable'); END;
 CREATE TRIGGER video_asset_approved_update BEFORE UPDATE ON video_release_assets
- WHEN (SELECT state FROM video_release_revisions WHERE id=OLD.release_id) IN ('approved','released')
- OR (SELECT state FROM video_release_revisions WHERE id=NEW.release_id) IN ('approved','released')
+ WHEN (SELECT state FROM video_release_revisions WHERE id=OLD.release_id) IN ('approved')
+ OR (SELECT state FROM video_release_revisions WHERE id=NEW.release_id) IN ('approved')
  BEGIN SELECT RAISE(ABORT, 'approved release assets are immutable'); END;
 CREATE TRIGGER video_asset_approved_delete BEFORE DELETE ON video_release_assets
- WHEN (SELECT state FROM video_release_revisions WHERE id=OLD.release_id) IN ('approved','released')
+ WHEN (SELECT state FROM video_release_revisions WHERE id=OLD.release_id) IN ('approved')
  BEGIN SELECT RAISE(ABORT, 'approved release assets are immutable'); END;
+-- Publishing is an auditable effect, not a mutation of an approved release.
+CREATE TABLE video_publication_attempts (
+ id TEXT PRIMARY KEY, release_id TEXT NOT NULL REFERENCES video_release_revisions(id) ON DELETE RESTRICT,
+ destination TEXT NOT NULL, provider TEXT NOT NULL,
+ idempotency_key TEXT NOT NULL, state TEXT NOT NULL
+ CHECK(state IN ('prepared','submitted','succeeded','failed','cancelled')),
+ remote_ref TEXT, request_json TEXT NOT NULL CHECK(json_valid(request_json)),
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ UNIQUE(provider,destination,idempotency_key)
+);
+CREATE TRIGGER video_publication_requires_approval BEFORE INSERT ON video_publication_attempts
+ WHEN NOT EXISTS (SELECT 1 FROM video_release_revisions r WHERE r.id=NEW.release_id AND r.state='approved')
+ BEGIN SELECT RAISE(ABORT, 'publication requires approved immutable release'); END;
+-- A successful renderer or mastered audio artifact is a production snapshot.
+CREATE TRIGGER render_succeeded_immutable BEFORE UPDATE ON video_renders
+ WHEN OLD.status='succeeded' BEGIN SELECT RAISE(ABORT, 'successful render snapshot is immutable'); END;
+CREATE TRIGGER render_succeeded_no_delete BEFORE DELETE ON video_renders
+ WHEN OLD.status='succeeded' BEGIN SELECT RAISE(ABORT, 'successful render snapshot cannot be deleted'); END;
+CREATE TRIGGER mix_immutable_update BEFORE UPDATE ON audio_mixes
+ BEGIN SELECT RAISE(ABORT, 'audio mixes are immutable artifacts'); END;
+CREATE TRIGGER mix_immutable_delete BEFORE DELETE ON audio_mixes
+ BEGIN SELECT RAISE(ABORT, 'audio mixes are immutable artifacts'); END;
