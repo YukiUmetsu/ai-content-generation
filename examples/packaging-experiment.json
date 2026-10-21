@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "kind": "packaging-experiment",
+  "id": "house-math-lifetime-cost-v1",
+  "status": "illustrative-unapproved",
+  "brandKitRef": {
+    "id": "brand_house_math",
+    "revision": 1
+  },
+  "sourceEvidenceRequired": [
+    "mortgage-rate-and-amortization",
+    "local-property-tax",
+    "insurance-history",
+    "maintenance-assumptions"
+  ],
+  "audience": {
+    "location": "US",
+    "intent": "understand 30-year homeownership cash outflow",
+    "format": "youtube-long"
+  },
+  "promise": {
+    "question": "What is the total 30-year cash cost of a $500,000 home?",
+    "answerStatus": "requires-scenario-model",
+    "payoffId": "30-year-cost-reveal",
+    "cannotAssert": "Any universal final cost without region, financing, taxes, insurance and maintenance assumptions"
+  },
+  "hypotheses": [
+    {
+      "id": "cost-reversal",
+      "title": "The Real 30-Year Cost of a $500,000 House",
+      "thumbnail": {
+        "concept": "visible-cost-reversal",
+        "focalSubject": "single house diagram",
+        "visualTension": "purchase price beside scenario-calculated lifetime total",
+        "text": "30 YEARS",
+        "colorRoles": [
+          "canvas",
+          "textPrimary",
+          "accent"
+        ],
+        "licensedAssetRefs": []
+      },
+      "hook": {
+        "secondsTarget": 10,
+        "visualFirst": "house price appears then a second lifetime-cost meter grows from sourced cost categories",
+        "speechPromise": "The sticker price is only the beginning.",
+        "answerEventId": "30-year-cost-reveal"
+      }
+    },
+    {
+      "id": "decision-comparison",
+      "title": "Rent vs Buy: The Costs Everyone Forgets",
+      "thumbnail": {
+        "concept": "split-decision",
+        "focalSubject": "same home across buy and rent paths",
+        "visualTension": "cost curves cross at measured break-even point",
+        "text": "BREAK EVEN?",
+        "colorRoles": [
+          "canvas",
+          "positive",
+          "negative"
+        ],
+        "licensedAssetRefs": []
+      },
+      "hook": {
+        "secondsTarget": 10,
+        "visualFirst": "two synchronized cumulative-cost curves cross or diverge using declared assumptions",
+        "speechPromise": "One choice looks cheaper until the hidden costs appear.",
+        "answerEventId": "scenario-break-even"
+      }
+    },
+    {
+      "id": "mechanism-breakdown",
+      "title": "Why a $500,000 House Can Cost So Much More",
+      "thumbnail": {
+        "concept": "cost-cutaway",
+        "focalSubject": "cutaway house with financing, taxes, insurance and maintenance",
+        "visualTension": "small price tag over many major cost layers",
+        "text": "THE HIDDEN COST",
+        "colorRoles": [
+          "surface",
+          "accent",
+          "textPrimary"
+        ],
+        "licensedAssetRefs": []
+      },
+      "hook": {
+        "secondsTarget": 10,
+        "visualFirst": "roof, foundation, loan and insurance cost layers separate into a cost waterfall",
+        "speechPromise": "Let's break down where the money actually goes.",
+        "answerEventId": "expense-waterfall"
+      }
+    }
+  ],
+  "creativeConstraints": {
+    "genuineVarietyRequired": true,
+    "thumbnailMaxWordsHeuristic": 5,
+    "speechVisualAlignment": "semantic-event-id",
+    "sourceClaimsMustMatchPackaging": true,
+    "landscapeAndPortraitRecomposedIndependently": true,
+    "noClaimOfVirality": true
+  },
+  "learning": {
+    "youtubeABTestAvailable": "eligible-long-form-only",
+    "primaryExperimentMetric": "native-watch-time-share",
+    "performanceData": "not-yet-published",
+    "views": null,
+    "impressions": null,
+    "ctr": null,
+    "retention30s": null,
+    "rpm": null,
+    "confidence": "unknown"
+  }
+}

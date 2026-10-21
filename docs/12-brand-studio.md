@@ -43,6 +43,10 @@ A BrandKit is immutable once approved; edits produce a new revision. Authoring d
 - A background such as "ancient," "Asian" or "traditional Japanese" needs a narrower, user-controlled art direction (period, medium, restraint, color/print/architecture inspiration). Never invent cultural authenticity or default to generic kanji, torii, bamboo or calligraphy. Verify rights for cultural references, textures and fonts.
 - Use a recipe/slot resolver: semantic intent (compare, mechanism, cost timeline, map, definition, payoff) → approved scene recipe → brand treatment → 16:9/9:16 layout variant → Kumiki compilation. Avoid baking brand-specific components for each channel.
 
+## Packaging and distinctiveness
+
+BrandKit extends to a **packaging grammar**: approved title voice (editorial versus provocative), thumbnail hierarchy, reusable subject/number/diagram treatments, hook pacing, and permitted emotional range. Brand invariants are not a mandate to reuse one layout on every upload. Let `PackagingHypothesis` select among visibly different cost-reversal, mechanism cutaway, comparison and surprise concepts while preserving semantic tokens and font/asset rights. For data-driven topic choice and causal caveats see [15 Creative Intelligence](15-video-performance-system.md); the dated market scan is an observation snapshot, not a style decree.
+
 ## Consistency without sameness
 
 Define **identity invariants** (palette roles, typographic hierarchy, emblem/logo, narrator character, illustration/texture idiom, SFX signatures, caption treatment) and **controlled variability** (shot composition, specific chart types, hero palette emphasis, suspense/intensity, soundtrack arrangement). A channel should look coherent across 100 videos without repeating the same title-card animation every time.
