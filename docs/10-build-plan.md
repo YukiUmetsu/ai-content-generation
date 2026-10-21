@@ -139,7 +139,7 @@ Use a fictional sample scenario, not a claim about an actual US market: a **$500
 - **Pass:** import two dated snapshots of one video while retaining title history; reject malformed dates, duplicate record and false CTR/RPM fields; never infer private retention.
 
 **C02 — Source-grounded topic brief**
-- **Depends on:** C01. **Read:** 04,05,15,08.
+- **Depends on:** F02,F03; C01 is optional for initial checked-in manual/synthetic inputs. **Read:** 04,05,15,08.
 - **Deliver:** \`OpportunityBrief\` with question, audience stakes, evidence/assumption IDs, originality angle, visual teachability and uncertainties. Start with the synthetic house scenario; show sourced vs assumed distinctly.
 - **Pass:** brief cannot claim unverified dollar totals or an unsupported universal outcome; all displayed figures link to inputs and arithmetic; uncited assumption displays as hypothetical.
 
