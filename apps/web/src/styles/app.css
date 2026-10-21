@@ -1,0 +1,33 @@
+/* App-level imports. The Kumiki layer stays vendored and untouched:
+   `kumiki/global.css` pulls Tailwind v4 + the generated `--km-*` tokens. */
+@import "./kumiki/global.css";
+
+/* Tailwind v4 auto-detects sources, but the app tree is declared explicitly so a
+   future nested package cannot silently drop class scanning. */
+@source "../**/*.{ts,tsx}";
+
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Japanese and mixed-script copy: keep long words from overflowing narrow panes. */
+  :lang(ja) {
+    line-break: strict;
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+
+  ::selection {
+    background-color: var(--km-action-subtle);
+    color: var(--km-action-subtle-fg);
+  }
+}
