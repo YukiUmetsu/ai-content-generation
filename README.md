@@ -6,7 +6,7 @@ Build a **local-first, research-driven content production studio**: accumulate e
 
 Replace the previous `docs/` directory rather than merging both versions; obsolete pages would provide conflicting instructions. Preserve any project-specific notes or actual migrations separately.
 
-Start with [AGENTS.md](AGENTS.md) → [docs/INDEX.md](docs/INDEX.md) → the current milestone in [docs/10-build-plan.md](docs/10-build-plan.md). This package is **a specification only**, not runnable application code.
+Start with [AGENTS.md](AGENTS.md) → [docs/INDEX.md](docs/INDEX.md) → the current milestone in [docs/10-build-plan.md](docs/10-build-plan.md). The domain/backend specification is not yet implemented; the shared frontend foundation is runnable in [`apps/web`](apps/web/README.md).
 
 ## First OpenCode task
 

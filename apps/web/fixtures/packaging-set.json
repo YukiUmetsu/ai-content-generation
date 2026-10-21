@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "packaging-set-house-math-v1",
+  "projectRef": "project-house-math",
+  "status": "draft",
+  "premiseSetup": {
+    "question": "What does a $500,000 house actually cost over 30 years?",
+    "audienceStakes": "Buyers comparing a sticker price with the full cash outflow of owning the same home.",
+    "openingPromise": "The sticker price is only the beginning; the video separates the purchase price from recurring owner costs.",
+    "evidenceRefs": [
+      "docs-10-build-plan-shared-fixture",
+      "scenario-assumption-house-price"
+    ]
+  },
+  "premisePayoff": {
+    "answerEventId": "lifetime-total-reveal",
+    "payoffStatement": "A scenario-calculated lifetime cash outflow, shown as the sum of the declared purchase, financing, tax, insurance and maintenance assumptions.",
+    "limitation": "No rent model, lending-rate series, property-tax growth series or maintenance series is sourced for this scenario, so the total is a scenario calculation and not a market measurement.",
+    "evidenceRefs": [
+      "scenario-assumption-house-price",
+      "scenario-assumption-unsourced-series"
+    ]
+  },
+  "hypotheses": [
+    {
+      "hypothesisId": "house-cost-visible-reversal",
+      "title": "The Real 30-Year Cost of a $500,000 House",
+      "strategy": "visible-cost-reversal",
+      "thumbnailConcept": "A single house diagram with the $500,000 sticker price beside a second meter that grows from the declared cost categories.",
+      "openingVisual": "The price tag appears first, then a lifetime-cost meter grows from the declared purchase, financing, tax, insurance and maintenance assumptions.",
+      "payoffEventId": "lifetime-total-reveal",
+      "claimRefs": [
+        "scenario-assumption-house-price",
+        "docs-10-build-plan-shared-fixture"
+      ]
+    },
+    {
+      "hypothesisId": "house-cost-decision-comparison",
+      "title": "Rent vs Buy: The Costs Everyone Forgets",
+      "strategy": "decision-comparison",
+      "thumbnailConcept": "The same home split between a buy path and a rent path under the declared assumptions.",
+      "openingVisual": "Two cumulative-cost paths appear side by side, with the rental side labelled as a declared scenario input rather than a sourced model.",
+      "payoffEventId": "lifetime-total-reveal",
+      "claimRefs": [
+        "scenario-assumption-house-price",
+        "scenario-assumption-no-rent-model"
+      ]
+    },
+    {
+      "hypothesisId": "house-cost-mechanism-cutaway",
+      "title": "Why a $500,000 House Can Cost So Much More",
+      "strategy": "mechanism-cutaway",
+      "thumbnailConcept": "A cutaway house exposing financing, tax, insurance and maintenance cost layers around the purchase price.",
+      "openingVisual": "Roof, foundation, loan and insurance layers separate into a cost waterfall built from the declared scenario assumptions.",
+      "payoffEventId": "lifetime-total-reveal",
+      "claimRefs": [
+        "scenario-assumption-house-price",
+        "docs-10-build-plan-shared-fixture"
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "metricKey": "scenario-purchase-price",
+      "provenance": "estimated",
+      "value": {
+        "kind": "number",
+        "value": 500000
+      },
+      "unit": "USD",
+      "sourceVersionId": null,
+      "observedAt": null,
+      "method": "Illustrative scenario input from docs/10-build-plan.md 'Shared fixture: one original house-cost video'; not a market observation."
+    },
+    {
+      "metricKey": "sourced-lending-rate-series",
+      "provenance": "unknown",
+      "value": {
+        "kind": "unknown"
+      },
+      "unit": null,
+      "sourceVersionId": null,
+      "observedAt": null,
+      "method": null
+    }
+  ],
+  "createdAt": "2026-10-21T00:00:00Z"
+}

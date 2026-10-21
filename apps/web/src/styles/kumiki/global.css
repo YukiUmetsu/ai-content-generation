@@ -1,0 +1,179 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Appearance scope: components read semantic `--km-*` variables which are
+   re-pointed by the tokens.css blocks above when the data attribute is set on
+   <html> or any ancestor. */
+@custom-variant dark (&:where([data-km-appearance="dark"], [data-km-appearance="dark"] *));
+
+/* Bridge resolved Kumiki tokens into Tailwind's utility namespaces. `inline`
+   keeps the var() reference so runtime appearance/density switching works. */
+@theme inline {
+  /* Surface colours */
+  --color-canvas: var(--km-surface-canvas);
+  --color-surface: var(--km-surface-default);
+  --color-surface-subtle: var(--km-surface-subtle);
+  --color-surface-elevated: var(--km-surface-elevated);
+  --color-surface-inset: var(--km-surface-inset);
+  --color-surface-floating: var(--km-surface-floating);
+
+  /* Text colours */
+  --color-foreground: var(--km-text-primary);
+  --color-muted-foreground: var(--km-text-muted);
+  --color-inverse-foreground: var(--km-text-inverse);
+  --color-danger: var(--km-text-danger);
+
+  /* Border / focus */
+  --color-border: var(--km-border-subtle);
+  --color-input: var(--km-border-strong);
+  --color-ring: var(--km-focus-ring);
+
+  /* Action colours */
+  --color-primary: var(--km-action-primary);
+  --color-primary-foreground: var(--km-action-primary-fg);
+  --color-secondary: var(--km-action-secondary);
+  --color-secondary-foreground: var(--km-action-secondary-fg);
+  --color-subtle: var(--km-action-subtle);
+  --color-subtle-foreground: var(--km-action-subtle-fg);
+  --color-destructive: var(--km-action-destructive);
+  --color-destructive-foreground: var(--km-action-destructive-fg);
+  --color-checked: var(--km-action-checked);
+  --color-checked-foreground: var(--km-action-checked-fg);
+  --color-disabled: var(--km-action-disabled);
+  --color-disabled-foreground: var(--km-action-disabled-fg);
+
+  /* Overlay */
+  --color-overlay: var(--km-overlay-scrim);
+  --color-track: var(--km-surface-track);
+  --color-field: var(--km-surface-field);
+
+  /* Status (severity semantics: info / success / warning / danger) */
+  --color-status-info: var(--km-status-info);
+  --color-status-success: var(--km-status-success);
+  --color-status-warning: var(--km-status-warning);
+  --color-status-danger: var(--km-status-danger);
+
+  /* Typography */
+  --font-sans: var(--km-font-sans);
+  --font-mono: var(--km-font-mono);
+  --font-serif: var(--km-font-serif);
+  --font-cjk: var(--km-font-cjk);
+
+  --text-xs: var(--km-type-scale-xs);
+  --text-xs--line-height: var(--km-type-leading-xs);
+  --text-sm: var(--km-type-scale-sm);
+  --text-sm--line-height: var(--km-type-leading-sm);
+  --text-base: var(--km-type-scale-base);
+  --text-base--line-height: var(--km-type-leading-base);
+  --text-lg: var(--km-type-scale-lg);
+  --text-lg--line-height: var(--km-type-leading-lg);
+  --text-xl: var(--km-type-scale-xl);
+  --text-xl--line-height: var(--km-type-leading-xl);
+  --text-2xl: var(--km-type-scale-2xl);
+  --text-2xl--line-height: var(--km-type-leading-2xl);
+  --text-3xl: var(--km-type-scale-3xl);
+  --text-3xl--line-height: var(--km-type-leading-3xl);
+
+  --text-display: var(--km-type-scale-display);
+  --text-display--line-height: var(--km-type-leading-display);
+  --text-heading-lg: var(--km-type-scale-heading-lg);
+  --text-heading-lg--line-height: var(--km-type-leading-heading-lg);
+  --text-heading: var(--km-type-scale-heading);
+  --text-heading--line-height: var(--km-type-leading-heading);
+  --text-heading-sm: var(--km-type-scale-heading-sm);
+  --text-heading-sm--line-height: var(--km-type-leading-heading-sm);
+  --text-subheading: var(--km-type-scale-subheading);
+  --text-subheading--line-height: var(--km-type-leading-subheading);
+  --text-label: var(--km-type-scale-label);
+  --text-label--line-height: var(--km-type-leading-label);
+  --text-body-lg: var(--km-type-scale-body-lg);
+  --text-body-lg--line-height: var(--km-type-leading-body-lg);
+  --text-body: var(--km-type-scale-body);
+  --text-body--line-height: var(--km-type-leading-body);
+  --text-body-sm: var(--km-type-scale-body-sm);
+  --text-body-sm--line-height: var(--km-type-leading-body-sm);
+  --text-caption: var(--km-type-scale-caption);
+  --text-caption--line-height: var(--km-type-leading-caption);
+
+  --font-weight-regular: var(--km-type-weight-regular);
+  --font-weight-medium: var(--km-type-weight-medium);
+  --font-weight-semibold: var(--km-type-weight-semibold);
+  --font-weight-bold: var(--km-type-weight-bold);
+
+  --tracking-tight: var(--km-type-tracking-tight);
+  --tracking-normal: var(--km-type-tracking-normal);
+  --tracking-wide: var(--km-type-tracking-wide);
+  --tracking-display: var(--km-type-tracking-display);
+  --tracking-heading-lg: var(--km-type-tracking-heading-lg);
+  --tracking-heading: var(--km-type-tracking-heading);
+  --tracking-heading-sm: var(--km-type-tracking-heading-sm);
+  --tracking-subheading: var(--km-type-tracking-subheading);
+  --tracking-label: var(--km-type-tracking-label);
+  --tracking-body: var(--km-type-tracking-body);
+  --tracking-body-sm: var(--km-type-tracking-body-sm);
+  --tracking-caption: var(--km-type-tracking-caption);
+
+  /* Elevation */
+  --shadow: var(--km-shadow-DEFAULT);
+
+  /* Radii */
+  --radius-sm: var(--km-radius-sm);
+  --radius-md: var(--km-radius-md);
+  --radius-lg: var(--km-radius-lg);
+  --radius-xl: var(--km-radius-xl);
+  --radius-2xl: var(--km-radius-2xl);
+  --radius-3xl: var(--km-radius-3xl);
+  --radius-full: var(--km-radius-pill);
+  --radius-control: var(--km-control-radius);
+  --radius-surface: var(--km-control-surface-radius);
+
+  /* Spacing */
+  --space-1: var(--km-space-1);
+  --space-2: var(--km-space-2);
+  --space-3: var(--km-space-3);
+  --space-4: var(--km-space-4);
+  --space-5: var(--km-space-5);
+  --space-6: var(--km-space-6);
+  --space-7: var(--km-space-7);
+  --space-8: var(--km-space-8);
+
+  /* Motion */
+  --ease-enter: var(--km-ease-enter);
+  --ease-exit: var(--km-ease-exit);
+  --ease-continuity: var(--km-ease-continuity);
+  --duration-short: var(--km-duration-short);
+  --duration-medium: var(--km-duration-medium);
+  --duration-long: var(--km-duration-long);
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  [data-km-appearance="dark"] {
+    color-scheme: dark;
+  }
+
+  html {
+    font-family: var(--km-font-sans, ui-sans-serif, system-ui, sans-serif);
+    line-height: var(--km-type-leading-base, 1.5);
+  }
+
+  body {
+    background-color: var(--km-surface-canvas);
+    color: var(--km-text-primary);
+  }
+
+  /* Motion is decorative: respect the user's reduced-motion preference. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

@@ -27,6 +27,12 @@ Rust orchestrates this worker via typed IPC, verifies output hashes and owns con
 
 **Render risks and priorities:** test deterministic direct-seek first/mid/last; explicitly await fonts/3D/image readiness; no CI per-frame screenshot analysis; human-watch a full representative output. The existing PNG-per-frame export is useful for first delivery, but optimize later with stream/incremental segment capture if disk/time benchmarks justify it. FFmpeg LGPL/GPL dependencies and codecs require separate distribution review.
 
+## Frontend foundation (`apps/web`)
+
+The shared studio shell consumes a **source-vendored** Kumiki registry, not an npm package. It is pinned to commit `275209e228bc981dd176838e20f6a0d51761b3a9`; `apps/web/kumiki.config.json` declares the revision and item closure, and `apps/web/vendor/kumiki.lock.json` records the SHA-256 of every vendored file. `apps/web/scripts/vendor-kumiki.mjs` resolves the root `registry.json` dependency closure and verifies or updates the copy; `pnpm kumiki:verify` fails on any drift. Do not edit `src/components/ui/*` or `src/styles/kumiki/*` in place — fix upstream or adapt at the call site.
+
+Ownership stays split: `src/app` owns neutral editor chrome (sidebar, header, tabs, split pane, inspector, preview frame); `src/features/<id>` owns one feature body behind `FeatureSlotProps`; creative output is scoped inside a preview/artboard container. The shell bridges Kumiki's `--km-*` semantic tokens into Tailwind, supports `data-km-appearance` light/dark and `data-km-density` compact/spacious, and must not introduce a parallel theme or brand-overridden editor chrome. Import paths, slot rules, token usage and the upgrade procedure are documented in [`apps/web/README.md`](../apps/web/README.md).
+
 ## First integration fixture
 
 Create a 30–60s illustrated cost-reveal explainer: verified numeric/example claims → script beats → Fish or mock TTS → alignment → meaningful Kumiki animations → semantic impacts, under-voice music ducking → mastered WAV → --audio export MP4 → QA. Re-render independently in YouTube 16:9 and a **recomposed** Shorts/TikTok 9:16 layout. Verify targeted regeneration after narrator/music/brand-kit changes, rights checks and no imported Kumiki runtime dependency in ordinary ContentGen editor UI.

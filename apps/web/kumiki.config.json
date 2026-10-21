@@ -1,0 +1,13 @@
+{
+  "$comment": "Pinned Kumiki-UI source registry. Bump `commit` deliberately, then run `pnpm kumiki:update` and review the diff. Never edit vendored files in src/components/ui or src/styles/kumiki directly.",
+  "repository": "https://github.com/YukiUmetsu/kumiki-ui",
+  "commit": "275209e228bc981dd176838e20f6a0d51761b3a9",
+  "manifest": "registry.json",
+  "items": ["button", "tabs", "surface-card", "sidebar", "split-pane", "input", "dialog"],
+  "styles": ["src/styles/tokens.css", "src/styles/global.css"],
+  "targets": {
+    "registry:ui": "src/components/ui",
+    "registry:component": "src/components",
+    "registry:lib": "src/lib"
+  }
+}
