@@ -4,14 +4,20 @@
 
 Every visual has a **learning/marketing objective**, source claims, intended viewer distance, locale, canvas target and editability requirements. Use deterministic SVG/HTML/React composition for text, process diagrams, charts and infographics; optional local diffusion only for illustrations/backgrounds, *not* precise labels. Keep layers, source images, typography, storyboards and timelines editable. Distinguish UI-preview engine from final offline renderer.
 
+## Current integration decision (2026-10-21)
+
+**Prefer Kumiki-UI for reusable visual composition and choreography**: its implemented source registry already includes media stills, motion MG1/MD1/CC1/VT1, infographics, visual guards and a single-audio-file Playwright/FFmpeg exporter. Do not rebuild each named component here. The broad "neutral SceneSpec" and template list below describe **ContentGen's semantic authoring needs only**, not a second canonical media wire format; adapt to implemented Kumiki contracts with capability checks. The full Kumiki video Composition schema remains proposed. See [14](14-kumiki-integration.md).
+
+**Audio is now a dedicated production subsystem**, not just normalized TTS fragments: speech provider adapters, sample-accurate alignment, semantic SFX, rights-checked music, gain/ducking/mix/master, audio QA and multi-platform packaging. See [13](13-audio-production.md). Brand style, voice tone, mood, semantic palette, type and platform-safe layouts are versioned in [12](12-brand-studio.md).
+
 ## Media stack and adapter boundaries
 
 | Capability | Practical initial provider | Alternatives / tradeoff |
 |---|---|---|
 | SVG/graphic layout | SVG + ELK.js + Satori/React, resvg output | Mermaid/Graphviz; validate font metrics and geometry |
-| Programmatic slides/video | Motion Canvas | HyperFrames/Remotion behind adapter; verify licensing/compatibility |
+| Programmatic slides/video | Kumiki MG1/MD1/CC1/visual + existing VideoExportStage/FFmpeg adapter | Motion Canvas/other engines only after a measured missing capability; versioned adapter and license review |
 | Narrative illustrations | MFLUX + commercially permitted FLUX.2 Klein 4B | Z-Image or other adapter; optional heavyweight download |
-| TTS | Qwen3-TTS MLX | Kokoro, local supplied WAV; voice rights |
+| TTS | Provider-neutral speech port; Fish Audio cloud candidate | Qwen3-TTS MLX, Kokoro, imported WAV; provider terms and commercial voice rights reviewed independently |
 | STT/alignment | whisper.cpp | MLX-Audio; Rhubarb English lip-sync optional |
 | Character animation | Layered sprites + timeline actions | Inochi2D rigs or Blender as optional advanced workers |
 | Desktop demos | OBS + test/automation harness | Browser apps via Playwright |
@@ -19,11 +25,11 @@ Every visual has a **learning/marketing objective**, source claims, intended vie
 
 Do not download all tools in baseline or assume a particular repo supports your exact Apple Silicon/24 GB setup. Text inference, image generation, TTS and heavy render are **sequential by default**.
 
-## One neutral composition format
+## One editable semantic authoring specification, one Kumiki visual integration boundary
 
-Versioned `SceneSpec`/`TimelineSpec` (see [`visual-scene.json`](../examples/visual-scene.json)) must express: `{id, canvas: {width,height,fps,profile}, tokens/brand_version, locale, layers[], audio_tracks[], timed_actions[], dependencies[], source_refs[], render_targets[]}`. Elements have stable IDs, type, normalized/text-safe bounds, measured constraints, z-index, intentional-overlap tags, alt description, font/style tokens and editable properties. Timed actions have start/end/easing/property/target and optional narration/phoneme anchors.
+ContentGen's versioned **SemanticStoryboard** (see [`visual-scene.json`](../examples/visual-scene.json)) expresses learning objective, sourced claims, beat IDs, intended visual transformations, named semantic event IDs, narration direction, BrandKit revision and delivery-profile intents. It deliberately does **not** define layer transforms, keyframes or a parallel visual scene wire format. A versioned adapter compiles this authoring intent into only those Kumiki registry fragments that are actually implemented (artboard, MD1/MG1, CC1 and supported visual scenes). Resolve layout, audio source times and renderer capabilities explicitly, store the adapter version and do not invent unsupported Kumiki APIs.
 
-**Renderer-specific adapters** interpret supported subsets and report unsupported features; do not claim identical output between Motion Canvas, HyperFrames and SVG. Keep generated visual source and exported frames linked by exact render manifest (renderer/version/fonts/assets/seed). Support targeted scene/segment rerenders.
+**Renderer-specific adapters** interpret only supported Kumiki subsets and report missing capabilities. Optional Motion Canvas/other exporters are fallback integrations, not the default semantic owner. Keep compiled visual source and exported frames linked by a render manifest (renderer/registry-version/fonts/assets/seed) and support targeted scene/segment rerenders.
 
 ## Graphics and thumbnails
 

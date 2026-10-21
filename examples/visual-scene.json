@@ -1,15 +1,71 @@
 {
-  "schema_version": 1,
+  "schemaVersion": 1,
+  "kind": "semantic-storyboard",
   "id": "visual-redaction-comparison",
-  "learning_objective": "Explain why covering words visually may leave source text accessible",
-  "canvas": {"width": 1600, "height": 900, "safe_area_percent": 6},
-  "theme": {"name": "editorial-light", "typography_profile": "readable-explainer"},
-  "elements": [
-    {"id": "title", "kind": "text", "role": "title", "text": "Covering is not removing", "layout": {"anchor": "top", "min_font_px": 60}},
-    {"id": "left", "kind": "card", "role": "comparison", "text": "Overlay: content may remain", "layout": {"column": 1, "min_font_px": 32}},
-    {"id": "right", "kind": "card", "role": "comparison", "text": "Redaction: remove underlying content", "layout": {"column": 2, "min_font_px": 32}},
-    {"id": "footer", "kind": "text", "role": "caption", "text": "Verify the saved file with text extraction", "layout": {"anchor": "bottom", "min_font_px": 28}}
+  "brandKitRef": {
+    "id": "brand_example",
+    "revision": 1
+  },
+  "learningObjective": "Explain why covering PDF text visually may leave the original text accessible",
+  "locale": "en-US",
+  "claims": [
+    {
+      "id": "claim-001",
+      "status": "requires_source_verification",
+      "sourceRefs": []
+    }
   ],
-  "constraints": ["no_text_collisions", "no_overflow", "safe_margins", "readable_contrast"],
-  "note": "Illustrative SceneSpec, not a validated implementation-specific schema."
+  "beats": [
+    {
+      "id": "covering",
+      "objective": "Show black rectangle masking visible words while extractable text persists",
+      "visualIntent": "comparison",
+      "semanticObjects": [
+        "original-pdf-text",
+        "mask-rectangle",
+        "extractable-text"
+      ],
+      "namedEvents": [
+        "overlay-applied",
+        "hidden-text-revealed"
+      ],
+      "narrationText": "Covering text is not necessarily removing it."
+    },
+    {
+      "id": "removing",
+      "objective": "Show secure redaction removes underlying PDF content",
+      "visualIntent": "visual-transformation",
+      "semanticObjects": [
+        "original-pdf-text",
+        "redacted-pdf",
+        "text-extraction-result"
+      ],
+      "namedEvents": [
+        "content-removed",
+        "verification-passed"
+      ],
+      "narrationText": "Real redaction must remove the information, then verify the output."
+    }
+  ],
+  "deliveryProfiles": [
+    {
+      "id": "youtube-landscape-v1",
+      "layoutIntent": "side-by-side-comparison"
+    },
+    {
+      "id": "youtube-shorts-v1",
+      "layoutIntent": "sequential-portrait-comparison"
+    }
+  ],
+  "rendererPlan": {
+    "adapter": "kumiki-implemented-contracts",
+    "registryCommit": "PIN_RELEASE_WHEN_SELECTED",
+    "requiredCapabilities": [
+      "comparison",
+      "semantic-reveal"
+    ],
+    "fallbackPolicy": "explicit-failure"
+  },
+  "rightsReview": "unapproved",
+  "note": "Illustrative semantic story authoring format, not a Kumiki Composition JSON schema. Visual components and frame tracks generated only by adapter after capability validation."
 }

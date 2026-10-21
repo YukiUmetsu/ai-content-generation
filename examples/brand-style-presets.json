@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "note": "Archetype seeds for Brand Studio; not production brand kit, licensed assets or cultural authenticity guarantees.",
+  "presets": [
+    {
+      "id": "modern-analytical",
+      "traits": [
+        "minimal typography",
+        "strong data hierarchy",
+        "precise technical diagrams"
+      ],
+      "colorDirection": "charcoal + warm amber + off-white",
+      "motion": "restrained and causal",
+      "sonic": "warm measured narrator, soft tactile clicks"
+    },
+    {
+      "id": "geeky-technical",
+      "traits": [
+        "engineering diagrams",
+        "monospaced labels for code only",
+        "curious exploration"
+      ],
+      "colorDirection": "deep navy + cyan + warm highlight",
+      "motion": "packet paths and causal transformations, not ornament",
+      "sonic": "precise voice, subtle electrical interface tones"
+    },
+    {
+      "id": "calm-editorial",
+      "traits": [
+        "ample whitespace",
+        "readable serif headlines",
+        "quiet diagram fills"
+      ],
+      "colorDirection": "warm paper + slate + muted green",
+      "motion": "slow reveal, limited camera movement",
+      "sonic": "gentle voice, sparse ambience"
+    },
+    {
+      "id": "cinematic-investigative",
+      "traits": [
+        "strong contrast",
+        "evidence-first storytelling",
+        "controlled suspense"
+      ],
+      "colorDirection": "near-black + restrained red/ivory",
+      "motion": "purposeful reveals and long holds",
+      "sonic": "low suspense bed, restrained impacts"
+    },
+    {
+      "id": "playful-educational",
+      "traits": [
+        "friendly forms",
+        "clear icons",
+        "high recognition"
+      ],
+      "colorDirection": "vivid balanced accents + neutral surfaces",
+      "motion": "elastic with semantic intent",
+      "sonic": "energetic but articulate voice, light UI ticks"
+    },
+    {
+      "id": "historical-archival",
+      "traits": [
+        "historically justified materials",
+        "maps",
+        "document evidence"
+      ],
+      "colorDirection": "sepia/ink/paper with era-specific override",
+      "motion": "period-appropriate editorial movement",
+      "sonic": "subtle room/archival ambience; no faux authentic music"
+    },
+    {
+      "id": "traditional-japanese-inspired",
+      "traits": [
+        "purposeful ma (negative space)",
+        "seasonal or material references selected by user",
+        "Japanese legibility"
+      ],
+      "colorDirection": "indigo + warm paper + vermilion optional",
+      "motion": "measured rhythm, quiet holds",
+      "sonic": "restrained modern ambience; culturally informed music only with sourced permission"
+    },
+    {
+      "id": "nature-documentary",
+      "traits": [
+        "organic compositions",
+        "clear maps/species diagrams",
+        "natural material textures"
+      ],
+      "colorDirection": "earth and forest tones",
+      "motion": "patient camera and observation",
+      "sonic": "soft ambience with licensed field recordings"
+    },
+    {
+      "id": "east-asian-contemporary",
+      "traits": [
+        "locally chosen contemporary graphic references",
+        "editorial typography with appropriate language support",
+        "regional diversity rather than generic iconography"
+      ],
+      "colorDirection": "neutral canvas and user-selected saturated accent",
+      "motion": "restrained graphic transitions, respects reading flow",
+      "sonic": "brand-directed contemporary minimal score, not generic cultural motifs"
+    }
+  ]
+}

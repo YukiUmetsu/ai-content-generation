@@ -17,6 +17,21 @@
 | **K. Growth and reuse (P1)** | performance imports, SEO experiments, English/JA adaptations, scheduled briefs, stale-source impact detection, safe PR publishing | one content topic → article/Short/infographic; source change produces review queue; dated metrics retain completeness; publishing gated |
 | **L. Interactive products (P1/P2)** | course objectives/prerequisites, exercises/simulations, packaged lessons, offerings and optional future commerce | complete objective → lesson → exercise with verifiable test → immutable course release; no payment dependency |
 
+## Approved video-first fast lane (parallel to article-first A–L plan)
+
+This fast lane reflects current multi-brand monetized explainers while preserving the broader article/research roadmap. Keep a vertical slice complete before implementing numerous media components:
+
+| Order | Delivery | Acceptance |
+|---|---|---|
+| V0 | Minimal A foundation + pin Kumiki registry; BrandKit schema, curated presets, approved versioning and preview | Create two distinct brands, switch without cross-brand asset/token leakage, round-trip kit versions |
+| V1 | Provider-neutral Speak/Align: Fish candidate + explicit local/imported fallback + mock; rights checks | Synthesize/audition 2 phrases, reproduce artifacts, provider unavailable and denied commercial-rights tests |
+| V2 | Sample-precise audio pipeline: SFX bank, licensed beds, semantic cues, fades/ducking, FFmpeg mastering, QA | 30-second voice-forward WAV; detected missing speech/peak/rights errors |
+| V3 | ContentGen → implemented Kumiki export adapter; hook/cost reveal/caption/scene tests | 30–60-second meaningful 16:9 explainer with mix and video QA, deterministic direct-seek |
+| V4 | Reauthored 9:16 composition + destination presets + editable brand/storyboard UI | Same source explained in Shorts, TikTok, Reels; preserved semantics and independent safe-area QA |
+| V5 | Selective regeneration + batch variants + editorial/research source verification | Change one line/music/brand mood and rebuild only dependent artifacts; review/publish gated |
+
+See [12 Brand Studio](12-brand-studio.md), [13 Audio](13-audio-production.md), [14 Kumiki](14-kumiki-integration.md). A–L remain the general feature plan; V0–V5 is a **prioritized alternative**, not evidence those services have shipped.
+
 **Priorities when constrained:** A → B → C → D → E → F, then real demos/thumbnails/media based on actual audience value. Data ownership for brands, projects, characters and immutable releases must be established in A even if UI ships later. Do not prioritize generative character video or a dedicated graph server over research/search correctness.
 
 ## Per-stage delivery protocol

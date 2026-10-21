@@ -14,9 +14,14 @@
 | [08-assurance](08-assurance.md) | Deterministic QA, tests, accessibility, privacy, rights and release gates | Every release |
 | [09-products-publishing](09-products-publishing.md) | Brand/project hierarchy, products, package releases, publication and attribution | Catalog, commerce, export |
 | [10-build-plan](10-build-plan.md) | Priority order, acceptance fixtures, agent handoff | Every milestone |
+| [12-brand-studio](12-brand-studio.md) | BrandKit, curated style presets, visual/sonic identity, consistency and platform layouts | Multi-brand video systems and brand authoring |
+| [13-audio-production](13-audio-production.md) | Swappable TTS/alignment, sound event bank, music, mix/master, audio QA | Narration, SFX, soundtrack, captions |
+| [14-kumiki-integration](14-kumiki-integration.md) | Implemented Kumiki registry/video handshake and unimplemented boundary | Visual scenes, motion, renderer adapters |
 | [11-tools](11-tools.md) | Swappable tool candidates, benchmarks and primary references | New dependencies |
 
 **Code-adjacent fixtures:** [`../examples/core-schema.sql`](../examples/core-schema.sql), [`../examples/research-intelligence.sql`](../examples/research-intelligence.sql), and example JSON for provider profiles, jobs, research, articles/SEO, design tokens, graphics, thumbnails, characters and release manifests. Examples are contracts to adapt and test, **not automatically applied migrations or confirmed third-party APIs**.
+
+**Video-first task path:** brand creation → 03,06–08,12; audio → 02,03,08,13; visual/video integration → 06,08,14 and Kumiki's pinned source contracts; platform adaptation → 05,09,12,14.
 
 **Task paths:** research/SEO → 03,04,08; article/editor → 04,05,07,08; media/characters → 03,06–08; catalog/publishing → 03,08,09; runtime/inference → 01–03,08,11. For cross-cutting work, consult the narrowest additional owner file. When guidance conflicts: safety and legal constraints → tested migration/contracts → domain owner → roadmap → examples. Never silently discard user data to reconcile a specification conflict.
 

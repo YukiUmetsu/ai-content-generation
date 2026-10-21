@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "id": "audio_house_math_cost_reveal",
+  "brandKitRef": {
+    "id": "brand_house_math",
+    "revision": 1
+  },
+  "scriptRevision": "script-example-v1",
+  "voiceProfile": {
+    "id": "voice_house_math_en",
+    "locale": "en-US",
+    "providerPreference": [
+      "fish-speech",
+      "local-qwen-tts",
+      "imported-voice"
+    ],
+    "requiresApproval": true
+  },
+  "beats": [
+    {
+      "id": "beat_intro",
+      "text": "The price of a house is only the beginning.",
+      "direction": {
+        "emotion": "curious",
+        "pace": "measured"
+      },
+      "anchorEvent": "house-price-intro"
+    },
+    {
+      "id": "beat_reveal",
+      "text": "Thirty years later, the real cost may be dramatically higher.",
+      "direction": {
+        "emotion": "serious",
+        "pace": "slow"
+      },
+      "anchorEvent": "lifetime-total-reveal"
+    }
+  ],
+  "sounds": [
+    {
+      "id": "sfx_reveal",
+      "eventId": "lifetime-total-reveal",
+      "category": "number.reveal",
+      "intensity": 0.6,
+      "optional": true,
+      "assetSelection": "rights-checked-bank"
+    }
+  ],
+  "music": {
+    "paletteId": "music_calm_technical_v1",
+    "mood": "curious",
+    "duckUnderNarration": true,
+    "licenseRequired": true
+  },
+  "mix": {
+    "internalSampleRate": 48000,
+    "channels": 2,
+    "loudnessProfile": "youtube-stereo-v1",
+    "preserveStems": true
+  },
+  "targets": [
+    {
+      "profileId": "youtube-landscape-v1",
+      "width": 1920,
+      "height": 1080,
+      "fps": {
+        "num": 30,
+        "den": 1
+      }
+    },
+    {
+      "profileId": "youtube-shorts-v1",
+      "width": 1080,
+      "height": 1920,
+      "fps": {
+        "num": 30,
+        "den": 1
+      },
+      "layout": "reauthor-vertical"
+    }
+  ],
+  "policy": {
+    "networkTts": "requires-provider-grant",
+    "commercialRights": "verify-provider-model-and-assets",
+    "approvedRelease": false
+  },
+  "note": "Schema/IDs are illustrative, not valid remote Fish Audio API arguments or existing assets."
+}

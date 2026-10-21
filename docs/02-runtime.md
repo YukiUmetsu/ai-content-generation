@@ -14,6 +14,12 @@ Rust service modules depend on async traits such as `TextGenerate`, `StructuredG
 
 Result: `status`, typed artifact references/validated structured output, usage (if measured), diagnostics, model/seed/params, timestamps, license/provenance metadata and retry classification. Never deserialize arbitrary untrusted provider output without schema validation. A subprocess adapter uses structured JSON on stdin/stdout or verified API, argument arrays (not `sh -c`), timeouts, owned process groups, stdout limits and sanitized logs. Never infer Magnitude's runtime endpoint from `opencode --model`; verify its supported inference protocol. `examples/provider-profiles.json` contains **illustrative** profiles.
 
+## Speech, audio and render capability contract
+
+The broad legacy Speak/RenderVideo names should be interpreted as facade capabilities, **not a dependency on Qwen, Fish Audio, Motion Canvas or one mixer**. Add versioned SpeechSynthesize, SpeechAlign, AudioMix, AudioAnalyze, SoundResolve and KumikiRenderAdapter interfaces as defined in [13](13-audio-production.md) and [14](14-kumiki-integration.md). Store a logical VoiceProfile with provider mappings, audition/rights/version status. Provider substitution invalidates duration/alignment dependent visual events and audio, never silently assumes equivalent voice identity.
+
+Remote TTS (including a no-cost API) requires explicit scoped network access, rate/budget controls, current commercial output rights and redactable logs. Offline/mock and imported-audio paths remain functional when the preferred provider is unavailable.
+
 ## Durable DAG scheduler
 
 - `Workflow`: versioned DAG of steps, immutable input IDs and output artifact references, typed dependencies, approval gates, resource claims, retry policy. Reject cycles before enqueue.

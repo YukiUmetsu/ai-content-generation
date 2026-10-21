@@ -56,6 +56,70 @@
         "publish.prepare"
       ],
       "enabled": true
+    },
+    {
+      "id": "fish-speech",
+      "adapter": "fish_audio_tts",
+      "capabilities": [
+        "speech.synthesize"
+      ],
+      "model": "CONFIGURE_VERIFIED_MODEL",
+      "base_url": "CONFIGURE_VERIFIED_ENDPOINT",
+      "network_policy": "explicit_user_grant",
+      "enabled": false,
+      "rights_status": "unverified_for_monetized_publication",
+      "notes": "Illustrative. Verify Fish free/paid API terms, alignment availability, voice identity and cost before enabling."
+    },
+    {
+      "id": "local-qwen-tts",
+      "adapter": "local_tts_worker",
+      "capabilities": [
+        "speech.synthesize"
+      ],
+      "model": "CONFIGURE_AFTER_LICENSE_AND_INSTALL",
+      "enabled": false,
+      "notes": "No startup model download; voice mapping remains stable even when underlying model changes."
+    },
+    {
+      "id": "imported-voice",
+      "adapter": "imported_audio",
+      "capabilities": [
+        "speech.import"
+      ],
+      "enabled": true,
+      "notes": "User-supplied or licensed voice audio; explicit duration and metadata verification."
+    },
+    {
+      "id": "local-speech-alignment",
+      "adapter": "speech_alignment_worker",
+      "capabilities": [
+        "speech.align.segment",
+        "speech.align.word"
+      ],
+      "enabled": false,
+      "notes": "Actual supported languages and timings must be probed; fallback to segment-only is explicit."
+    },
+    {
+      "id": "ffmpeg-audio-mix",
+      "adapter": "ffmpeg_audio_worker",
+      "capabilities": [
+        "audio.mix",
+        "audio.analyze",
+        "audio.master"
+      ],
+      "enabled": false,
+      "notes": "Optional installed binary; license/codec audit and sample-accurate fixtures required."
+    },
+    {
+      "id": "kumiki-video-adapter",
+      "adapter": "kumiki_source_registry_video_export",
+      "capabilities": [
+        "scene.compile",
+        "video.render",
+        "visual.validate"
+      ],
+      "enabled": false,
+      "notes": "Pin verified source registry commit; use implemented VideoExportStage and absolute-frame capture, not proposed full Composition API."
     }
   ]
 }
