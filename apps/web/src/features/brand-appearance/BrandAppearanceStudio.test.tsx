@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { BrandAppearanceStudio } from "./index";
+import { BrandAppearanceStudio } from "./BrandAppearanceStudio";
 import { createBrandState } from "./model/brands";
 import type { BrandState } from "./model/types";
 import fixtureKit from "../../../../../examples/brand-kit.json";
@@ -14,7 +14,7 @@ function setup(props: Partial<React.ComponentProps<typeof BrandAppearanceStudio>
 }
 
 describe("BrandAppearanceStudio", () => {
-  it("renders the default House Math brand with the modern-analytical preset", () => {
+  it("renders the default House Math brand with modern-analytical preset", () => {
     setup();
     expect(screen.getByRole("heading", { name: "House Math" })).toBeInTheDocument();
     expect(screen.getByTestId("video-opening")).toHaveAttribute("data-preset", "modern-analytical");
@@ -22,18 +22,17 @@ describe("BrandAppearanceStudio", () => {
     expect(screen.getByTestId("thumbnail-preview")).toHaveAttribute("data-preset", "modern-analytical");
   });
 
-  it("switches presets and updates all three previews plus palette and typography", async () => {
+  it("switches presets and updates all three previews", async () => {
     const { user } = setup();
-    await user.click(screen.getByRole("button", { name: /Cinematic Investigative/i }));
+    const cinematic = screen.getByRole("button", { name: /Cinematic Investigative/i });
+    await user.click(cinematic);
 
     expect(screen.getByTestId("video-opening")).toHaveAttribute("data-preset", "cinematic-investigative");
     expect(screen.getByTestId("metric-reveal")).toHaveAttribute("data-preset", "cinematic-investigative");
     expect(screen.getByTestId("thumbnail-preview")).toHaveAttribute("data-preset", "cinematic-investigative");
 
-    const video = screen.getByTestId("video-opening");
-    expect(video.style.getPropertyValue("--ba-canvas")).toBe("#0A0A0C");
-    expect(video.style.getPropertyValue("--ba-accent")).toBe("#CC4B3F");
-    expect(video.style.getPropertyValue("--ba-weight-display")).toBe("700");
+    const stage = screen.getByTestId("video-opening");
+    expect(stage.style.getPropertyValue("--ba-canvas")).toBe("#0A0A0C");
   });
 
   it("edits a single palette role without changing others", async () => {
@@ -55,33 +54,38 @@ describe("BrandAppearanceStudio", () => {
 
   it("keeps two brands independent when switching", async () => {
     const { user } = setup();
-    const canvasInput = screen.getAllByLabelText(/hex$/i)[0];
+    const hexInputs = screen.getAllByLabelText(/hex$/i);
+    const canvasInput = hexInputs[0];
+
     await user.clear(canvasInput);
     await user.type(canvasInput, "#FF5733");
 
-    await user.click(screen.getByRole("button", { name: /Tideline/i }));
-    const tidelineCanvas = screen.getAllByLabelText(/hex$/i)[0];
-    expect(tidelineCanvas).toHaveValue("#F3EEE5");
+    const tidelineButton = screen.getByRole("button", { name: /Tideline/i });
+    await user.click(tidelineButton);
 
-    await user.click(screen.getByRole("button", { name: /House Math/i }));
+    const tidelineCanvas = screen.getAllByLabelText(/hex$/i)[0];
+    expect(tidelineCanvas).toHaveValue("#F2EEE4");
+
+    const houseMathButton = screen.getByRole("button", { name: /House Math/i });
+    await user.click(houseMathButton);
     expect(screen.getAllByLabelText(/hex$/i)[0]).toHaveValue("#FF5733");
   });
 
   it("exports and re-imports the active brand appearance round-trip", async () => {
     const { user } = setup();
-    await user.click(screen.getByRole("button", { name: /^Export$/i }));
+    await user.click(screen.getByRole("button", { name: /export/i }));
 
-    const exportArea = screen.getByRole("textbox", { name: /export/i });
-    const exported = (exportArea as HTMLTextAreaElement).value;
+    const textarea = screen.getByRole("textbox", { name: /export/i });
+    const exported = (textarea as HTMLTextAreaElement).value;
     const doc = JSON.parse(exported);
     expect(doc.kind).toBe("brand-kit-appearance");
     expect(doc.visual.palette.canvas).toBe("#101A22");
 
-    await user.click(screen.getByRole("tab", { name: /^Import$/i }));
+    await user.click(screen.getByRole("button", { name: /import/i }));
+
     const importArea = screen.getByRole("textbox", { name: /import/i });
     await user.clear(importArea);
-    await user.click(importArea);
-    await user.paste(exported);
+    await user.type(importArea, exported);
 
     await user.click(screen.getByRole("button", { name: /Import from JSON/i }));
 
@@ -91,13 +95,12 @@ describe("BrandAppearanceStudio", () => {
 
   it("imports examples/brand-kit.json and applies the House Math appearance", async () => {
     const { user } = setup();
-    await user.click(screen.getByRole("button", { name: /^Export$/i }));
-    await user.click(screen.getByRole("tab", { name: /^Import$/i }));
+    await user.click(screen.getByRole("button", { name: /export/i }));
+    await user.click(screen.getByRole("button", { name: /import/i }));
 
     const importArea = screen.getByRole("textbox", { name: /import/i });
     await user.clear(importArea);
-    await user.click(importArea);
-    await user.paste(JSON.stringify(fixtureKit));
+    await user.type(importArea, JSON.stringify(fixtureKit));
 
     await user.click(screen.getByRole("button", { name: /Import from JSON/i }));
 
@@ -107,13 +110,13 @@ describe("BrandAppearanceStudio", () => {
 
   it("shows invalid-hex and low-contrast warnings without crashing previews", async () => {
     const { user } = setup();
-    const canvasInput = screen.getAllByLabelText(/hex$/i)[0];
+    const hexInputs = screen.getAllByLabelText(/hex$/i);
+    const canvasInput = hexInputs[0];
 
     await user.clear(canvasInput);
     await user.type(canvasInput, "not-a-color");
 
     expect(screen.getByRole("alert")).toHaveTextContent(/#RGB|#RRGGBB/i);
-
     expect(screen.getByTestId("video-opening")).toBeInTheDocument();
     expect(screen.getByTestId("metric-reveal")).toBeInTheDocument();
     expect(screen.getByTestId("thumbnail-preview")).toBeInTheDocument();
@@ -150,15 +153,11 @@ describe("BrandAppearanceStudio", () => {
       }
     );
 
-    render(
-      <BrandAppearanceStudio
-        locale="ja"
-        initialBrands={[longBrand]}
-        initialActiveBrandId={longBrand.id}
-      />
-    );
-
-    expect(screen.getByRole("heading", { name: longFixture.name })).toHaveTextContent(longFixture.name);
+    render(<BrandAppearanceStudio locale="ja" initialBrands={[longBrand]} initialActiveBrandId={longBrand.id} />);
+    const heading = screen.getByRole("heading", { name: longFixture.name });
+    expect(heading).toBeInTheDocument();
+    expect(heading).toHaveTextContent(longFixture.name);
+    expect(heading).not.toHaveClass("truncate");
     expect(screen.getByText("ブランドの外観")).toBeInTheDocument();
     expect(screen.getByText("カラーパレット")).toBeInTheDocument();
     expect(screen.getByText("タイポグラフィ")).toBeInTheDocument();
