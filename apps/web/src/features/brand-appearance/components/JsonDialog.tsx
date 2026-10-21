@@ -1,58 +1,64 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Tabs } from "@/components/ui/tabs";
-import type { BrandState, Locale } from "../model/types";
-import { exportBrandKitAppearance, importBrandKitAppearance } from "../model/json";
-import { hasInvalidPaletteValues } from "../model/palette";
+import type { ImportError, Locale } from "../model/types";
 import { copy } from "../i18n";
 
 interface JsonDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  brand: BrandState;
+  exportText: string;
+  exportDisabled: boolean;
+  onImport: (text: string) => void;
+  importErrors: ImportError[];
   locale: Locale;
-  onImport: (brand: BrandState) => void;
 }
 
 export function JsonDialog({
   open,
   onOpenChange,
-  brand,
-  locale,
+  exportText,
+  exportDisabled,
   onImport,
+  importErrors,
+  locale,
 }: JsonDialogProps) {
   const t = copy(locale);
-  const exportText = useMemo(
-    () => JSON.stringify(exportBrandKitAppearance(brand), null, 2),
-    [brand]
-  );
-  const canExport = !hasInvalidPaletteValues(brand.paletteInput);
-
+  const [mode, setMode] = useState<"export" | "import">("export");
   const [importText, setImportText] = useState("");
-  const [importErrors, setImportErrors] = useState<{ path: string; message: string }[]>([]);
-  const [copied, setCopied] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(exportText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(exportText);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = exportText;
+        area.style.position = "fixed";
+        area.style.opacity = "0";
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(area);
+        if (!ok) throw new Error("execCommand copy failed");
+      }
+      setCopyStatus("copied");
     } catch {
-      setImportErrors([{ path: "", message: t.copyFailed }]);
+      setCopyStatus("failed");
     }
   }
 
   function handleDownload() {
     const blob = new Blob([exportText], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "brand-kit-appearance.json";
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "brand-kit-appearance.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 
@@ -62,102 +68,79 @@ export function JsonDialog({
     const reader = new FileReader();
     reader.onload = () => {
       setImportText(String(reader.result ?? ""));
-      setImportErrors([]);
-    };
-    reader.onerror = () => {
-      setImportErrors([{ path: "", message: "Could not read file." }]);
     };
     reader.readAsText(file);
-    event.target.value = "";
+    if (fileRef.current) fileRef.current.value = "";
   }
 
   function handleImport() {
-    const result = importBrandKitAppearance(importText, brand);
-    if ("errors" in result) {
-      setImportErrors(result.errors);
-    } else {
-      setImportErrors([]);
-      onImport(result.brand);
-      onOpenChange(false);
-      setImportText("");
-    }
+    onImport(importText);
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title={t.exportDialogTitle} size="lg">
       <div className="ba-json-dialog">
-        <Tabs defaultActiveIndex={0}>
-          <Tabs.List aria-label={t.exportDialogTitle}>
-            <Tabs.Tab value={0}>{t.exportTab}</Tabs.Tab>
-            <Tabs.Tab value={1}>{t.importTab}</Tabs.Tab>
-          </Tabs.List>
-          <Tabs.Panel value={0}>
-            <div className="ba-json-export">
-              <textarea
-                className="ba-json-textarea"
-                value={exportText}
-                readOnly
-                aria-label={t.exportTab}
-                rows={12}
-              />
-              {!canExport && (
-                <p className="ba-json-disabled-note">Fix palette errors before exporting.</p>
-              )}
-              <div className="ba-json-actions">
-                <Button variant="secondary" onClick={handleCopy} disabled={!canExport}>
-                  {copied ? t.copied : t.copy}
-                </Button>
-                <Button variant="primary" onClick={handleDownload} disabled={!canExport}>
-                  {t.download}
-                </Button>
-              </div>
+        <div className="ba-json-mode-switch" role="group">
+          <Button
+            variant={mode === "export" ? "secondary" : "subtle"}
+            size="sm"
+            aria-pressed={mode === "export"}
+            onClick={() => setMode("export")}
+          >
+            {t.exportTab}
+          </Button>
+          <Button
+            variant={mode === "import" ? "secondary" : "subtle"}
+            size="sm"
+            aria-pressed={mode === "import"}
+            onClick={() => setMode("import")}
+          >
+            {t.importTab}
+          </Button>
+        </div>
+
+        {mode === "export" ? (
+          <div className="ba-json-export">
+            <textarea readOnly value={exportText} className="ba-json-textarea" aria-label={t.exportTab} />
+            {exportDisabled && (
+              <p className="ba-json-disabled-note" role="alert">{t.invalidHex}</p>
+            )}
+            <div className="ba-json-actions">
+              <Button onClick={handleCopy} disabled={exportDisabled} size="sm" variant="secondary">
+                {copyStatus === "copied" ? t.copied : copyStatus === "failed" ? t.copyFailed : t.copy}
+              </Button>
+              <Button onClick={handleDownload} disabled={exportDisabled} size="sm">
+                {t.download}
+              </Button>
             </div>
-          </Tabs.Panel>
-          <Tabs.Panel value={1}>
-            <div className="ba-json-import">
-              <textarea
-                className="ba-json-textarea"
-                value={importText}
-                onChange={(e) => {
-                  setImportText(e.target.value);
-                  setImportErrors([]);
-                }}
-                placeholder={t.importPlaceholder}
-                aria-label={t.importTab}
-                rows={10}
-              />
-              <div className="ba-json-actions">
-                <label className="ba-json-file-label">
-                  {t.importFileLabel}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".json,application/json"
-                    onChange={handleFileChange}
-                  />
-                </label>
-                <Button variant="primary" onClick={handleImport}>
-                  {t.importAction}
-                </Button>
-              </div>
-              {importErrors.length > 0 && (
-                <ul className="ba-json-errors">
-                  {importErrors.map((err, index) => (
-                    <li key={`${err.path}-${index}`}>
-                      {err.path ? (
-                        <>
-                          <code>{err.path}</code>: {err.message}
-                        </>
-                      ) : (
-                        err.message
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+          </div>
+        ) : (
+          <div className="ba-json-import">
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              className="ba-json-textarea"
+              placeholder={t.importPlaceholder}
+              aria-label={t.importTab}
+            />
+            <label className="ba-json-file-label">
+              <input ref={fileRef} type="file" accept="application/json,.json" onChange={handleFileChange} />
+              {t.importFileLabel}
+            </label>
+            {importErrors.length > 0 && (
+              <ul className="ba-json-errors" role="alert">
+                {importErrors.map((err, index) => (
+                  <li key={index}>
+                    <code>{err.path}</code>: {err.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="ba-json-actions">
+              <Button onClick={handleImport} size="sm">{t.importAction}</Button>
             </div>
-          </Tabs.Panel>
-        </Tabs>
+          </div>
+        )}
       </div>
     </Dialog>
   );
