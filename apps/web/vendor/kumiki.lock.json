@@ -9,7 +9,32 @@
     "sidebar",
     "split-pane",
     "input",
-    "dialog"
+    "dialog",
+    "artboard",
+    "editable-text",
+    "layer-stack",
+    "alignment-guides",
+    "export-preview",
+    "infographic-economic-charts",
+    "motion-director",
+    "camera-stage",
+    "visual-transformation",
+    "video-export-stage",
+    "media-document",
+    "media-frame",
+    "infographic-system",
+    "infographic-view",
+    "motion-track",
+    "motion-preset",
+    "scene-storyboard",
+    "motion-react",
+    "video-platform-presets",
+    "motion-path",
+    "mask-reveal",
+    "shape-morph",
+    "shared-element",
+    "animated-text",
+    "slider"
   ],
   "npmDependencies": {
     "class-variance-authority": "button",
@@ -72,6 +97,90 @@
       "target": "src/components/ui/dialog.tsx",
       "sha256": "f3d7acb1aac54fbbb4e01218715283a39f51a9eef8c45fcda80f32e15ad25c61",
       "bytes": 6207
+    },
+    {
+      "item": "artboard",
+      "source": "registry/media/artboard.tsx",
+      "target": "src/components/media/artboard.tsx",
+      "sha256": "700f11332d90df3c036187e43d96f40da380c4092e5330885a0891607649dfeb",
+      "bytes": 18069
+    },
+    {
+      "item": "editable-text",
+      "source": "registry/media/editable-text.tsx",
+      "target": "src/components/media/editable-text.tsx",
+      "sha256": "d6eae4d359f147c1cdd7456dddb741aa195230b9eeefbf3fb5a3b20ec28f6367",
+      "bytes": 22808
+    },
+    {
+      "item": "layer-stack",
+      "source": "registry/media/layer-stack.tsx",
+      "target": "src/components/media/layer-stack.tsx",
+      "sha256": "b35f9ea0434315f57f09ebb4181ca99219f21ddd9d07eb3016ec32c68e80c043",
+      "bytes": 41049
+    },
+    {
+      "item": "alignment-guides",
+      "source": "registry/media/alignment-guides.tsx",
+      "target": "src/components/media/alignment-guides.tsx",
+      "sha256": "aea353cec2ab063a8293dcb1006464971856d73f336f342e13041c3e305417d0",
+      "bytes": 16774
+    },
+    {
+      "item": "export-preview",
+      "source": "registry/media/export-preview.tsx",
+      "target": "src/components/media/export-preview.tsx",
+      "sha256": "a167ce8e4a9df1440b5e9e316bf98a2a5f93513d9838cfbae2e6eac431dcc67b",
+      "bytes": 28128
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/economic.ts",
+      "target": "src/components/infographic/economic.ts",
+      "sha256": "af92dbd6274d7951bf20d24646107c44e8b790213082a7ea9a9c3c39e421028a",
+      "bytes": 27923
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/cost-waterfall.ts",
+      "target": "src/components/infographic/cost-waterfall.ts",
+      "sha256": "b048e03542ee8b802ad78a978f25d294c8e2fbc5c57e5c0ae866d9435323f472",
+      "bytes": 26037
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/lifecycle-cost-timeline.ts",
+      "target": "src/components/infographic/lifecycle-cost-timeline.ts",
+      "sha256": "a61b77b5beb32687d41459495ff0423153c3f38e4fc8afbd4a3fe36e26c57ae8",
+      "bytes": 24562
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/break-even-comparison.ts",
+      "target": "src/components/infographic/break-even-comparison.ts",
+      "sha256": "1cf953ee6a458a72c6d55dc335af83724ab82b3f3954936bb7be8e3517a96c2e",
+      "bytes": 35022
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/scenario-band.ts",
+      "target": "src/components/infographic/scenario-band.ts",
+      "sha256": "8f0e183862e74ed08a4d38a52c541475087478df1763b22ad474524f7e64fe17",
+      "bytes": 19757
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/economic-react.tsx",
+      "target": "src/components/infographic/economic-react.tsx",
+      "sha256": "6a5fec0c114452f69698e6f2673cb21375e0691ae6cc05e0a5b9e11e466db14d",
+      "bytes": 2673
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/motion-director.ts",
+      "target": "src/components/motion/motion-director.ts",
+      "sha256": "d0984f4cc9e2e08d607bd0e4222eea3f442e70e351628846804982adb5e4dd95",
+      "bytes": 20882
     },
     {
       "item": "styles",
