@@ -74,6 +74,8 @@ erDiagram
 
 Before a migration: inspect actual `sqlite_schema` + `PRAGMA user_version`, backup existing database, plan online-compatible additive changes, apply transactionally, run `PRAGMA foreign_key_check` and `PRAGMA integrity_check`, reopen with old data and test approval updates/deletes, cross-brand writes and rollback after a forced failure. For brand kit changes, create a **new revision**, not an `UPDATE` on approved JSON.
 
+**Runnable repository check:** `python3 examples/test-creative-schema.py` loads actual `core-schema.sql` plus `creative-production.sql` in a disposable in-memory SQLite database, then exercises brand isolation, immutable story/release, license approval and idempotency guards. OpenCode must execute this test after incorporating the files and report its real result; the standalone local verification did not execute this newly added repository test script.
+
 **Local SQL validation status:** the additive fixture was parsed/executed in SQLite against minimal compatible parent-table stubs with seeded successful and failing writes. It passed `foreign_key_check` and `integrity_check`. This is **not** proof that every historical schema upgrade has been run against the complete baseline or a production database. Integration tests must apply real ordered migrations against a disposable DB containing actual baseline data.
 
 ## SQL fixtures
