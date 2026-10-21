@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "visual-redaction-comparison",
+  "learning_objective": "Explain why covering words visually may leave source text accessible",
+  "canvas": {"width": 1600, "height": 900, "safe_area_percent": 6},
+  "theme": {"name": "editorial-light", "typography_profile": "readable-explainer"},
+  "elements": [
+    {"id": "title", "kind": "text", "role": "title", "text": "Covering is not removing", "layout": {"anchor": "top", "min_font_px": 60}},
+    {"id": "left", "kind": "card", "role": "comparison", "text": "Overlay: content may remain", "layout": {"column": 1, "min_font_px": 32}},
+    {"id": "right", "kind": "card", "role": "comparison", "text": "Redaction: remove underlying content", "layout": {"column": 2, "min_font_px": 32}},
+    {"id": "footer", "kind": "text", "role": "caption", "text": "Verify the saved file with text extraction", "layout": {"anchor": "bottom", "min_font_px": 28}}
+  ],
+  "constraints": ["no_text_collisions", "no_overflow", "safe_margins", "readable_contrast"],
+  "note": "Illustrative SceneSpec, not a validated implementation-specific schema."
+}

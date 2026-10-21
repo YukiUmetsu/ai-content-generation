@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "product_id": "product_privacy_course",
+  "release_id": "release_v1",
+  "version": "1.0.0",
+  "state": "draft",
+  "brand_id": "brand_filequell",
+  "product_kind": "video_course",
+  "localized_title": {"en": "Practical Document Privacy"},
+  "items": [
+    {"position": 1, "role": "lesson", "content_version_id": "vid_lesson_01_r1", "artifact_id": "art_lesson_01", "sha256": "sha256:PLACEHOLDER-REPLACE-WITH-REAL-HASH"},
+    {"position": 2, "role": "worksheet", "artifact_id": "art_pdf_01", "sha256": "sha256:PLACEHOLDER-REPLACE-WITH-REAL-HASH"}
+  ],
+  "rights_status": "pending_review",
+  "commerce": {"connected": false, "provider": null},
+  "note": "Illustrative fixture only. Replace placeholder IDs/hashes before any release."
+}

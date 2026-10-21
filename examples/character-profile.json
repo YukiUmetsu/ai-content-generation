@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "character_id": "char_navi",
+  "owner_brand_id": "brand_education",
+  "status": "approved",
+  "revision": 1,
+  "names": [
+    {"locale": "en", "display_name": "Navi", "pronunciation": "NAH-vee", "primary": true},
+    {"locale": "ja", "display_name": "ナビ", "pronunciation": "ナビ", "primary": true}
+  ],
+  "personality": ["curious", "precise", "warm"],
+  "identity_markers": ["rounded teal shell", "single amber forehead LED"],
+  "palette": ["#146B71", "#F2B94B"],
+  "canonical_reference_artifact_ids": ["art_navi_front_v1", "art_navi_side_v1"],
+  "approved_poses": ["idle", "point", "explain"],
+  "expressions": ["neutral", "happy", "curious", "thinking", "surprised"],
+  "voice_profiles": [{"locale": "en", "voice_profile_id": "voice_navi_en"}],
+  "rights": {"commercial_use": "human_reviewed", "source": "original_design", "review_ref": "approval_demo"},
+  "note": "Illustrative fixture: IDs are placeholders, not existing files."
+}

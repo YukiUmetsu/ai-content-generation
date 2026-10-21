@@ -1,0 +1,39 @@
+{
+  "schema": "contentstudio.research_collection.v1",
+  "id": "rc-pdf-redaction",
+  "project_id": "project-filequell-privacy",
+  "name": "PDF redaction evidence and gaps",
+  "objective": "Evidence-backed article and demo",
+  "locale": "en-US",
+  "sources": [
+    {
+      "source_id": "src-pdf-standard",
+      "snapshot_id": "snap-standard-20261015",
+      "passage_id": 42,
+      "locator": {
+        "section": "Text extraction"
+      },
+      "status": "verified"
+    }
+  ],
+  "questions": [
+    {
+      "id": "q1",
+      "text": "When does visually covering text leave searchable PDF content?",
+      "status": "open"
+    }
+  ],
+  "brief": {
+    "claim_passage_refs": [
+      42
+    ],
+    "seo_keyword_ids": [
+      "kw-redaction"
+    ],
+    "unknowns": [
+      "Feature verification pending"
+    ],
+    "publish_ready": false
+  },
+  "caveat": "Illustrative IDs, no verified technical evidence included"
+}

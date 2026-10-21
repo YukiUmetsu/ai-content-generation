@@ -1,0 +1,29 @@
+{
+  "schema": "contentstudio.seo_opportunity.v1",
+  "project_id": "project-filequell-privacy",
+  "cluster_id": "cluster-pdf-safe-redaction",
+  "locale": "en-US",
+  "country": "US",
+  "user_problem": "How can I redact PDF text safely?",
+  "keywords": [
+    {
+      "keyword_id": "kw-redaction",
+      "phrase": "how to redact a PDF",
+      "provider": "example-offline-fixture",
+      "observed_at": "2026-10-15T00:00:00Z",
+      "search_volume": null,
+      "paid_competition": null,
+      "provider_organic_difficulty": null
+    }
+  ],
+  "evidence_passage_ids": [
+    42
+  ],
+  "original_experiment": "Create synthetic test PDF and compare extractable text before/after redaction",
+  "risk_flags": [
+    "All SEO metrics are unknown",
+    "Publish only after evidence and product feature checks"
+  ],
+  "proposed_format": "article_with_demo",
+  "status": "research_needed"
+}

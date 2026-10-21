@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "thumbnail_id": "thumb_pdf_01",
+  "variant_key": "a_clear_comparison",
+  "source_content_id": "video_pdf_metadata",
+  "source_revision": 1,
+  "project_id": "project_filequell_privacy",
+  "brand_id": "brand_filequell",
+  "language": "en",
+  "platform_profile": {"id": "youtube_video_16_9", "version": "2026-10-15", "width": 1280, "height": 720},
+  "design_token_snapshot_ref": "tokens_filequell_v1",
+  "scene_elements": [
+    {"id": "background", "type": "shape", "z": 0, "fill_token": "thumbnail.background", "bounds": {"x": 0, "y": 0, "w": 1280, "h": 720}},
+    {"id": "title", "type": "text", "z": 2, "text": "Hidden PDF Data", "font_token": "thumbnail.headline", "bounds": {"x": 90, "y": 120, "w": 700, "h": 260}, "allow_overlap": false},
+    {"id": "illustration", "type": "image", "z": 1, "artifact_id": "art_sanitized_pdf_example", "bounds": {"x": 820, "y": 90, "w": 350, "h": 540}, "focal_point": {"x": 0.5, "y": 0.5}}
+  ],
+  "export": {"formats": ["png", "jpeg"], "preview_scales": [1, 0.25, 0.125]},
+  "qa": {"geometry": "pending", "claims": "pending", "small_size_preview": "pending"},
+  "note": "Illustrative scene spec; never render without resolving tokens and asset refs."
+}

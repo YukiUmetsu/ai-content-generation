@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "id": "local-magnitude-text",
+      "adapter": "openai_compatible_http",
+      "capabilities": [
+        "text.generate",
+        "text.structured"
+      ],
+      "model": "qwen3.6-35b-a3b:gguf:q2",
+      "base_url": "CONFIGURE_AFTER_ENDPOINT_VERIFICATION",
+      "network_policy": "loopback_only",
+      "enabled": false,
+      "notes": "The OpenCode model name is not proof of this runtime model ID or endpoint."
+    },
+    {
+      "id": "local-image-mflux",
+      "adapter": "external_cli_json_bridge",
+      "capabilities": [
+        "image.generate"
+      ],
+      "model": "flux2-klein-4b",
+      "binary_path": "CONFIGURE_AFTER_INSTALL",
+      "enabled": false,
+      "download_approval_required": true
+    },
+    {
+      "id": "offline-svg",
+      "adapter": "native_svg_renderer",
+      "capabilities": [
+        "graphics.render"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "fixture-sources",
+      "adapter": "local_fixture_research",
+      "capabilities": [
+        "research.fetch"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "native-quality-gates",
+      "adapter": "native_quality_validator",
+      "capabilities": [
+        "quality.validate"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "local-filesystem",
+      "adapter": "local_export",
+      "capabilities": [
+        "publish.prepare"
+      ],
+      "enabled": true
+    }
+  ]
+}

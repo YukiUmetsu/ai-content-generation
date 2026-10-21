@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "workflow_type": "article_with_diagram",
+  "project_id": "example-project",
+  "topic": "Why visual PDF masking is not the same as redaction",
+  "language": "en",
+  "format": "article",
+  "policy": {"offline": true, "external_publishing": false, "max_auto_repairs": 2},
+  "steps": [
+    {"id": "research", "capability": "research.fetch", "deps": [], "provider_profile": "fixture-sources"},
+    {"id": "outline", "capability": "text.structured", "deps": ["research"], "provider_profile": "local-magnitude-text"},
+    {"id": "article", "capability": "text.structured", "deps": ["outline"], "provider_profile": "local-magnitude-text"},
+    {"id": "scene", "capability": "text.structured", "deps": ["article"], "provider_profile": "local-magnitude-text"},
+    {"id": "graphic", "capability": "graphics.render", "deps": ["scene"], "provider_profile": "offline-svg"},
+    {"id": "validate", "capability": "quality.validate", "deps": ["article", "graphic"], "provider_profile": "native-quality-gates"},
+    {"id": "export", "capability": "publish.prepare", "deps": ["validate"], "provider_profile": "local-filesystem"}
+  ]
+}

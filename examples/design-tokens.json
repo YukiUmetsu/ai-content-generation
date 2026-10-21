@@ -1,0 +1,44 @@
+{
+  "$description": "Illustrative DTCG 2025.10 format tokens; not a production-selected brand palette.",
+  "color": {
+    "neutral": {
+      "white": { "$type": "color", "$value": "#ffffff" },
+      "ink": { "$type": "color", "$value": "#20242a" },
+      "muted": { "$type": "color", "$value": "#5b6470" },
+      "border": { "$type": "color", "$value": "#d6dce3" }
+    },
+    "accent": { "$type": "color", "$value": "#285fb0" },
+    "surface": { "$type": "color", "$value": "{color.neutral.white}" },
+    "text": {
+      "primary": { "$type": "color", "$value": "{color.neutral.ink}" },
+      "secondary": { "$type": "color", "$value": "{color.neutral.muted}" }
+    }
+  },
+  "space": {
+    "1": { "$type": "dimension", "$value": "4px" },
+    "2": { "$type": "dimension", "$value": "8px" },
+    "3": { "$type": "dimension", "$value": "12px" },
+    "4": { "$type": "dimension", "$value": "16px" },
+    "6": { "$type": "dimension", "$value": "24px" },
+    "8": { "$type": "dimension", "$value": "32px" },
+    "12": { "$type": "dimension", "$value": "48px" }
+  },
+  "font": {
+    "family": { "$type": "fontFamily", "$value": "system-ui" },
+    "size": {
+      "body": { "$type": "dimension", "$value": "16px" },
+      "label": { "$type": "dimension", "$value": "14px" },
+      "title": { "$type": "dimension", "$value": "28px" }
+    }
+  },
+  "radius": {
+    "sm": { "$type": "dimension", "$value": "6px" },
+    "md": { "$type": "dimension", "$value": "10px" },
+    "lg": { "$type": "dimension", "$value": "16px" }
+  },
+  "motion": {
+    "fast": { "$type": "duration", "$value": "120ms" },
+    "base": { "$type": "duration", "$value": "200ms" },
+    "context": { "$type": "duration", "$value": "300ms" }
+  }
+}

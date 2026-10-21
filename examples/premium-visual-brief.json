@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "id": "pdf-redaction-comparison",
+  "project_id": "example-filequell",
+  "language": "en",
+  "audience": "professionals sharing sensitive documents",
+  "learning_objective": "Explain why a black rectangle may fail to remove underlying PDF text",
+  "one_sentence_takeaway": "Visual concealment and removal of source data are different operations.",
+  "content_category": "privacy",
+  "factual_claims": [
+    {
+      "id": "claim-001",
+      "text": "A graphic drawn over text may not remove the underlying PDF content.",
+      "verification_status": "requires_source_verification",
+      "evidence_ids": []
+    }
+  ],
+  "visual_grammar": "side_by_side_comparison",
+  "focal_element": "difference between covering and removing text",
+  "template_id": "side-by-side-reveal",
+  "template_version": "1.0.0",
+  "brand_theme_id": "filequell-example",
+  "source_claim_ids": ["claim-001"],
+  "output_presets": ["article-mobile", "article-desktop", "video-16-9", "short-9-16"],
+  "caption_strategy": "accurate_optional_captions",
+  "editable_master_required": true,
+  "qa": {
+    "rules": ["no_clipped_essential_text", "respect_safe_areas", "contrast_aa", "visual_claims_backed_by_sources"],
+    "review_status": "draft_only"
+  },
+  "notes": "Synthetic demonstration only. Do not approve until the cited claim has supporting verified evidence and application features have been verified."
+}
