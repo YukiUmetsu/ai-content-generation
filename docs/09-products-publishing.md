@@ -6,6 +6,10 @@
 
 UI: tree search, create/move/rename/duplicate, selection, keyboard and undo; show inheritance and overrides, dependencies/`used by`, safe deletion preview. Default create flow asks one meaningful choice at a time. Large advanced panels for licenses, providers or pricing are contextual, not mandatory before creating a project.
 
+## Brand inheritance and immutable creative identity
+
+Brand holds a versioned BrandKit (approved palette/type hierarchy, art direction, narration persona, sonic palette, motion grammar, storytelling policy, supported languages and delivery recipes). Projects inherit an approved revision; episodes may request mood and destination-safe overrides with clear provenance. Platform deliverables may derive from one semantic master but **must reauthor** layout/captions/shot structure to match portrait or landscape. Video export packages freeze voice-provider/model/rights, selected SFX/music hashes, font assets, brand revision, editorial evidence and output profile. See [12](12-brand-studio.md), [13](13-audio-production.md).
+
 ## Product lifecycle (payments later)
 
 `Draft product → selected variants (language, format, edition) → assembled deliverables → rights/provenance/QA → approved immutable release manifest → export package`. Manifest pins exact content/artifact revision and SHA-256, language, license/terms, metadata, cover/thumbnail, file formats and customer-facing contents. New changes create a new release; they never mutate existing approved packages.

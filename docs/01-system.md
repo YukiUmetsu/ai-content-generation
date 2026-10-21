@@ -6,6 +6,12 @@ Local-first creative application turning **research → verified knowledge → p
 
 **Out of scope initially:** custom graph database, fully automatic publication or payment handling, live social CRM, heavyweight generative video, unrestricted web crawler, general-purpose 3D editor, large-scale multi-user SaaS, dozens of half-implemented providers.
 
+## Brand/media product boundaries (video-first integration)
+
+A BrandKit is a versioned approval-bound identity spanning semantic visual tokens, type/asset rights, motion direction, editorial persona, logical narrator, SFX/music palette and platform layout policy. Projects inherit a pinned approved BrandKit revision and may override only permitted traits. An episode may select a mood; the destination selects a DeliveryProfile; neither silently mutates approved identity. See [12](12-brand-studio.md).
+
+ContentGen orchestrates research, script/beat documents, provider-neutral audio, rights, jobs, brand revisions and final mux/publish. Kumiki is consumed as pinned source-distributed **visual/media/motion primitives**, not as a second backend or a competing application. Its comprehensive Composition wire schema is still partly proposed; integrate only implemented surfaces. [14](14-kumiki-integration.md) specifies the boundary. Audio adapter requirements are in [13](13-audio-production.md).
+
 ## Topology
 
 ```mermaid

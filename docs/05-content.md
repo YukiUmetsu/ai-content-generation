@@ -12,6 +12,10 @@ Persist typed `ArticleDoc` with language, canonical slug, title/description, sec
 
 **Editorial rules:** useful question answered early, strong examples and original experiments; clear progressive explanation, compact paragraphs, meaningful section headings, correct technical claims, contextual calls to action (disclose self-interest), no keyword stuffing or inflated text length. SEO metadata and sourced claims are validated separately. A reviewer can mark `verified`, `disputed`, `needs_source`, `estimate`, `opinion`; unsupported security promises block publishing. Store side-by-side changes and selective regeneration.
 
+## Brand-aware narrative content
+
+A visual content brief resolves to a pinned approved BrandKit (editorial voice, factual policy, art direction, narration persona, sound palette and motion grammar) before storyboard compilation. Episode mood can vary within approved bounds; platform versions adapt script structure, opening, shot pacing and layout rather than only truncating or cropping. Do not replace provenance with a stylish graphic. See [12](12-brand-studio.md).
+
 ## Repurposing and localization
 
 `source topic/research` → shared concept outline → format-specific stories. Blog, full explainer, Short, slideshow, infographic, newsletter, social post, worksheet and course lesson must **adapt** to distinct audiences and platform constraints, not merely truncate or translate. Preserve claim/evidence alignment and product capabilities. English/Japanese: terminology glossary, locale-specific queries and SEO, line breaks, text expansion, captions, pronunciation, translated on-screen graphics, independently rendered 16:9/9:16 compositions and voice consistency. Report untranslated or unsupported terms.

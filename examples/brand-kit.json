@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "kind": "brand-kit",
+  "id": "brand_house_math",
+  "revision": 1,
+  "status": "draft_example",
+  "name": "House Math",
+  "strategy": {
+    "audience": "Homeowners comparing long-term costs",
+    "promise": "Understand the numbers behind major home decisions",
+    "editorialPersona": [
+      "clear",
+      "skeptical",
+      "helpful"
+    ],
+    "defaultLanguage": "en-US",
+    "citationPolicy": "require-sources"
+  },
+  "artDirection": {
+    "presetId": "modern-analytical",
+    "traits": [
+      "architectural",
+      "calm",
+      "precise"
+    ],
+    "avoid": [
+      "decorative glass cards",
+      "camera motion without teaching intent",
+      "unlicensed stock illustrations"
+    ],
+    "materialLanguage": "architectural linework and understated paper"
+  },
+  "visual": {
+    "tokenVersion": "dtcg-example-v1",
+    "palette": {
+      "canvas": "#101A22",
+      "surface": "#1D2A33",
+      "textPrimary": "#F2F5F6",
+      "textSecondary": "#BED0D6",
+      "accent": "#E8A95B",
+      "positive": "#8BC4A1",
+      "negative": "#D97777"
+    },
+    "typography": {
+      "display": {
+        "family": "Newsreader",
+        "weight": 600
+      },
+      "body": {
+        "family": "Geist",
+        "weight": 450
+      },
+      "numbers": {
+        "family": "Geist",
+        "weight": 650
+      },
+      "captions": {
+        "family": "Geist",
+        "weight": 500
+      },
+      "cjkFallback": "User-configured licensed CJK font"
+    },
+    "texture": "subtle architectural drafting lines",
+    "iconStyle": "consistent outlined geometry",
+    "spacing": "spacious",
+    "cornerRadius": "low"
+  },
+  "narrative": {
+    "hookStyle": "immediately show surprising cost comparison",
+    "evidencePresentation": "reveal source with significant claims",
+    "pace": "measured",
+    "recapStyle": "one concrete viewer takeaway"
+  },
+  "motion": {
+    "camera": "locked-for-dense-charts",
+    "easing": "gentle",
+    "revealPace": "measured",
+    "reducedMotion": "fully-readable-static",
+    "recipes": [
+      "metric-reveal",
+      "cost-waterfall",
+      "comparison",
+      "timeline"
+    ]
+  },
+  "sonic": {
+    "voiceProfileId": "voice_house_math_en",
+    "narrationDirection": {
+      "timbre": "warm and authoritative",
+      "pace": "measured",
+      "emotionalRange": [
+        "curious",
+        "serious",
+        "reassuring"
+      ]
+    },
+    "sfxPaletteId": "sfx_understated_documentary_v1",
+    "musicPaletteId": "music_calm_technical_v1",
+    "defaultMood": "curious",
+    "loudnessProfileId": "youtube-stereo-v1"
+  },
+  "platformPolicy": {
+    "profiles": [
+      "youtube-landscape-v1",
+      "youtube-shorts-v1",
+      "instagram-reels-v1",
+      "facebook-reels-v1",
+      "tiktok-v1"
+    ],
+    "verticalRecompositionRequired": true,
+    "captionSafeZones": "per-versioned-platform-profile"
+  },
+  "governance": {
+    "approvedBy": null,
+    "licenseAudit": "required",
+    "snapshotId": null,
+    "notes": "Example only; selected font files, voice mappings, licenses and audible assets require approval."
+  }
+}

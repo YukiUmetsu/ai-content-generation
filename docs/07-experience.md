@@ -8,6 +8,10 @@ Primary navigation: **Projects, Research, Create, Content, Assets/Characters, Pr
 
 **User paths:** Research `search → inspect evidence → save/annotate → build brief`; content `choose topic → outline → write → visual → QA → approve`; video `script → storyboard → preview → edit → render`; product `choose assets → validate rights → freeze release → export`. Every path needs honest loading, empty, success, failure, progress and interrupted-job states. Do not fake percentage progress or silently erase edits.
 
+## Brand Studio and Kumiki registry
+
+Use a **pinned Kumiki source-registry** for reusable accessible application patterns and explainer graphics; do not implement a separate general-purpose media component system. BrandKit authoring controls visual tokens/typography/motion **and** editorial and sonic identity, with a fast-path preset picker, audition/side-by-side previews and full manual override without loss of repeatability. See [12](12-brand-studio.md) and [14](14-kumiki-integration.md).
+
 ## Design tokens and responsive system
 
 Use a versioned, DTCG-compatible token source, compiled to CSS and renderer parameters. Three levels: foundations (`space.4`, `neutral.900`), semantic intent (`surface`, `action.primary`, `text.muted`), and component (`dialog.radius`, `timeline.rowHeight`). Separate **brand**, **light/dark**, and **density** (comfortable/compact/editorial) axes. Snapshots pin the exact token/font versions used for published assets. See [`design-tokens.json`](../examples/design-tokens.json) for an illustrative source.

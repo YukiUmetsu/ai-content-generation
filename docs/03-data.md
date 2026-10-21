@@ -39,6 +39,10 @@ erDiagram
 | Graph | `graph_nodes/edges` | Derived suggestions + provenance/temporal validity; never replace canonical IDs |
 | Execution | `jobs`, `steps`, `step_dependencies`, `provider_profiles`, `qa_findings`, `approvals`, `publish_attempts` | Idempotency, approvals, audit and repair possible after restart |
 
+## Additive future migration requirements: brand + audio (not implemented by fixtures)
+
+Introduce versioned BrandKits and reusable style presets (brand_id, revision, approval/hash, identity/tokens/editorial/motion/sonic JSON validated by schema); named VoiceProfiles and provider mappings (locale, rights, model, consent, audition ref); sound/music bank entries (hash, license snapshot, attribution, mood/category/role, restrictions); audio production documents + beat/alignment/time-sample records, cue/event IDs, mixes/stems/QA; and versioned platform delivery profiles/layout variants. Approved video packages must freeze BrandKit, typography/SFX/music/voice/provider versions and resolved export rights. Never overwrite a published video's brand revision when the studio palette changes. See [12](12-brand-studio.md), [13](13-audio-production.md). These are requirements for ordered future migrations, **not tables already in core-schema.sql**.
+
 ## SQL fixtures
 
 - [`core-schema.sql`](../examples/core-schema.sql) is the **full legacy baseline DDL** translated from the prior documentation. It contains the table/trigger definitions above; use it as a reference, split into ordered migrations, and test ordering/forward keys.

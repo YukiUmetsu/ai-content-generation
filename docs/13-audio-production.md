@@ -1,0 +1,62 @@
+# Audio production — provider-neutral narration and semantic sound design
+
+**Owner:** ContentGen orchestrates voice provider selection, speech synthesis/alignment, audio asset rights, editing, DSP and mastering. Kumiki owns audio cue/timeline *declarations* and consumes resolved alignment for animation/captions; it is not a TTS engine or audio mixer. [Kumiki's audio contract](https://github.com/YukiUmetsu/kumiki-ui/blob/main/docs/10-character-audio.md) is the reference for cue semantics.
+
+## Provider-neutral capabilities
+
+Define typed, versioned Rust ports with optional TypeScript/Python worker IPC:
+
+- **SpeechSynthesize:** input = text, locale, logical voice-profile ID, direction (pace, emotion, emphasis, pronunciation), output format and budget; output = immutable audio artifact, exact duration in samples, sample rate, measured usage, provider/model/voice ID, status/provenance and rights record.
+- **SpeechAlign:** input = audio artifact + expected text + language; output = segment, word and optionally phoneme times in the *source sample domain*, confidence/provenance and accuracy level. May be provided by TTS API or separate local alignment adapter. Unsupported levels are explicit.
+- **AudioMix:** resolves versioned lane/clip/fade/automation/sidechain spec to WAV and optional stems; interchangeable DSP implementation with deterministic fixtures. Prefer FFmpeg initially, without storing command text as the canonical spec.
+- **AudioAnalyze:** probe duration, sample rate, channel mapping, peak/true peak, integrated loudness, detected clipping, unexpected silence, script coverage and mix clipping.
+- **SoundResolve:** resolve semantic sound categories/events through a rights-checked, deterministic bank with bounded variation. Manual no-sound is always valid.
+- **MusicSelect:** selects only licensed beds/stings with genre/mood/tempo/intensity and usage constraints; not a mandatory generative-music dependency.
+
+**Initial adapters:** Fish Audio cloud TTS, local TTS (e.g. Qwen3-TTS when installed), manual/imported recording, local speech aligner when necessary, FFmpeg mixer/encoder. Avoid assuming Fish's free model supports timestamp alignment or commercial monetization without testing current API terms and model capability. An optional provider can declare unavailable; never silently upload a voice sample or fall back to a paid model.
+
+A **VoiceProfile** is the stable creative identity: locale, timbre/persona description, pace range, pronunciation lexicon, allowed tone/emotion range and ordered provider-specific mappings. Each mapping has a separate consent/license state and audition artifact. Switching provider is allowed but perceptual equivalence is not promised; audition and approve substitutions. Sensitive voice samples have explicit retention and external-call permissions. No speaker-cloning requests without rights approval.
+
+**Generate by beat**, not whole-film blobs. Synthesis cache key hashes normalized speech text, locale, pronouncer version, voice mapping/provider/model/version, settings, sample format and rights/consent scope. A rewritten sentence invalidates its segment + alignment + dependent cue times, not unrelated footage. Keep an immutable copy of provider output; decoded/resampled derivatives have their own hashes.
+
+## Audio data model and production passes
+
+Source of truth = editable **AudioProductionSpec**, linked to a video/scene revision and approved BrandKit revision. Record:
+- narration beats, text, desired delivery, optional pauses, phrase/word alignment and exact source samples
+- clip lanes: narration, music, SFX, ambience; stable artifact refs with versioned rights and audio channel metadata
+- named events such as reveal, arrival, compare, error, question, resolution and intentional silence; event anchors to Kumiki semantic IDs, not arbitrary wall-clock playback
+- trim/source offset, start sample/time, gain, pan, envelopes, fades, ducking, EQ/compression/limiter presets, output profile and captions
+- resolved compiler/FFmpeg version, rights/licensing/attribution, deterministic selection seed, measured output stats
+
+**Pipeline:**
+1. Approve script and pronunciation glossary; split semantic beats, mark pauses/emphasis and expected spoken content.
+2. Synthesize/import each beat; probe audio, normalize encoding **for processing** (suggest 48 kHz float PCM internal), measure exact durations, and align segment/words where supported.
+3. Resolve speech clock into timeline named cues; schedule scenes, subject handoffs, camera, captions and SFX from the same cue IDs. Convert fractional speech timestamps to visual frames **once** under a documented rounding policy; do not round sample positions.
+4. Resolve sound events to a themed audio palette. Assets need rights, attribution, categories, intensity, attack/tail, default loudness and alternate IDs. Avoid one SFX per text entrance; cap density and collision of foreground effects.
+5. Choose optional licensed music/ambience using BrandKit identity + episode/section mood. Apply smooth ducking under speech; build intro/outro transitions; let intentional silence breathe.
+6. Decode → trim → gain/fades → bus automation/EQ/dynamics → narration-driven ducking → bus mix → limiter → profile loudness/true-peak measurement → final WAV/stems.
+7. Validate: no missing clip, orphan cue, unexpected silent sentence, clipped speech, abrupt cut, unusable pronunciation/alignment, masked dialogue, excessive SFX, invalid export rights or mismatched video duration.
+8. Render Kumiki visuals, mux mastered audio through current Kumiki exporter/FFmpeg boundary, export SRT/VTT where requested, then validate rendered MP4 audio and caption sync.
+
+**Suggested mastering starting points, not mandatory platform standards:** voice-forward compression/occasional de-essing; restrained music roughly 18–25 dB below narration as an *audition starting point*; final integrated loudness near -16 LUFS and true peak at or below -1.5 dBTP for a common stereo online-video profile. Implement configurable profiles and measure output rather than asserting one target for all platforms. Store stereo/downmix and sample-rate policy, do not accidentally phase-cancel speech.
+
+## Sound-design grammar and brand modes
+
+Sound categories (not filenames): input.click, data.transfer, number.reveal, transition.sweep, evidence.arrives, emphasis.soft, tension.rise, resolution, environment.room, ambience.nature. Each semantic event declares importance (0..1), optionality, max density, nearby speech protection, gain limits and approved mood variants.
+
+**SonicIdentity** stays recognizable (narrator timbre, intro signature, characteristic acoustic palette) while **SoundMood** changes per chapter: calm, curious, energetic, suspenseful, unsettling/scary, reassuring, historic/ceremonial. Mood controls selection and intensity inside BrandKit-approved bounds; do not force scary stingers or horror tropes onto every educational topic. Keep silence an intentional approved sound-design outcome. Match SFX to actual visual contact/reveal events.
+
+**Licenses:** Freesound may contain CC0, CC BY and other rights; ingestion must record license per asset rather than treating the whole website as free commercial stock. For tracks, record source/license snapshot, attribution text, platform/monetization restriction, user approval and checksum. Block export for unresolved rights. Online provider "free" pricing is not proof of commercial output rights.
+
+## QA and fixtures
+
+Use offline provider mocks in CI and opt-in integration tests for cloud/local voices. Fixtures:
+- 30s multi-beat film with speech, music ducking, reveal SFX and an intentionally silent pause
+- split/rewrite just one beat and verify only dependent artifacts invalidate
+- unavailable Fish Audio → local provider selected explicitly; no secret leaks, unapproved remote call or cost increase
+- aligner returns only segment timestamps: captions get segment timing, not fake phoneme precision
+- deliberate missing speech, clipped peak, incompatible sample rate, unsupported license, too-loud SFX and wrong audio/video duration must fail
+- mixed English/Japanese with pronunciation tests and font/caption alignment; long-form and vertical export with independent time/layout policies
+- compare reference narration/Mix QA with a short **human listening check**; never equate measured LUFS with premium sound
+
+**Milestone done when:** a local deterministic fixture plus one approved real-provider sample generate a repeatable mastered WAV, timed SFX and captions and a Kumiki MP4 without requiring any specific speech model in domain types.

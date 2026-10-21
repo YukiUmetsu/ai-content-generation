@@ -20,6 +20,10 @@ Finding: `{code, severity: blocker|error|warning|info, artifact_id, content_or_s
 
 **Geometry QA specifics:** post-font-load bounds and text measurement, containment, z/occlusion, clipping, spacing and line-wrapping; intentional overlapping requires declared semantics. Sample animations at keyframes and near entrances/exits/scene cuts plus representative in-between frames. Test 16:9 and 9:16 *independently* at small/actual size. Audio STT verification compares to approved script, and output QA notes tool limitations. Limit automatic fixes to two targeted cycles, then request review.
 
+## Cross-platform brand/audio release gates
+
+Block unresolved commercial rights for voice provider/model/clone, font, soundtrack and per-item SFX (a free API or Freesound source alone is not a license). Pin BrandKit revision, voice mapping, sound bank, platform preset and layout variant to each export. Deterministically test missing narration, incorrect duration, clipped audio, foreground SFX speech masking proxies, bad ducking envelope, clip/sample drift, missing caption alignment and unsupported provider fallback; human-listen to a representative final render for naturalness and music balance. Validate landscape and **recomposed** vertical layouts independently. Kumiki's critical-subject, caption/text and camera guards remain the visual source of truth; no screenshot/LLM grading loops in CI. See [12](12-brand-studio.md), [13](13-audio-production.md), [14](14-kumiki-integration.md).
+
 ## Testing matrix
 
 - **Rust/unit:** schema validation, provider errors, DAG cycle rejection, restart/retry/cancel, cache fingerprinting, resource preflight, safe cleanup, graph traversal and permission filters.

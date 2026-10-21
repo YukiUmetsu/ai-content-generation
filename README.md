@@ -17,6 +17,12 @@ Do not auto-install large models, paid providers or video engines. Show
 actual test/build results, disk usage, known limitations and next steps.
 ```
 
+## Video-first vertical slice and Brand Studio
+
+The target video workflow is **approved BrandKit → researched script/semantic beats → provider-neutral narration (Fish Audio or local/imported) → alignment + rights-checked SFX/music → Kumiki-UI compositions → offline FFmpeg mastering/encoding → QA → approved multi-platform packages**. Branding is repeatable but not generic: use semantic color, fonts, camera language, narration persona, SFX grammar and platform-specific composition. Video-first milestone track is specified in [build plan](docs/10-build-plan.md); full article/research product scope remains available.
+
+Owners: [12 — Brand Studio](docs/12-brand-studio.md), [13 — Audio production](docs/13-audio-production.md), [14 — Kumiki integration](docs/14-kumiki-integration.md). These are **specifications/fixtures, not claims of implemented ContentGen services**.
+
 ## Non-negotiables
 
 - Durable **source snapshots, passage citations and dated SEO metrics** precede semantic summarization; no fabricated citations, features, keyword volumes or test results.
