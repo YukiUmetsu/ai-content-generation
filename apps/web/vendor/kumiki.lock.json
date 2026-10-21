@@ -435,6 +435,90 @@
       "bytes": 9059
     },
     {
+      "item": "motion-track",
+      "source": "registry/motion/constants.ts",
+      "target": "src/components/motion/constants.ts",
+      "sha256": "33d5a73ac1f9ead06f2c7fdb9fa7f5c8a182caae60fa06419fe96a11e5e36d35",
+      "bytes": 3132
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/diagnostics.ts",
+      "target": "src/components/motion/diagnostics.ts",
+      "sha256": "0afd0b537d4ee71838e8077c1e1856bee2e22e0b8c48c8a89bdac8a073ce41c2",
+      "bytes": 2025
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/matrix.ts",
+      "target": "src/components/motion/matrix.ts",
+      "sha256": "8d456678fb112ea3a76ba5207ec0100ccdf6f9e837562a602fc21c71ea1f2e0b",
+      "bytes": 9683
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/easing.ts",
+      "target": "src/components/motion/easing.ts",
+      "sha256": "c19bfe389b028076c65cba2ebbaceea6ab74ec67914c2143b546071f6dc5afd7",
+      "bytes": 6397
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/springs.ts",
+      "target": "src/components/motion/springs.ts",
+      "sha256": "c5ea5a4f053fc676a898e0fc42ce2362e0a2a9fb1c5288db05205ed1d815c4d4",
+      "bytes": 4549
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/interpolate.ts",
+      "target": "src/components/motion/interpolate.ts",
+      "sha256": "d2e6c5c4d7fbc22edef51a04254765add1884d55561c42811bad32a6033219ac",
+      "bytes": 10354
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/stagger.ts",
+      "target": "src/components/motion/stagger.ts",
+      "sha256": "885cc7008601059a3f9ba30bcb8112fefeb0ba2a81b2cb0c8288b54f9b40d1e9",
+      "bytes": 2741
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/timeline.ts",
+      "target": "src/components/motion/timeline.ts",
+      "sha256": "c424d7b9619b737ba01a3d6eaa34851ab0044684b27b5e9ba0e1c65a02929f95",
+      "bytes": 32092
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/serialize.ts",
+      "target": "src/components/motion/serialize.ts",
+      "sha256": "1d19a44b4cf375d8867fc9a8d2d8bd8fca4acb41d94995400ac79a6e77ef9c7c",
+      "bytes": 15807
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/validate.ts",
+      "target": "src/components/motion/validate.ts",
+      "sha256": "0e62d4312a141a2091391ea13f42ae03d26fe627343cb3012d79e39487bed527",
+      "bytes": 24890
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/storyboard.ts",
+      "target": "src/components/motion/storyboard.ts",
+      "sha256": "3420ab92a356707bfab53ac783c3800b13861ad6b0c31a50b1f5d75844f4b491",
+      "bytes": 23946
+    },
+    {
+      "item": "motion-preset",
+      "source": "registry/motion/presets.ts",
+      "target": "src/components/motion/presets.ts",
+      "sha256": "8dc0e8965f358e636cae44b883a2abd3bd0ad67d6dfb0313dd7043600ed22208",
+      "bytes": 18633
+    },
+    {
       "item": "styles",
       "source": "src/styles/tokens.css",
       "target": "src/styles/kumiki/tokens.css",
