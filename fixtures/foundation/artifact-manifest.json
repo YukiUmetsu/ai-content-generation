@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "art_foundation_sample_v1",
+  "digestAlgorithm": "sha256",
+  "digest": "1fc12c76bb932174340a43a784aba075d7a25b59e6772e9999a818eb75aae7a3",
+  "sizeBytes": 35,
+  "mediaType": "text/plain",
+  "producer": {
+    "kind": "tool",
+    "name": "content-gen-foundation-fixture",
+    "version": "1"
+  },
+  "createdAt": "2026-10-21T00:00:00Z",
+  "metadata": {
+    "fixture": "foundation-v1"
+  }
+}

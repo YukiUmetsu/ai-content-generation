@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "id": "pkg_house_cost_fixture_v1",
+  "projectRef": "project_house_cost_fixture",
+  "status": "approved",
+  "premiseSetup": {
+    "question": "What does a $500,000 house really cost over 30 years?",
+    "audienceStakes": "Buyers can mistake the sticker price for the full cash outflow.",
+    "openingPromise": "The sticker price is only the beginning of the story.",
+    "evidenceRefs": [
+      "srcv_house_cost_fixture_1"
+    ]
+  },
+  "premisePayoff": {
+    "answerEventId": "lifetime-total-reveal",
+    "payoffStatement": "Under the stated assumptions, the lifetime total is decomposed into financing, tax, insurance and maintenance.",
+    "limitation": "Illustrative assumptions only; not a universal market claim.",
+    "evidenceRefs": [
+      "srcv_house_cost_fixture_1"
+    ]
+  },
+  "hypotheses": [
+    {
+      "hypothesisId": "hyp_cost_reversal",
+      "title": "The Real 30-Year Cost of a $500,000 House",
+      "strategy": "visible-cost-reversal",
+      "thumbnailConcept": "Price tag beside a growing lifetime-cost meter",
+      "openingVisual": "House price appears, then cost layers stack",
+      "payoffEventId": "lifetime-total-reveal",
+      "claimRefs": [
+        "srcv_house_cost_fixture_1"
+      ]
+    },
+    {
+      "hypothesisId": "hyp_mechanism_cutaway",
+      "title": "Where a $500,000 House Payment Actually Goes",
+      "strategy": "mechanism-cutaway",
+      "thumbnailConcept": "Cutaway of a house with four labeled cost layers",
+      "openingVisual": "Monthly payment splits into principal, interest, tax and upkeep",
+      "payoffEventId": "lifetime-total-reveal",
+      "claimRefs": [
+        "srcv_house_cost_fixture_1"
+      ]
+    },
+    {
+      "hypothesisId": "hyp_decision_comparison",
+      "title": "Rent vs Buy: The 30-Year Cash Difference",
+      "strategy": "decision-comparison",
+      "thumbnailConcept": "Two columns, rent and buy, with a 30-year total",
+      "openingVisual": "Two households make the same income but different housing choices",
+      "payoffEventId": "lifetime-total-reveal",
+      "claimRefs": [
+        "srcv_house_cost_fixture_1"
+      ]
+    }
+  ],
+  "metrics": [
+    {
+      "metricKey": "purchase_price",
+      "provenance": "estimated",
+      "value": {
+        "kind": "number",
+        "value": 500000.0
+      },
+      "unit": "USD",
+      "method": "Illustrative fixture assumption, not market data"
+    },
+    {
+      "metricKey": "mortgage_rate",
+      "provenance": "estimated",
+      "value": {
+        "kind": "range",
+        "low": 0.055,
+        "high": 0.075
+      },
+      "unit": "ratio",
+      "method": "Illustrative sensitivity range"
+    },
+    {
+      "metricKey": "source_page_count",
+      "provenance": "measured",
+      "value": {
+        "kind": "number",
+        "value": 1.0
+      },
+      "unit": "pages",
+      "sourceVersionId": "srcv_house_cost_fixture_1",
+      "observedAt": "2026-10-21T00:00:00Z"
+    },
+    {
+      "metricKey": "local_property_tax",
+      "provenance": "unknown",
+      "value": {
+        "kind": "unknown"
+      },
+      "unit": "USD/year"
+    }
+  ],
+  "createdAt": "2026-10-21T00:00:00Z",
+  "approvedAt": "2026-10-21T00:05:00Z"
+}

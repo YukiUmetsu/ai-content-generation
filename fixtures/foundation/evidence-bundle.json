@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "schemaVersion": 1,
+    "id": "src_house_cost_fixture",
+    "sourceKind": "test",
+    "canonicalUri": "fixture://foundation/house-cost-notes.txt",
+    "title": "Illustrative house cost assumptions",
+    "publisher": "ContentGen fixtures",
+    "rightsStatus": "cleared",
+    "createdAt": "2026-10-21T00:00:00Z",
+    "metadata": {
+      "fixture": "foundation-v1"
+    }
+  },
+  "version": {
+    "schemaVersion": 1,
+    "id": "srcv_house_cost_fixture_1",
+    "sourceId": "src_house_cost_fixture",
+    "contentSha256": "1fc12c76bb932174340a43a784aba075d7a25b59e6772e9999a818eb75aae7a3",
+    "retrievedAt": "2026-10-21T00:00:00Z",
+    "mediaType": "text/plain",
+    "byteSize": 35,
+    "parserVersion": "fixture-parser/1",
+    "rawArtifactId": "art_foundation_sample_v1",
+    "createdAt": "2026-10-21T00:00:00Z",
+    "metadata": {
+      "fixture": "foundation-v1"
+    }
+  },
+  "passages": [
+    {
+      "schemaVersion": 1,
+      "id": "psg_house_cost_fixture_p1",
+      "sourceVersionId": "srcv_house_cost_fixture_1",
+      "passageOrder": 0,
+      "locator": {
+        "kind": "page",
+        "page": 1
+      },
+      "language": "en",
+      "body": "Illustrative fixture: a $500,000 purchase price is not the same as the lifetime cash outflow.",
+      "bodySha256": "94c2dacb4ada75e0f97129ffb12ffc68777be5c489c63be35d8504d7d761cb8b",
+      "createdAt": "2026-10-21T00:00:00Z"
+    }
+  ]
+}

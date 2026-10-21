@@ -6,3 +6,9 @@ coverage
 .DS_Store
 .vite
 apps/web/.qa/
+/target/
+/data/
+*.db
+*.db-shm
+*.db-wal
+
