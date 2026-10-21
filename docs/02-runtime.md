@@ -20,6 +20,8 @@ The broad legacy Speak/RenderVideo names should be interpreted as facade capabil
 
 Remote TTS (including a no-cost API) requires explicit scoped network access, rate/budget controls, current commercial output rights and redactable logs. Offline/mock and imported-audio paths remain functional when the preferred provider is unavailable.
 
+**Persistence note:** the additive [creative-production fixture](../examples/creative-production.sql) defines the relational pointers between logical voice revisions/provider mappings, source-true sample timings, audio mixes, Kumiki scene documents, output profiles and frozen video releases. Do not store provider credentials in SQLite or use this SQL fixture as an automatic production migration. See [data ownership](03-data.md).
+
 ## Durable DAG scheduler
 
 - `Workflow`: versioned DAG of steps, immutable input IDs and output artifact references, typed dependencies, approval gates, resource claims, retry policy. Reject cycles before enqueue.
