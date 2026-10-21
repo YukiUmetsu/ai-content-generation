@@ -14,6 +14,17 @@
       "sonic": "warm measured narrator, soft tactile clicks"
     },
     {
+      "id": "geeky-technical",
+      "traits": [
+        "engineering diagrams",
+        "monospaced labels for code only",
+        "curious exploration"
+      ],
+      "colorDirection": "deep navy + cyan + warm highlight",
+      "motion": "packet paths and causal transformations, not ornament",
+      "sonic": "precise voice, subtle electrical interface tones"
+    },
+    {
       "id": "calm-editorial",
       "traits": [
         "ample whitespace",
@@ -78,6 +89,17 @@
       "colorDirection": "earth and forest tones",
       "motion": "patient camera and observation",
       "sonic": "soft ambience with licensed field recordings"
+    },
+    {
+      "id": "east-asian-contemporary",
+      "traits": [
+        "locally chosen contemporary graphic references",
+        "editorial typography with appropriate language support",
+        "regional diversity rather than generic iconography"
+      ],
+      "colorDirection": "neutral canvas and user-selected saturated accent",
+      "motion": "restrained graphic transitions, respects reading flow",
+      "sonic": "brand-directed contemporary minimal score, not generic cultural motifs"
     }
   ]
 }

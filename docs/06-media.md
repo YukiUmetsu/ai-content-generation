@@ -27,9 +27,9 @@ Do not download all tools in baseline or assume a particular repo supports your 
 
 ## One editable semantic authoring specification, one Kumiki visual integration boundary
 
-ContentGen's versioned semantic storyboard adapter (see [`visual-scene.json`](../examples/visual-scene.json)) must express: `{id, canvas: {width,height,fps,profile}, tokens/brand_version, locale, layers[], audio_tracks[], timed_actions[], dependencies[], source_refs[], render_targets[]}`. Elements have stable IDs, type, normalized/text-safe bounds, measured constraints, z-index, intentional-overlap tags, alt description, font/style tokens and editable properties. Timed actions have start/end/easing/property/target and optional narration/phoneme anchors.
+ContentGen's versioned **SemanticStoryboard** (see [`visual-scene.json`](../examples/visual-scene.json)) expresses learning objective, sourced claims, beat IDs, intended visual transformations, named semantic event IDs, narration direction, BrandKit revision and delivery-profile intents. It deliberately does **not** define layer transforms, keyframes or a parallel visual scene wire format. A versioned adapter compiles this authoring intent into only those Kumiki registry fragments that are actually implemented (artboard, MD1/MG1, CC1 and supported visual scenes). Resolve layout, audio source times and renderer capabilities explicitly, store the adapter version and do not invent unsupported Kumiki APIs.
 
-**Renderer-specific adapters** interpret supported subsets and report unsupported features; do not claim identical output between Motion Canvas, HyperFrames and SVG. Keep generated visual source and exported frames linked by exact render manifest (renderer/version/fonts/assets/seed). Support targeted scene/segment rerenders.
+**Renderer-specific adapters** interpret only supported Kumiki subsets and report missing capabilities. Optional Motion Canvas/other exporters are fallback integrations, not the default semantic owner. Keep compiled visual source and exported frames linked by a render manifest (renderer/registry-version/fonts/assets/seed) and support targeted scene/segment rerenders.
 
 ## Graphics and thumbnails
 
