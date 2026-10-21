@@ -267,6 +267,90 @@
       "bytes": 7501
     },
     {
+      "item": "video-export-stage",
+      "source": "registry/video/video-export-stage.tsx",
+      "target": "src/components/video/video-export-stage.tsx",
+      "sha256": "4d64d047a4dec31716e22af170dd5c1b42ded9a3cfe848fedad54a281b2d88d5",
+      "bytes": 5766
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/document.ts",
+      "target": "src/components/media/document.ts",
+      "sha256": "a695e1492cdaaf78f1ecd1480ad5ceb725ed424f3764b2f9376e558d17aa9996",
+      "bytes": 58224
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/text-layout.ts",
+      "target": "src/components/media/text-layout.ts",
+      "sha256": "c2d710833eecd124aac5aa341fa91f76a17a9dfadad78dd9f3473d307c014d4d",
+      "bytes": 21664
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/svg-export.ts",
+      "target": "src/components/media/svg-export.ts",
+      "sha256": "cd215a1acf11ae20e14e9ab2d8146784201c2deae9631a98db301f78672988ad",
+      "bytes": 42972
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/media-context.tsx",
+      "target": "src/components/media/media-context.tsx",
+      "sha256": "96c642c89bab48fa928ece792bde4bb0ec985adf3ea0d2105211fc945dbaf26a",
+      "bytes": 3772
+    },
+    {
+      "item": "media-frame",
+      "source": "registry/media/media-frame.tsx",
+      "target": "src/components/media/media-frame.tsx",
+      "sha256": "20e25a2d0ffe66462882e69f4ce025faad81a512a233a37356738adae8b01967",
+      "bytes": 10445
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/types.ts",
+      "target": "src/components/infographic/types.ts",
+      "sha256": "625fd684313921cfc688a298560ba0fdbab4b51cce1b1b94664d6362ff0488a4",
+      "bytes": 19401
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/validate.ts",
+      "target": "src/components/infographic/validate.ts",
+      "sha256": "9098017e8e1a78a8113c91c6368b9978f4c09c9852f3a56bb41852180700917a",
+      "bytes": 24415
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/measure.ts",
+      "target": "src/components/infographic/measure.ts",
+      "sha256": "f6fcf539ce000630efcd93e8def061c87e4090f55c734d5c25244d7dd41d013a",
+      "bytes": 12817
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/primitives.ts",
+      "target": "src/components/infographic/primitives.ts",
+      "sha256": "89e8376bb30bce5b5aa8535f91a29ea32cb42c445b54d403970f97fc1eb62d7d",
+      "bytes": 42477
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/color.ts",
+      "target": "src/components/infographic/color.ts",
+      "sha256": "2c0a3412c5fafef88609cc0350760d3072619d5a94e08685f1b394671adb5ca7",
+      "bytes": 2359
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/paint.ts",
+      "target": "src/components/infographic/paint.ts",
+      "sha256": "b6df64f7878b7b21425d800481526f6e8d729fbd648dae884b70626a4fde5db3",
+      "bytes": 5766
+    },
+    {
       "item": "styles",
       "source": "src/styles/tokens.css",
       "target": "src/styles/kumiki/tokens.css",
