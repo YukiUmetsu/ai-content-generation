@@ -16,7 +16,8 @@
  */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, posix, relative, resolve } from "node:path";
+import { dedupeVendorFiles, targetForRegistryFile } from "./vendor-kumiki-paths.mjs";
 import { fileURLToPath } from "node:url";
 
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -71,12 +72,10 @@ for (const item of resolved) {
     npmDependencies[dependency] = npmDependencies[dependency] ?? item.name;
   }
   for (const file of item.files ?? []) {
-    const root = config.targets[file.type];
-    if (!root) throw new Error(`No target root configured for file type "${file.type}" (${item.name}).`);
     files.push({
       item: item.name,
       source: file.path,
-      target: join(root, file.path.split("/").pop()),
+      target: targetForRegistryFile(file.path, config.componentRoot ?? "src/components"),
     });
   }
 }
@@ -94,7 +93,9 @@ const lock = {
   files: [],
 };
 
-for (const file of files) {
+const uniqueFiles = dedupeVendorFiles(files);
+
+for (const file of uniqueFiles) {
   const bytes = await readSource(file.source);
   const digest = sha256(bytes);
   const absolute = join(APP_ROOT, file.target);
@@ -141,6 +142,12 @@ if (updateLock) {
   const committed = JSON.parse(await readFile(LOCK_PATH, "utf8"));
   if (committed.commit !== config.commit) {
     throw new Error(`kumiki.config.json pins ${config.commit} but the lock records ${committed.commit}.`);
+  }
+  if (JSON.stringify(committed.items) !== JSON.stringify(lock.items)) {
+    throw new Error("Kumiki item closure differs from the lock. Run with --update-lock after review.");
+  }
+  if (JSON.stringify(committed.npmDependencies) !== JSON.stringify(lock.npmDependencies)) {
+    throw new Error("Kumiki npm dependency closure differs from the lock. Run with --update-lock after review.");
   }
   console.log(`\nAll ${lock.files.length} vendored files match commit ${config.commit.slice(0, 12)}.`);
 }
