@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Validate;
+use crate::artifacts::sha256_hex;
 use crate::error::{
     DomainError, ensure_identifier, ensure_metadata, ensure_schema_version, ensure_sha256,
     ensure_text, ensure_timestamp, ensure_uri,
@@ -177,6 +178,9 @@ impl Validate for SourceVersion {
         ensure_identifier("source version source_id", &self.source_id)?;
         ensure_sha256("source version content_sha256", &self.content_sha256)?;
         ensure_timestamp("source version retrieved_at", &self.retrieved_at)?;
+        // Media types stay non-blank here (matching the SQL CHECK) because a
+        // captured HTTP `Content-Type` may legitimately carry parameters such as
+        // `; charset=utf-8`; only generated artifacts require a bare essence.
         ensure_text("source version media_type", &self.media_type)?;
         ensure_text("source version parser_version", &self.parser_version)?;
         if let Some(artifact_id) = &self.raw_artifact_id {
@@ -199,6 +203,16 @@ impl Validate for SourcePassage {
         ensure_text("source passage language", &self.language)?;
         ensure_text("source passage body", &self.body)?;
         ensure_sha256("source passage body_sha256", &self.body_sha256)?;
+        // The digest is committed provenance, so it must describe the stored
+        // body rather than being an unchecked label.
+        if self.body_sha256 != sha256_hex(self.body.as_bytes()) {
+            return Err(DomainError::RuleViolation {
+                message: format!(
+                    "source passage '{}' body_sha256 does not match its body",
+                    self.id
+                ),
+            });
+        }
         ensure_timestamp("source passage created_at", &self.created_at)?;
         self.locator.validate()
     }

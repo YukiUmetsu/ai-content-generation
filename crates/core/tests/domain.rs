@@ -148,6 +148,45 @@ fn rejects_unsupported_schema_versions() {
 }
 
 #[test]
+fn timestamps_accept_only_one_canonical_utc_form() {
+    // Only `YYYY-MM-DDTHH:MM:SSZ` is accepted: one spelling per instant so
+    // string comparisons and SQLite TEXT ordering agree.
+    for rejected in [
+        "2026-10-21T00:00:00.500Z",
+        "2026-10-21T00:00:00+00:00",
+        "2026-10-21T00:00:00z",
+        "2026-10-21 00:00:00Z",
+        "2026-02-30T00:00:00Z",
+        "2026-10-21T24:00:00Z",
+        "2026-10-21T00:00:60Z",
+    ] {
+        let mut job = job_dag_fixture();
+        job.job.updated_at = rejected.to_owned();
+        assert!(
+            matches!(job.validate(), Err(DomainError::InvalidTimestamp { .. })),
+            "{rejected} must be rejected as a non-canonical timestamp"
+        );
+    }
+
+    // A same-second fraction is now impossible, so equality and ordering of the
+    // accepted form agree with chronological order.
+    let mut job = job_dag_fixture();
+    job.job.updated_at = job.job.created_at.clone();
+    job.validate()
+        .expect("equal timestamps are ordered, not reversed");
+
+    let mut job = job_dag_fixture();
+    job.attempts[0].finished_at = Some(job.attempts[0].started_at.clone());
+    job.validate().expect("equal attempt timestamps are valid");
+
+    let mut packaging = packaging_fixture();
+    packaging.approved_at = Some(packaging.created_at.clone());
+    packaging
+        .validate()
+        .expect("approval at the creation second is valid");
+}
+
+#[test]
 fn evidence_rejects_broken_locators_and_provenance_links() {
     let mut evidence = evidence_fixture();
     evidence.source.title.clear();
@@ -193,6 +232,13 @@ fn evidence_rejects_broken_locators_and_provenance_links() {
         evidence.validate(),
         Err(DomainError::SecretMaterial { .. })
     ));
+
+    let mut evidence = evidence_fixture();
+    evidence.passages[0].body.push_str(" tampered");
+    assert!(
+        matches!(evidence.validate(), Err(DomainError::RuleViolation { .. })),
+        "a passage body must match its committed digest"
+    );
 }
 
 #[test]

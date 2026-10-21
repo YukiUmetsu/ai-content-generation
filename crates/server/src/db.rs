@@ -2,7 +2,9 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub const MIGRATION_VERSION: i64 = 1;
+/// Schema version this binary writes, derived so it can never drift from the
+/// migration list.
+pub const MIGRATION_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].version;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Migration {

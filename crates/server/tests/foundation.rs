@@ -317,6 +317,14 @@ fn migrations_apply_in_order_to_fresh_database() {
     assert_eq!(report.to_version, 1);
     assert_eq!(report.applied, vec![1]);
     assert_eq!(db::user_version(&connection).unwrap(), 1);
+    assert_eq!(
+        db::MIGRATION_VERSION,
+        db::MIGRATIONS
+            .last()
+            .map(|migration| migration.version)
+            .unwrap(),
+        "the advertised schema version must follow the migration list"
+    );
 
     let (name, checksum): (String, String) = connection
         .query_row(
@@ -563,11 +571,27 @@ fn schema_rejects_unsourced_metrics_and_mutating_provenance() {
     );
     assert!(bad_digest.is_err(), "digests must be lowercase SHA-256 hex");
 
+    for (statement, expected) in [
+        ("DELETE FROM artifact_manifests", "artifact manifests"),
+        ("DELETE FROM source_versions", "source versions"),
+        ("DELETE FROM source_passages", "source passages"),
+        ("DELETE FROM job_attempts", "job attempts"),
+        (
+            "DELETE FROM packaging_metric_provenance WHERE hypothesis_set_id = 'pkg_house_cost_fixture_v1'",
+            "approved metric provenance",
+        ),
+    ] {
+        assert!(
+            connection.execute(statement, []).is_err(),
+            "{expected} must not be deletable"
+        );
+    }
+
     connection
         .execute(
             "INSERT INTO jobs
                 (id, schema_version, job_kind, state, idempotency_key, created_at, updated_at)
-             VALUES ('job_other', 1, 'other', 'PENDING', 'job-other', 
+             VALUES ('job_other', 1, 'other', 'PENDING', 'job-other',
                      '2026-10-21T00:00:00Z', '2026-10-21T00:00:00Z')",
             [],
         )

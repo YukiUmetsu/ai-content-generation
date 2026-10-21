@@ -141,13 +141,19 @@ pub(crate) fn ensure_uri(field: &'static str, value: &str) -> Result<(), DomainE
     Ok(())
 }
 
-/// Strict UTC RFC 3339 subset: `YYYY-MM-DDTHH:MM:SS[.fraction]Z`.
+/// Canonical UTC RFC 3339 form: `YYYY-MM-DDTHH:MM:SSZ`.
 ///
-/// Rejecting offsets keeps database ordering lexicographic and comparisons
-/// straightforward. Callers that need local time must convert before storing.
+/// Exactly one spelling per instant is accepted. Offsets *and* fractional
+/// seconds are rejected because these timestamps are stored as TEXT and ordered
+/// lexicographically in SQLite (`ORDER BY`, indexes) and compared as strings in
+/// the domain validators. A fraction sorts before `Z` at the same second, so
+/// `2026-10-21T00:00:00.500Z` would compare as *earlier* than
+/// `2026-10-21T00:00:00Z`. Callers that need local time or sub-second precision
+/// must normalize before storing (truncate, or keep the extra precision in a
+/// separate numeric column).
 pub(crate) fn is_utc_timestamp(value: &str) -> bool {
     let bytes = value.as_bytes();
-    if bytes.len() < 20 {
+    if bytes.len() != 20 {
         return false;
     }
     if bytes[4] != b'-'
@@ -189,14 +195,7 @@ pub(crate) fn is_utc_timestamp(value: &str) -> bool {
         return false;
     }
 
-    let rest = &bytes[19..];
-    match rest {
-        [b'Z'] => true,
-        [b'.', fraction @ .., b'Z'] => {
-            !fraction.is_empty() && fraction.len() <= 9 && fraction.iter().all(u8::is_ascii_digit)
-        }
-        _ => false,
-    }
+    bytes[19] == b'Z'
 }
 
 fn parse_digits(bytes: &[u8]) -> Option<u32> {
