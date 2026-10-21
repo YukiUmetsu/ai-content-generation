@@ -633,7 +633,6 @@ async fn router_registers_lane_stubs_and_health() {
     for (path, feature) in [
         ("/api/research/evidence", "research.evidence"),
         ("/api/creative/packaging", "creative.packaging"),
-        ("/api/jobs", "jobs.artifacts"),
     ] {
         let response = app
             .clone()
@@ -646,6 +645,40 @@ async fn router_registers_lane_stubs_and_health() {
         assert_eq!(body["error"]["code"], "not_implemented");
         assert_eq!(body["error"]["feature"], feature);
     }
+
+    // The jobs lane is implemented, so it must answer from a real migrated
+    // database instead of returning the shared 501 stub.
+    let temp_root = std::env::var_os("CONTENTGEN_TEST_TMP")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    static FOUNDATION_JOBS_COUNTER: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+    let sequence = FOUNDATION_JOBS_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp_dir = temp_root.join(format!(
+        "contentgen-foundation-jobs-{}-{sequence}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let db_path = temp_dir.join("data.db");
+    {
+        let mut connection = db::open(&db_path).expect("open temp database");
+        db::migrate(&mut connection).expect("migrate temp database");
+    }
+    let jobs_app = build_router(AppState::new(db_path));
+    let response = jobs_app
+        .oneshot(
+            Request::builder()
+                .uri("/api/jobs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body, serde_json::json!({"jobs": []}));
+    std::fs::remove_dir_all(&temp_dir).unwrap();
 
     let response = app
         .oneshot(
