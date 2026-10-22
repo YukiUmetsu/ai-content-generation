@@ -44,6 +44,41 @@ test("Fish request uses explicit free model header, WAV output and no uploaded s
   assert.deepEqual(Buffer.from(result.audio), wav());
 });
 
+test("repairs completed Fish streaming WAV headers without modifying PCM samples", async () => {
+  const original = wav();
+  for (const marker of [0xffffffff, 0x7fffeffc]) {
+    const streamed = Buffer.from(original);
+    streamed.writeUInt32LE(marker, 4);
+    streamed.writeUInt32LE(marker, 40);
+    const result = await synthesizeFishBeat(request, {
+      apiKey: "private", maxAttempts: 1,
+      fetchImpl: async () => new Response(streamed, { headers: { "content-type": "audio/wav" } }),
+    });
+    assert.deepEqual(Buffer.from(result.audio), original);
+  }
+  const zeroLengthData = Buffer.from(original);
+  zeroLengthData.writeUInt32LE(0xffffffff, 4);
+  zeroLengthData.writeUInt32LE(0, 40);
+  const result = await synthesizeFishBeat(request, {
+    apiKey: "private", maxAttempts: 1,
+    fetchImpl: async () => new Response(zeroLengthData, { headers: { "content-type": "audio/wav" } }),
+  });
+  assert.deepEqual(Buffer.from(result.audio), original);
+});
+
+test("rejects ordinary truncated WAVs and incomplete streaming PCM samples", async () => {
+  const finite = wav();
+  finite.writeUInt32LE(800, 4);
+  const oddStreaming = wav().subarray(0, 45);
+  // A 45-byte response fails the minimum WAV payload requirement.
+  oddStreaming.writeUInt32LE(0xffffffff, 4);
+  oddStreaming.writeUInt32LE(0xffffffff, 40);
+  const fake = (audio) => ({ apiKey: "private", maxAttempts: 1,
+    fetchImpl: async () => new Response(audio, { headers: { "content-type": "audio/wav" } }) });
+  await assert.rejects(synthesizeFishBeat(request, fake(finite)), /incomplete WAV payload/i);
+  await assert.rejects(synthesizeFishBeat(request, fake(oddStreaming)), /invalid or empty WAV|incomplete PCM sample/i);
+});
+
 test("remote TTS requires network, key and voice-reference consent before fetch", async () => {
   let calls = 0;
   const deps = { apiKey: "private", fetchImpl: async () => { calls++; return goodResponse(); } };
