@@ -117,6 +117,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
+      onDiagnostic: options.onProgress,
     });
     options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
     const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
