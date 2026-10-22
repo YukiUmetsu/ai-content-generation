@@ -61,13 +61,13 @@ describe("Studio shell", () => {
 
   it("shows an illustrative preview and plain-language workflow for planned tools", async () => {
     render(<App />);
-    await userEvent.setup().click(screen.getByRole("tab", { name: /thumbnail composer/i }));
+    await userEvent.setup().click(screen.getByRole("tab", { name: /platform delivery/i }));
 
     expect(screen.getByText(/The editor isn't connected yet/i)).toBeInTheDocument();
     expect(screen.getByText(/Illustrative output/i)).toBeInTheDocument();
-    expect(screen.getByTestId("concept-preview-thumbnail")).toBeInTheDocument();
+    expect(screen.getByTestId("concept-preview-platform")).toBeInTheDocument();
     const guide = screen.getByLabelText(/how to use this tool/i);
     expect(within(guide).getByText("Planned")).toBeInTheDocument();
-    expect(within(guide).getByText(/Check readability at mobile-card size/i)).toBeInTheDocument();
+    expect(within(guide).getByText(/Choose the destination platform and format/i)).toBeInTheDocument();
   });
 });
