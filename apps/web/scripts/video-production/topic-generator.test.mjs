@@ -84,3 +84,14 @@ test("model errors and redirect responses fail clearly, and no cloud fallback is
   await assert.rejects(generateTopicDraft(request, { transport: async () => { throw new Error("ECONNREFUSED"); } }), /local|connect|unavailable/i);
   await assert.rejects(generateTopicDraft(request, { transport: async () => ({ ok: false, status: 302, text: async () => "" }) }), /model|local|302/i);
 });
+
+test("topic generation propagates cancellation while retaining an operation deadline", async () => {
+  const controller = new AbortController();
+  await generateTopicDraft(request, { signal: controller.signal, transport: async (_url, init) => {
+    assert.notEqual(init.signal, controller.signal, "caller cancellation must be combined with a deadline");
+    assert.equal(init.signal.aborted, false);
+    controller.abort();
+    assert.equal(init.signal.aborted, true);
+    return fakeTransport();
+  } });
+});

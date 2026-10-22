@@ -118,12 +118,14 @@ export async function generateTopicDraft(input, { transport = fetch, signal } = 
   const content = JSON.stringify({ topic: brief.topic, viewerQuestion: brief.viewerQuestion, audience: brief.audience,
     notes: brief.notes, locale: brief.locale, format: brief.mode, scriptLength: minBeats });
   let wire;
+  const deadline = AbortSignal.timeout(brief.mode === "youtube-long" ? 12 * 60_000 : 3 * 60_000);
+  const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
   try {
     const response = await transport(brief.endpoint, {
       method: "POST", redirect: "error", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: brief.model, temperature: 0.6, stream: false, response_format: { type: "json_object" },
         messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content }] }),
-      signal: signal ?? AbortSignal.timeout(180000),
+      signal: requestSignal,
     });
     wire = JSON.parse(await boundedResponse(response));
   } catch (error) { fail(`local model unavailable or returned invalid JSON: ${String(error?.message ?? error).slice(0, 150)}`); }
@@ -143,7 +145,7 @@ export async function generateTopicDraft(input, { transport = fetch, signal } = 
     policy: { commercialRightsVerified: false, reviewerApproved: false, maxCostUsd: 0 },
     claims: [{ id: "editorial-claims-unverified", status: "unverified", text: "Unverified model-generated explainer. Input notes are not independently fact-checked." }],
     beats: drafted.beats, events: [{ id: "topic-payoff", beatId: drafted.beats.at(-1).id }],
-    sounds: [{ id: "topic-payoff-chime", eventId: "topic-payoff", category: "number.reveal", assetRef: "self-authored-test-chime", licenseStatus: "test-only" }],
+    sounds: [{ id: "topic-payoff-chime", eventId: "topic-payoff", category: "answer.reveal", assetRef: "self-authored-test-chime", licenseStatus: "test-only" }],
   };
   const parsed = parseVideoProductionJob(job);
   if (!parsed.ok) fail(`generated video job failed validation: ${parsed.findings.filter((f) => f.severity === "error").map((f) => f.code).join(", ")}`);

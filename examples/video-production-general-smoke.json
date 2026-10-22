@@ -19,5 +19,5 @@
     { "id": "arrival", "narration": "At the end, the destination receives the data and can display the message. That is the useful idea: send, route, and deliver.", "visualIntent": "general-payoff", "visual": { "headline": "THE MESSAGE ARRIVES", "subhead": "Send · route · deliver", "emphasis": "THE ANSWER", "items": ["Send", "Route", "Deliver"] }, "claimRefs": ["unverified-network-illustration"], "eventIds": ["message-delivered"], "pauseAfterMs": 0 }
   ],
   "events": [{ "id": "message-delivered", "beatId": "arrival" }],
-  "sounds": [{ "id": "arrival-chime", "eventId": "message-delivered", "category": "number.reveal", "assetRef": "self-authored-test-chime", "licenseStatus": "test-only" }]
+  "sounds": [{ "id": "arrival-chime", "eventId": "message-delivered", "category": "answer.reveal", "assetRef": "self-authored-test-chime", "licenseStatus": "test-only" }]
 }
