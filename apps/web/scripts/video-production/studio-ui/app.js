@@ -274,6 +274,13 @@ function showStatus(state) {
     generating: "WRITING", rendering: "RENDERING", completed: "REVIEW NEEDED", failed: "FAILED", cancelled: "CANCELLED" })[state.status] || state.status.toUpperCase();
   $("activity-message").textContent = clientError || state.message || "No activity.";
   showFindings(state.findings?.length ? state.findings : state.qa?.findings);
+  const fishDebug = $("fish-diagnostics");
+  const events = Array.isArray(state.fishDiagnostics) ? state.fishDiagnostics : [];
+  fishDebug.hidden = events.length === 0;
+  if (events.length) {
+    $("fish-diagnostics-text").textContent = JSON.stringify(events, null, 2);
+    if (state.status === "failed") fishDebug.open = true;
+  }
   applySteps(state);
   const isWorking = state.status === "rendering" || state.status === "checking" || state.status === "generating";
   $("preflight-button").disabled = isWorking || runningRequest;
