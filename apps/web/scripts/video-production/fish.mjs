@@ -118,7 +118,7 @@ function safeContentLength(value) {
 
 async function readBounded(response, signal, diagnostic) {
   const mediaType = safeMime(response.headers?.get("content-type"));
-  if (!PCM_TYPES.has(mediaType)) throw fail("wrong-content-type", `Fish returned ${mediaType || "no content type"}, not the requested raw PCM format.`);
+  if (!PCM_TYPES.has(mediaType)) throw fail("wrong-content-type", `Fish returned an unexpected audio content type (${mediaType}); expected raw PCM.`);
   const declared = response.headers?.get("content-length");
   if (declared && Number(declared) > MAX_WAV_BYTES - 44) throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
   if (!response.body) throw fail("invalid-pcm", "Fish response had no PCM audio body.");
