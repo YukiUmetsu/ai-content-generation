@@ -37,6 +37,7 @@ export function Shell() {
 
       if (
         activeSection === "create" &&
+        !isTypingTarget(event.target) &&
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
