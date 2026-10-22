@@ -24,6 +24,18 @@ describe("generic deterministic explainer scene", () => {
     expect(svg).toContain("UNVERIFIED EDITORIAL DRAFT");
   });
 
+  it("uses Kumiki's process journey to move exactly one semantic subject through flow stages", () => {
+    const start = renderToStaticMarkup(<GeneralExportScene plan={plan} frame={65} />);
+    const middle = renderToStaticMarkup(<GeneralExportScene plan={plan} frame={94} />);
+    expect(start).toContain("data-km-diagram-stage");
+    expect(middle).toContain("data-diagram-node=\"step-2\"");
+    expect(middle).toContain("data-process-journey-subject=\"topic-flow\"");
+    expect(middle.match(/data-process-journey-subject=/g)).toHaveLength(1);
+    expect(middle).toContain('data-diagram-overlaps="0"');
+    expect(start).not.toEqual(middle);
+    expect(middle).not.toContain("<foreignObject");
+  });
+
   it("has no DOM payoff content until after its event, then reveals named nodes", () => {
     const at = renderToStaticMarkup(<GeneralExportScene plan={plan} frame={120} />);
     const after = renderToStaticMarkup(<GeneralExportScene plan={plan} frame={155} />);

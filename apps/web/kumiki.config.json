@@ -20,7 +20,9 @@
     "motion-director",
     "camera-stage",
     "visual-transformation",
-    "video-export-stage"
+    "video-export-stage",
+    "diagram-stage",
+    "process-journey"
   ],
   "styles": [
     "src/styles/tokens.css",
