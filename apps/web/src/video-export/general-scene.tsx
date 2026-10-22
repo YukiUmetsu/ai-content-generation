@@ -1,0 +1,81 @@
+import { fitSvgText } from "../../scripts/video-production/text-layout.mjs";
+import { getGeneralFrame } from "../../scripts/video-production/general-visual-plan.mjs";
+import type { GeneralFrame, GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
+
+const ink = "#F5F2EB";
+const muted = "#A5B9C5";
+const accent = "#D9AF7C";
+const turquoise = "#81C4BF";
+const palette = [turquoise, accent, "#A89CD5", "#B4D99B", "#D98D9C"];
+
+function Node({ x, y, width, height, label, index, highlight = false }: { x: number; y: number; width: number; height: number; label: string; index: number; highlight?: boolean }) {
+  const text = fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
+  return <g data-general-node={index}>
+    <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
+    <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
+    {text.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5} y={y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11} fontSize={text.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
+  </g>;
+}
+
+function Diagram({ state }: { state: GeneralFrame }) {
+  const items = state.visual.items.slice(0, state.visibleItems);
+  const all = state.visual.items;
+  if (state.intent === "general-comparison" && all.length <= 3) {
+    const width = all.length === 3 ? 220 : 325;
+    const gap = all.length === 3 ? 25 : 40;
+    return <g>
+      {items.map((label, i) => <g key={`${label}-${i}`}>
+        <Node x={1060 + i * (width + gap)} y={470} width={width} height={165} label={label} index={i} />
+        {i > 0 && <text x={1040 + i * (width + gap)} y={560} fill={accent} textAnchor="middle" fontSize="25" fontWeight="700">VS</text>}
+      </g>)}
+    </g>;
+  }
+  if (state.intent === "general-breakdown") {
+    return <g>
+      {items.map((label, i) => <g key={`${label}-${i}`}>
+        <text x="1077" y={328 + 124 * i} fontSize="27" fill={ink}>{label}</text>
+        <rect x="1077" y={349 + 124 * i} width="680" height="23" rx="11" fill="#2F4751" />
+        <rect x="1077" y={349 + 124 * i} width={680 * (0.45 + 0.55 * (all.length - i) / all.length)} height="23" rx="11" fill={palette[i % palette.length]} />
+      </g>)}
+    </g>;
+  }
+  const height = 110;
+  const gap = all.length === 5 ? 18 : all.length === 4 ? 26 : 46;
+  const startY = Math.max(240, 540 - (all.length * height + (all.length - 1) * gap) / 2);
+  return <g>
+    {items.map((label, i) => <g key={`${label}-${i}`}>
+      <Node x={1150} y={startY + i * (height + gap)} width={555} height={height} label={label} index={i} highlight={state.intent === "general-payoff" && i === all.length - 1} />
+      {i > 0 && <g><path d={`M1427 ${startY + i * (height + gap) - gap + 4} v${gap - 14}`} stroke={accent} strokeWidth="4" strokeLinecap="round"/><path d={`M1418 ${startY + i * (height + gap) - 14} l9 11 9 -11`} fill="none" stroke={accent} strokeWidth="4" strokeLinejoin="round"/></g>}
+    </g>)}
+  </g>;
+}
+
+export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; frame: number }) {
+  const state = getGeneralFrame(plan, frame);
+  const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
+  const heading = fitSvgText(state.visual.headline, { maxWidthPx: 760, preferredSize: 72, minSize: 35, maxLines: 3 });
+  const sub = fitSvgText(state.visual.subhead, { maxWidthPx: 750, preferredSize: 32, minSize: 22, maxLines: 4 });
+  return <svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
+    <defs>
+      <linearGradient id="general-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#101D2D"/><stop offset="1" stopColor="#1D3A48"/></linearGradient>
+      <radialGradient id="general-glow"><stop offset="0" stopColor="#D9AF7C" stopOpacity=".16"/><stop offset="1" stopColor="#D9AF7C" stopOpacity="0"/></radialGradient>
+    </defs>
+    <rect width="1920" height="1080" fill="url(#general-bg)" />
+    <circle cx="1545" cy="500" r="605" fill="url(#general-glow)" />
+    <path d="M120 156 H1800" stroke="#506676" strokeWidth="2" opacity=".7"/>
+    <rect x="120" y="90" width="14" height="14" rx="4" fill={accent}/>
+    <text x="156" y="107" fill={accent} fontSize="26" fontWeight="700" letterSpacing="5">CONTENTGEN · EXPLAINER</text>
+    <text x="1800" y="107" fill={muted} fontSize="24" textAnchor="end">{String(state.chapterIndex + 1).padStart(2, "0")} / {String(state.chapterCount).padStart(2, "0")}</text>
+    <line x1="988" y1="222" x2="988" y2="920" stroke="#425D6D" strokeWidth="2" />
+    {!isPayoffHidden && <g opacity={state.enterProgress} transform={`translate(${(1 - state.enterProgress) * -38} 0)`}>
+      <text x="125" y="243" fill={accent} fontSize="26" letterSpacing="3.8" fontWeight="700">{state.visual.emphasis.toUpperCase()}</text>
+      {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
+      {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
+    </g>}
+    <Diagram state={state}/>
+    <path d="M120 978 H1800" stroke="#4C6570" strokeWidth="2" />
+    <rect x="120" y="978" width={1680 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="5" fill={accent} />
+    <text x="120" y="1034" fill={muted} fontSize="22">{state.disclaimer}</text>
+    <text x="1800" y="1034" textAnchor="end" fill={muted} fontSize="22">DRAFT · {frame}f</text>
+  </svg>;
+}

@@ -30,8 +30,23 @@
             <div class="mode-options">
               <label class="choice"><input type="radio" name="mode" value="smoke" checked><span class="choice-body"><span class="choice-top"><strong>Quick smoke test</strong><span class="pill">START HERE</span></span><span>3 narration beats · approx. 30–60 sec</span><small>Check the full pipeline without a long render.</small></span><span class="choice-indicator" aria-hidden="true"></span></label>
               <label class="choice"><input type="radio" name="mode" value="long"><span class="choice-body"><span class="choice-top"><strong>Long-form YouTube</strong><span class="pill pill-muted">8 MIN+</span></span><span>26 narration beats · 1920 × 1080</span><small>15,000+ frames; capture may take a long time.</small></span><span class="choice-indicator" aria-hidden="true"></span></label>
+              <label class="choice"><input type="radio" name="mode" value="topic"><span class="choice-body"><span class="choice-top"><strong>Your own topic</strong><span class="pill">LOCAL AI</span></span><span>Generate a new landscape explainer draft</span><small>Any subject · locally generated script and diagrams</small></span><span class="choice-indicator" aria-hidden="true"></span></label>
             </div>
             <div class="fixture-caption" id="fixture-caption">Illustrative House Math scenario · YouTube landscape · 30 fps</div>
+          </section>
+
+          <section id="topic-fields" class="panel" aria-labelledby="topic-heading" hidden>
+            <div class="section-heading"><span class="step-index">01A</span><div><h2 id="topic-heading">Generate your explainer</h2><p>An installed local text model writes a structured, editable draft. It does not browse for facts.</p></div></div>
+            <div class="field-group"><label for="topic-text">Video topic <span class="required-mark">*</span></label><textarea id="topic-text" rows="2" maxlength="220" placeholder="e.g. Why do heat pumps save energy?"></textarea></div>
+            <div class="field-group"><label for="topic-question">Question to answer</label><input id="topic-question" maxlength="240" placeholder="What should viewers understand by the end?"></div>
+            <div class="field-group"><label for="topic-audience">Audience <span class="required-mark">*</span></label><input id="topic-audience" maxlength="160" placeholder="e.g. Curious homeowners"></div>
+            <div class="field-group"><label for="topic-notes">Evidence / caveat notes (optional)</label><textarea id="topic-notes" rows="3" maxlength="4000" placeholder="Paste relevant verified facts or caveats. Notes are not independently checked."></textarea></div>
+            <div class="field-group"><label for="topic-length">Episode length</label><select id="topic-length"><option value="smoke">Quick proof of concept · 30–90 seconds</option><option value="youtube-long">YouTube long · 8+ measured minutes</option></select></div>
+            <div class="field-group"><label for="topic-locale">Narration language</label><select id="topic-locale"><option value="en-US">English</option><option value="ja-JP">日本語 · Japanese</option></select></div>
+            <div class="field-group"><label for="topic-model-endpoint">Local model endpoint</label><input id="topic-model-endpoint" value="http://127.0.0.1:11434/v1/chat/completions" spellcheck="false" maxlength="260"><p class="helper">OpenAI-compatible localhost service (such as a configured Ollama or LM Studio server). No model downloads.</p></div>
+            <div class="field-group"><label for="topic-model-id">Installed text model ID</label><input id="topic-model-id" placeholder="Your loaded model ID" spellcheck="false" maxlength="120"></div>
+            <button id="generate-button" class="button button-secondary" type="button"><span class="button-icon">✦</span> Generate local draft <span class="button-arrow">→</span></button>
+            <p class="helper">Your topic, audience, language, question and notes go only to your localhost text model. Narration uses your separate Fish/local voice settings later.</p>
           </section>
 
           <section class="panel" aria-labelledby="narrator-heading">
@@ -73,6 +88,15 @@
         </form>
 
         <div class="review-column">
+          <section id="topic-review" class="panel" aria-labelledby="draft-heading" hidden>
+            <div class="result-title"><div><div class="overline">EDIT BEFORE YOU RENDER</div><h2 id="draft-heading">Generated storyboard</h2></div><span class="pill pill-muted">UNVERIFIED DRAFT</span></div>
+            <p id="draft-summary" class="helper"></p>
+            <div id="draft-packaging" class="draft-packaging"></div>
+            <label for="draft-json" class="draft-label">Edit the JSON story (narration, titles, scene diagrams)</label>
+            <textarea id="draft-json" spellcheck="false" rows="12" aria-describedby="draft-policy"></textarea>
+            <p id="draft-policy" class="helper">Source, audio and publishing rights remain unverified. Beat IDs, SFX and release policy cannot be edited in this test studio.</p>
+            <button id="save-draft-button" class="button button-secondary" type="button">Save storyboard edits <span class="button-arrow">→</span></button>
+          </section>
           <section class="panel result-panel" aria-labelledby="status-heading">
             <div class="result-title"><div><div class="overline">PRODUCTION CONSOLE</div><h2 id="status-heading">Live run status</h2></div><span id="status-badge" class="status-badge" data-state="idle">NOT STARTED</span></div>
             <div class="timeline">

@@ -12,6 +12,7 @@ const object = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const string = (v) => typeof v === "string" && v.trim().length > 0;
 const integer = (v, min = 0) => Number.isSafeInteger(v) && v >= min;
 const allowedIntents = new Set(["house-intro", "cost-breakdown", "cost-timeline", "cost-comparison", "cost-payoff"]);
+const genericIntents = new Set(["general-intro", "general-flow", "general-comparison", "general-breakdown", "general-payoff"]);
 const byPreset = new Map(presets.map((preset) => [preset.id, preset]));
 
 /** @param {unknown} input */
@@ -67,13 +68,16 @@ export function parseVideoProductionJob(input) {
     if (!integer(value.revision, 1)) add("invalid-revision", `${path}.revision`, "Revision must be a positive integer.");
   };
 
-  if (!fields(input, "$", ["schemaVersion", "kind", "id", "mode", "locale", "approval", "topic", "references", "destination", "voice", "policy", "claims", "beats", "events", "sounds", "scenario"])) {
+  if (!fields(input, "$", ["schemaVersion", "kind", "visualFamily", "id", "mode", "locale", "approval", "topic", "references", "destination", "voice", "policy", "claims", "beats", "events", "sounds", "scenario"])) {
     return { ok: false, findings };
   }
   if (input.schemaVersion !== 1 || input.kind !== "video-production-job") {
     add("unsupported-schema", "$", "Requires video-production-job schemaVersion 1.");
   }
   text(input.id, "id");
+  const family = input.visualFamily ?? "house-math-v1";
+  if (!["house-math-v1", "general-explainer-v1"].includes(family)) add("unsupported-visual-family", "visualFamily", "Choose a supported visual recipe family.");
+  if (family === "general-explainer-v1" && has(input, "scenario")) add("incompatible-scenario", "scenario", "A generic explainer cannot use House Math financial scenario data.");
   if (input.mode !== "smoke" && input.mode !== "youtube-long") add("invalid-mode", "mode", "Choose smoke or youtube-long.");
   if (input.locale !== "en-US" && input.locale !== "ja-JP") add("unsupported-locale", "locale", "Supported locales are en-US and ja-JP.");
   if (input.approval !== "test-only" && input.approval !== "approved") add("invalid-approval", "approval", "Choose test-only or approved.");
@@ -141,7 +145,7 @@ export function parseVideoProductionJob(input) {
   const claims = objects(input.claims, "claims", ["id", "status", "text", "sourceRefs"]);
   for (const [index, claim] of claims.entries()) {
     text(claim.text, `claims[${index}].text`);
-    if (!["illustrative", "verified", "disputed"].includes(claim.status)) add("invalid-claim-status", `claims[${index}].status`, "Claim status must be illustrative, verified or disputed.");
+    if (!["illustrative", "unverified", "verified", "disputed"].includes(claim.status)) add("invalid-claim-status", `claims[${index}].status`, "Claim status must be illustrative, unverified, verified or disputed.");
     if (has(claim, "sourceRefs")) idList(claim.sourceRefs, `claims[${index}].sourceRefs`);
     if (claim.status === "verified" && (!Array.isArray(claim.sourceRefs) || claim.sourceRefs.length === 0)) add("missing-source", `claims[${index}].sourceRefs`, "A verified claim needs a source reference.");
   }
@@ -150,20 +154,30 @@ export function parseVideoProductionJob(input) {
   if (beats.length === 0) add("empty-narration", "beats", "At least one narrated beat is required.");
   for (const [index, beat] of beats.entries()) {
     text(beat.narration, `beats[${index}].narration`);
-    if (!allowedIntents.has(beat.visualIntent)) add("unsupported-scene-intent", `beats[${index}].visualIntent`, "No Kumiki visual recipe supports this intent yet.");
+    if (!(family === "general-explainer-v1" ? genericIntents : allowedIntents).has(beat.visualIntent)) add("unsupported-scene-intent", `beats[${index}].visualIntent`, "No visual recipe in this family supports this intent.");
     for (const ref of idList(beat.claimRefs, `beats[${index}].claimRefs`)) {
       if (!claimIds.has(ref)) add("unknown-claim-ref", `beats[${index}].claimRefs`, "Beat references an unknown claim.");
     }
     idList(beat.eventIds, `beats[${index}].eventIds`);
     if (!integer(beat.pauseAfterMs, 0) || beat.pauseAfterMs > 60000) add("invalid-pause", `beats[${index}].pauseAfterMs`, "Pause must be 0–60,000 milliseconds.");
-    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, ["headline", "subhead", "emphasis"])) {
+    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items"] : ["headline", "subhead", "emphasis"])) {
       for (const [key, maxLength] of [["headline", 68], ["subhead", 115], ["emphasis", 28]]) {
         const value = beat.visual[key];
         if (!string(value) || value.length > maxLength || /[\r\n\u0000-\u001f]/.test(value)) {
           add("visual-copy-overflow", `beats[${index}].visual.${key}`, `Scene ${key} must be one safe line of at most ${maxLength} characters.`);
         }
       }
+      if (family === "general-explainer-v1") {
+        if (!Array.isArray(beat.visual.items) || beat.visual.items.length < 2 || beat.visual.items.length > 5) {
+          add("invalid-diagram-items", `beats[${index}].visual.items`, "A generic scene needs 2–5 specific, meaningful diagram labels.");
+        } else for (const [itemIndex, label] of beat.visual.items.entries()) {
+          if (!string(label) || label.length > 44 || /[\r\n\u0000-\u001f]/.test(label)) {
+            add("invalid-diagram-item", `beats[${index}].visual.items[${itemIndex}]`, "Diagram labels must be one safe line of at most 44 characters.");
+          }
+        }
+      }
     }
+    if (family === "general-explainer-v1" && !has(beat, "visual")) add("missing-general-visual", `beats[${index}].visual`, "Generic scenes require authored visual copy and diagram labels.");
   }
   const beatIds = new Set(beats.map((beat) => beat.id));
   const events = objects(input.events, "events", ["id", "beatId"]);
@@ -180,6 +194,10 @@ export function parseVideoProductionJob(input) {
     if (!eventIds.has(id)) add("orphan-beat-event", `beats[${index}].eventIds`, "A beat refers to an unregistered event.");
   }
   if (!eventIds.has(input.topic?.payoffEventId)) add("missing-payoff", "topic.payoffEventId", "The declared payoff event must exist.");
+  if (family === "general-explainer-v1" && beats.length > 0 && (beats.at(-1)?.visualIntent !== "general-payoff" ||
+    !beats.at(-1)?.eventIds?.includes(input.topic?.payoffEventId) || beats.slice(0, -1).some((beat) => beat.eventIds?.includes(input.topic?.payoffEventId)))) {
+    add("invalid-payoff-scene", "beats", "The final generic beat must own the payoff event and use general-payoff.");
+  }
   const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "licenseStatus"]);
   for (const [index, sound] of sounds.entries()) {
     for (const key of ["eventId", "category", "assetRef"]) text(sound[key], `sounds[${index}].${key}`);

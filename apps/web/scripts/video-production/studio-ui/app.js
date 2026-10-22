@@ -6,6 +6,8 @@ let preflightReady = false;
 let runningRequest = false;
 let currentReview = null;
 let clientError = "";
+let currentDraftId = "";
+let topicDirty = true;
 
 function config() {
   const data = new FormData(form);
@@ -14,12 +16,22 @@ function config() {
     mode: data.get("mode"), provider, voiceId: String(data.get("voiceId") || "").trim(),
     providerRevision: String(data.get("providerRevision") || "").trim(),
   };
+  if (common.mode === "topic") common.draftId = topicDirty ? "" : currentDraftId;
   if (provider === "fish") return {
     ...common, apiKey: $("fish-key").value, voiceConsent: $("voice-consent").checked,
     transmitText: $("transmit-text").checked,
   };
   return { ...common, modelId: $("model-id").value.trim(), endpoint: $("local-endpoint").value.trim(),
     localVoiceAuthorized: $("local-authorized").checked };
+}
+
+function topicConfig() {
+  return {
+    topic: $("topic-text").value.trim(), viewerQuestion: $("topic-question").value.trim(),
+    audience: $("topic-audience").value.trim(), notes: $("topic-notes").value.trim(),
+    mode: $("topic-length").value, locale: $("topic-locale").value,
+    endpoint: $("topic-model-endpoint").value.trim(), model: $("topic-model-id").value.trim(),
+  };
 }
 
 async function api(path, method = "GET", payload = undefined) {
@@ -45,6 +57,38 @@ function showProvider() {
   if (!fish && $("provider-revision").value === "fish-api-v1") $("provider-revision").value = "";
 }
 
+function showMode() {
+  const topic = form.elements.mode.value === "topic";
+  $("topic-fields").hidden = !topic;
+  $("topic-review").hidden = !topic || !currentDraftId;
+  $("fixture-caption").textContent = topic
+    ? "Local topic generator · original diagrams · 1920 × 1080 · 30 fps"
+    : "Illustrative House Math scenario · YouTube landscape · 30 fps";
+}
+
+function showDraft(draft) {
+  if (!draft?.job) return;
+  currentDraftId = draft.job.id;
+  topicDirty = false;
+  const narrationLength = draft.narrationLength || { count: draft.words ?? "Unmeasured", unit: "words" };
+  $("draft-summary").textContent = `${draft.job.topic.title} · ${draft.job.beats.length} narrated beats · ${narrationLength.count} ${narrationLength.unit}. Every factual statement needs human verification.`;
+  const container = $("draft-packaging");
+  container.replaceChildren();
+  for (const option of draft.packaging || []) {
+    const article = document.createElement("article");
+    const strategy = document.createElement("strong");
+    strategy.textContent = `${option.id || "Concept"} · ${option.strategy}`;
+    const title = document.createElement("span");
+    title.textContent = option.title;
+    const description = document.createElement("small");
+    description.textContent = `Thumbnail: ${option.thumbnail}. Hook: ${option.hook}`;
+    article.append(strategy, title, description);
+    container.append(article);
+  }
+  $("draft-json").value = JSON.stringify(draft.job, null, 2);
+  showMode();
+}
+
 function invalidate() {
   clientError = "";
   if (lastStatus !== "rendering" && lastStatus !== "checking") {
@@ -53,10 +97,42 @@ function invalidate() {
   }
 }
 
+async function generate() {
+  if (runningRequest) return;
+  runningRequest = true;
+  clientError = "";
+  preflightReady = false;
+  topicDirty = true;
+  $("render-button").disabled = true;
+  $("generate-button").disabled = true;
+  try {
+    const result = await api("/api/topic", "POST", topicConfig());
+    showDraft(result.draft);
+    $("activity-message").textContent = "Draft generated. Inspect or edit the script, then check readiness.";
+  } catch (error) { clientError = error.message; }
+  finally { runningRequest = false; $("generate-button").disabled = false; await refresh(); }
+}
+
+async function saveDraft() {
+  if (runningRequest) return;
+  runningRequest = true;
+  clientError = "";
+  try {
+    let job;
+    try { job = JSON.parse($("draft-json").value); }
+    catch { throw new Error("Storyboard must be valid JSON before saving."); }
+    const result = await api("/api/draft", "POST", { job });
+    showDraft(result.draft);
+    invalidate();
+  } catch (error) { clientError = error.message; }
+  finally { runningRequest = false; await refresh(); }
+}
+
 function applySteps(state) {
   const phase = state.phase || "idle";
   const stages = ["build", "speech", "render", "review"];
   const stage = ["building", "preflight"].includes(phase) ? 0
+    : ["generating", "draft"].includes(phase) ? -1
     : ["starting", "browser-preflight", "narration", "timeline"].includes(phase) ? 1
       : ["audio", "rendering", "capture", "mux", "qa", "stills"].includes(phase) ? 2
         : phase === "review" ? 3 : -1;
@@ -127,14 +203,16 @@ function showStatus(state) {
   const badge = $("status-badge");
   badge.dataset.state = state.status;
   badge.textContent = ({ idle: "NOT STARTED", checking: "CHECKING", ready: "READY", blocked: "BLOCKED",
-    rendering: "RENDERING", completed: "REVIEW NEEDED", failed: "FAILED", cancelled: "CANCELLED" })[state.status] || state.status.toUpperCase();
+    generating: "WRITING", rendering: "RENDERING", completed: "REVIEW NEEDED", failed: "FAILED", cancelled: "CANCELLED" })[state.status] || state.status.toUpperCase();
   $("activity-message").textContent = clientError || state.message || "No activity.";
   showFindings(state.findings?.length ? state.findings : state.qa?.findings);
   applySteps(state);
-  const isWorking = state.status === "rendering" || state.status === "checking";
+  const isWorking = state.status === "rendering" || state.status === "checking" || state.status === "generating";
   $("preflight-button").disabled = isWorking || runningRequest;
-  $("render-button").disabled = isWorking || runningRequest || !preflightReady;
-  $("cancel-button").hidden = state.status !== "rendering";
+  $("render-button").disabled = isWorking || runningRequest || !preflightReady || (form.elements.mode.value === "topic" && topicDirty);
+  $("generate-button").disabled = isWorking || runningRequest;
+  $("save-draft-button").disabled = isWorking || runningRequest;
+  $("cancel-button").hidden = !["rendering", "generating"].includes(state.status);
   const progress = state.progress;
   const counts = Number.isInteger(progress?.completedFrames) && Number.isInteger(progress?.totalFrames) && progress.totalFrames > 0;
   $("frame-progress").hidden = !counts;
@@ -174,6 +252,7 @@ async function preflight() {
   $("activity-message").textContent = "Building the scene and checking prerequisites…";
   $("preflight-button").disabled = true;
   try {
+    if (form.elements.mode.value === "topic" && topicDirty) throw new Error("Generate or regenerate your topic draft before checking readiness.");
     const result = await api("/api/preflight", "POST", config());
     preflightReady = result.ready;
     showFindings(result.report?.findings);
@@ -199,17 +278,21 @@ async function render() {
 }
 
 async function cancel() {
-  if (!window.confirm("Stop the current render? Completed cached beats and verified segments may be reusable on a future run.")) return;
+  if (!window.confirm("Stop the current operation? Completed cached beats and frame segments may be reusable for a future render.")) return;
   try { await api("/api/cancel", "POST", {}); }
   catch (error) { clientError = error.message; }
   await refresh();
 }
 
-form.addEventListener("input", invalidate);
-form.addEventListener("change", (event) => { if (event.target.name === "provider") showProvider(); invalidate(); });
+form.addEventListener("input", (event) => { if (event.target.closest?.("#topic-fields")) topicDirty = true; invalidate(); });
+form.addEventListener("change", (event) => { if (event.target.name === "provider") showProvider(); if (event.target.name === "mode") showMode(); invalidate(); });
+$("generate-button").addEventListener("click", generate);
+$("save-draft-button").addEventListener("click", saveDraft);
 $("preflight-button").addEventListener("click", preflight);
 $("render-button").addEventListener("click", render);
 $("cancel-button").addEventListener("click", cancel);
 showProvider();
+showMode();
+api("/api/draft").then((result) => { if (result.draft) showDraft(result.draft); }).catch(() => {});
 refresh();
 setInterval(refresh, 1500);

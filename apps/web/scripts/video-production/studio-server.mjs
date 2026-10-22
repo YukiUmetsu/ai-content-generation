@@ -8,7 +8,10 @@ import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { isDeepStrictEqual } from "node:util";
 import { inspectProduction } from "./cli.mjs";
+import { parseVideoProductionJob } from "./job.mjs";
+import { generateTopicDraft, validateTopicBrief } from "./topic-generator.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { produceVideo } from "./produce.mjs";
 import { findChromium } from "./try.mjs";
@@ -44,10 +47,11 @@ function textValue(value, label, max = 180) {
 
 function validateConfig(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new ClientError("Choose a valid video configuration.");
-  if (!["smoke", "long"].includes(input.mode)) throw new ClientError("Choose a smoke or long-form example.");
+  if (!["smoke", "long", "topic"].includes(input.mode)) throw new ClientError("Choose a smoke, long or custom-topic video.");
   if (!["fish", "local"].includes(input.provider)) throw new ClientError("Choose Fish Audio or local TTS.");
   const voiceId = textValue(input.voiceId, "Authorized voice ID");
   const providerRevision = textValue(input.providerRevision, "TTS engine revision");
+  const draftId = input.mode === "topic" ? textValue(input.draftId, "Generate a topic draft first", 120) : undefined;
   if (input.provider === "fish") {
     if (input.voiceConsent !== true || input.transmitText !== true) {
       throw new ClientError("Confirm permission to use the Fish voice and transmit the script text.");
@@ -55,7 +59,7 @@ function validateConfig(input) {
     if (input.apiKey !== undefined && (typeof input.apiKey !== "string" || input.apiKey.length > 4096)) {
       throw new ClientError("Invalid Fish API key input.");
     }
-    return { mode: input.mode, provider: "fish", voiceId, providerRevision,
+    return { mode: input.mode, draftId, provider: "fish", voiceId, providerRevision,
       apiKey: input.apiKey?.trim() || "", voiceConsent: true, transmitText: true };
   }
   if (input.localVoiceAuthorized !== true) throw new ClientError("Confirm authorization for the local voice.");
@@ -63,13 +67,16 @@ function validateConfig(input) {
   const endpoint = textValue(input.endpoint, "Local TTS endpoint", 240);
   try { localSpeechEndpoint(endpoint); }
   catch { throw new ClientError("The local TTS endpoint must be a bare HTTP loopback origin and port."); }
-  return { mode: input.mode, provider: "local", voiceId, modelId, providerRevision, endpoint, localVoiceAuthorized: true };
+  return { mode: input.mode, draftId, provider: "local", voiceId, modelId, providerRevision, endpoint, localVoiceAuthorized: true };
 }
 
 /** Only the known fixture fields are reused; browser input cannot mutate policy or assets. */
-export function createStudioJob(input) {
+export function createStudioJob(input, generatedDraft = null) {
   const config = validateConfig(input);
-  const job = structuredClone(fixtures[config.mode]);
+  if (config.mode === "topic" && (!generatedDraft?.job || generatedDraft.job.id !== config.draftId)) {
+    throw new ClientError("Generate a topic draft before checking readiness, or refresh your outdated draft.", 409);
+  }
+  const job = structuredClone(config.mode === "topic" ? generatedDraft.job : fixtures[config.mode]);
   job.voice = config.provider === "fish"
     ? { ...job.voice, provider: "fish", modelId: "s2.1-pro-free", voiceId: config.voiceId, licenseStatus: "unknown" }
     : { ...job.voice, provider: "local", modelId: config.modelId, voiceId: config.voiceId,
@@ -77,11 +84,12 @@ export function createStudioJob(input) {
   return job;
 }
 
-function signature(config, env) {
+function signature(config, env, generatedDraft = null) {
   const { apiKey: _ignored, ...nonSecret } = config;
   const credentialHash = config.provider === "fish"
     ? createHash("sha256").update(config.apiKey || env.FISH_AUDIO_API_KEY || "").digest("hex") : "not-applicable";
-  return createHash("sha256").update(JSON.stringify({ ...nonSecret, credentialHash })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({ ...nonSecret, credentialHash,
+    draft: config.mode === "topic" ? generatedDraft?.job : null })).digest("hex");
 }
 
 function json(res, status, payload) {
@@ -89,13 +97,13 @@ function json(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-async function bodyJson(req) {
-  if (Number(req.headers["content-length"] || 0) > 16 * 1024) throw new ClientError("Request exceeds 16 KB.", 413);
+async function bodyJson(req, limit = 16 * 1024) {
+  if (Number(req.headers["content-length"] || 0) > limit) throw new ClientError("Request exceeds the body limit.", 413);
   let length = 0;
   const chunks = [];
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > 16 * 1024) throw new ClientError("Request exceeds 16 KB.", 413);
+    if (length > limit) throw new ClientError("Request exceeds the body limit.", 413);
     chunks.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
@@ -109,7 +117,7 @@ function authorize(req, token, url) {
   if (origin && origin !== `http://${host}`) throw new ClientError("A different origin cannot control video production.", 403);
   if (req.headers["sec-fetch-site"] === "cross-site") throw new ClientError("Cross-site requests are not allowed.", 403);
   if (req.method === "POST" && req.headers["x-contentgen-studio-token"] !== token) throw new ClientError("Studio token required.", 403);
-  if (req.method === "POST" && !["/api/preflight", "/api/render", "/api/cancel"].includes(url.pathname)) {
+  if (req.method === "POST" && !["/api/preflight", "/api/render", "/api/cancel", "/api/topic", "/api/draft"].includes(url.pathname)) {
     throw new ClientError("Unknown action.", 404);
   }
 }
@@ -161,17 +169,68 @@ async function listArtifacts(dir, token) {
 /** Start one ephemeral, token-protected local test server; injectable for offline tests. */
 export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(), "Movies", "ContentGen"),
   build = defaultBuild, inspect = inspectProduction, produce = produceVideo, findBrowser = findChromium,
+  generateTopic = generateTopicDraft,
   env = process.env } = {}) {
   const token = randomBytes(24).toString("hex");
   let busy = false, validatedSignature = "", abort = null, activeKey = "", releaseDir = null;
+  let generatedDraft = null;
   let snapshot = { status: "idle", phase: "idle", message: "Choose a test and check readiness.",
     findings: [], report: null, progress: null, artifacts: null, qa: null, outputDir: null };
   const update = (patch) => { snapshot = { ...snapshot, ...patch }; };
   const publicStatus = () => snapshot;
+  const handleTopic = async (req, res) => {
+    if (busy) throw new ClientError("Another operation is already in progress.", 409);
+    const input = await bodyJson(req);
+    try { validateTopicBrief(input); }
+    catch (error) { throw new ClientError(String(error.message).slice(0, 250)); }
+    const controller = new AbortController();
+    busy = true;
+    abort = controller;
+    generatedDraft = null;
+    validatedSignature = "";
+    update({ status: "generating", phase: "generating", message: "Asking your local text model to author the explainer…", report: null, findings: [] });
+    try {
+      const result = await generateTopic(input, { signal: controller.signal });
+      if (controller.signal.aborted) throw new Error("cancelled");
+      if (result?.editorialStatus !== "unverified-draft" || result.job?.visualFamily !== "general-explainer-v1" ||
+        result.job.approval !== "test-only" || result.job.policy?.commercialRightsVerified !== false || !parseVideoProductionJob(result.job).ok) {
+        throw new Error("the model generated an unsupported or unsafe video job");
+      }
+      generatedDraft = result;
+      update({ status: "idle", phase: "draft", message: "Editable topic draft ready. Review script and factual claims before checking readiness." });
+      json(res, 200, { draft: generatedDraft });
+    } catch (error) {
+      const cancelled = controller.signal.aborted;
+      update({ status: cancelled ? "cancelled" : "failed", phase: "generating",
+        message: cancelled ? "Draft generation cancelled." : "Local text generation failed; check the endpoint, installed model and returned JSON." });
+      json(res, cancelled ? 409 : 422, { error: cancelled ? "Draft generation cancelled." : String(error.message || "Local model generation failed").slice(0, 260) });
+    } finally { busy = false; abort = null; }
+  };
+  const handleDraftEdit = async (req, res) => {
+    if (busy) throw new ClientError("Wait until the current operation finishes.", 409);
+    if (!generatedDraft) throw new ClientError("Generate a draft first.", 409);
+    const input = await bodyJson(req, 512 * 1024);
+    const current = generatedDraft.job;
+    if (!input.job || typeof input.job !== "object" || !isDeepStrictEqual(
+      { ...input.job, topic: current.topic, beats: current.beats }, current)) {
+      throw new ClientError("Only draft topic wording and narrated/visual beats may be edited here; policy, voice, events, IDs and assets are locked.");
+    }
+    const candidate = structuredClone(input.job);
+    if (candidate.topic?.payoffEventId !== current.topic.payoffEventId || candidate.beats?.length !== current.beats.length ||
+      candidate.beats.some((beat, i) => beat.id !== current.beats[i].id || !isDeepStrictEqual(beat.eventIds, current.beats[i].eventIds) || !isDeepStrictEqual(beat.claimRefs, current.beats[i].claimRefs))) {
+      throw new ClientError("Keep beat identifiers, evidence references and timed payoff events unchanged.");
+    }
+    const parsed = parseVideoProductionJob(candidate);
+    if (!parsed.ok) throw new ClientError(`Edited job is invalid: ${parsed.findings.filter((f) => f.severity === "error").map((f) => f.code).join(", ")}`);
+    generatedDraft = { ...generatedDraft, job: candidate };
+    validatedSignature = "";
+    update({ status: "idle", phase: "draft", message: "Edited draft saved in this local session. Check readiness again." });
+    json(res, 200, { draft: generatedDraft });
+  };
   const handlePreflight = async (req, res) => {
     if (busy) throw new ClientError("A test operation is already running.", 409);
     const config = validateConfig(await bodyJson(req));
-    const job = createStudioJob(config);
+    const job = createStudioJob(config, generatedDraft);
     busy = true;
     validatedSignature = "";
     update({ status: "checking", phase: "building", message: "Building the video scene locally…", report: null, findings: [], progress: null });
@@ -190,7 +249,7 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
         env: { ...env, FISH_AUDIO_API_KEY: config.apiKey || env.FISH_AUDIO_API_KEY || "" },
       });
       const safeReport = JSON.parse(JSON.stringify(report).replaceAll(config.apiKey || "\u0000", "[redacted]"));
-      if (report.ready) validatedSignature = signature(config, env);
+      if (report.ready) validatedSignature = signature(config, env, generatedDraft);
       update({ status: report.ready ? "ready" : "blocked", phase: "preflight", report: safeReport,
         findings: safeReport.findings || [], message: report.ready ? "Ready to render. No TTS provider was called." : "Readiness blocked; resolve the findings below." });
       json(res, 200, { ready: report.ready, report: safeReport });
@@ -205,10 +264,10 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
     const input = await bodyJson(req);
     const config = validateConfig(input);
     if (input.confirmRender !== true) throw new ClientError("Confirm this one test render explicitly.");
-    if (snapshot.status !== "ready" || signature(config, env) !== validatedSignature) {
+    if (snapshot.status !== "ready" || signature(config, env, generatedDraft) !== validatedSignature) {
       throw new ClientError("Run Check readiness with these exact settings before rendering.", 409);
     }
-    const job = createStudioJob(config);
+    const job = createStudioJob(config, generatedDraft);
     const out = join(resolve(outputRoot), `${config.mode}-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(5).toString("hex")}`);
     const controller = new AbortController();
     busy = true;
@@ -257,13 +316,16 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
       const url = new URL(req.url || "/", "http://127.0.0.1");
       authorize(req, token, url);
       if (req.method === "GET" && url.pathname === "/api/status") return json(res, 200, publicStatus());
+      if (req.method === "GET" && url.pathname === "/api/draft") return json(res, 200, { draft: generatedDraft });
+      if (req.method === "POST" && url.pathname === "/api/topic") return await handleTopic(req, res);
+      if (req.method === "POST" && url.pathname === "/api/draft") return await handleDraftEdit(req, res);
       if (req.method === "GET" && url.pathname === "/api/fixtures") return json(res, 200,
         Object.fromEntries(Object.entries(fixtures).map(([mode, job]) => [mode, { title: job.topic.title,
           mode: job.mode, beats: job.beats.length, minimumSeconds: job.destination.minimumDurationSeconds || null }])));
       if (req.method === "POST" && url.pathname === "/api/preflight") return await handlePreflight(req, res);
       if (req.method === "POST" && url.pathname === "/api/render") return await handleRender(req, res);
       if (req.method === "POST" && url.pathname === "/api/cancel") {
-        if (!busy || !abort) throw new ClientError("No active render to cancel.", 409);
+        if (!busy || !abort) throw new ClientError("No active operation to cancel.", 409);
         abort.abort(new Error("User requested cancellation"));
         update({ phase: "cancelling", message: "Stopping the current production worker…" });
         return json(res, 202, { cancelling: true });

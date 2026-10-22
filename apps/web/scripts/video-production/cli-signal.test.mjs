@@ -24,9 +24,18 @@ test("real SIGINT reaches production AbortSignal and lets owned staging clean up
       env: {}, probeTool: async () => ({ available: true }),
       inspectRenderBuild: async () => "b".repeat(64),
       produceVideo: async (_job, options) => {
-        await writeFile(${JSON.stringify(ready)}, "started");
         const keepAlive = setInterval(() => {}, 100);
-        try { await new Promise((_, reject) => options.signal?.addEventListener("abort", () => reject(new Error("cancelled")), { once: true })); }
+        // Arm abort before publishing the ready marker: the parent may send SIGINT
+        // as soon as the file appears. Otherwise an early abort is lost forever.
+        const aborted = new Promise((_, reject) => {
+          const onAbort = () => reject(new Error("cancelled"));
+          if (options.signal?.aborted) onAbort();
+          else options.signal?.addEventListener("abort", onAbort, { once: true });
+        });
+        try {
+          await writeFile(${JSON.stringify(ready)}, "started");
+          await aborted;
+        }
         finally { clearInterval(keepAlive); await writeFile(${JSON.stringify(cleanup)}, "clean"); }
       },
     });

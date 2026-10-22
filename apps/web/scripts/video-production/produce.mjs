@@ -12,6 +12,7 @@ import { synthesizeNarration } from "./speech.mjs";
 import { buildSampleTimeline, toFrame } from "./timeline.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
+import { compileGeneralVisuals } from "./general-visual-plan.mjs";
 import { startLocalStageServer } from "./stage-server.mjs";
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
@@ -118,7 +119,8 @@ export async function produceVideo(candidate, options, deps = {}) {
     });
     options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
     const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
-    const plan = compileHouseMathVisuals(job, timeline);
+    const plan = job.visualFamily === "general-explainer-v1"
+      ? compileGeneralVisuals(job, timeline) : compileHouseMathVisuals(job, timeline);
     const frames = plan.manifest.durationFrames;
     const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
     const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));

@@ -13,6 +13,8 @@ const localConfig = {
   mode: "long", provider: "local", voiceId: "my-voice", modelId: "installed-local-model",
   providerRevision: "local-build-1", endpoint: "http://127.0.0.1:8765", localVoiceAuthorized: true,
 };
+const topicConfig = { ...fishConfig, mode: "topic", draftId: "", topicLength: "smoke" };
+const generic = JSON.parse((await import("node:fs")).readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
 
 async function harness(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "contentgen-studio-test-"));
@@ -76,6 +78,37 @@ test("fixture selection changes the validated job duration and provider without 
   assert.equal(long.voice.provider, "local");
   assert.equal(long.voice.endpoint, "http://127.0.0.1:8765");
   assert.equal(JSON.stringify(long).includes("SUPER-SECRET-FISH-KEY"), false);
+});
+
+test("custom topic generation creates an unverified source job, then readiness and render use precisely that draft", async (t) => {
+  const studio = await harness(t, { generateTopic: async (input) => ({ schemaVersion: 1, kind: "topic-video-draft", editorialStatus: "unverified-draft",
+    packaging: [{ strategy: "mechanism", title: "How Messages Travel", thumbnail: "network", hook: "route" }],
+    job: { ...structuredClone(generic), id: "topic-generated-001", topic: { ...generic.topic, title: input.topic } } }) });
+  const generated = await studio.send("/api/topic", "POST", { topic: "How messages move", viewerQuestion: "Where do they go?", audience: "beginners",
+    notes: "No trusted references supplied", locale: "en-US", mode: "smoke", endpoint: "http://127.0.0.1:11434/v1/chat/completions", model: "my-local-model" });
+  assert.equal(generated.status, 200);
+  const draft = (await generated.json()).draft;
+  assert.equal(draft.job.topic.title, "How messages move");
+  assert.equal(draft.job.policy.commercialRightsVerified, false);
+  const config = { ...topicConfig, draftId: draft.job.id };
+  assert.equal((await studio.send("/api/preflight", "POST", config)).status, 200);
+  assert.equal((await studio.send("/api/render", "POST", { ...config, confirmRender: true })).status, 202);
+  const final = await until(studio, (s) => s.status === "completed");
+  assert.equal(studio.calls.at(-1).job.topic.title, "How messages move");
+  assert.equal(studio.calls.at(-1).job.visualFamily, "general-explainer-v1");
+  assert.equal(final.qa.commercialReady, false);
+});
+
+test("topic edits reject forged approval and invalidate preflight before reuse", async (t) => {
+  const studio = await harness(t, { generateTopic: async () => ({ kind: "topic-video-draft", editorialStatus: "unverified-draft", packaging: [], job: structuredClone(generic) }) });
+  await studio.send("/api/topic", "POST", { topic: "Networks", audience: "students", mode: "smoke", locale: "en-US",
+    endpoint: "http://127.0.0.1:11434/v1/chat/completions", model: "my-local-model" });
+  const config = { ...topicConfig, draftId: generic.id };
+  await studio.send("/api/preflight", "POST", config);
+  const blocked = await studio.send("/api/draft", "POST", { job: { ...generic, approval: "approved" } });
+  assert.equal(blocked.status, 400);
+  assert.equal((await studio.send("/api/draft", "POST", { job: { ...generic, topic: { ...generic.topic, title: "Edited network topic" } } })).status, 200);
+  assert.equal((await studio.send("/api/render", "POST", { ...config, confirmRender: true })).status, 409);
 });
 
 test("preflight is side-effect-free for Fish TTS, reports actual findings, and keeps the key out of status", async (t) => {
@@ -197,9 +230,13 @@ test("serves an interactive accessible frontend with local-only script and styli
   assert.match(html, /Check readiness/);
   assert.match(html, /Render test video/);
   assert.match(html, /type="password"/);
+  assert.match(html, /id="topic-locale"/);
+  assert.match(html, /value="ja-JP"/);
   assert.match(html, /studio-token/);
   const js = await studio.send("/studio.js");
   assert.equal(js.status, 200);
-  assert.match(await js.text(), /\/api\/preflight/);
+  const client = await js.text();
+  assert.match(client, /\/api\/preflight/);
+  assert.match(client, /\$\("topic-locale"\)\.value/);
   assert.equal((await studio.send("/studio.css")).status, 200);
 });
