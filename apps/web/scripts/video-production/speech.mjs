@@ -80,11 +80,12 @@ export async function synthesizeNarration(job, options) {
   const direction = options.direction ?? { pace: "measured" };
   const normalized = options.normalizeWav ?? ((input, output) => normalizeGeneratedWav(input, output, { ffmpeg: options.ffmpeg, signal: options.signal }));
   const probe = options.probeWav ?? ((path) => probeNormalizedWav(path, { ffprobe: options.ffprobe, signal: options.signal }));
-  const synthesize = options.synthesize ?? ((request) => options.provider === "fish"
+  const synthesize = options.synthesize ?? ((request, beatId) => options.provider === "fish"
     ? synthesizeFishBeat({
       ...request, allowNetwork: options.allowNetwork,
       rightsContext: { voiceReferenceConsent: options.voiceReferenceConsent, textTransmissionApproved: options.textTransmissionApproved, commercialRightsVerified: job.policy?.commercialRightsVerified },
-    }, { apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal })
+    }, { apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
+      onDiagnostic: (detail) => options.onDiagnostic?.({ ...detail, beatId }) })
     : synthesizeLocalBeat({
       ...request, endpoint: voice.endpoint,
       rightsContext: { localVoiceAuthorized: options.localVoiceAuthorized, commercialRightsVerified: job.policy?.commercialRightsVerified },
@@ -122,7 +123,7 @@ export async function synthesizeNarration(job, options) {
       const staging = await mkdtemp(join(keyDir, ".staging-"));
       try {
         const request = { text: signature.text, locale: job.locale, voiceId: voice.voiceId, modelId: voice.modelId, direction };
-        const result = await synthesize(request);
+        const result = await synthesize(request, beat.id);
         if (!(result?.audio instanceof Uint8Array) || result.audio.length === 0 ||
           result.provider !== options.provider || result.modelId !== voice.modelId ||
           result.voiceId !== voice.voiceId || result.encoding !== "wav") fail(`provider returned invalid speech identity/audio for beat ${beat.id}`);
