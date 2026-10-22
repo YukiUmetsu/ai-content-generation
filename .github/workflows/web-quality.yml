@@ -54,18 +54,16 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Install FFmpeg for measured media tests
+      # Deterministic video planning tests need neither FFmpeg nor Chromium.
+      # Run the complete FFmpeg-backed suite locally before media releases.
+      - name: Test video planning without media tools
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
-
-      - name: Verify media toolchain for headless video tests
-        run: |
-          ffmpeg -hide_banner -version
-          ffprobe -hide_banner -version
-
-      - name: Test headless video production
-        run: pnpm test:video:headless
+          node --test \
+            scripts/video-production/job.test.mjs \
+            scripts/video-production/topic-generator.test.mjs \
+            scripts/video-production/general-visual-plan.test.mjs \
+            scripts/video-production/visual-plan.test.mjs \
+            scripts/video-production/timeline.test.mjs
 
       - name: Production build
         run: pnpm build
