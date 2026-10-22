@@ -39,7 +39,8 @@ describe("Studio shell", () => {
     expect(screen.getByText(/The editor isn't connected yet/i)).toBeInTheDocument();
     expect(screen.getByText(/Illustrative output/i)).toBeInTheDocument();
     expect(screen.getByTestId("concept-preview-thumbnail")).toBeInTheDocument();
-    expect(screen.getByText("Planned")).toBeInTheDocument();
-    expect(screen.getByText(/Check readability at mobile-card size/i)).toBeInTheDocument();
+    const guide = screen.getByLabelText(/how to use this tool/i);
+    expect(within(guide).getByText("Planned")).toBeInTheDocument();
+    expect(within(guide).getByText(/Check readability at mobile-card size/i)).toBeInTheDocument();
   });
 });

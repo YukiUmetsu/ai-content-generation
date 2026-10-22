@@ -42,7 +42,7 @@ function HeroArtwork({ variant, locale }: { variant: "brand" | "thumbnail" | "mo
           <p className="mt-1 break-words font-serif text-xl font-semibold tabular-nums text-foreground sm:text-3xl">$12,400</p>
           <div className="mt-3 flex flex-col gap-1.5">
             <div className="h-1.5 w-full rounded-full bg-surface-subtle"><div className="h-full w-[58%] rounded-full bg-primary" /></div>
-            <div className="h-1.5 w-full rounded-full bg-surface-subtle"><div className="h-full w-[28%] rounded-full bg-positive" /></div>
+            <div className="h-1.5 w-full rounded-full bg-surface-subtle"><div className="h-full w-[28%] rounded-full bg-primary/50" /></div>
             <div className="h-1.5 w-full rounded-full bg-surface-subtle"><div className="h-full w-[17%] rounded-full bg-border" /></div>
           </div>
         </div>
@@ -78,7 +78,7 @@ function StoryboardPreview({ locale }: { locale: Locale }) {
               <span className="text-caption font-mono text-muted-foreground">{scene.number} / 03</span>
               {index === 0 ? (
                 <div className="mt-3 flex h-1/2 items-end">
-                  <div className="h-3/4 w-1/3 rounded-t-control bg-primary/70" />
+                  <div className="h-3/4 w-1/3 rounded-control bg-primary/70" />
                   <div className="ml-2 h-full w-1/3 rounded-t-control bg-surface-subtle" />
                   <div className="ml-2 h-1/2 w-1/3 rounded-t-control bg-border" />
                 </div>

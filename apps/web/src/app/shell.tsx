@@ -20,7 +20,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 export function Shell() {
-  const { locale, appearance, density } = usePreferences();
+  const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("create");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
