@@ -1,3 +1,5 @@
+import geistWoff2 from "@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url";
+import newsreaderWoff2 from "@fontsource-variable/newsreader/files/newsreader-latin-wght-normal.woff2?url";
 import { documentToPng, documentToSvg, EXPORT_PROFILES, preflightExport } from "@/components/media/svg-export";
 import type { Diagnostic, MediaDocument, Size } from "@/components/media/document";
 import { composeThumbnail } from "./compose";
@@ -5,6 +7,47 @@ import type { Locale, ThumbnailDocument } from "./types";
 
 /** Bundled families the export can actually rasterise. */
 export const LOADED_FAMILIES: readonly string[] = ["Geist Variable", "Newsreader Variable"];
+
+function toBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunk = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
+  }
+  return btoa(binary);
+}
+
+let exportFontCss: Promise<string> | null = null;
+
+/**
+ * Embedded faces for rasterisation. An SVG loaded into an `<img>` cannot read
+ * the page's font-face rules, so the PNG path fetches the bundled faces and
+ * embeds them. Japanese glyphs still fall back to the platform CJK font.
+ * Failure is non-fatal: the exporter then reports its normal font-substitution
+ * diagnostic instead of blocking the image.
+ */
+export function loadExportFontCss(): Promise<string> {
+  if (!exportFontCss) {
+    const faces: Array<[string, string]> = [
+      ["Geist Variable", geistWoff2],
+      ["Newsreader Variable", newsreaderWoff2],
+    ];
+    exportFontCss = Promise.all(
+      faces.map(async ([family, url]) => {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) return "";
+          const data = await response.arrayBuffer();
+          return `@font-face{font-family:'${family}';font-style:normal;font-weight:100 900;src:url(data:font/woff2;base64,${toBase64(data)}) format('woff2');}`;
+        } catch {
+          return "";
+        }
+      })
+    ).then((parts) => parts.join(""));
+  }
+  return exportFontCss;
+}
 
 export interface ThumbnailExportOptions {
   variantId?: string;
@@ -79,7 +122,11 @@ export async function thumbnailPng(
   options: ThumbnailExportOptions = {}
 ): Promise<ThumbnailPngResult> {
   const media = exportMedia(document, options);
-  const result = await documentToPng(media, { scale: options.scale ?? 1 });
+  const fontCss = await loadExportFontCss();
+  const result = await documentToPng(media, {
+    scale: options.scale ?? 1,
+    ...(fontCss ? { fontCss } : {}),
+  });
   return {
     blob: result.blob,
     size: result.size,
