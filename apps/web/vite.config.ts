@@ -5,6 +5,10 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  input: {
+    studio: fileURLToPath(new URL("./index.html", import.meta.url)),
+    headlessVideo: fileURLToPath(new URL("./video-export.html", import.meta.url)),
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -15,15 +19,9 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     proxy: {
-      // Three loopback-only backend lanes, each its own process.
-      // Override the ports when another local service already owns them.
       "/api/research": process.env.CONTENTGEN_RESEARCH_ORIGIN ?? "http://127.0.0.1:8788",
       "/api/jobs": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
-      // The packaging route is a registered 501 stub in the current backend
-      // lane. This proxy targets the local fixture server (`pnpm
-      // fixtures:creative`) so the panel can be reviewed against a real set.
-      "/api/creative":
-        process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
+      "/api/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
       "/v1/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
     },
   },

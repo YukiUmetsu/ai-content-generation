@@ -4,11 +4,99 @@ React 19 + TypeScript + Vite 8 + Tailwind CSS v4 + a pinned, source-vendored
 [Kumiki-UI](https://github.com/YukiUmetsu/kumiki-ui) registry.
 
 This app is the **shared application shell and creative-workbench foundation**.
-It deliberately contains no research, job, render, or publishing logic. The
+Its headless video-production scripts are separate from the interactive workbench. The
 five feature slots are independently owned: **Brand & appearance** and **Motion
 & media lab** are working examples; thumbnail, storyboard and platform delivery
 remain integration slots. The shell, split pane, preview canvas, inspector,
 appearance/density axes and error boundary are provided.
+
+## Headless video production (draft MP4 pipeline)
+
+The headless command now connects automatic Fish Audio or local-loopback narration to sample-accurate scene timing, SFX, a Kumiki frame-export scene, bounded browser capture, FFmpeg encoding/muxing, and a measured QA report. **This is an automated *draft*, not a published or commercially approved video.** The example House Math jobs are hypothetical and test-only; neither a live Fish API request nor real browser playback has been verified by CI.
+
+### Easiest way to try it on your Mac
+
+With Node >=22.12, pnpm, FFmpeg/FFprobe and an already-installed Chrome/Chromium-compatible browser:
+
+```bash
+cd apps/web
+pnpm install --frozen-lockfile  # one time
+pnpm video:studio
+```
+
+Open **http://127.0.0.1:8788**. The **local Video Test Studio** offers a complete browser test path:
+
+1. Choose **Quick smoke test** (3 beats, ~30–60 seconds), **Long-form YouTube** (26 beats, at least 8 measured minutes), or **Your own topic**. For a custom topic, enter its question, intended audience, optional notes, and an installed local text-model endpoint; click **Generate local draft**.
+   The model proposes three alternate titles/hooks and writes an editable, scene-by-scene narrated story. Review its `job.json` in the editor and **Save draft edits** before testing. The model's statements are explicitly **unverified**, not invented citations or commercial-ready claims. For custom long-form, the model must produce a substantive script and the finished narration must still measure at least eight minutes.
+2. Select **Fish Audio API** or your own installed **local TTS bridge**. Enter an authorized voice reference and, for Fish, an API key (or set `FISH_AUDIO_API_KEY` in the launching terminal). The Fish model is fixed to the test-only `s2.1-pro-free` ID; paid models cannot be selected.
+3. Check the voice permissions and click **Check readiness**. The studio builds the export scene and checks dependencies/browser/consent **without any TTS request**. Read actionable findings if blocked.
+4. Click **Render test video** and confirm this specific run. Watch real worker stages and completed verified frame batches, or cancel. Then play the real MP4, audition voice/master audio, check review stills, and download captions, render manifest and QA report. The job-owned output directory is displayed below the player.
+
+No arbitrary file paths, online publishing, model downloads or commercial approval are exposed. The local topic generator sends the brief only to an **already running OpenAI-compatible text server on loopback** such as `http://127.0.0.1:11434/v1/chat/completions`; it never silently uses a cloud model. Topic generation alone does not call Fish Audio or render a video. The server only listens on `127.0.0.1`, requires a local token for changes/artifact downloads, does not persist credentials and creates unique directories under `~/Movies/ContentGen/`. Close the studio with Ctrl-C. Run a long-form test only after the smoke test succeeds and you have adequate time/disk space; 8 minutes at 30 fps requires **at least 14,400 frames** and can take a long time to capture.
+
+### Topic-only terminal command
+
+For scripting or debugging without opening the Studio, start your own local OpenAI-compatible text server with the model already installed and run:
+
+```bash
+cd apps/web
+pnpm video:topic -- --topic "How does a refrigerator move heat?" \
+  --audience "Curious homeowners" --mode smoke \
+  --model your-installed-model-name --out ../../outputs/refrigerator-draft.json
+```
+
+The command writes a unique **test-only, editable `video-production-job/v1` draft**; it does not fetch sources, call a voice provider, render, or publish. Run `pnpm video:topic -- --help` for local endpoint, audience, language and long-form options. The generator supports English and Japanese and enforces substantive narration limits; actual duration is still checked using measured generated audio before export.
+
+### Terminal alternative
+
+```bash
+cd apps/web
+pnpm video:try
+```
+
+This guided terminal command automatically detects Chrome in standard macOS locations, builds the export page, takes an **authorized Fish voice ID**, and reads a Fish API key from `FISH_AUDIO_API_KEY` or a **hidden** terminal prompt. It asks for voice/text-transmission authorization, checks media tools and the scene build, and **asks again before generating narration or calling Fish Audio**. Press Enter (default No) at the render question to stop safely after preflight. It generates a fresh job-owned directory in `~/Movies/ContentGen/smoke-...`, containing the complete `job.json` and, if production succeeds, `release/video.mp4` and the QA artifacts. It never modifies the checked-in example. Fish `s2.1-pro-free` is evaluation-only until availability and commercial terms are checked.
+
+Use `pnpm video:try -- --dry-run` to check readiness without any TTS request or video output; it still builds the local scene and prompts for authorization. For a configured local bridge, use `pnpm video:try -- --provider local` and provide `CONTENTGEN_LOCAL_VOICE_ID`, `CONTENTGEN_LOCAL_MODEL_ID`, `CONTENTGEN_LOCAL_ENGINE_VERSION`, and optionally `CONTENTGEN_LOCAL_ENDPOINT`. The underlying `pnpm video:produce` remains available for fully scripted runs. No browser, model or dependency is automatically downloaded by the guide.
+
+Prerequisites: Node `>=22.12`, pnpm, FFmpeg/FFprobe, the production `apps/web/dist` build, an **already installed** Chrome/Chromium executable, and `playwright-core` (installed from this app's pinned pnpm lockfile; it does not download a browser). Supply your own permitted voice reference and TTS service. Run on an explicitly chosen, job-owned directory with sufficient disk space; ~8-minute 1080p videos require lengthy frame capture.
+
+```bash
+cd apps/web
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test:video:headless
+
+# In the job JSON, replace the placeholder voiceId with an authorized ID.
+# Set FISH_AUDIO_API_KEY and CONTENTGEN_CHROMIUM_EXECUTABLE in your local environment.
+pnpm video:produce -- \
+  --job ../../examples/video-production-house-math-smoke.json \
+  --provider fish --provider-revision fish-api-v1 --out ../../outputs/house-math-smoke \
+  --allow-network --voice-consent --transmit-text --allow-test-assets --dry-run
+
+# Remove --dry-run only after reviewing the preflight findings and permissions.
+# Output: <out>/release/video.mp4, master.wav, voice.wav, captions.srt,
+# stills/frame-NNNNNN.png, render-manifest.json and qa-report.json.
+```
+
+For long-form production start from `../../examples/video-production-house-math-long.json`: its 26 script beats target at least **480 measured seconds**, not a rough word-count duration. Both the scene compiler and QA gate enforce the larger of the eight-minute baseline and the job's `destination.minimumDurationSeconds` using actual synthesized audio. Short-form jobs and portrait rendering remain future work, with **no forced 30–60-second length** for shorts. The first renderer accepts YouTube landscape only.
+
+`--dry-run` is side-effect-free: it checks consent, credentials' **presence**, local FFmpeg/FFprobe, the built export scene, an executable Chromium path and installed browser driver, voice/rights metadata and budget policy without calling providers, launching a browser, starting a server, or producing media. A real production run goes further: it **launches Chromium and verifies the built scene before any narration requests**. For Fish, the video orchestrator currently accepts **only the `s2.1-pro-free` model ID**, and makes no guarantee that the provider offers unlimited free use or commercial licensing. Paid models are blocked because per-job usage metering is not yet implemented; paid-use approval flags alone cannot override that. Never commit `FISH_AUDIO_API_KEY` or an unlicensed voice reference.
+
+For user-installed **local TTS**, change the job voice to `provider: "local"`, an authorized voice and a local model/engine revision; supply `endpoint: "http://127.0.0.1:8765"`. Run with `--provider local --provider-revision <actual-engine-version> --local-voice-authorized` and omit Fish-only network flags. Use `--local-endpoint http://127.0.0.1:8765` only if you need to override the job endpoint. No model is downloaded, installed, or activated by this CLI.
+
+Each release is atomically exposed only after a finished MP4 has been probed for FPS, dimensions, frame count, duration drift, loudness and required story payoff. The release also contains up to four **raster-checked, SHA-verified review stills** (opening, middle, shortly after payoff, end); they are saved separately from bounded render batches and checked again when resuming. The render manifest records the hashed compiled scene, per-beat narration hashes and provider revisions, and SHA-256 hashes of the delivered media. A changed JS/CSS/font build invalidates render-segment reuse; scene typography has a deterministic fit pass and a real-browser text-bounds check. These stills help triage but are **not** a substitute for watching the film. Ctrl-C/SIGTERM requests graceful cancellation and staging cleanup; failed captures preserve per-beat caches and hashed render segments for safe resumption, without overwriting any prior `release/`. Every successful run still reports `commercialReady: false` and requires normal-speed audio/video inspection plus explicit commercial-asset/voice licensing review before any publication.
+
+### Narration adapters (opt-in, currently offline-tested only)
+
+- **Fish Audio:** supply `FISH_AUDIO_API_KEY` at runtime, an authorized voice-reference ID, locale, and explicit model. The adapter uses `POST https://api.fish.audio/v1/tts`, a versioned request with `model: s2.1-pro-free` for evaluation, and checks WAV bytes. No API call occurs without `--allow-network` and voice/text-transmission consent. The standalone adapter accepts paid models with explicit approval, but the multi-beat production CLI blocks them until reliable budget metering exists. Availability and commercial licensing of any free model or voice must be independently verified before release; no real Fish request has been made during this foundation implementation.
+- **Local:** a **user-installed and running** TTS bridge can be configured with a bare loopback origin such as `http://127.0.0.1:8765`. The adapter POSTs to `/v1/speech` with JSON `{schema_version:1,text,locale,voice_id,model_id,direction,format:"wav"}`. The bridge must return 200, mono 16-bit PCM WAV with `Content-Type: audio/wav` and `X-TTS-Engine-Version: <actual engine version>`. No model is installed or started by ContentGen. Redirects and non-loopback endpoints are refused. The caller must confirm local voice authorization; engine/model identity is recorded for future cache isolation. No installed TTS bridge has been verified yet.
+- Both adapters expose per-beat generated WAV bytes and fail closed on invalid audio. The CLI consumes them automatically; CI runs the standalone `pnpm test:video:headless` suite with injected provider/browser dependencies, real FFmpeg sample encodes and loopback stage tests. **A real provider-to-browser end-to-end film has not yet been produced**.
+
+### Measured speech and audio-mastering modules
+
+The independently testable worker modules (`scripts/video-production/{speech,timeline,audio}.mjs`) now generate narration per beat, normalize it through FFmpeg to mono 48 kHz/16-bit PCM, probe the *actual* sample count with FFprobe, and cache by script, provider/engine revision, voice settings, and rights scope. Corrupt cache entries are regenerated; revoked voice authorization still blocks cache use. `buildSampleTimeline` uses half-open sample ranges and rounds to picture frames only at the boundary. Beat-level SRT captions exclude deliberate pauses and never masquerade as word alignment.
+
+`renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. The speech, mastering, segmented encoding and final MP4 mux each have FFmpeg-backed tests; the orchestration integration test uses an injected provider and browser, so **real visual playback remains unverified**.
 
 ## Run and verify
 
@@ -126,6 +214,17 @@ The configuration selects 17 top-level items; the pinned registry resolves
 32 items and vendors 82 unique files including the two stylesheets. All
 required npm dependencies already exist in `package.json`; this expansion
 adds no new runtime dependencies.
+
+### Upstream adoption candidates (checked 2026-10-22)
+
+Kumiki main has advanced **22 commits** beyond this pin (140 registry items vs 110 at the pin). The general-topic renderer still uses its own simple SVG story layouts; the next **separately validated** registry upgrade should target:
+
+1. `diagram-stage` + `process-journey` for authored node/edge identities, moving packets and semantic route explanations; require normal-speed 16:9 browser export and shuffled-frame seek parity before replacing the generic-flow renderer.
+2. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
+3. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
+4. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
+
+`evidence-stage` is useful later for authorized source visuals. Its dependency tree is broader, and recent Short/Video items still document pending human inspection. **Do not silently move the Kumiki commit pin or call uninstalled registry APIs.** Adopt an item through `kumiki:update`, hash verification, consumer typecheck/build and actual video playback checks in a dedicated change.
 
 Kumiki has one root `registry.json`, not per-item JSON files expected by the
 shadcn GitHub registry flow. `scripts/vendor-kumiki.mjs` is the reproducible

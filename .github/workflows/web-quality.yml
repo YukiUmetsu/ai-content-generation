@@ -54,5 +54,18 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Install FFmpeg for measured media tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Verify media toolchain for headless video tests
+        run: |
+          ffmpeg -hide_banner -version
+          ffprobe -hide_banner -version
+
+      - name: Test headless video production
+        run: pnpm test:video:headless
+
       - name: Production build
         run: pnpm build

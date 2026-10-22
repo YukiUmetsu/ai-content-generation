@@ -10,9 +10,9 @@
 
 **Default sequence:** M0 foundation → M1 Brand Studio → M2 creative planning/packaging → M3 speech and sound → M4 Kumiki video rendering → M5 portrait/destination adaptation → M6 regeneration/analytics → optional M7 research/articles/products. This **replaces the earlier instruction to ship an article before video**; the old A–L features remain in the optional backlog at the end.
 
-**First useful release (R1):** using checked-in synthetic, *clearly labeled* inputs, create one approved BrandKit, choose one of three genuinely different title/thumbnail/hook hypotheses, explain a specific home-cost mechanism with a meaningful animated transformation, import or synthesize narrator audio offline, add at least one semantically anchored SFX, mix it, render a **30–60s 16:9 MP4**, export a distinct mobile-legible thumbnail and caption file, and generate an audit/QA report. A mocked speech adapter is fine for automated CI; a human-provided audio clip proves audible production. **Do not mark R1 complete with silent video, static screenshot montage, generic title cards or fake evidence.**
+**First useful release (R1):** using checked-in synthetic, *clearly labeled* inputs, create one approved BrandKit, choose one of three genuinely different title/thumbnail/hook hypotheses, explain a specific home-cost mechanism through a **coherent 8+-minute** narrative with meaningful animated mechanisms and examples, **automatically generate real narrator speech from script text via Fish Audio API or a configured local TTS engine**, add semantically anchored SFX, mix it, render a **16:9 MP4** (initial editorial target **9–15 minutes**, longer if the subject warrants), export a distinct mobile-legible thumbnail and caption file, and generate an audit/QA report. A **30–60-second** mock-voice/offline fixture remains the cheap **smoke test**, not R1 completion; imported audio alone does not meet the automation goal. **Do not mark R1 complete with silent video, static screenshot montage, generic title cards or fake evidence.**
 
-**Second useful release (R2):** re-author that concept for a true **9:16** platform layout and **short-form narrative**; switch brand presets and narrator backends without rewriting media logic, and demonstrate targeted rerendering instead of rebuilding every artifact. TikTok, Instagram and Facebook may use versioned local export presets before any upload integration.
+**Second useful release (R2):** re-author that concept for a true **9:16** platform layout and a **destination-specific short-form narrative**, not a crop or sped-up long video. Editorial starting targets (to be revised using actual retention/revenue): YouTube Shorts **45–120s**, TikTok **90–180s**, Instagram Reels **45–60s** for discovery or **120–180s** for deeper mini-explainers, Facebook Reels **120–180s**. Switch brand presets and narrator backends without rewriting media logic, and demonstrate targeted rerendering. Recheck each platform's upload/monetization limits before integration; [the duration research and platform citations](superpowers/specs/2026-10-22-headless-video-production-design.md#1a-duration-and-destination-profiles-research-reviewed-2026-10-22) distinguish platform constraints from observational benchmarks.
 
 **First scalable release (R3):** editable UI for brand/storyboard/thumbnail, restart-safe queue, bounded disk use, provider capabilities/rights tracking, non-destructive revisions, measurable experiment imports and transparent human publishing approval. Online trends, automatic upload, payments, character lip sync and generative video are **not** R1 requirements.
 
@@ -21,7 +21,7 @@
 - **Paths are suggested, not guaranteed:** the repository may still consist only of docs and fixtures. Before each task, inspect actual files and edit existing appropriate modules; never create 12 empty crates or imaginary Kumiki imports to match a diagram.
 - **Rust owns** typed source-of-truth models, DB, jobs, approvals, content hashes, rights and provider routing. **React/TypeScript owns** editing, previews and optional render worker. Kumiki-UI owns visuals, deterministic animation/camera, infographic logic and production constraints. **FFmpeg/local workers** own DSP/encoding; ContentGen owns their orchestration.
 - Existing Kumiki still/media and MG1/MD1/CC1/VT1/video-export surfaces are usable **only after inspecting exact pinned APIs**. Full Composition/document/audio-lane APIs described elsewhere may be proposals; do not invent runtime support.
-- **Offline first:** mock/fake research, approved local WAV, generated tones/CC0 test samples and built-in SVG graphics suffice through R1. Never silently call Fish Audio, SEO APIs, upload platforms, install >250 MB, purchase media, clone third-party voices or fetch unlicensed fonts.
+- **Offline first for tests:** mock/fake research, approved local WAV, generated tones/CC0 test samples and built-in SVG graphics suffice for unit/CI and short export **smoke tests**, but not for the automated-narration R1 acceptance. A real opt-in Fish Audio API call or locally configured synthesizer must generate the full release voice. Never silently call Fish Audio, SEO APIs, upload platforms, install >250 MB, purchase media, clone third-party voices or fetch unlicensed fonts.
 - **No false completion:** each task includes a real result and negative test; absent tools/tests produce **BLOCKED** with evidence rather than “passed.” Never present hypothetical number, algorithmic viral score, CTR or RPM as measured.
 - **Never delete** unrelated user files, shared model caches, old approved brand revisions or approved releases. Ignore local secrets/DB/assets and use owned temporary directories with cleanup only after verified output.
 
@@ -172,10 +172,10 @@ Use a fictional sample scenario, not a claim about an actual US market: a **$500
 - **Deliver:** \`SpeechSynthesize\` and \`SpeechImport\` ports with locale/profile/provider mapping; real WAV import, exact sample count, format probe, immutable artifact and consent/rights metadata. Mock speech for CI.
 - **Pass:** 2 beat WAVs audible in local fixture, mismatch/unsupported format refused, provider disabled returns \`Unavailable\`. Do not clone voices or load a huge model.
 
-**A02 — Optional Fish Audio or installed local speech provider**
+**A02 — Real Fish Audio or installed local speech provider (required for R1)**
 - **Depends on:** A01. **Read:** 13,02 and verified current provider terms.
-- **Deliver:** **only with separate network/model/usage approval**, a single adapter that maps logical voice profile to real provider IDs, records usage/version/rights and fails closed. Local TTS and Fish are alternatives; import/mock remains functional.
-- **Pass:** opt-in real sample plus unavailable/rate-limit/denied-license tests; switching provider preserves script but explicitly invalidates generated audio/alignment timing. **Optional for R1**, required only when enabling production TTS.
+- **Deliver:** with explicit network/model/usage approval where needed, implement Fish Audio and a configured local TTS adapter behind a common voice interface, mapping logical voice profiles to real provider/model identities and recording usage/version/rights. Either genuinely functioning provider is sufficient for the R1 acceptance run; import/mock remains for CI and preview. A missing local model or Fish key produces a clear setup failure, not fake success.
+- **Pass:** opt-in real automatically generated sample plus unavailable/rate-limit/denied-license tests; switching provider preserves script but explicitly invalidates generated audio/alignment timing. **Required for R1**: generate the entire long-form script by one real provider; imported-only or mock-only audio does not pass.
 
 **A03 — Segment-accurate timing and alignment**
 - **Depends on:** A01,C06. **Read:** 13,14.
@@ -190,7 +190,7 @@ Use a fictional sample scenario, not a claim about an actual US market: a **$500
 **A05 — Offline FFmpeg mix/master**
 - **Depends on:** A01,A03,A04. **Read:** 13,02,08.
 - **Deliver:** typed multi-lane WAV mixing for voice/music/SFX, trims/fades, voice-triggered music ducking, peak/loudness analysis and versioned output profile; record command/tool versions and stems. FFmpeg installed/approved separately if absent.
-- **Pass:** a 30–60s listenable stereo WAV with real speech and timed SFX, no clipping, detectable silence/error and configurable ducking. Verify with FFprobe/audio analysis and human listen. Never represent plain \`--audio\` muxing as multitrack mixing.
+- **Pass:** a 30–60s listenable stereo WAV with generated/mock speech and timed SFX as the isolated smoke fixture, then an **8+-minute mastered WAV** with automatically synthesized real-provider speech and timed SFX for R1, with no clipping, detectable silence/error and configurable ducking. Verify with FFprobe/audio analysis and human listen. Never represent plain \`--audio\` muxing as multitrack mixing.
 
 **A06 — Captions and sync quality**
 - **Depends on:** A03,A05. **Read:** 13,08,12.
@@ -219,7 +219,7 @@ Use a fictional sample scenario, not a claim about an actual US market: a **$500
 **K04 — MP4 exporter + audio mux**
 - **Depends on:** K03,A05,A06. **Read:** 14 and current exporter script.
 - **Deliver:** a served stage exposing \`VideoExportStage\` handshake, deterministic frame capture, duration/fps manifest, mastered WAV mux, MP4 plus subtitle file, artifact hashes and FFprobe report. Use existing Kumiki export entry point.
-- **Pass:** local **30–60s 16:9 playable MP4** with synchronized speech/SFX, sound and captions; repeat render seeks reproduce frames, missing font/image/3D readiness fails, video/audio durations validated. Measure temp PNG/storage/time and clean only owned scratch.
+- **Pass:** a local **30–60s 16:9** integration-smoke MP4 plus an **8+-minute 16:9 playable release candidate** with automatic narration, synchronized SFX and captions; repeat render seeks reproduce frames, missing font/image/3D readiness fails and video/audio durations match. **Long-form acceptance requires bounded frame capture/streaming or segmented export**—not keeping tens of thousands of uncompressed PNGs in one scratch directory. Measure peak scratch/CPU/time, test cancellation/segment failure and clean only owned scratch.
 
 **K05 — First release and QA gate**
 - **Depends on:** K04,C04,B04. **Read:** 08,12,13,15.
@@ -238,7 +238,7 @@ Use a fictional sample scenario, not a claim about an actual US market: a **$500
 **P02 — Short story adaptation**
 - **Depends on:** P01,C05. **Read:** 15,16.
 - **Deliver:** select an appropriate “instant result → cause → payoff,” “experiment → explanation” or “A vs B → threshold” short engine; rewrite *script and shot plan* for a compact complete claim, not a speed-up of long-form. Keep source/payoff trace.
-- **Pass:** 20–60s fixture communicates one defensible result, strong first visual, actual answer and limitation; human sees full short; no deceptive unresolved curiosity gap.
+- **Pass:** at least one **90–180s portrait** fixture for a TikTok/Facebook-style mini-explainer and one **45–60s** discovery variant (usable for Instagram/YouTube Shorts), each with a defensible result, strong first visual, actual answer and limitation. These are editorial defaults, not proven platform optima or arbitrary padding targets; human watches every variant; no deceptive unresolved curiosity gap.
 
 **P03 — Destination export profiles**
 - **Depends on:** P01,P02,K04. **Read:** 09,12,13.
@@ -298,7 +298,7 @@ If the business priorities shift back to articles, follow **F01–F05 → R01 �
 
 ## 11. Dependency shortcut and next-task selector
 
-**Critical path to first real video:** \`F01 F02 F03 F04 F05 → B01 B02 B03 B04 → C02 C03 C04 C05 C06 → A01 A03 A04 A05 A06 → K01 K02 K03 K04 K05\`. F06/B05 provide the UI; for the earliest offline CLI fixture, defer UI and persist via typed API. C01 market import and A02 real cloud TTS are valuable but **not blockers** for a labeled synthetic concept + imported approved narration.
+**Critical path to first real video:** \`F01 F02 F03 F04 F05 → B01 B02 B03 B04 → C02 C03 C04 C05 C06 → A01 A02 A03 A04 A05 A06 → K01 K02 K03 K04 K05\`. F06/B05 provide the UI; for the earliest offline CLI **smoke** fixture, defer UI and persist via typed API. C01 market import is not a blocker for a labeled synthetic concept, but **A02 automatic real-provider TTS and a complete 8+-minute bounded-memory/disk render are R1 blockers**. A 30–60s imported/mock-narration fixture does not fulfill R1.
 
 **Critical path to portrait:** \`K05 → P01 → P02 → P03\`. **Quality/scale:** \`P03 → S01 → S02 S04\`; analytics \`C01 + P04 → S03\`.
 
