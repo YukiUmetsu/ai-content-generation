@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 
@@ -20,7 +20,8 @@ describe("Studio shell", () => {
     expect(screen.queryByRole("button", { name: "Compact" })).not.toBeInTheDocument();
 
     await userEvent.setup().click(screen.getByRole("button", { name: /view settings/i }));
-    expect(screen.getByText("Density")).toBeInTheDocument();
-    expect(screen.getByText("Language")).toBeInTheDocument();
+    const settingsDialog = within(screen.getByRole("dialog"));
+    expect(settingsDialog.getByText("Density")).toBeInTheDocument();
+    expect(settingsDialog.getByText("Language")).toBeInTheDocument();
   });
 });
