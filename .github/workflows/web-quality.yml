@@ -54,16 +54,27 @@ jobs:
       - name: Test
         run: pnpm test
 
-      # Deterministic video planning tests need neither FFmpeg nor Chromium.
-      # Run the complete FFmpeg-backed suite locally before media releases.
-      - name: Test video planning without media tools
+      # These use synthetic providers/browser drivers, not FFmpeg or Chromium.
+      # Real media encoding, muxing and audio probes are local release gates.
+      - name: Test video planning and mock production without media tools
         run: |
           node --test \
+            scripts/video-production/cli.test.mjs \
+            scripts/video-production/cli-signal.test.mjs \
+            scripts/video-production/fish.test.mjs \
+            scripts/video-production/local.test.mjs \
             scripts/video-production/job.test.mjs \
             scripts/video-production/topic-generator.test.mjs \
             scripts/video-production/general-visual-plan.test.mjs \
             scripts/video-production/visual-plan.test.mjs \
-            scripts/video-production/timeline.test.mjs
+            scripts/video-production/timeline.test.mjs \
+            scripts/video-production/produce.test.mjs \
+            scripts/video-production/report.test.mjs \
+            scripts/video-production/stage-server.test.mjs \
+            scripts/video-production/studio-server.test.mjs \
+            scripts/video-production/text-layout.test.mjs \
+            scripts/video-production/topic-cli.test.mjs \
+            scripts/video-production/try.test.mjs
 
       - name: Production build
         run: pnpm build
