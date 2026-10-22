@@ -6,10 +6,33 @@ import "@fontsource-variable/newsreader";
 import { VideoExportStage } from "@/components/video/video-export-stage";
 import type { HouseMathVisualPlan } from "../../scripts/video-production/visual-plan.mjs";
 import { HouseMathExportScene } from "./house-math-scene";
+declare global { interface Window { __contentgenBuildHash?: string } }
+
+/** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
+async function prepareHouseMathFrame(target: number) {
+  const start = performance.now();
+  let stage: HTMLElement | null = null;
+  while (performance.now() - start < 10000) {
+    stage = document.querySelector<HTMLElement>("[data-km-video-capture]");
+    if (stage?.dataset.frame === String(target)) break;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }
+  if (!stage || stage.dataset.frame !== String(target)) throw new Error(`House Math scene frame ${target} did not settle`);
+  await document.fonts.ready;
+  const copy = stage.querySelectorAll<SVGGraphicsElement>("[data-house-copy]");
+  if (!copy.length) throw new Error("House Math scene has no verifiable title copy");
+  for (const item of copy) {
+    const box = item.getBBox();
+    if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0 ||
+      box.x < 116 || box.x + box.width > 950 || box.y < 250 || box.y + box.height > 965) {
+      throw new Error(`House Math text is clipped or outside the authored column at frame ${target}`);
+    }
+  }
+}
 
 function ExportApp({ plan }: { plan: HouseMathVisualPlan }) {
   const [frame, setFrame] = useState(0);
-  return <VideoExportStage manifest={plan.manifest} frame={frame} onSeek={(absoluteFrame) => setFrame(absoluteFrame)}>
+  return <VideoExportStage manifest={plan.manifest} frame={frame} onSeek={(absoluteFrame) => setFrame(absoluteFrame)} prepareFrame={prepareHouseMathFrame}>
     <HouseMathExportScene plan={plan} frame={frame} />
   </VideoExportStage>;
 }
@@ -17,8 +40,15 @@ function ExportApp({ plan }: { plan: HouseMathVisualPlan }) {
 async function boot() {
   const root = document.getElementById("root");
   if (!root) throw new Error("Missing browser-export root");
-  const response = await fetch("/__video_job", { cache: "no-store", credentials: "omit" });
+  const [response, buildResponse] = await Promise.all([
+    fetch("/__video_job", { cache: "no-store", credentials: "omit" }),
+    fetch("/__video_build", { cache: "no-store", credentials: "omit" }),
+  ]);
   if (!response.ok) throw new Error(`Video plan is unavailable: HTTP ${response.status}`);
+  if (!buildResponse.ok) throw new Error(`Video build fingerprint is unavailable: HTTP ${buildResponse.status}`);
+  const build = await buildResponse.json() as { sha256?: string };
+  if (!/^[a-f0-9]{64}$/i.test(build.sha256 ?? "")) throw new Error("Video build handshake returned an invalid fingerprint");
+  window.__contentgenBuildHash = build.sha256;
   const plan = await response.json() as HouseMathVisualPlan;
   if (plan?.schemaVersion !== 1 || plan.kind !== "house-math-visual-plan" ||
     plan.manifest?.schemaVersion !== 1 || plan.manifest.width !== 1920 || plan.manifest.height !== 1080 ||

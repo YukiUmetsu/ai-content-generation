@@ -54,5 +54,13 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Verify media toolchain for headless video tests
+        run: |
+          ffmpeg -hide_banner -version
+          ffprobe -hide_banner -version
+
+      - name: Test headless video production
+        run: pnpm test:video:headless
+
       - name: Production build
         run: pnpm build

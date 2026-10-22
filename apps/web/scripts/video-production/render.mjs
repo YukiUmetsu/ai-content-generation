@@ -2,7 +2,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join, parse, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { homedir } from "node:os";
@@ -13,6 +14,23 @@ const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const fail = (message) => { throw new Error(`Video export failed: ${message}`); };
 const integer = (value, min) => Number.isSafeInteger(value) && value >= min;
 const exists = async (path) => stat(path).then(() => true, (error) => error.code !== "ENOENT");
+
+/** Launch and close the actual installed browser before any billable synthesis. */
+export async function probeBrowserExecutable(browserExecutable) {
+  if (!browserExecutable) fail("configure an already-installed Chromium executable");
+  try { await access(browserExecutable, constants.X_OK); }
+  catch { fail("configured Chromium executable is missing or not executable"); }
+  let chromium;
+  try { ({ chromium } = await import("playwright-core")); }
+  catch { fail("install the pinned playwright-core package before narration synthesis"); }
+  let browser;
+  try {
+    browser = await chromium.launch({ executablePath: browserExecutable, headless: true, timeout: 30000 });
+    const page = await browser.newPage();
+    await page.close();
+  } catch { fail("Chromium cannot launch and open an export page in this environment"); }
+  finally { if (browser) await browser.close(); }
+}
 
 async function runTool(program, args, { signal, timeout = 600000 } = {}) {
   try { return await exec(program, args, { signal, timeout, maxBuffer: 512 * 1024 }); }
@@ -31,6 +49,7 @@ function verifyManifest(manifest) {
 function validateOptions(options) {
   verifyManifest(options?.manifest);
   if (!/^[a-f\d]{64}$/i.test(options?.planHash ?? "")) fail("a SHA-256 validated render-plan hash is required for safe segment resume");
+  if (!/^[a-f\d]{64}$/i.test(options?.buildHash ?? "")) fail("a SHA-256 identity for the built scene is required for safe segment resume");
   const parsed = new URL(options?.stageUrl ?? "http://invalid/");
   if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname) ||
       parsed.username || parsed.password || parsed.search || parsed.hash) fail("video stage must be a plain HTTP loopback endpoint");
@@ -86,8 +105,10 @@ async function defaultOpenCapture(stageUrl, manifest, options) {
     await page.goto(stageUrl, { waitUntil: "networkidle", timeout: 30000 });
     await page.waitForFunction(() => Boolean(window.__kmVideoExport?.manifest), undefined, { timeout: 20000 });
     const live = await page.evaluate(() => window.__kmVideoExport?.manifest);
+    const buildHash = await page.evaluate(() => window.__contentgenBuildHash);
     return {
       manifest: live,
+      buildHash,
       captureFrame: async (absoluteFrame, path) => {
         await page.evaluate((frame) => window.__kmVideoExport.seek(frame), absoluteFrame);
         await page.locator("[data-km-video-capture]").screenshot({ path, animations: "disabled", scale: "css", timeout: 30000 });
@@ -122,13 +143,13 @@ async function defaultConcat(paths, outputPath, { ffmpeg, signal }) {
 }
 
 /**
- * @param {{stageUrl:string,manifest:object,planHash:string,outDir:string,maxBatchFrames?:number,reviewFrames?:number[],browserExecutable?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
+ * @param {{stageUrl:string,manifest:object,planHash:string,buildHash:string,outDir:string,maxBatchFrames?:number,reviewFrames?:number[],browserExecutable?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
  * @param {{openCapture?:Function,encodeBatch?:Function,probeSegment?:Function,concatSegments?:Function,probeFinal?:Function}} dependencies
  */
 export async function renderVideoSegments(options, dependencies = {}) {
   const { dir, limit, reviewFrames } = validateOptions(options);
   const { manifest } = options;
-  const fingerprint = sha256(JSON.stringify({ version: 1, planHash: options.planHash, manifest, h264Profile: "libx264-crf18-yuv420p" }));
+  const fingerprint = sha256(JSON.stringify({ version: 2, planHash: options.planHash, buildHash: options.buildHash, manifest, h264Profile: "libx264-crf18-yuv420p" }));
   const segmentsDir = join(dir, "segments");
   const openCapture = dependencies.openCapture ?? ((url, expected) => defaultOpenCapture(url, expected, options));
   const encodeBatch = dependencies.encodeBatch ?? ((batch) => defaultEncode({ ...batch, ffmpeg: options.ffmpeg ?? "ffmpeg", signal: options.signal }));
@@ -145,6 +166,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
     // Even resume must establish the correct live visual page, not stale/bypassed output.
     capture = await openCapture(options.stageUrl, manifest);
     if (!isDeepStrictEqual(capture?.manifest, manifest)) fail("live Kumiki export manifest differs from the validated render plan");
+    if (capture?.buildHash !== options.buildHash) fail("live browser export handshake has a mismatched built-scene fingerprint");
     for (let startFrame = 0, index = 0; startFrame < manifest.durationFrames; startFrame += limit, index++) {
       if (options.signal?.aborted) fail("video capture cancelled");
       const frameCount = Math.min(limit, manifest.durationFrames - startFrame);

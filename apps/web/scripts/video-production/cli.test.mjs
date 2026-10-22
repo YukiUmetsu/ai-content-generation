@@ -27,6 +27,7 @@ test("dry-run inspects config without sending requests or rendering", async () =
     budgetUsd: 0,
     out: "./production-output",
     env: { FISH_AUDIO_API_KEY: "private-token" },
+    inspectRenderBuild: async () => "b".repeat(64),
     probeTool: async () => { toolChecks += 1; return { available: true, version: "test" }; },
   });
   assert.equal(toolChecks, 3);
@@ -57,6 +58,7 @@ test("authorized CLI delegates the entire media job exactly once without leaking
   ], {
     env: { FISH_AUDIO_API_KEY: "secret-key" },
     probeTool: async () => ({ available: true, version: "mock" }),
+    inspectRenderBuild: async () => "b".repeat(64),
     produceVideo: async (_job, options) => {
       calls++;
       assert.equal(options.apiKey, "secret-key");
@@ -75,6 +77,7 @@ test("preflight blocks paid Fish model and placeholder voice reference", async (
     voiceReferenceConsent: true, textTransmissionApproved: true, paidUsageApproved: true,
     allowTestAssets: true, budgetUsd: 0, env: { FISH_AUDIO_API_KEY: "dummy" },
     probeTool: async () => ({ available: true }),
+    inspectRenderBuild: async () => "b".repeat(64),
   };
   const paid = await inspectProduction(invalidVoice, opts);
   assert.equal(paid.ready, false);
@@ -82,4 +85,17 @@ test("preflight blocks paid Fish model and placeholder voice reference", async (
   const placeholder = await inspectProduction(job, opts);
   assert.equal(placeholder.ready, false);
   assert.equal(placeholder.findings.some(({ code }) => code === "fish-voice-missing"), true);
+});
+
+test("dry-run identifies a missing export build even when media tools appear available", async () => {
+  const availableJob = structuredClone(job);
+  availableJob.voice.voiceId = "authorized-reference";
+  const result = await inspectProduction(availableJob, {
+    provider: "fish", providerRevision: "fish-api-v1", out: "./safe-output", allowNetwork: true,
+    voiceReferenceConsent: true, textTransmissionApproved: true, allowTestAssets: true,
+    env: { FISH_AUDIO_API_KEY: "dummy" }, probeTool: async () => ({ available: true }),
+    inspectRenderBuild: async () => { throw new Error("not built"); },
+  });
+  assert.equal(result.ready, false);
+  assert.ok(result.findings.some(({ code }) => code === "export-build-unavailable"));
 });

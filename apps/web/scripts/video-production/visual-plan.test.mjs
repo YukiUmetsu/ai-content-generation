@@ -54,3 +54,27 @@ test("long authored episode has varied chapters; synthetic sample fixtures exerc
   assert.ok(measured.totalSamples / 48000 >= 480);
   assert.equal(getHouseMathFrame(plan, plan.manifest.durationFrames - 1).chapterIndex, long.beats.length - 1);
 });
+
+test("custom long-form minimum exceeds the default eight-minute floor", () => {
+  const custom = structuredClone(long);
+  custom.destination.minimumDurationSeconds = 600;
+  const measured = buildSampleTimeline(custom.beats.map((beat) => ({ id: beat.id, samples: 20 * 48000, pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds })), { fps: custom.destination.fps, events: custom.events });
+  assert.ok(measured.totalSamples > 480 * 48000 && measured.totalSamples < 600 * 48000);
+  assert.throws(() => compileHouseMathVisuals(custom, measured), /600|minimum|duration/i);
+});
+
+test("long story keeps final total hidden across every earlier comparison and timeline scene", () => {
+  const longAudio = long.beats.map((beat) => ({ id: beat.id, samples: 20 * 48000, pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds }));
+  const timelineLong = buildSampleTimeline(longAudio, { fps: long.destination.fps, events: long.events });
+  const plan = compileHouseMathVisuals(long, timelineLong);
+  const reveal = plan.events[plan.payoffEventId];
+  const earlier = plan.chapters.filter((chapter) => chapter.startFrame < reveal);
+  assert.ok(earlier.some((chapter) => chapter.intent === "cost-comparison"));
+  assert.ok(earlier.some((chapter) => chapter.intent === "cost-timeline"));
+  for (const chapter of earlier) {
+    const sampled = getHouseMathFrame(plan, Math.min(chapter.endFrame - 1, chapter.startFrame + 35));
+    assert.equal(sampled.totalLabel, null, `chapter ${chapter.id} leaked the final cash number`);
+  }
+  assert.equal(getHouseMathFrame(plan, reveal).totalLabel, null);
+  assert.match(getHouseMathFrame(plan, reveal + 30).totalLabel, /^\$1,4/);
+});

@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startLocalStageServer } from "./stage-server.mjs";
+import { startLocalStageServer, fingerprintBuiltStage } from "./stage-server.mjs";
 
 test("loopback server returns validated plan and built stage with restrictive headers", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "contentgen-stage-test-"));
@@ -24,6 +24,8 @@ test("loopback server returns validated plan and built stage with restrictive he
   assert.equal(api.headers.get("cache-control"), "no-store");
   const script = await fetch(new URL("/assets/main.js", server.url));
   assert.equal(script.headers.get("content-type"), "text/javascript; charset=utf-8");
+  const identity = await fetch(new URL("/__video_build", server.url));
+  assert.equal((await identity.json()).sha256, server.buildHash);
 });
 
 test("no directory traversal, source-map access, external host binding or non-GET", async (t) => {
@@ -37,4 +39,19 @@ test("no directory traversal, source-map access, external host binding or non-GE
   assert.equal((await fetch(new URL("/secret.map", server.url))).status, 404);
   assert.equal((await fetch(new URL("/%2e%2e/%2e%2e/etc/passwd", server.url))).status, 404);
   assert.equal((await fetch(new URL("/__video_job", server.url), { method: "POST" })).status, 405);
+});
+
+test("renderer identity changes with served scene JS/fonts but not an unrelated sourcemap", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-fingerprint-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "assets"));
+  await writeFile(join(root, "video-export.html"), "<script src='/assets/scene.js'></script>");
+  await writeFile(join(root, "assets", "scene.js"), "scene-v1");
+  const first = await fingerprintBuiltStage(root);
+  assert.match(first, /^[a-f0-9]{64}$/);
+  await writeFile(join(root, "assets", "scene.js"), "scene-v2");
+  const second = await fingerprintBuiltStage(root);
+  assert.notEqual(second, first);
+  await writeFile(join(root, "assets", "ignored.map"), "not-a-served-asset");
+  assert.equal(await fingerprintBuiltStage(root), second);
 });

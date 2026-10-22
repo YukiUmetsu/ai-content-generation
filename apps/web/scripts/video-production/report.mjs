@@ -23,7 +23,8 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
       Math.abs(durationSeconds - videoFromFrames) > frameDuration ||
       Math.abs(durationSeconds - mp4.audioDurationSeconds) > frameDuration ||
       Math.abs(videoFromFrames - mp4.videoDurationSeconds) > frameDuration) fail("audio/video duration drift exceeds one video frame");
-  if (job.mode === "youtube-long" && Math.min(durationSeconds, videoFromFrames, mp4.audioDurationSeconds) < 480) fail("long-form release requires at least 480 measured seconds");
+  const minimumSeconds = Math.max(job.mode === "youtube-long" ? 480 : 0, job.destination.minimumDurationSeconds ?? 0);
+  if (Math.min(durationSeconds, videoFromFrames, mp4.audioDurationSeconds) < minimumSeconds) fail(`finished film requires at least ${minimumSeconds} measured seconds`);
   if (!Object.hasOwn(timeline.eventSamples ?? {}, job.topic?.payoffEventId)) fail("named payoff event is missing");
   const namedPayoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], fps);
   if (!integer(namedPayoffFrame) || namedPayoffFrame >= mp4.frameCount) fail("named payoff event falls outside the finished movie");

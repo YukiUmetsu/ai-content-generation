@@ -36,7 +36,7 @@ function pngFrame(color) {
 const config = (dir, frames = 301) => ({
   stageUrl: "http://127.0.0.1:4545/video-export.html",
   manifest: { schemaVersion: 1, id: "smoke", width: 32, height: 18, fps: { num: 30, den: 1 }, durationFrames: frames },
-  planHash: "f".repeat(64), outDir: dir, maxBatchFrames: 150,
+  planHash: "f".repeat(64), buildHash: "b".repeat(64), outDir: dir, maxBatchFrames: 150,
 });
 
 async function harness(t) {
@@ -49,6 +49,7 @@ async function harness(t) {
       assert.match(stageUrl, /^http:\/\/127\.0\.0\.1/);
       return {
         manifest: expected,
+        buildHash: "b".repeat(64),
         captureFrame: async (frame, path) => {
           captured.push(frame);
           await writeFile(path, Buffer.from(`png-frame-${frame}`));
@@ -103,6 +104,12 @@ test("resume validates hash, manifest and probe before skipping completed segmen
   await assert.rejects(renderVideoSegments(config(dir, 151), dependencies), /hash|corrupt|resume/i);
 });
 
+test("same narrative plan with changed built scene cannot reuse stale H264 segments", async (t) => {
+  const { dir, dependencies } = await harness(t);
+  await renderVideoSegments(config(dir, 151), dependencies);
+  await assert.rejects(renderVideoSegments({ ...config(dir, 151), buildHash: "c".repeat(64) }, dependencies), /stale|fingerprint|resume|build/i);
+});
+
 test("capture abort leaves verified segments but never publishes an incomplete MP4", async (t) => {
   const { dir, dependencies } = await harness(t);
   let closed = false;
@@ -142,12 +149,21 @@ test("manifest mismatch aborts before recording any frame", async (t) => {
   assert.equal(stats().encoded, 0);
 });
 
+test("browser handshake must prove the same static build fingerprint as the resume identity", async (t) => {
+  const { dir, dependencies, stats } = await harness(t);
+  const original = dependencies.openCapture;
+  dependencies.openCapture = async (...args) => ({ ...await original(...args), buildHash: "c".repeat(64) });
+  await assert.rejects(renderVideoSegments(config(dir, 151), dependencies), /build|fingerprint|handshake/i);
+  assert.equal(stats().captured.length, 0);
+});
+
 test("real FFmpeg encodes two batches and probes a complete H.264 MP4", { skip: spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status !== 0 || spawnSync("ffprobe", ["-version"], { stdio: "ignore" }).status !== 0 }, async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "contentgen-render-integration-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const result = await renderVideoSegments({ ...config(dir, 3), maxBatchFrames: 2 }, {
     openCapture: async (_url, manifest) => ({
       manifest,
+      buildHash: "b".repeat(64),
       captureFrame: async (frame, path) => writeFile(path, pngFrame(30 + frame * 50)),
       close: async () => {},
     }),

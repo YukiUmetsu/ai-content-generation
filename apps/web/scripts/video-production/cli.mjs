@@ -3,10 +3,11 @@ import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, parse, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseVideoProductionJob } from "./job.mjs";
 import { produceVideo } from "./produce.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
+import { fingerprintBuiltStage } from "./stage-server.mjs";
 
 const readFlagValue = (argv, index) => {
   if (index + 1 >= argv.length || argv[index + 1].startsWith("--")) throw new Error(`${argv[index]} requires a value.`);
@@ -56,11 +57,15 @@ export function validateOutputTarget(target) {
   return full;
 }
 
-function defaultToolProbe(name, env, browserExecutable) {
+async function defaultToolProbe(name, env, browserExecutable) {
   if (name === "browser") {
     const executable = browserExecutable || env.CONTENTGEN_CHROMIUM_EXECUTABLE;
     if (!executable) return { available: false, reason: "Set CONTENTGEN_CHROMIUM_EXECUTABLE to an existing browser." };
-    try { accessSync(executable, constants.X_OK); return { available: true, version: "configured-local-browser" }; }
+    try {
+      accessSync(executable, constants.X_OK);
+      await import("playwright-core");
+      return { available: true, version: "configured-local-browser/driver" };
+    }
     catch { return { available: false, reason: "Configured browser is unavailable or not executable." }; }
   }
   const run = spawnSync(name, ["-version"], { encoding: "utf8", timeout: 4000, maxBuffer: 4096 });
@@ -73,7 +78,7 @@ function defaultToolProbe(name, env, browserExecutable) {
  * Honest, side-effect-free preflight: no provider fetch, rendering or file writes.
  * Tool version probes are allowed; inject probeTool in offline tests.
  * @param {unknown} candidate
- * @param {{provider?:string,providerRevision?:string,allowNetwork?:boolean,budgetUsd?:number,out:string,dryRun?:boolean,env?:Record<string,string>,localEndpoint?:string,browserExecutable?:string,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,allowTestAssets?:boolean,probeTool?:(name:string)=>Promise<object>}} options
+ * @param {{provider?:string,providerRevision?:string,allowNetwork?:boolean,budgetUsd?:number,out:string,dryRun?:boolean,env?:Record<string,string>,localEndpoint?:string,browserExecutable?:string,distRoot?:string,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,allowTestAssets?:boolean,probeTool?:(name:string)=>Promise<object>,inspectRenderBuild?:Function}} options
  */
 export async function inspectProduction(candidate, options) {
   const parsed = parseVideoProductionJob(candidate);
@@ -108,6 +113,11 @@ export async function inspectProduction(candidate, options) {
   if (parsed.job.destination.presetId !== "youtube") add("render-profile-unavailable", "The first renderer supports YouTube landscape only.");
 
   const tools = {};
+  try {
+    const distRoot = options.distRoot || fileURLToPath(new URL("../../dist", import.meta.url));
+    const buildHash = await (options.inspectRenderBuild ?? fingerprintBuiltStage)(distRoot);
+    if (!/^[a-f0-9]{64}$/i.test(buildHash ?? "")) throw new Error("bad build hash");
+  } catch { add("export-build-unavailable", "Run pnpm build to create the reproducible video-export.html scene before producing narration."); }
   for (const name of ["ffmpeg", "ffprobe", "browser"]) {
     try { tools[name] = await (options.probeTool ?? ((tool) => defaultToolProbe(tool, env, options.browserExecutable)))(name); }
     catch { tools[name] = { available: false, reason: `${name} could not be inspected.` }; }
@@ -126,10 +136,17 @@ export async function inspectProduction(candidate, options) {
 }
 
 export async function main(argv = process.argv.slice(2), dependencies = {}) {
+  const cancellation = new AbortController();
+  let terminationSignal = null;
+  const onSigint = () => { terminationSignal = "SIGINT"; cancellation.abort(new Error("SIGINT")); };
+  const onSigterm = () => { terminationSignal = "SIGTERM"; cancellation.abort(new Error("SIGTERM")); };
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  const signal = dependencies.signal ? AbortSignal.any([cancellation.signal, dependencies.signal]) : cancellation.signal;
   try {
     const options = parseCliArgs(argv);
     const candidate = JSON.parse(readFileSync(resolve(options.job), "utf8"));
-    const report = await inspectProduction(candidate, { ...options, env: dependencies.env ?? process.env, probeTool: dependencies.probeTool });
+    const report = await inspectProduction(candidate, { ...options, env: dependencies.env ?? process.env, probeTool: dependencies.probeTool, inspectRenderBuild: dependencies.inspectRenderBuild });
     if (options.dryRun) {
       process.stdout.write(JSON.stringify(report, null, 2) + "\n");
       return report.ready ? 0 : 2;
@@ -144,13 +161,17 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
       provider: options.provider || candidate.voice.provider,
       apiKey: env.FISH_AUDIO_API_KEY,
       browserExecutable: options.browserExecutable || env.CONTENTGEN_CHROMIUM_EXECUTABLE,
+      signal,
     });
     process.stdout.write(JSON.stringify({ videoPath: result.videoPath, releaseDir: result.releaseDir, releaseStatus: result.qa.releaseStatus, technicalPass: result.qa.technicalPass, commercialReady: result.qa.commercialReady }, null, 2) + "\n");
-    return 0;
+    return terminationSignal === "SIGINT" ? 130 : terminationSignal === "SIGTERM" ? 143 : 0;
   } catch (error) {
     const reason = error instanceof SyntaxError ? "Invalid job JSON." : (error instanceof Error ? error.message : "Unknown CLI failure.");
     process.stderr.write(reason + "\n");
-    return 2;
+    return terminationSignal === "SIGINT" ? 130 : terminationSignal === "SIGTERM" ? 143 : 2;
+  } finally {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
   }
 }
 

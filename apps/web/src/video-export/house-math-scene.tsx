@@ -1,21 +1,10 @@
 import { getHouseMathFrame } from "../../scripts/video-production/visual-plan.mjs";
+import { fitSvgText } from "../../scripts/video-production/text-layout.mjs";
 import type { HouseMathVisualPlan, HouseMathFrame } from "../../scripts/video-production/visual-plan.mjs";
 
 const cash = (amount: number) => "$" + Math.round(amount).toLocaleString("en-US");
 const short = (amount: number) => amount >= 1_000_000 ? "$" + (amount / 1_000_000).toFixed(2) + "M" : "$" + (amount / 1000).toFixed(0) + "K";
 const ink = "#F4F1E9", muted = "#A7B5C3", amber = "#D7B27A";
-
-function wrapHeading(value: string, limit = 26) {
-  const lines: string[] = [];
-  let line = "";
-  for (const word of value.split(/\s+/)) {
-    const candidate = line ? line + " " + word : word;
-    if (candidate.length > limit && line) { lines.push(line); line = word; }
-    else line = candidate;
-  }
-  if (line) lines.push(line);
-  return lines.slice(0, 3);
-}
 
 function HouseIllustration({ frame }: { frame: HouseMathFrame }) {
   const lift = (1 - frame.enterProgress) * 42;
@@ -66,7 +55,7 @@ function LifetimeTimeline({ frame }: { frame: HouseMathFrame }) {
     <text x={left} y="260" fill={muted} fontSize="26" letterSpacing="4">CUMULATIVE CASH PAID</text>
     {[0, 0.25, 0.5, 0.75, 1].map((p) => <g key={p}>
       <line x1={left} y1={top + height * (1 - p)} x2={left + width} y2={top + height * (1 - p)} stroke="#405568" strokeWidth="2" strokeDasharray="8 12" />
-      <text x={left - 24} y={top + height * (1 - p) + 10} fill={muted} fontSize="22" textAnchor="end">{short(max * p)}</text>
+      <text x={left - 24} y={top + height * (1 - p) + 10} fill={muted} fontSize="22" textAnchor="end">{Math.round(p * 100)}%</text>
     </g>)}
     <polyline fill="none" stroke={amber} strokeWidth="9" strokeLinejoin="round" strokeLinecap="round" points={points} />
     {series.filter((item) => item.year % 5 === 0).map((item) => <text key={item.year} x={left + width * item.year / (series.length - 1)} y={top + height + 58} fill={muted} fontSize="24" textAnchor="middle">{item.year}y</text>)}
@@ -76,17 +65,15 @@ function LifetimeTimeline({ frame }: { frame: HouseMathFrame }) {
 }
 
 function Comparison({ frame }: { frame: HouseMathFrame }) {
-  const total = frame.economics.totalCashOutflow;
-  const paidRatio = frame.scenario.purchasePrice / total;
   const appear = frame.enterProgress;
   return <g opacity={appear}>
     <text x="1070" y="265" fill={muted} fontSize="25" letterSpacing="4">SAME HOUSE · DIFFERENT MEASURES</text>
     <text x="1070" y="378" fill={ink} fontSize="30">Asking price</text>
-    <rect x="1070" y="416" width={730 * paidRatio * appear} height="92" rx="12" fill="#79AFC2" />
+    <rect x="1070" y="416" width={520 * appear} height="92" rx="12" fill="#79AFC2" />
     <text x="1783" y="483" fill={ink} textAnchor="end" fontSize="41" fontWeight="700">{short(frame.scenario.purchasePrice)}</text>
     <text x="1070" y="620" fill={ink} fontSize="30">Illustrative 30-year cash outflow</text>
-    <rect x="1070" y="660" width={730 * appear} height="108" rx="12" fill={amber} />
-    <text x="1783" y="736" fill="#13212C" textAnchor="end" fontSize="44" fontWeight="800">{short(total)}</text>
+    <rect x="1070" y="660" width={730 * appear} height="108" rx="12" fill="#3D5260" stroke={amber} strokeDasharray="12 12" />
+    <text x="1783" y="736" fill={amber} textAnchor="end" fontSize="34" fontWeight="700">TOTAL REVEALED AT THE END</text>
     <rect x="1065" y="836" width="720" height="105" rx="18" fill="#203441" stroke="#415C6A" />
     <text x="1101" y="886" fill={muted} fontSize="24">These are cash flows, not after-sale net costs.</text>
     <text x="1101" y="922" fill={ink} fontSize="23">Home equity and resale value are separate.</text>
@@ -99,7 +86,7 @@ function Payoff({ frame }: { frame: HouseMathFrame }) {
     <circle cx="1440" cy="536" r={275 + (1 - p) * 70} fill="none" stroke={amber} strokeWidth="3" opacity={p * 0.6} />
     <circle cx="1440" cy="536" r={234 + (1 - p) * 90} fill={amber} opacity={p * 0.09} />
     <text x="1440" y="365" textAnchor="middle" fill={muted} fontSize="27" letterSpacing="4" opacity={p}>CASH PAID OVER {frame.scenario.years} YEARS</text>
-    <text x="1440" y={555 + (1 - p) * 38} textAnchor="middle" fill={ink} fontSize="94" fontWeight="750" letterSpacing="-6" opacity={p}>{cash(frame.economics.totalCashOutflow)}</text>
+    <text x="1440" y={555 + (1 - p) * 38} textAnchor="middle" fill={ink} fontSize="94" fontWeight="750" letterSpacing="-6" opacity={p}>{frame.totalLabel}</text>
     <rect x="1180" y="622" width="520" height="68" rx="14" fill="#27403F" opacity={p} />
     <text x="1440" y="665" textAnchor="middle" fill="#B5DACB" fontSize="24" fontWeight="650" opacity={p}>ILLUSTRATIVE · NO RESALE OFFSET</text>
     <g opacity={Math.max(0, frame.enterProgress - p * 0.5)}>
@@ -111,8 +98,9 @@ function Payoff({ frame }: { frame: HouseMathFrame }) {
 
 export function HouseMathExportScene({ plan, frame }: { plan: HouseMathVisualPlan; frame: number }) {
   const state = getHouseMathFrame(plan, frame);
-  const lines = wrapHeading(state.headline);
-  const subheadLines = wrapHeading(state.subhead, 44);
+  const heading = fitSvgText(state.headline, { maxWidthPx: 798, preferredSize: 73, minSize: 32, maxLines: 3 });
+  const subheading = fitSvgText(state.subhead, { maxWidthPx: 795, preferredSize: 31, minSize: 22, maxLines: 4 });
+  const lines = heading.lines, subheadLines = subheading.lines;
   const isPayoff = state.intent === "cost-payoff";
   return <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080" role="img" aria-label={`${state.headline}: ${state.subhead}`} style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
     <defs>
@@ -127,8 +115,8 @@ export function HouseMathExportScene({ plan, frame }: { plan: HouseMathVisualPla
     <text x="1800" y="105" textAnchor="end" fill={muted} fontSize="26" letterSpacing="2">{String(state.chapterIndex + 1).padStart(2, "0")} / {String(state.chapterCount).padStart(2, "0")}</text>
     <g opacity={state.enterProgress} transform={`translate(${(1 - state.enterProgress) * -50} 0)`}>
       <text x="125" y="240" fill={amber} fontSize="28" fontWeight="700" letterSpacing="3.2">{state.emphasis.toUpperCase()}</text>
-      {lines.map((line, index) => <text key={`${line}-${index}`} x="120" y={345 + 90 * index} fill={ink} fontSize={lines.length > 2 ? 63 : 73} fontWeight="750" letterSpacing="-2.1">{line}</text>)}
-      {subheadLines.map((line, index) => <text key={`${line}-${index}`} x="125" y={Math.max(650, 425 + lines.length * 90) + index * 49} fill={muted} fontSize="31">{line}</text>)}
+      {lines.map((line, index) => <text data-house-copy="heading" key={`${line}-${index}`} x="120" y={345 + 90 * index} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-2.1">{line}</text>)}
+      {subheadLines.map((line, index) => <text data-house-copy="subheading" key={`${line}-${index}`} x="125" y={Math.max(650, 425 + lines.length * 90) + index * 49} fill={muted} fontSize={subheading.fontSize}>{line}</text>)}
     </g>
     <line x1="973" y1="214" x2="973" y2="924" stroke="#415766" strokeWidth="2" opacity="0.68" />
     {state.intent === "house-intro" && <HouseIllustration frame={state} />}

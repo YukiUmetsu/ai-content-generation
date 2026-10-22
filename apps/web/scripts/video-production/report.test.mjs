@@ -38,6 +38,7 @@ test("long mode never passes when rendered film is shorter than 480 seconds", ()
     mp4: { ...short.mp4, frameCount: 480 * 30, audioDurationSeconds: 480, videoDurationSeconds: 480 },
   };
   assert.equal(buildQaReport(long).technicalPass, true);
+  assert.throws(() => buildQaReport({ ...long, job: { ...long.job, destination: { ...long.job.destination, minimumDurationSeconds: 600 } } }), /600|minimum|duration/i);
 });
 
 test("missing payoff, mismatched hash, clipped peak and audio/video drift are release blockers", () => {

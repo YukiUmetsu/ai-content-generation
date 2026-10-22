@@ -45,7 +45,8 @@ export function compileHouseMathVisuals(job, timeline) {
   if (job.destination.presetId !== "youtube" || job.destination.width !== 1920 || job.destination.height !== 1080) fail("first House Math renderer supports YouTube 1920x1080 only");
   if (!timeline || timeline.sampleRate !== 48000 || !Number.isSafeInteger(timeline.totalFrames) || timeline.totalFrames < 1) fail("measured 48 kHz narration timeline is required");
   if (timeline.fps?.num !== job.destination.fps.num || timeline.fps?.den !== job.destination.fps.den) fail("timeline and destination rational FPS differ");
-  if (job.mode === "youtube-long" && timeline.totalSamples < 480 * 48000) fail("long-form requires at least 480 seconds of measured narration, not padding");
+  const minimumSeconds = Math.max(job.mode === "youtube-long" ? 480 : 0, job.destination.minimumDurationSeconds ?? 0);
+  if (timeline.totalSamples < minimumSeconds * 48000) fail(`video requires at least ${minimumSeconds} seconds of measured narration, not padding`);
   if (!Array.isArray(timeline.beats) || timeline.beats.length !== job.beats.length) fail("scene chapter count must match narrated beats");
   const chapters = job.beats.map((beat, index) => {
     const range = timeline.beats[index];
@@ -85,13 +86,14 @@ export function getHouseMathFrame(plan, absoluteFrame) {
   const localFrame = absoluteFrame - chapter.startFrame;
   const revealAt = plan.events[plan.payoffEventId];
   const revealProgress = chapter.intent === "cost-payoff" && absoluteFrame > revealAt ? ease((absoluteFrame - revealAt) / 32) : 0;
+  const totalLabel = revealProgress > 0 ? "$" + Math.round(plan.economics.totalCashOutflow).toLocaleString("en-US") : null;
   const enterProgress = ease(localFrame / 22);
   const chapterFrames = chapter.endFrame - chapter.startFrame;
   const progress = clamp01(localFrame / Math.max(1, chapterFrames - 1));
   return {
     frame: absoluteFrame, chapterIndex, chapterCount: plan.chapters.length, intent: chapter.intent,
     headline: chapter.visual.headline, subhead: chapter.visual.subhead, emphasis: chapter.visual.emphasis,
-    localFrame, enterProgress, revealProgress, progress,
+    localFrame, enterProgress, revealProgress, totalLabel, progress,
     disclaimer: plan.disclaimer, economics: plan.economics, scenario: plan.scenario,
   };
 }

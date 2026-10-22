@@ -20,7 +20,7 @@ export interface HouseMathFrame {
   frame: number; chapterIndex: number; chapterCount: number;
   intent: HouseMathVisualPlan["chapters"][number]["intent"];
   headline: string; subhead: string; emphasis: string; localFrame: number;
-  enterProgress: number; revealProgress: number; progress: number;
+  enterProgress: number; revealProgress: number; totalLabel: string | null; progress: number;
   disclaimer: string; economics: HouseMathVisualPlan["economics"]; scenario: HouseMathVisualPlan["scenario"];
 }
 export declare function compileHouseMathVisuals(job: unknown, timeline: unknown): HouseMathVisualPlan;

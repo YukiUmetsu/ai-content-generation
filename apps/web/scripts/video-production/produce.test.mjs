@@ -19,7 +19,7 @@ async function context(t) {
   const injected = {
     synthesizeNarration: async (j) => {
       providerCalls += j.beats.length;
-      return j.beats.map((b) => ({ id: b.id, samples: 48000, pauseAfterMs: b.pauseAfterMs, eventIds: b.eventIds, text: b.narration, wavPath: "mocked" }));
+      return j.beats.map((b) => ({ id: b.id, samples: 48000, pauseAfterMs: b.pauseAfterMs, eventIds: b.eventIds, text: b.narration, wavPath: "mocked", sha256: hash(b.narration), provider: "local", modelId: "installed-mock", providerRevision: "bridge-1" }));
     },
     renderMasterAudio: async (input, options) => {
       await mkdir(options.outputDir, { recursive: true });
@@ -32,8 +32,9 @@ async function context(t) {
     startLocalStageServer: async ({ validatedPlan }) => {
       sceneCalls++;
       assert.equal(validatedPlan.kind, "house-math-visual-plan");
-      return { url: "http://127.0.0.1:9876/video-export.html", close: async () => { closed = true; } };
+      return { url: "http://127.0.0.1:9876/video-export.html", buildHash: "b".repeat(64), close: async () => { closed = true; } };
     },
+    preflightExport: async () => ({ buildHash: "b".repeat(64) }),
     renderVideoSegments: async ({ manifest, outDir, reviewFrames }) => {
       browserCalls++;
       await mkdir(outDir, { recursive: true });
@@ -71,6 +72,12 @@ test("one command connects synthetic adapter outputs into atomically published r
     const bytes = await readFile(join(result.releaseDir, still.file));
     assert.equal(hash(bytes), still.sha256);
   }
+  const manifest = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
+  assert.equal(manifest.buildHash, "b".repeat(64));
+  assert.equal(manifest.artifacts.voice, hash(await readFile(join(result.releaseDir, "voice.wav"))));
+  assert.equal(manifest.narration.length, ctx.job.beats.length);
+  assert.equal(manifest.narration[0].providerRevision, "bridge-1");
+  assert.equal(manifest.narration[0].sha256, hash(ctx.job.beats[0].narration));
 });
 
 test("stage/render failure closes the local server and never publishes an incomplete release", async (t) => {
@@ -118,4 +125,20 @@ test("missing review frames aborts publication rather than claiming a complete e
   ctx.injected.renderVideoSegments = async () => ({ frameCount: 90, segmentHashes: [], reviewStills: [], peakScratchBytes: 0, videoOnlyPath: "missing" });
   await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /review still|preview/i);
   assert.equal((await readdir(ctx.opts.out)).includes("release"), false);
+});
+
+test("broken renderer prerequisites fail before any provider usage or output publication", async (t) => {
+  const ctx = await context(t);
+  ctx.injected.preflightExport = async () => { throw new Error("built renderer missing"); };
+  await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /renderer missing/);
+  assert.equal(ctx.status().providerCalls, 0);
+  assert.equal(ctx.status().sceneCalls, 0);
+});
+
+test("rebuilding scene between preflight and capture never publishes stale pixels", async (t) => {
+  const ctx = await context(t);
+  const serve = ctx.injected.startLocalStageServer;
+  ctx.injected.startLocalStageServer = async (data) => ({ ...await serve(data), buildHash: "c".repeat(64) });
+  await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /build|scene.*changed/i);
+  assert.equal(ctx.status().browserCalls, 0);
 });

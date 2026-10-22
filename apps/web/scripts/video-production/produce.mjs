@@ -13,7 +13,8 @@ import { buildSampleTimeline, toFrame } from "./timeline.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { startLocalStageServer } from "./stage-server.mjs";
-import { renderVideoSegments } from "./render.mjs";
+import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
+import { fingerprintBuiltStage } from "./stage-server.mjs";
 import { buildQaReport } from "./report.mjs";
 
 const run = promisify(execFile);
@@ -68,7 +69,7 @@ async function toolVersions() {
 /**
  * @param {object} candidate JSON video-production-job v1
  * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
- * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
+ * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
   const parsed = parseVideoProductionJob(candidate);
@@ -93,6 +94,14 @@ export async function produceVideo(candidate, options, deps = {}) {
   if ([parse(out).root, homedir(), process.cwd(), resolve(process.cwd(), ".."), "/tmp", "/workspace"].includes(out)) fail("choose a narrow, job-owned output directory");
   const releaseDir = join(out, "release");
   if (await exists(releaseDir)) fail("release already exists; choose a new output directory instead of overwriting published files");
+  const distRoot = options.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
+  // This potentially costly browser/build check MUST finish before provider transmission.
+  const preflight = await (deps.preflightExport ?? (async () => {
+    const buildHash = await fingerprintBuiltStage(distRoot);
+    await probeBrowserExecutable(options.browserExecutable);
+    return { buildHash };
+  }))();
+  if (!/^[a-f0-9]{64}$/i.test(preflight?.buildHash ?? "")) fail("built scene must have a SHA-256 export identity");
   const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
@@ -120,12 +129,12 @@ export async function produceVideo(candidate, options, deps = {}) {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
     });
-    const distRoot = options.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
     stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan });
+    if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {
       render = await (deps.renderVideoSegments ?? renderVideoSegments)({
-        stageUrl: stage.url, manifest: plan.manifest, planHash,
+        stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable,
         maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
       });
@@ -157,13 +166,20 @@ export async function produceVideo(candidate, options, deps = {}) {
     ]);
     const artifactHashes = {
       video: sha256(await readFile(video)), master: sha256(await readFile(master)),
+      voice: sha256(await readFile(voice)),
       captions: sha256(await readFile(captions)),
     };
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
     const versions = deps.toolVersions ?? await toolVersions();
     const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed" });
     const manifestPath = join(working, "render-manifest.json");
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, planHash, plan, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes }, null, 2), { flag: "wx" });
+    const narration = speech.map((beat) => ({
+      id: beat.id, sha256: beat.sha256, samples: beat.samples,
+      provider: beat.provider, modelId: beat.modelId, providerRevision: beat.providerRevision,
+      licenseStatus: beat.licenseStatus ?? job.voice.licenseStatus,
+      commercialRightsVerified: beat.commercialRightsVerified === true,
+    }));
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.
