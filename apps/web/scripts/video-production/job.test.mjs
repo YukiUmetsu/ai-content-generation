@@ -4,6 +4,7 @@ import test from "node:test";
 import { parseVideoProductionJob } from "./job.mjs";
 
 const original = JSON.parse(readFileSync(new URL("../../../../examples/video-production-house-math-smoke.json", import.meta.url), "utf8"));
+const general = JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
 const modified = (change) => change(structuredClone(original));
 const errorCodes = (result) => result.findings.filter((item) => item.severity === "error").map((item) => item.code);
 
@@ -12,6 +13,22 @@ test("validates the illustrative House Math smoke job", () => {
   assert.equal(result.ok, true, JSON.stringify(result.findings));
   assert.equal(result.job.approval, "test-only");
   assert.equal(result.job.destination.presetId, "youtube");
+});
+
+test("validates a general explainer and rejects family-incompatible or unsafe diagram data", () => {
+  assert.equal(parseVideoProductionJob(general).ok, true, JSON.stringify(parseVideoProductionJob(general).findings));
+  const copy = structuredClone(general);
+  copy.beats[1].visual.items[0] = "x".repeat(100);
+  assert.ok(errorCodes(parseVideoProductionJob(copy)).includes("invalid-diagram-item"));
+  const house = structuredClone(general);
+  house.visualFamily = "house-math-v1";
+  assert.ok(errorCodes(parseVideoProductionJob(house)).includes("unsupported-scene-intent"));
+  const orphan = structuredClone(general);
+  orphan.beats[3].visualIntent = "general-flow";
+  assert.ok(errorCodes(parseVideoProductionJob(orphan)).includes("invalid-payoff-scene"));
+  const missing = structuredClone(general);
+  missing.beats[0].visual.items = [];
+  assert.ok(errorCodes(parseVideoProductionJob(missing)).includes("invalid-diagram-items"));
 });
 
 test("does not allow a duplicate beat or event identifier", () => {
@@ -81,6 +98,14 @@ test("unverified voice license always blocks commercial approval", () => {
     return job;
   });
   assert.equal(errorCodes(parseVideoProductionJob(unlicensed)).includes("commercial-approval-blocked"), true);
+});
+
+test("source-unknown model claims remain valid drafts but cannot be commercially approved", () => {
+  const authored = structuredClone(general);
+  authored.claims[0].status = "unverified";
+  assert.equal(parseVideoProductionJob(authored).ok, true);
+  authored.approval = "approved";
+  assert.ok(errorCodes(parseVideoProductionJob(authored)).includes("commercial-approval-blocked"));
 });
 
 test("scenario economics and per-beat visual copy must be finite and fit authored scenes", () => {

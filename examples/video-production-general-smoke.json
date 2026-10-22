@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "video-production-job",
+  "visualFamily": "general-explainer-v1",
+  "id": "general-network-smoke-v1",
+  "mode": "smoke",
+  "locale": "en-US",
+  "approval": "test-only",
+  "topic": { "title": "How a Message Crosses a Network", "viewerQuestion": "How does a message reach another device?", "payoffEventId": "message-delivered" },
+  "references": { "brandKit": { "id": "brand_explainer_demo", "revision": 1 }, "storyboard": { "id": "general_smoke_story", "revision": 1 }, "selectedPackagingId": "general-network-process" },
+  "destination": { "presetId": "youtube", "width": 1920, "height": 1080, "fps": { "num": 30, "den": 1 }, "targetDurationSeconds": [30, 90], "minimumDurationSeconds": null },
+  "voice": { "profileId": "general-narrator", "provider": "fish", "modelId": "s2.1-pro-free", "voiceId": "configure-a-licensed-reference", "locale": "en-US", "licenseStatus": "unknown" },
+  "policy": { "commercialRightsVerified": false, "reviewerApproved": false, "maxCostUsd": 0 },
+  "claims": [{ "id": "unverified-network-illustration", "status": "illustrative", "text": "The diagram is an illustrative route, not a measured network capture." }],
+  "beats": [
+    { "id": "question", "narration": "You press send. The message seems to appear somewhere else instantly, but what happens between the two devices?", "visualIntent": "general-intro", "visual": { "headline": "A MESSAGE LEAVES", "subhead": "What happens after you tap Send?", "emphasis": "THE QUESTION", "items": ["Your device", "The network", "Their device"] }, "claimRefs": ["unverified-network-illustration"], "eventIds": [], "pauseAfterMs": 300 },
+    { "id": "steps", "narration": "The message becomes data that can travel between devices. An example path carries it from a phone to a local router and onward through the network.", "visualIntent": "general-flow", "visual": { "headline": "A ROUTE THROUGH THE NETWORK", "subhead": "Illustrative hops, not a live trace", "emphasis": "THE JOURNEY", "items": ["Phone", "Router", "Network", "Destination"] }, "claimRefs": ["unverified-network-illustration"], "eventIds": [], "pauseAfterMs": 300 },
+    { "id": "compare", "narration": "The route can change depending on the network and where the other device connects. This example is a mental model, not a promise of a specific route.", "visualIntent": "general-comparison", "visual": { "headline": "ONE MESSAGE, DIFFERENT ROUTES", "subhead": "The path depends on network conditions", "emphasis": "THE CAVEAT", "items": ["Local connection", "Internet route"] }, "claimRefs": ["unverified-network-illustration"], "eventIds": [], "pauseAfterMs": 200 },
+    { "id": "arrival", "narration": "At the end, the destination receives the data and can display the message. That is the useful idea: send, route, and deliver.", "visualIntent": "general-payoff", "visual": { "headline": "THE MESSAGE ARRIVES", "subhead": "Send · route · deliver", "emphasis": "THE ANSWER", "items": ["Send", "Route", "Deliver"] }, "claimRefs": ["unverified-network-illustration"], "eventIds": ["message-delivered"], "pauseAfterMs": 0 }
+  ],
+  "events": [{ "id": "message-delivered", "beatId": "arrival" }],
+  "sounds": [{ "id": "arrival-chime", "eventId": "message-delivered", "category": "number.reveal", "assetRef": "self-authored-test-chime", "licenseStatus": "test-only" }]
+}

@@ -26,12 +26,26 @@ pnpm video:studio
 
 Open **http://127.0.0.1:8788**. The **local Video Test Studio** offers a complete browser test path:
 
-1. Choose **Quick smoke test** (3 beats, ~30–60 seconds) or **Long-form YouTube** (26 beats, at least 8 measured minutes; potentially a lengthy render).
+1. Choose **Quick smoke test** (3 beats, ~30–60 seconds), **Long-form YouTube** (26 beats, at least 8 measured minutes), or **Your own topic**. For a custom topic, enter its question, intended audience, optional notes, and an installed local text-model endpoint; click **Generate local draft**.
+   The model proposes three alternate titles/hooks and writes an editable, scene-by-scene narrated story. Review its `job.json` in the editor and **Save draft edits** before testing. The model's statements are explicitly **unverified**, not invented citations or commercial-ready claims. For custom long-form, the model must produce a substantive script and the finished narration must still measure at least eight minutes.
 2. Select **Fish Audio API** or your own installed **local TTS bridge**. Enter an authorized voice reference and, for Fish, an API key (or set `FISH_AUDIO_API_KEY` in the launching terminal). The Fish model is fixed to the test-only `s2.1-pro-free` ID; paid models cannot be selected.
 3. Check the voice permissions and click **Check readiness**. The studio builds the export scene and checks dependencies/browser/consent **without any TTS request**. Read actionable findings if blocked.
 4. Click **Render test video** and confirm this specific run. Watch real worker stages and completed verified frame batches, or cancel. Then play the real MP4, audition voice/master audio, check review stills, and download captions, render manifest and QA report. The job-owned output directory is displayed below the player.
 
-No arbitrary file paths, online publishing, model downloads or commercial approval are exposed. The server only listens on `127.0.0.1`, requires a local token for changes/artifact downloads, does not persist credentials and creates unique directories under `~/Movies/ContentGen/`. Close the studio with Ctrl-C. Run a long-form test only after the smoke test succeeds and you have adequate time/disk space; 8 minutes at 30 fps requires **at least 14,400 frames** and can take a long time to capture.
+No arbitrary file paths, online publishing, model downloads or commercial approval are exposed. The local topic generator sends the brief only to an **already running OpenAI-compatible text server on loopback** such as `http://127.0.0.1:11434/v1/chat/completions`; it never silently uses a cloud model. Topic generation alone does not call Fish Audio or render a video. The server only listens on `127.0.0.1`, requires a local token for changes/artifact downloads, does not persist credentials and creates unique directories under `~/Movies/ContentGen/`. Close the studio with Ctrl-C. Run a long-form test only after the smoke test succeeds and you have adequate time/disk space; 8 minutes at 30 fps requires **at least 14,400 frames** and can take a long time to capture.
+
+### Topic-only terminal command
+
+For scripting or debugging without opening the Studio, start your own local OpenAI-compatible text server with the model already installed and run:
+
+```bash
+cd apps/web
+pnpm video:topic -- --topic "How does a refrigerator move heat?" \
+  --audience "Curious homeowners" --mode smoke \
+  --model your-installed-model-name --out ../../outputs/refrigerator-draft.json
+```
+
+The command writes a unique **test-only, editable `video-production-job/v1` draft**; it does not fetch sources, call a voice provider, render, or publish. Run `pnpm video:topic -- --help` for local endpoint, audience, language and long-form options. The generator supports English and Japanese and enforces substantive narration limits; actual duration is still checked using measured generated audio before export.
 
 ### Terminal alternative
 
@@ -200,6 +214,17 @@ The configuration selects 17 top-level items; the pinned registry resolves
 32 items and vendors 82 unique files including the two stylesheets. All
 required npm dependencies already exist in `package.json`; this expansion
 adds no new runtime dependencies.
+
+### Upstream adoption candidates (checked 2026-10-22)
+
+Kumiki main has advanced **22 commits** beyond this pin (140 registry items vs 110 at the pin). The general-topic renderer still uses its own simple SVG story layouts; the next **separately validated** registry upgrade should target:
+
+1. `diagram-stage` + `process-journey` for authored node/edge identities, moving packets and semantic route explanations; require normal-speed 16:9 browser export and shuffled-frame seek parity before replacing the generic-flow renderer.
+2. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
+3. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
+4. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
+
+`evidence-stage` is useful later for authorized source visuals. Its dependency tree is broader, and recent Short/Video items still document pending human inspection. **Do not silently move the Kumiki commit pin or call uninstalled registry APIs.** Adopt an item through `kumiki:update`, hash verification, consumer typecheck/build and actual video playback checks in a dedicated change.
 
 Kumiki has one root `registry.json`, not per-item JSON files expected by the
 shadcn GitHub registry flow. `scripts/vendor-kumiki.mjs` is the reproducible
