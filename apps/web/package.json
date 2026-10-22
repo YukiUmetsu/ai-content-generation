@@ -16,6 +16,7 @@
     "kumiki:verify": "node scripts/vendor-kumiki.mjs",
     "fixtures:creative": "node scripts/serve-fixtures.mjs",
     "video:produce": "node scripts/video-production/cli.mjs",
+    "video:try": "node scripts/video-production/try.mjs",
     "test:video:headless": "node --test scripts/video-production/*.test.mjs"
   },
   "dependencies": {

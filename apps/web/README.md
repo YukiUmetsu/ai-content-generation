@@ -14,6 +14,20 @@ appearance/density axes and error boundary are provided.
 
 The headless command now connects automatic Fish Audio or local-loopback narration to sample-accurate scene timing, SFX, a Kumiki frame-export scene, bounded browser capture, FFmpeg encoding/muxing, and a measured QA report. **This is an automated *draft*, not a published or commercially approved video.** The example House Math jobs are hypothetical and test-only; neither a live Fish API request nor real browser playback has been verified by CI.
 
+### Easiest way to try it on your Mac
+
+With Node >=22.12, pnpm, FFmpeg/FFprobe and an already-installed Chrome/Chromium-compatible browser:
+
+```bash
+cd apps/web
+pnpm install --frozen-lockfile  # one time
+pnpm video:try
+```
+
+This guided terminal command automatically detects Chrome in standard macOS locations, builds the export page, takes an **authorized Fish voice ID**, and reads a Fish API key from `FISH_AUDIO_API_KEY` or a **hidden** terminal prompt. It asks for voice/text-transmission authorization, checks media tools and the scene build, and **asks again before generating narration or calling Fish Audio**. Press Enter (default No) at the render question to stop safely after preflight. It generates a fresh job-owned directory in `~/Movies/ContentGen/smoke-...`, containing the complete `job.json` and, if production succeeds, `release/video.mp4` and the QA artifacts. It never modifies the checked-in example. Fish `s2.1-pro-free` is evaluation-only until availability and commercial terms are checked.
+
+Use `pnpm video:try -- --dry-run` to check readiness without any TTS request or video output; it still builds the local scene and prompts for authorization. For a configured local bridge, use `pnpm video:try -- --provider local` and provide `CONTENTGEN_LOCAL_VOICE_ID`, `CONTENTGEN_LOCAL_MODEL_ID`, `CONTENTGEN_LOCAL_ENGINE_VERSION`, and optionally `CONTENTGEN_LOCAL_ENDPOINT`. The underlying `pnpm video:produce` remains available for fully scripted runs. No browser, model or dependency is automatically downloaded by the guide.
+
 Prerequisites: Node `>=22.12`, pnpm, FFmpeg/FFprobe, the production `apps/web/dist` build, an **already installed** Chrome/Chromium executable, and `playwright-core` (installed from this app's pinned pnpm lockfile; it does not download a browser). Supply your own permitted voice reference and TTS service. Run on an explicitly chosen, job-owned directory with sufficient disk space; ~8-minute 1080p videos require lengthy frame capture.
 
 ```bash
