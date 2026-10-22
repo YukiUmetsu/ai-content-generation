@@ -37,10 +37,22 @@ describe("House Math deterministic export scene", () => {
     expect(middle).toContain("ILLUSTRATIVE SCENARIO");
   });
 
-  it("payoff number is zero-opacity on first reveal frame and visible later", () => {
+  it("does not place the final amount in the DOM before the event, then reveals it", () => {
     const at = renderToStaticMarkup(<HouseMathExportScene plan={plan} frame={120} />);
     const later = renderToStaticMarkup(<HouseMathExportScene plan={plan} frame={155} />);
-    expect(at).toMatch(/opacity="0"[^>]*>\$1,413,352<\/text>/);
+    expect(at).not.toContain("$1,413,352");
     expect(later).toMatch(/opacity="1"[^>]*>\$1,413,352<\/text>/);
+  });
+
+  it("does not spoil the total on a preceding comparison scene", () => {
+    const withComparison: HouseMathVisualPlan = {
+      ...plan,
+      chapters: plan.chapters.map((chapter) => chapter.id === "components"
+        ? { ...chapter, intent: "cost-comparison" }
+        : chapter),
+    };
+    const comparison = renderToStaticMarkup(<HouseMathExportScene plan={withComparison} frame={90} />);
+    expect(comparison).toContain("TOTAL REVEALED AT THE END");
+    expect(comparison).not.toContain("$1,413,352");
   });
 });
