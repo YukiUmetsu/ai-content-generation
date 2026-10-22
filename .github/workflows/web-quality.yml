@@ -1,0 +1,58 @@
+name: Web quality
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-quality.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Install, verify and test web app
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify pinned Kumiki sources
+        run: pnpm kumiki:verify
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Production build
+        run: pnpm build

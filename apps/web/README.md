@@ -3,11 +3,12 @@
 React 19 + TypeScript + Vite 8 + Tailwind CSS v4 + a pinned, source-vendored
 [Kumiki-UI](https://github.com/YukiUmetsu/kumiki-ui) registry.
 
-This app is the **shared application shell only**. It deliberately contains no
-research, job, render, or publishing logic. The five feature teams own the
-folders under `src/features/` and replace their placeholder slot bodies; the
-shell, split pane, preview canvas, inspector, appearance/density axes and error
-boundary are provided.
+This app is the **shared application shell and creative-workbench foundation**.
+It deliberately contains no research, job, render, or publishing logic. The
+five feature slots are independently owned: **Brand & appearance** and **Motion
+& media lab** are working examples; thumbnail, storyboard and platform delivery
+remain integration slots. The shell, split pane, preview canvas, inspector,
+appearance/density axes and error boundary are provided.
 
 ## Run and verify
 
@@ -44,6 +45,27 @@ there by default; set `CONTENTGEN_CREATIVE_ORIGIN` to point elsewhere. The
 fixture is illustrative and synthetic, derived from the documented house-cost
 scenario, and is never a published or measured performance claim. Stop the
 fixture server to see the real 501 response again.
+
+## Motion & media integration showcase
+
+Open **Create → Motion gallery** to exercise the vendored components as one
+frame-addressed workflow:
+
+- **MotionDirector → CameraStage:** deterministic camera movement and a signal
+  reveal sampled at integer frames, with reduced-motion behavior respected.
+- **EconomicChartView:** an illustrative HVAC cost waterfall reveals from the
+  same frame scrubber; the values are synthetic examples, not market claims.
+- **Artboard + LayerStack + LayerList + AlignmentGuides:** inspect the layered
+  title card, select layers, and keep safe-area/grid guides out of the export.
+- **ExportPreview:** review export diagnostics and download the authored still as
+  SVG or PNG, including small-format checks.
+- **VideoExportStage:** select YouTube landscape or Shorts portrait, author at
+  the selected profile's exact dimensions, and verify a frame is ready for
+  browser capture. This is a capture handshake, not a video encoder or publisher.
+
+The **Web quality** GitHub Actions workflow runs frozen dependency installation,
+pinned Kumiki verification, lint, typecheck, tests and production build for
+changes to `apps/web/**`.
 
 ## Layout
 
