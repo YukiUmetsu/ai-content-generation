@@ -1,7 +1,7 @@
 # Headless Video Production MVP — Design
 
 **Date:** 2026-10-22  
-**Status:** Approved direction in conversation; written specification awaiting review  
+**Status:** User-approved written design (2026-10-22); [implementation plan](../plans/2026-10-22-headless-video-production.md)  
 **Scope:** First working CLI-first production slice of ContentGen, without a new UI.
 
 ## 1. Intent and finish line
