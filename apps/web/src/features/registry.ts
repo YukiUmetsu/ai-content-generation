@@ -5,7 +5,7 @@
  * workspace. Keep the contract user-facing: every tool explains its outcome,
  * steps and outputs, and clearly distinguishes a live editor from a planned one.
  */
-import type { ComponentType, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export const FEATURE_IDS = [
   "brand-appearance",
