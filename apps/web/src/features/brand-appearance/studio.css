@@ -107,24 +107,22 @@
 
 @container (min-width: 720px) {
   .ba-grid {
-    flex-direction: row;
-    align-items: flex-start;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .ba-editor {
-    width: 22rem;
-    flex: 0 0 auto;
-  }
-
-  .ba-preview-stage-section {
-    flex: 1 1 0%;
-    min-width: 0;
+    width: 100%;
+    max-width: none;
+    flex: 1 1 auto;
   }
 }
 
 /* Editor sections */
 .ba-editor {
   display: flex;
+  width: 100%;
+  max-width: none;
   flex-direction: column;
   gap: var(--km-space-3);
 }

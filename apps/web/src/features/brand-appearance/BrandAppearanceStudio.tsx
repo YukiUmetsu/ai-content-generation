@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FeatureSlotProps } from "@/features/registry";
 import { Button } from "@/components/ui/button";
 import { Download, Upload } from "lucide-react";
 import type {
@@ -27,6 +28,7 @@ export interface BrandAppearanceStudioProps {
   className?: string;
   initialBrands?: BrandState[];
   initialActiveBrandId?: string;
+  onPreviewChange?: FeatureSlotProps["onPreviewChange"];
 }
 
 function brandRecord(brands: BrandState[]): Record<string, BrandState> {
@@ -38,6 +40,7 @@ export function BrandAppearanceStudio({
   className,
   initialBrands,
   initialActiveBrandId,
+  onPreviewChange,
 }: BrandAppearanceStudioProps) {
   const t = copy(locale);
   const [brandsMap, setBrandsMap] = useState<Record<string, BrandState>>(() =>
@@ -72,6 +75,16 @@ export function BrandAppearanceStudio({
   );
 
   const exportDisabled = hasInvalidPaletteValues(brand.paletteInput);
+
+  useEffect(() => {
+    if (!onPreviewChange) return;
+    onPreviewChange(<PreviewStage brand={brand} palette={previewPalette} locale={locale} />);
+  }, [onPreviewChange, brand, previewPalette, locale]);
+
+  useEffect(() => {
+    if (!onPreviewChange) return;
+    return () => onPreviewChange(null);
+  }, [onPreviewChange]);
 
   function updateBrand(next: BrandState) {
     setBrandsMap((prev) => ({ ...prev, [next.id]: next }));
@@ -207,7 +220,7 @@ export function BrandAppearanceStudio({
           <ContrastStatus palette={previewPalette} locale={locale} />
         </section>
 
-        <PreviewStage brand={brand} palette={previewPalette} locale={locale} />
+        {!onPreviewChange && <PreviewStage brand={brand} palette={previewPalette} locale={locale} />}
       </main>
 
       <JsonDialog

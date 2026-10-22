@@ -8,10 +8,8 @@ import type { Locale } from "@/features/registry";
 interface ShortcutsDialogProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  /** Hide the visible label; the accessible name stays "Shortcuts". */
   iconOnly?: boolean;
   className?: string;
-  /** Render the dialog without its trigger button (for layouts that supply their own). */
   showTrigger?: boolean;
 }
 
@@ -19,23 +17,18 @@ function shortcutRows(locale: Locale) {
   const t = {
     en: {
       open: "Open keyboard shortcuts",
-      focus: "Focus tool filter",
       switch: "Switch studio tool",
       close: "Close dialog or panel",
-      keys: (k: string) => k,
     },
     ja: {
       open: "キーボードショートカットを開く",
-      focus: "ツール検索にフォーカス",
       switch: "スタジオツールを切り替え",
       close: "ダイアログやパネルを閉じる",
-      keys: (k: string) => k,
     },
   }[locale];
 
   return [
     { keys: ["?"], action: t.open },
-    { keys: ["Ctrl / Cmd", "K"], action: t.focus },
     { keys: ["1 – 5"], action: t.switch },
     { keys: ["Esc"], action: t.close },
   ];

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { FEATURE_IDS, FEATURE_METADATA, type FeatureId } from "@/features/registry";
 import { Header } from "./header";
 import { InspectorPanel } from "./inspector";
@@ -9,6 +9,7 @@ import { Workspace } from "./workspace";
 import { EmptyState } from "./empty-state";
 import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
+import { ShortcutsDialog } from "./shortcuts-dialog";
 
 const PROJECT_ID = "demo-project-1";
 
@@ -23,32 +24,13 @@ export function Shell() {
   const [activeSection, setActiveSection] = useState<SectionId>("create");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
-  const [filter, setFilter] = useState("");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-
-  const filteredIds = useMemo(() => {
-    const query = filter.trim().toLowerCase();
-    if (!query) return FEATURE_IDS.slice();
-    return FEATURE_IDS.filter((id) => {
-      const meta = FEATURE_METADATA[id];
-      const title = (locale === "ja" ? meta.titleJa : meta.title).toLowerCase();
-      const outcome = (locale === "ja" ? meta.outcomeJa : meta.outcome).toLowerCase();
-      return title.includes(query) || outcome.includes(query);
-    });
-  }, [filter, locale]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "?" && !isTypingTarget(event.target)) {
         event.preventDefault();
         setShortcutsOpen(true);
-        return;
-      }
-
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        const input = document.querySelector<HTMLElement>("[data-shortcut='filter']");
-        input?.focus();
         return;
       }
 
@@ -60,7 +42,7 @@ export function Shell() {
         /^[1-5]$/.test(event.key)
       ) {
         const index = parseInt(event.key, 10) - 1;
-        const next = filteredIds[index];
+        const next = FEATURE_IDS[index];
         if (next) {
           event.preventDefault();
           setActiveFeatureId(next);
@@ -70,7 +52,7 @@ export function Shell() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSection, filteredIds]);
+  }, [activeSection]);
 
   const activeMeta = FEATURE_METADATA[activeFeatureId];
 
@@ -84,7 +66,12 @@ export function Shell() {
       </a>
 
       <div className="hidden lg:block">
-        <StudioSidebar activeSection={activeSection} onSelectSection={setActiveSection} locale={locale} />
+        <StudioSidebar
+          activeSection={activeSection}
+          onSelectSection={setActiveSection}
+          locale={locale}
+          onOpenShortcuts={() => setShortcutsOpen(true)}
+        />
       </div>
 
       <MobileNavDrawer
@@ -93,27 +80,22 @@ export function Shell() {
         activeSection={activeSection}
         onSelectSection={setActiveSection}
         locale={locale}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Header
-          activeSection={activeSection}
-          activeFeatureId={activeFeatureId}
-          filter={filter}
-          onFilterChange={setFilter}
-          onOpenNav={() => setMobileNavOpen(true)}
-          shortcutsOpen={shortcutsOpen}
-          onShortcutsOpenChange={setShortcutsOpen}
-        />
+        {activeSection !== "create" && (
+          <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
+        )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
           {activeSection === "create" ? (
             <Workspace
               locale={locale}
               projectId={PROJECT_ID}
-              filter={filter}
               activeFeatureId={activeFeatureId}
               onFeatureChange={setActiveFeatureId}
+              onOpenNav={() => setMobileNavOpen(true)}
             />
           ) : activeSection === "research" ? (
             <ResearchWorkspace locale={locale} />
@@ -132,17 +114,11 @@ export function Shell() {
             </main>
           )}
 
-          {activeSection === "create" && (
-            <InspectorPanel
-              meta={activeMeta}
-              locale={locale}
-              projectId={PROJECT_ID}
-              appearance={appearance}
-              density={density}
-            />
-          )}
+          {activeSection === "create" && <InspectorPanel meta={activeMeta} locale={locale} />}
         </div>
       </div>
+
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} showTrigger={false} />
     </div>
   );
 }
@@ -159,12 +135,11 @@ function sectionEmptyTitle(id: SectionId, locale: "en" | "ja"): string {
     insights: { en: "Insights", ja: "分析" },
     settings: { en: "Settings", ja: "設定" },
   };
-  return locale === "ja" ? `${labels[id].ja}はこの基盤の範囲外です` : `${labels[id]} is outside this foundation`;
+  return locale === "ja" ? labels[id].ja + "はこの基盤の範囲外です" : labels[id].en + " is outside this foundation";
 }
 
 function sectionEmptyDescription(id: SectionId, locale: "en" | "ja"): string {
   return locale === "ja"
-    ? `「${sectionLabel(id, locale)}」の機能はまだ接続されていません。作成セクションで使用可能なスタジオツールから始めてください。`
-    : `The ${sectionLabel(id, locale).toLowerCase()} area is not wired in this foundation. Start with the available studio tools in Create.`;
+    ? "「" + sectionLabel(id, locale) + "」の機能はまだ接続されていません。作成セクションで使用可能なスタジオツールから始めてください。"
+    : "The " + sectionLabel(id, locale).toLowerCase() + " area is not wired in this foundation. Start with the available studio tools in Create.";
 }
-

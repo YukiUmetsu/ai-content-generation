@@ -2,15 +2,17 @@ import { useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { Sidebar } from "@/components/ui/sidebar";
 import type { Locale } from "@/features/registry";
+import { StudioControls } from "./studio-controls";
 import { SECTIONS, type SectionId } from "./navigation";
 
 interface StudioSidebarProps {
   activeSection: SectionId;
   onSelectSection: (section: SectionId) => void;
   locale: Locale;
+  onOpenShortcuts: () => void;
 }
 
-export function StudioSidebar({ activeSection, onSelectSection, locale }: StudioSidebarProps) {
+export function StudioSidebar({ activeSection, onSelectSection, locale, onOpenShortcuts }: StudioSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -43,6 +45,12 @@ export function StudioSidebar({ activeSection, onSelectSection, locale }: Studio
           </Sidebar.Item>
         ))}
       </Sidebar.Nav>
+
+      <Sidebar.Footer>
+        <li className="w-full">
+          <StudioControls collapsed={collapsed} onOpenShortcuts={onOpenShortcuts} />
+        </li>
+      </Sidebar.Footer>
     </Sidebar>
   );
 }
@@ -52,7 +60,7 @@ interface MobileNavDrawerProps extends StudioSidebarProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function MobileNavDrawer({ open, onOpenChange, activeSection, onSelectSection, locale }: MobileNavDrawerProps) {
+export function MobileNavDrawer({ open, onOpenChange, activeSection, onSelectSection, locale, onOpenShortcuts }: MobileNavDrawerProps) {
   return (
     <Dialog
       open={open}
@@ -67,6 +75,7 @@ export function MobileNavDrawer({ open, onOpenChange, activeSection, onSelectSec
           onOpenChange(false);
         }}
         locale={locale}
+        onOpenShortcuts={onOpenShortcuts}
       />
     </Dialog>
   );

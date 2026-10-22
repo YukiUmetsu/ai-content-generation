@@ -1,23 +1,11 @@
 /**
  * Feature integration contract.
  *
- * Five independent feature agents build on this foundation. Each agent owns one
- * folder under `src/features/<id>/` and replaces the body of its exported slot
- * component. Nothing else in the shell needs to change: the shell reads
- * `FEATURE_SLOTS` in `src/features/slots.tsx`, which maps each id to its slot.
- *
- * Rules for slot authors
- * - Accept `FeatureSlotProps`; do not read global state directly.
- * - Render inside the provided editor region: fill height, own your scroll.
- * - Use Kumiki components and `--km-*` semantic tokens (Tailwind utilities that
- *   bridge them). Do not introduce a second theme system, raw hex palettes or
- *   global CSS resets.
- * - Keep creative output (brand kits, thumbnails, storyboards, motion, platform
- *   variants) inside a preview/artboard scope, never restyled as editor chrome.
- * - Every async state must be honest: loading, empty, error, cancel. No fake
- *   percentages and no invented results.
+ * Each tool owns one folder under src/features/<id>/ and plugs into the shared
+ * workspace. Keep the contract user-facing: every tool explains its outcome,
+ * steps and outputs, and clearly distinguishes a live editor from a planned one.
  */
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 export const FEATURE_IDS = [
   "brand-appearance",
@@ -28,30 +16,28 @@ export const FEATURE_IDS = [
 ] as const;
 
 export type FeatureId = (typeof FEATURE_IDS)[number];
+export type Locale = "en" | "ja";
+export type ToolAvailability = "live" | "demo" | "planned";
 
 export interface FeatureSlotProps {
-  /** Stable project identifier. The foundation has no persistence yet; the shell
-   *  passes a placeholder id so slots can be wired to real data later. */
   projectId: string;
   locale: Locale;
-  /** Optional CSS class applied to the slot root by the shell. */
   className?: string;
+  /** Optional live preview content rendered in the shared preview pane. */
+  onPreviewChange?: (preview: ReactNode | null) => void;
 }
-
-export type Locale = "en" | "ja";
 
 export interface FeatureMetadata {
   id: FeatureId;
-  /** English label used in navigation. */
   title: string;
-  /** Japanese label, shown when the shell locale is `ja`. */
   titleJa: string;
-  /** One sentence describing the user outcome, not the implementation. */
   outcome: string;
   outcomeJa: string;
-  /** What this slot consumes from the foundation. */
+  availability: ToolAvailability;
+  steps: Record<Locale, readonly string[]>;
+  outputs: Record<Locale, readonly string[]>;
+  /** Internal integration metadata retained for future data-flow wiring. */
   consumes: readonly string[];
-  /** What this slot is expected to produce for downstream features. */
   produces: readonly string[];
 }
 
@@ -60,48 +46,140 @@ export const FEATURE_METADATA: Record<FeatureId, FeatureMetadata> = {
     id: "brand-appearance",
     title: "Brand & appearance",
     titleJa: "ブランドと外観",
-    outcome: "Define a versioned BrandKit: palette roles, type roles, motion cadence and delivery defaults.",
-    outcomeJa: "バージョン管理されたBrandKit（配色・書体・モーション・配信設定）を定義します。",
-    consumes: ["Kumiki --km-* tokens", "Appearance and density axis", "Preview canvas scope"],
-    produces: ["BrandKit revision", "DTCG token document", "Preview composition"],
+    outcome: "Choose a visual style, tune brand colors and typography, and see the result in video and thumbnail previews.",
+    outcomeJa: "ビジュアルスタイルを選び、ブランドカラーと書体を調整し、動画やサムネイルのプレビューで確認します。",
+    availability: "live",
+    steps: {
+      en: [
+        "Choose an art direction preset.",
+        "Adjust the palette and typography.",
+        "Review the video, metric, and thumbnail previews.",
+        "Export the appearance settings when you're happy.",
+      ],
+      ja: [
+        "アートディレクションのプリセットを選びます。",
+        "配色と書体を調整します。",
+        "動画・数値表示・サムネイルのプレビューを確認します。",
+        "完成したら外観設定を書き出します。",
+      ],
+    },
+    outputs: {
+      en: ["Reusable brand style settings", "Video-opening and metric previews", "YouTube thumbnail preview", "Exportable appearance JSON"],
+      ja: ["再利用できるブランドスタイル設定", "動画オープニングと数値表示のプレビュー", "YouTube サムネイルのプレビュー", "書き出し可能な外観 JSON"],
+    },
+    consumes: ["Brand colors and typography", "Selected art direction", "Optional BrandKit JSON"],
+    produces: ["Reusable brand style settings", "Video-opening preview", "Metric and thumbnail previews"],
   },
   "thumbnail-composer": {
     id: "thumbnail-composer",
     title: "Thumbnail composer",
     titleJa: "サムネイル作成",
-    outcome: "Compose distinct, factual thumbnail variants at export size and mobile card size.",
-    outcomeJa: "書き出しサイズとモバイル表示サイズで、根拠のあるサムネイル案を比較します。",
-    consumes: ["BrandKit palette and type roles", "Preview canvas scope", "Platform card sizes"],
-    produces: ["Thumbnail variants", "Packaging hypothesis", "Export manifest entry"],
+    outcome: "Create and compare YouTube thumbnail concepts that stay readable at full size and on mobile.",
+    outcomeJa: "通常サイズでもスマートフォンでも読みやすい YouTube サムネイル案を作成・比較します。",
+    availability: "planned",
+    steps: {
+      en: [
+        "Add the video topic and one key takeaway.",
+        "Compare thumbnail layouts and headline treatments.",
+        "Check readability at mobile-card size.",
+        "Choose a concept for export.",
+      ],
+      ja: [
+        "動画のテーマと伝えたい要点を入力します。",
+        "レイアウトと見出しの表現を比較します。",
+        "スマートフォンのカードサイズで読みやすさを確認します。",
+        "書き出す案を選びます。",
+      ],
+    },
+    outputs: {
+      en: ["Thumbnail concepts", "Mobile readability comparison", "Export-ready image"],
+      ja: ["サムネイル案", "モバイルでの読みやすさ比較", "書き出し用画像"],
+    },
+    consumes: ["Video topic and key takeaway", "Brand colors and typography", "Platform image sizes"],
+    produces: ["Thumbnail concepts", "Mobile readability comparison", "Export-ready image"],
   },
   "storyboard-planner": {
     id: "storyboard-planner",
     title: "Storyboard planner",
     titleJa: "ストーリーボード",
-    outcome: "Sequence scenes, narration beats and shot intent before any render is requested.",
-    outcomeJa: "レンダリング前に、シーン・ナレーション・ショット意図を構成します。",
-    consumes: ["BrandKit motion cadence", "Scene recipes", "Audio timing contract"],
-    produces: ["Storyboard document", "Scene list", "Render job request"],
+    outcome: "Plan the scenes, narration, and camera intent before rendering a video.",
+    outcomeJa: "動画をレンダリングする前に、シーン・ナレーション・カメラの意図を組み立てます。",
+    availability: "planned",
+    steps: {
+      en: [
+        "Break the idea into scenes.",
+        "Add narration beats and on-screen text.",
+        "Choose the intent for each shot.",
+        "Review pacing and scene order.",
+      ],
+      ja: [
+        "アイデアをシーンに分けます。",
+        "ナレーションと画面上のテキストを追加します。",
+        "各ショットの意図を決めます。",
+        "テンポとシーンの順序を確認します。",
+      ],
+    },
+    outputs: {
+      en: ["Scene sequence", "Narration beats", "Shot list and pacing plan"],
+      ja: ["シーンの順序", "ナレーションの区切り", "ショットリストとテンポ設計"],
+    },
+    consumes: ["Video idea and script", "Brand motion style", "Scene recipes"],
+    produces: ["Scene sequence", "Narration beats", "Shot list"],
   },
   "motion-gallery": {
     id: "motion-gallery",
     title: "Motion & media lab",
     titleJa: "モーション・メディア",
-    outcome: "Preview deterministic camera motion, data-led infographics, still exports and capture-ready video frames in one place.",
-    outcomeJa: "カメラモーション、インフォグラフィック、静止画書き出し、動画キャプチャ準備を一か所で確認します。",
-    consumes: ["BrandKit palette and type roles", "MotionDirector + CameraStage", "Platform preset manifests", "Illustrative cost data"],
-    produces: ["Frame-addressed motion sample", "Validated still export", "Capture-ready video frame", "QA diagnostics"],
+    outcome: "Explore animated scenes, infographic reveals, layer-based artwork, and capture-ready video frames.",
+    outcomeJa: "アニメーション、図解の表示、レイヤー作品、キャプチャ可能な動画フレームを確認します。",
+    availability: "demo",
+    steps: {
+      en: [
+        "Scrub the animation timeline.",
+        "Inspect the artwork layers or infographic view.",
+        "Compare landscape and vertical output profiles.",
+        "Check whether a frame is ready for browser capture.",
+      ],
+      ja: [
+        "アニメーションのタイムラインを操作します。",
+        "レイヤー作品や図解の表示を確認します。",
+        "横長と縦長の出力プロファイルを比較します。",
+        "ブラウザーでキャプチャできるフレームか確認します。",
+      ],
+    },
+    outputs: {
+      en: ["Animated example frame", "Layer and infographic previews", "Capture-readiness result"],
+      ja: ["アニメーションのサンプルフレーム", "レイヤーと図解のプレビュー", "キャプチャ準備の確認結果"],
+    },
+    consumes: ["Brand palette and typography", "Motion and camera controls", "Platform profiles"],
+    produces: ["Animated example frame", "Infographic preview", "Capture-readiness result"],
   },
   "platform-composer": {
     id: "platform-composer",
     title: "Platform delivery",
     titleJa: "プラットフォーム配信",
-    outcome: "Recompose one approved concept for each destination instead of cropping it.",
-    outcomeJa: "1つの承認済みコンセプトを切り抜かず、配信先ごとに再構成します。",
-    consumes: ["Versioned platform profiles", "Safe-area and caption policy", "Storyboard document"],
-    produces: ["Delivery variants", "Platform QA report", "Publication manifest"],
+    outcome: "Adapt one approved concept for YouTube, Shorts, and other destinations without awkward cropping.",
+    outcomeJa: "承認したコンセプトを不自然に切り抜かず、YouTube や Shorts などの配信先に合わせて再構成します。",
+    availability: "planned",
+    steps: {
+      en: [
+        "Choose the destination platform and format.",
+        "Adapt the layout to safe areas and captions.",
+        "Compare landscape and vertical variants.",
+        "Review the delivery checklist before export.",
+      ],
+      ja: [
+        "配信先のプラットフォームと形式を選びます。",
+        "セーフエリアと字幕に合わせてレイアウトを調整します。",
+        "横長と縦長のバリエーションを比較します。",
+        "書き出し前に配信チェックリストを確認します。",
+      ],
+    },
+    outputs: {
+      en: ["Platform-specific layouts", "Safe-area and caption checks", "Delivery variants"],
+      ja: ["プラットフォーム別レイアウト", "セーフエリアと字幕の確認", "配信用バリエーション"],
+    },
+    consumes: ["Approved concept", "Platform dimensions and safe areas", "Caption policy"],
+    produces: ["Platform-specific layouts", "Safe-area report", "Delivery variants"],
   },
 };
-
-/** Component contract every feature slot implements. */
-export type FeatureSlot = ComponentType<FeatureSlotProps>;
