@@ -173,6 +173,14 @@ test("refuses wrong MIME, RIFF masquerading as PCM, odd sample counts, empty and
   await assert.rejects(synthesizeFishBeat(request, stub(new Response(wavOf(samplePcm()), {
     headers: { "content-type": "audio/pcm" },
   }))), /WAV despite/i);
+  const disguised = new Response(Buffer.from('{"error":"not-a-voice"} '), {
+    headers: { "content-type": "audio/pcm" },
+  });
+  await assert.rejects(synthesizeFishBeat(request, stub(disguised)), /JSON-like despite/i);
+  const wrongSize = new Response(samplePcm(), {
+    headers: { "content-type": "audio/pcm", "content-length": "32" },
+  });
+  await assert.rejects(synthesizeFishBeat(request, stub(wrongSize)), /declared Content-Length/i);
   await assert.rejects(synthesizeFishBeat(request, stub(new Response(Buffer.from([0, 1, 2]), {
     headers: { "content-type": "audio/pcm" },
   }))), /incomplete/i);
