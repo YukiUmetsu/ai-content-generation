@@ -18,6 +18,9 @@ describe("MotionMediaShowcase", () => {
     const user = userEvent.setup();
     render(<MotionMediaShowcase locale="en" />);
 
+    await user.click(screen.getByRole("tab", { name: "Media" }));
+    expect(screen.getByRole("tree", { name: "Artboard layers" })).toBeInTheDocument();
+
     await user.click(screen.getByRole("tab", { name: "Infographic" }));
     expect(screen.getByRole("img", { name: /Illustrative HVAC installed cost/i })).toBeInTheDocument();
 
