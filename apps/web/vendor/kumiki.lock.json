@@ -9,7 +9,32 @@
     "sidebar",
     "split-pane",
     "input",
-    "dialog"
+    "dialog",
+    "artboard",
+    "editable-text",
+    "layer-stack",
+    "alignment-guides",
+    "export-preview",
+    "infographic-economic-charts",
+    "motion-director",
+    "camera-stage",
+    "visual-transformation",
+    "video-export-stage",
+    "media-document",
+    "media-frame",
+    "infographic-system",
+    "infographic-view",
+    "motion-track",
+    "motion-preset",
+    "scene-storyboard",
+    "motion-react",
+    "video-platform-presets",
+    "motion-path",
+    "mask-reveal",
+    "shape-morph",
+    "shared-element",
+    "animated-text",
+    "slider"
   ],
   "npmDependencies": {
     "class-variance-authority": "button",
@@ -72,6 +97,510 @@
       "target": "src/components/ui/dialog.tsx",
       "sha256": "f3d7acb1aac54fbbb4e01218715283a39f51a9eef8c45fcda80f32e15ad25c61",
       "bytes": 6207
+    },
+    {
+      "item": "artboard",
+      "source": "registry/media/artboard.tsx",
+      "target": "src/components/media/artboard.tsx",
+      "sha256": "700f11332d90df3c036187e43d96f40da380c4092e5330885a0891607649dfeb",
+      "bytes": 18069
+    },
+    {
+      "item": "editable-text",
+      "source": "registry/media/editable-text.tsx",
+      "target": "src/components/media/editable-text.tsx",
+      "sha256": "d6eae4d359f147c1cdd7456dddb741aa195230b9eeefbf3fb5a3b20ec28f6367",
+      "bytes": 22808
+    },
+    {
+      "item": "layer-stack",
+      "source": "registry/media/layer-stack.tsx",
+      "target": "src/components/media/layer-stack.tsx",
+      "sha256": "b35f9ea0434315f57f09ebb4181ca99219f21ddd9d07eb3016ec32c68e80c043",
+      "bytes": 41049
+    },
+    {
+      "item": "alignment-guides",
+      "source": "registry/media/alignment-guides.tsx",
+      "target": "src/components/media/alignment-guides.tsx",
+      "sha256": "aea353cec2ab063a8293dcb1006464971856d73f336f342e13041c3e305417d0",
+      "bytes": 16774
+    },
+    {
+      "item": "export-preview",
+      "source": "registry/media/export-preview.tsx",
+      "target": "src/components/media/export-preview.tsx",
+      "sha256": "a167ce8e4a9df1440b5e9e316bf98a2a5f93513d9838cfbae2e6eac431dcc67b",
+      "bytes": 28128
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/economic.ts",
+      "target": "src/components/infographic/economic.ts",
+      "sha256": "af92dbd6274d7951bf20d24646107c44e8b790213082a7ea9a9c3c39e421028a",
+      "bytes": 27923
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/cost-waterfall.ts",
+      "target": "src/components/infographic/cost-waterfall.ts",
+      "sha256": "b048e03542ee8b802ad78a978f25d294c8e2fbc5c57e5c0ae866d9435323f472",
+      "bytes": 26037
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/lifecycle-cost-timeline.ts",
+      "target": "src/components/infographic/lifecycle-cost-timeline.ts",
+      "sha256": "a61b77b5beb32687d41459495ff0423153c3f38e4fc8afbd4a3fe36e26c57ae8",
+      "bytes": 24562
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/break-even-comparison.ts",
+      "target": "src/components/infographic/break-even-comparison.ts",
+      "sha256": "1cf953ee6a458a72c6d55dc335af83724ab82b3f3954936bb7be8e3517a96c2e",
+      "bytes": 35022
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/scenario-band.ts",
+      "target": "src/components/infographic/scenario-band.ts",
+      "sha256": "8f0e183862e74ed08a4d38a52c541475087478df1763b22ad474524f7e64fe17",
+      "bytes": 19757
+    },
+    {
+      "item": "infographic-economic-charts",
+      "source": "registry/infographic/economic-react.tsx",
+      "target": "src/components/infographic/economic-react.tsx",
+      "sha256": "6a5fec0c114452f69698e6f2673cb21375e0691ae6cc05e0a5b9e11e466db14d",
+      "bytes": 2673
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/motion-director.ts",
+      "target": "src/components/motion/motion-director.ts",
+      "sha256": "d0984f4cc9e2e08d607bd0e4222eea3f442e70e351628846804982adb5e4dd95",
+      "bytes": 20882
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-types.ts",
+      "target": "src/components/motion/director-types.ts",
+      "sha256": "e6e848c516afc18d16eb9a35b2dd619338812688d2d0c6d277327eaa72d14ead",
+      "bytes": 5231
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-validation.ts",
+      "target": "src/components/motion/director-validation.ts",
+      "sha256": "cc777e448d09368cd9125db7de6a7db9bb5953ce1233d85be7a3667df8d625a2",
+      "bytes": 13015
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-schedule.ts",
+      "target": "src/components/motion/director-schedule.ts",
+      "sha256": "532ba5e99ecfac6c55024346f60b420e6f7f1bcfdbf7df2b1639635d1b279d01",
+      "bytes": 7190
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-authoring.ts",
+      "target": "src/components/motion/director-authoring.ts",
+      "sha256": "2af540a47e84c9b11d7b5fff44700f84e71f199db5f1202df99642d0757cdd86",
+      "bytes": 6100
+    },
+    {
+      "item": "motion-director",
+      "source": "registry/motion/director-recipes.ts",
+      "target": "src/components/motion/director-recipes.ts",
+      "sha256": "b15eea880b74ad659d94d797895b4669223af84ee389e0754e0b231b13d72487",
+      "bytes": 8169
+    },
+    {
+      "item": "camera-stage",
+      "source": "registry/motion/camera.ts",
+      "target": "src/components/motion/camera.ts",
+      "sha256": "b136f98159602c7e2f75c44a47b01396d8d991b7d6bea8a718694ed217a110ca",
+      "bytes": 6354
+    },
+    {
+      "item": "camera-stage",
+      "source": "registry/motion/camera-stage.tsx",
+      "target": "src/components/motion/camera-stage.tsx",
+      "sha256": "91734d0a3a9a8dee0f7b85749bcde8070ca783e92bf2e2ba38178041573badbe",
+      "bytes": 2305
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation.ts",
+      "target": "src/components/motion/visual-transformation.ts",
+      "sha256": "6c003bd708b639d1eff4ee7da54b66b46764610b86dbd7729b8ee294a3c710a4",
+      "bytes": 29564
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation-types.ts",
+      "target": "src/components/motion/visual-transformation-types.ts",
+      "sha256": "95a504f27bf2724407b6cb8437161f417588296f184c4d8f8ce30ccd507389f5",
+      "bytes": 4412
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation-scene.ts",
+      "target": "src/components/motion/visual-transformation-scene.ts",
+      "sha256": "61a4db3d0f456d47c69ff249943da4bd5d45906ef6d952d81d00a1b57f8ced5b",
+      "bytes": 9245
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/visual-transformation-react.tsx",
+      "target": "src/components/motion/visual-transformation-react.tsx",
+      "sha256": "b2a341060a12e4bd2c2d33df0f52796e558bcb032aeeeb9e7cd0679fa3d48f43",
+      "bytes": 5260
+    },
+    {
+      "item": "visual-transformation",
+      "source": "registry/motion/transformation-recipes.ts",
+      "target": "src/components/motion/transformation-recipes.ts",
+      "sha256": "da12169e5aebdfaf9b62a98b8aa78046c63feebf8cbb7c9b6d27ae1cc5afcfd6",
+      "bytes": 7501
+    },
+    {
+      "item": "video-export-stage",
+      "source": "registry/video/video-export-stage.tsx",
+      "target": "src/components/video/video-export-stage.tsx",
+      "sha256": "4d64d047a4dec31716e22af170dd5c1b42ded9a3cfe848fedad54a281b2d88d5",
+      "bytes": 5766
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/document.ts",
+      "target": "src/components/media/document.ts",
+      "sha256": "a695e1492cdaaf78f1ecd1480ad5ceb725ed424f3764b2f9376e558d17aa9996",
+      "bytes": 58224
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/text-layout.ts",
+      "target": "src/components/media/text-layout.ts",
+      "sha256": "c2d710833eecd124aac5aa341fa91f76a17a9dfadad78dd9f3473d307c014d4d",
+      "bytes": 21664
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/svg-export.ts",
+      "target": "src/components/media/svg-export.ts",
+      "sha256": "cd215a1acf11ae20e14e9ab2d8146784201c2deae9631a98db301f78672988ad",
+      "bytes": 42972
+    },
+    {
+      "item": "media-document",
+      "source": "registry/media/media-context.tsx",
+      "target": "src/components/media/media-context.tsx",
+      "sha256": "96c642c89bab48fa928ece792bde4bb0ec985adf3ea0d2105211fc945dbaf26a",
+      "bytes": 3772
+    },
+    {
+      "item": "media-frame",
+      "source": "registry/media/media-frame.tsx",
+      "target": "src/components/media/media-frame.tsx",
+      "sha256": "20e25a2d0ffe66462882e69f4ce025faad81a512a233a37356738adae8b01967",
+      "bytes": 10445
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/types.ts",
+      "target": "src/components/infographic/types.ts",
+      "sha256": "625fd684313921cfc688a298560ba0fdbab4b51cce1b1b94664d6362ff0488a4",
+      "bytes": 19401
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/validate.ts",
+      "target": "src/components/infographic/validate.ts",
+      "sha256": "9098017e8e1a78a8113c91c6368b9978f4c09c9852f3a56bb41852180700917a",
+      "bytes": 24415
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/measure.ts",
+      "target": "src/components/infographic/measure.ts",
+      "sha256": "f6fcf539ce000630efcd93e8def061c87e4090f55c734d5c25244d7dd41d013a",
+      "bytes": 12817
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/primitives.ts",
+      "target": "src/components/infographic/primitives.ts",
+      "sha256": "89e8376bb30bce5b5aa8535f91a29ea32cb42c445b54d403970f97fc1eb62d7d",
+      "bytes": 42477
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/color.ts",
+      "target": "src/components/infographic/color.ts",
+      "sha256": "2c0a3412c5fafef88609cc0350760d3072619d5a94e08685f1b394671adb5ca7",
+      "bytes": 2359
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/paint.ts",
+      "target": "src/components/infographic/paint.ts",
+      "sha256": "b6df64f7878b7b21425d800481526f6e8d729fbd648dae884b70626a4fde5db3",
+      "bytes": 5766
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/art-direction.ts",
+      "target": "src/components/infographic/art-direction.ts",
+      "sha256": "3f4011bd0300ff40e9794f6e30cc104ef09c0aca497d5e221c260aa446c825f8",
+      "bytes": 16733
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/grids.ts",
+      "target": "src/components/infographic/grids.ts",
+      "sha256": "703964b83ff60ef1dd85b907f7cf194d64ba2031a0e63826cdb8550b7e325aec",
+      "bytes": 20023
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/requirements.ts",
+      "target": "src/components/infographic/requirements.ts",
+      "sha256": "588c528407be929cc444b28f595585e09d6e85578ab74e1b63ba39f5d32073d3",
+      "bytes": 23983
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/blocks.ts",
+      "target": "src/components/infographic/blocks.ts",
+      "sha256": "0e4294effb6f1c7d33862669b7790427b1bfd668e67f26ae9a318f4862d34726",
+      "bytes": 57909
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/visualizers.ts",
+      "target": "src/components/infographic/visualizers.ts",
+      "sha256": "ee79694b8b1ee795a0703ecc510804c4df58973ea0e55bb7eb403bedb77fb82e",
+      "bytes": 53545
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/chart.ts",
+      "target": "src/components/infographic/chart.ts",
+      "sha256": "fbc64fd7d1e039fc1e71fd343f3d2dea5dff93d70dc4e0814f48cf19ea8376e0",
+      "bytes": 63944
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/annotations.ts",
+      "target": "src/components/infographic/annotations.ts",
+      "sha256": "45243399bfda29ca4098bebcf79ebc8e3e5aa407c14d4c2cd07baebc09aba168",
+      "bytes": 17618
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/templates.ts",
+      "target": "src/components/infographic/templates.ts",
+      "sha256": "7da30ea87418fc22178476bef8b83b00db7229b6120ce68b470dfcc15c0faa2a",
+      "bytes": 39616
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/layout.ts",
+      "target": "src/components/infographic/layout.ts",
+      "sha256": "f02edb2a553511332af4669af0556b1f723f8d6861aca30c4ee74567ac61d894",
+      "bytes": 22435
+    },
+    {
+      "item": "infographic-system",
+      "source": "registry/infographic/svg.ts",
+      "target": "src/components/infographic/svg.ts",
+      "sha256": "116d63f525517a0cf731b78ae3cc8920e3c539684c74c397016b9378814b2e45",
+      "bytes": 17665
+    },
+    {
+      "item": "infographic-view",
+      "source": "registry/infographic/react.tsx",
+      "target": "src/components/infographic/react.tsx",
+      "sha256": "d3fb7a5bbc38aea1c2180fb81962c6344a3261a2b96c7e19f09d688784a2a485",
+      "bytes": 11401
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/types.ts",
+      "target": "src/components/motion/types.ts",
+      "sha256": "a44798d512677901baf2e1fbf7de24ed92e510edd6c22d623e35fb0c8de3e14e",
+      "bytes": 9059
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/constants.ts",
+      "target": "src/components/motion/constants.ts",
+      "sha256": "33d5a73ac1f9ead06f2c7fdb9fa7f5c8a182caae60fa06419fe96a11e5e36d35",
+      "bytes": 3132
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/diagnostics.ts",
+      "target": "src/components/motion/diagnostics.ts",
+      "sha256": "0afd0b537d4ee71838e8077c1e1856bee2e22e0b8c48c8a89bdac8a073ce41c2",
+      "bytes": 2025
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/matrix.ts",
+      "target": "src/components/motion/matrix.ts",
+      "sha256": "8d456678fb112ea3a76ba5207ec0100ccdf6f9e837562a602fc21c71ea1f2e0b",
+      "bytes": 9683
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/easing.ts",
+      "target": "src/components/motion/easing.ts",
+      "sha256": "c19bfe389b028076c65cba2ebbaceea6ab74ec67914c2143b546071f6dc5afd7",
+      "bytes": 6397
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/springs.ts",
+      "target": "src/components/motion/springs.ts",
+      "sha256": "c5ea5a4f053fc676a898e0fc42ce2362e0a2a9fb1c5288db05205ed1d815c4d4",
+      "bytes": 4549
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/interpolate.ts",
+      "target": "src/components/motion/interpolate.ts",
+      "sha256": "d2e6c5c4d7fbc22edef51a04254765add1884d55561c42811bad32a6033219ac",
+      "bytes": 10354
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/stagger.ts",
+      "target": "src/components/motion/stagger.ts",
+      "sha256": "885cc7008601059a3f9ba30bcb8112fefeb0ba2a81b2cb0c8288b54f9b40d1e9",
+      "bytes": 2741
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/timeline.ts",
+      "target": "src/components/motion/timeline.ts",
+      "sha256": "c424d7b9619b737ba01a3d6eaa34851ab0044684b27b5e9ba0e1c65a02929f95",
+      "bytes": 32092
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/serialize.ts",
+      "target": "src/components/motion/serialize.ts",
+      "sha256": "1d19a44b4cf375d8867fc9a8d2d8bd8fca4acb41d94995400ac79a6e77ef9c7c",
+      "bytes": 15807
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/validate.ts",
+      "target": "src/components/motion/validate.ts",
+      "sha256": "0e62d4312a141a2091391ea13f42ae03d26fe627343cb3012d79e39487bed527",
+      "bytes": 24890
+    },
+    {
+      "item": "motion-track",
+      "source": "registry/motion/storyboard.ts",
+      "target": "src/components/motion/storyboard.ts",
+      "sha256": "3420ab92a356707bfab53ac783c3800b13861ad6b0c31a50b1f5d75844f4b491",
+      "bytes": 23946
+    },
+    {
+      "item": "motion-preset",
+      "source": "registry/motion/presets.ts",
+      "target": "src/components/motion/presets.ts",
+      "sha256": "8dc0e8965f358e636cae44b883a2abd3bd0ad67d6dfb0313dd7043600ed22208",
+      "bytes": 18633
+    },
+    {
+      "item": "motion-react",
+      "source": "registry/motion/react.tsx",
+      "target": "src/components/motion/react.tsx",
+      "sha256": "16ef6a7c5aee1da0b4f02561a79a4d23dc39e7329e4b8cb4e9abaf432f1f4973",
+      "bytes": 23990
+    },
+    {
+      "item": "motion-react",
+      "source": "registry/motion/graphic-composition.tsx",
+      "target": "src/components/motion/graphic-composition.tsx",
+      "sha256": "c4897df8d6fa5a40c02e1a7df452004962772585c798d860426d18af3e2ffe1d",
+      "bytes": 15732
+    },
+    {
+      "item": "motion-react",
+      "source": "registry/motion/svg-mask.tsx",
+      "target": "src/components/motion/svg-mask.tsx",
+      "sha256": "399c7698f5fa2ed93f60406af70b7f402d8ccb7a1382fba120d91c45c9c890b7",
+      "bytes": 1685
+    },
+    {
+      "item": "video-platform-presets",
+      "source": "registry/video/platform-presets.ts",
+      "target": "src/components/video/platform-presets.ts",
+      "sha256": "8f24e7eeb20f9913c42a1652bc635f39e0966c83217e387afd6a1e0848d36241",
+      "bytes": 3548
+    },
+    {
+      "item": "video-platform-presets",
+      "source": "registry/video/platform-presets.json",
+      "target": "src/components/video/platform-presets.json",
+      "sha256": "2e9dcfa69ad9d12020e9defb7c67c5ae15863084bf6334cb83692c7af50ce9fd",
+      "bytes": 4993
+    },
+    {
+      "item": "motion-path",
+      "source": "registry/motion/paths.ts",
+      "target": "src/components/motion/paths.ts",
+      "sha256": "ec1263b89bbcff2278b2e75f9ad3c225cf617b5083a3f9fd85a77b52da7b5a2d",
+      "bytes": 10095
+    },
+    {
+      "item": "motion-path",
+      "source": "registry/motion/trim.ts",
+      "target": "src/components/motion/trim.ts",
+      "sha256": "fe46b412c623a63be6c99bbd690f2f5b24dde77e04716de26db8b53603676a75",
+      "bytes": 5915
+    },
+    {
+      "item": "mask-reveal",
+      "source": "registry/motion/masks.ts",
+      "target": "src/components/motion/masks.ts",
+      "sha256": "caeaafcc1c1a70d2178d5157404539230cc87ef918159440e05bc1537c30d03b",
+      "bytes": 9075
+    },
+    {
+      "item": "shape-morph",
+      "source": "registry/motion/morph.ts",
+      "target": "src/components/motion/morph.ts",
+      "sha256": "765e695385eb8a84fadc9532d854fdbea94bc5462dc9a1fc72118b44d0e94eb9",
+      "bytes": 14686
+    },
+    {
+      "item": "shared-element",
+      "source": "registry/motion/shared-element.ts",
+      "target": "src/components/motion/shared-element.ts",
+      "sha256": "3ff1e09bd7fab5ce1a52b1f4a58e56de97af36bc7e3e2519644ad1baba9c5bb2",
+      "bytes": 8232
+    },
+    {
+      "item": "animated-text",
+      "source": "registry/motion/kinetic-text.ts",
+      "target": "src/components/motion/kinetic-text.ts",
+      "sha256": "fb7783892ae4d79dcaa0adb81cbeaa1027e4dbfa1f54404a745ecee60e489db0",
+      "bytes": 10598
+    },
+    {
+      "item": "slider",
+      "source": "registry/ui/slider.tsx",
+      "target": "src/components/ui/slider.tsx",
+      "sha256": "5dd24fd9947aff5ac5fb013a84852b60bee3acd3db2fa4605445fab7edf8d436",
+      "bytes": 8840
     },
     {
       "item": "styles",

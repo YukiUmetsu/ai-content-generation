@@ -1,0 +1,226 @@
+[
+  {
+    "id": "youtube",
+    "label": "YouTube (landscape)",
+    "width": 1920,
+    "height": 1080,
+    "placement": "video",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://support.google.com/youtube/answer/1722171",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.1
+    }
+  },
+  {
+    "id": "youtube-shorts",
+    "label": "YouTube Shorts",
+    "width": 1080,
+    "height": 1920,
+    "placement": "short",
+    "minSeconds": null,
+    "maxSeconds": 180,
+    "referenceUrl": "https://support.google.com/youtube/answer/15424877",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "instagram-reels",
+    "label": "Instagram Reels",
+    "width": 1080,
+    "height": 1920,
+    "placement": "short",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business/ads/facebook-instagram-reels-ads",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "instagram-feed",
+    "label": "Instagram feed portrait",
+    "width": 1080,
+    "height": 1350,
+    "placement": "feed",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "instagram-story",
+    "label": "Instagram Stories",
+    "width": 1080,
+    "height": 1920,
+    "placement": "story",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "tiktok",
+    "label": "TikTok organic",
+    "width": 1080,
+    "height": 1920,
+    "placement": "short",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.tiktok.com",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "tiktok-ads",
+    "label": "TikTok in-feed ad",
+    "width": 1080,
+    "height": 1920,
+    "placement": "ad",
+    "minSeconds": 5,
+    "maxSeconds": 60,
+    "referenceUrl": "https://ads.tiktok.com/resources/help/article/tiktok-reservation-in-feed-ads-reach-frequency?lang=en-0",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "facebook-reels",
+    "label": "Facebook Reels",
+    "width": 1080,
+    "height": 1920,
+    "placement": "short",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business/ads/facebook-instagram-reels-ads",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "facebook-feed",
+    "label": "Facebook feed portrait",
+    "width": 1080,
+    "height": 1350,
+    "placement": "feed",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "facebook-ads-feed",
+    "label": "Meta feed ads portrait",
+    "width": 1080,
+    "height": 1350,
+    "placement": "ad",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "facebook-ads-reels",
+    "label": "Meta Reels ads",
+    "width": 1080,
+    "height": 1920,
+    "placement": "ad",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.facebook.com/business/ads/facebook-instagram-reels-ads",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.19
+    }
+  },
+  {
+    "id": "linkedin-video",
+    "label": "LinkedIn landscape",
+    "width": 1920,
+    "height": 1080,
+    "placement": "video",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.linkedin.com/help/linkedin",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.1
+    }
+  },
+  {
+    "id": "linkedin-square",
+    "label": "LinkedIn square",
+    "width": 1080,
+    "height": 1080,
+    "placement": "feed",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "https://www.linkedin.com/help/linkedin",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.1
+    }
+  },
+  {
+    "id": "social-square",
+    "label": "Social square",
+    "width": 1080,
+    "height": 1080,
+    "placement": "feed",
+    "minSeconds": null,
+    "maxSeconds": null,
+    "referenceUrl": "",
+    "safeInset": {
+      "left": 0.08,
+      "right": 0.12,
+      "top": 0.09,
+      "bottom": 0.1
+    }
+  }
+]

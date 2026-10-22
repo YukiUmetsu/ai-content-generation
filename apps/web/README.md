@@ -51,7 +51,8 @@ fixture server to see the real 501 response again.
 src/
   app/                 shell, header, sidebar, workspace, inspector, preview,
                        preferences provider, shortcuts dialog, error boundary
-  components/ui/       vendored Kumiki components — do not edit by hand
+  components/{ui,media,infographic,motion,video}/
+                       vendored Kumiki source — do not edit by hand
   features/
     registry.ts        feature ids, metadata and the FeatureSlotProps contract
     slots.tsx          id -> slot component map (the only shared registration)
@@ -82,25 +83,42 @@ targets.
 | Hash lock | `vendor/kumiki.lock.json` |
 | Script | `scripts/vendor-kumiki.mjs` |
 
-Installed items and their dependency closure:
+Selected items and their dependency closure:
 
-- `button` → `class-variance-authority`, `motion`
-- `tabs` → `@base-ui/react`
-- `surface-card`
-- `sidebar`
-- `split-pane`
-- `input` + `field-input`
-- `dialog`
-- styles: `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
-  `src/styles/global.css` → `src/styles/kumiki/global.css`
+- **Application UI:** `button`, `tabs`, `surface-card`, `sidebar`,
+  `split-pane`, `input` (includes `field-input`), and `dialog`.
+- **Editable media:** `artboard`, `editable-text`, `layer-stack`,
+  `alignment-guides`, and `export-preview`. Dependencies include
+  `media-document` and `media-frame`.
+- **Infographics:** `infographic-economic-charts`, plus
+  `infographic-system` and `infographic-view`.
+- **Motion:** `motion-director`, `camera-stage`, and
+  `visual-transformation`. The closure includes `motion-track`,
+  `motion-preset`, `scene-storyboard`, `motion-react`, and the required
+  timeline/path/mask/morph/animated-text modules.
+- **Video delivery:** `video-export-stage` and `video-platform-presets`.
+- **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
+  `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
-Kumiki ships a single root `registry.json`, not the per-item JSON that the
-shadcn CLI expects, so the shadcn CLI cannot resolve a pinned GitHub commit for
-these items. `scripts/vendor-kumiki.mjs` is the reproducible replacement: it
-reads the manifest, resolves `registryDependencies`, copies each file
-byte-for-byte, and records SHA-256 hashes and byte counts in the lock.
-`components.json` remains in place for future standard shadcn items, but it is
-not the Kumiki install path.
+The configuration selects 17 top-level items; the pinned registry resolves
+32 items and vendors 82 unique files including the two stylesheets. All
+required npm dependencies already exist in `package.json`; this expansion
+adds no new runtime dependencies.
+
+Kumiki has one root `registry.json`, not per-item JSON files expected by the
+shadcn GitHub registry flow. `scripts/vendor-kumiki.mjs` is the reproducible
+installer: it resolves `registryDependencies`, preserves each source path
+under `src/components/` (for example, `registry/motion/types.ts` becomes
+`src/components/motion/types.ts`), and records SHA-256 hashes and byte counts.
+Preserving source directories is required for relative imports and avoids
+collisions between similarly named files such as infographic and motion
+`types.ts`.
+
+Repeated references to the same source file are deduplicated; different
+sources resolving to the same target fail loudly. `pnpm test` includes tests
+for path preservation, traversal rejection, dependency deduplication and
+collision detection. `components.json` remains for future standard shadcn
+items, but it is not the Kumiki install path.
 
 ### Upgrade procedure
 
