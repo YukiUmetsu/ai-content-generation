@@ -1,4 +1,5 @@
 import { Eye, Keyboard, Moon, PanelLeft, Search, Sun } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -6,7 +7,6 @@ import { FEATURE_METADATA, type FeatureId, type Locale } from "@/features/regist
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { sectionLabel, type SectionId } from "./navigation";
 import { usePreferences } from "./use-preferences";
-import { useState } from "react";
 
 interface HeaderProps {
   activeSection: SectionId;
@@ -105,7 +105,7 @@ export function Header({
   shortcutsOpen,
   onShortcutsOpenChange,
 }: HeaderProps) {
-  const { appearance, setAppearance, density, setDensity, locale, setLocale } = usePreferences();
+  const { appearance, setAppearance, locale } = usePreferences();
 
   const nextAppearance = appearance === "light" ? "dark" : "light";
   const appearanceLabel =
@@ -118,12 +118,12 @@ export function Header({
         : "Switch to light mode";
 
   return (
-    <header className="flex shrink-0 flex-col gap-3 border-b border-border bg-surface px-3 py-3 lg:px-4">
-      <div className="flex items-start gap-2">
+    <header className="flex shrink-0 flex-col gap-3 border-b border-border bg-surface px-3 py-2 lg:px-4">
+      <div className="flex min-w-0 items-center gap-3">
         <Button
           variant="outline"
           size="icon"
-          className="mt-0.5 lg:hidden"
+          className="lg:hidden"
           aria-label={locale === "ja" ? "ナビゲーションを開く" : "Open navigation"}
           title={locale === "ja" ? "ナビゲーションを開く" : "Open navigation"}
           onClick={onOpenNav}
@@ -131,20 +131,15 @@ export function Header({
           <PanelLeft aria-hidden className="size-4" />
         </Button>
 
-        <nav
-          aria-label="Breadcrumb"
-          className="flex min-w-[140px] flex-1 items-center text-sm"
-        >
+        <nav aria-label="Breadcrumb" className="flex min-w-0 flex-1 items-center text-sm">
           <span className="shrink-0 whitespace-nowrap font-medium text-foreground">
             {sectionLabel(activeSection, locale)}
           </span>
           {activeSection === "create" && (
             <>
-              <span className="mx-2 shrink-0 text-muted-foreground" aria-hidden="true">
-                /
-              </span>
+              <span className="mx-2 shrink-0 text-muted-foreground" aria-hidden="true">/</span>
               <span
-                className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]"
+                className="min-w-0 truncate text-muted-foreground"
                 title={featureLabel(activeFeatureId, locale)}
               >
                 {featureLabel(activeFeatureId, locale)}
@@ -158,114 +153,27 @@ export function Header({
           role="toolbar"
           aria-label={locale === "ja" ? "スタジオツールバー" : "Studio toolbar"}
         >
-          {/* Compact toolbar on smaller screens */}
-          <div className="flex items-center gap-0.5 xl:hidden">
-            <Button
-              variant="subtle"
-              size="icon"
-              aria-label={appearanceLabel}
-              title={appearanceLabel}
-              onClick={() => setAppearance(nextAppearance)}
-              icon={
-                nextAppearance === "dark" ? (
-                  <Moon aria-hidden className="size-4" />
-                ) : (
-                  <Sun aria-hidden className="size-4" />
-                )
-              }
-            />
-          </div>
-
-          <div className="flex items-center gap-0.5 border-l border-border pl-1 xl:hidden">
-            <ViewPreferencesDialog locale={locale} />
-          </div>
-
-          {/* Full toolbar on xl+ */}
-          <div className="hidden items-center gap-0.5 xl:flex">
-            <Button
-              variant={appearance === "light" ? "primary" : "subtle"}
-              size="sm"
-              aria-pressed={appearance === "light"}
-              aria-label="Light"
-              title="Light"
-              onClick={() => setAppearance("light")}
-              icon={<Sun aria-hidden className="size-4" />}
-            >
-              Light
-            </Button>
-            <Button
-              variant={appearance === "dark" ? "primary" : "subtle"}
-              size="sm"
-              aria-pressed={appearance === "dark"}
-              aria-label="Dark"
-              title="Dark"
-              onClick={() => setAppearance("dark")}
-              icon={<Moon aria-hidden className="size-4" />}
-            >
-              Dark
-            </Button>
-          </div>
-
-          <div className="hidden items-center gap-0.5 border-l border-border pl-1 xl:flex">
-            <Button
-              variant={density === "compact" ? "primary" : "subtle"}
-              size="sm"
-              aria-pressed={density === "compact"}
-              aria-label="Compact"
-              title="Compact"
-              onClick={() => setDensity("compact")}
-            >
-              Compact
-            </Button>
-            <Button
-              variant={density === "spacious" ? "primary" : "subtle"}
-              size="sm"
-              aria-pressed={density === "spacious"}
-              aria-label="Spacious"
-              title="Spacious"
-              onClick={() => setDensity("spacious")}
-            >
-              Spacious
-            </Button>
-          </div>
-
-          <div className="hidden items-center gap-0.5 border-l border-border pl-1 xl:flex">
-            <Button
-              variant={locale === "en" ? "primary" : "subtle"}
-              size="sm"
-              aria-pressed={locale === "en"}
-              aria-label="English"
-              title="English"
-              onClick={() => setLocale("en")}
-            >
-              EN
-            </Button>
-            <Button
-              variant={locale === "ja" ? "primary" : "subtle"}
-              size="sm"
-              aria-pressed={locale === "ja"}
-              aria-label="日本語"
-              title="日本語"
-              onClick={() => setLocale("ja")}
-            >
-              日本語
-            </Button>
-          </div>
-
-          <div className="hidden items-center gap-0.5 border-l border-border pl-1 lg:flex">
+          <Button
+            variant="subtle"
+            size="icon"
+            aria-label={appearanceLabel}
+            title={appearanceLabel}
+            onClick={() => setAppearance(nextAppearance)}
+            icon={nextAppearance === "dark"
+              ? <Moon aria-hidden className="size-4" />
+              : <Sun aria-hidden className="size-4" />}
+          />
+          <ViewPreferencesDialog locale={locale} />
+          <div className="border-l border-border pl-1">
             <Button
               variant="outline"
-              size="sm"
+              size="icon"
               aria-label={locale === "ja" ? "ショートカット" : "Shortcuts"}
               title={locale === "ja" ? "ショートカット" : "Shortcuts"}
               icon={<Keyboard aria-hidden className="size-4" />}
               onClick={() => onShortcutsOpenChange?.(true)}
-            >
-              {locale === "ja" ? "ショートカット" : "Shortcuts"}
-            </Button>
+            />
           </div>
-
-          {/* Dialog remains mounted so the ? keyboard shortcut works at every size. */}
           <ShortcutsDialog
             open={shortcutsOpen}
             onOpenChange={onShortcutsOpenChange}

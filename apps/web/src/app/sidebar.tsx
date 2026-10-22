@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { Sidebar } from "@/components/ui/sidebar";
 import type { Locale } from "@/features/registry";
@@ -10,26 +11,20 @@ interface StudioSidebarProps {
 }
 
 export function StudioSidebar({ activeSection, onSelectSection, locale }: StudioSidebarProps) {
+  const [collapsed, setCollapsed] = useState(false);
+
   return (
-    <Sidebar aria-label="Main navigation">
-      <Sidebar.Header className="px-2 pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-            <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-control bg-foreground font-serif text-lg font-medium text-inverse-foreground">
-              C
-            </span>
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-sm font-medium text-foreground">ContentGen</span>
-              <span className="truncate text-caption text-muted-foreground">
-                {locale === "ja" ? "無題のプロジェクト" : "Untitled project"}
-              </span>
-            </div>
-          </div>
-          <Sidebar.Toggle
-            collapseLabel={locale === "ja" ? "サイドバーを折りたたむ" : "Collapse sidebar"}
-            expandLabel={locale === "ja" ? "サイドバーを展開" : "Expand sidebar"}
-          />
-        </div>
+    <Sidebar
+      aria-label="Main navigation"
+      collapsed={collapsed}
+      onCollapsedChange={setCollapsed}
+      className={collapsed ? "cg-sidebar--collapsed" : "cg-sidebar--expanded"}
+    >
+      <Sidebar.Header className="items-end px-0 pb-1">
+        <Sidebar.Toggle
+          collapseLabel={locale === "ja" ? "サイドバーを折りたたむ" : "Collapse sidebar"}
+          expandLabel={locale === "ja" ? "サイドバーを展開" : "Expand sidebar"}
+        />
       </Sidebar.Header>
 
       <Sidebar.Nav>
@@ -76,4 +71,3 @@ export function MobileNavDrawer({ open, onOpenChange, activeSection, onSelectSec
     </Dialog>
   );
 }
-

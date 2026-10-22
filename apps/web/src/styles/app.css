@@ -31,3 +31,15 @@
     color: var(--km-action-subtle-fg);
   }
 }
+
+
+/* Application-specific navigation sizing; the vendored Kumiki component stays untouched. */
+.cg-sidebar--expanded {
+  width: 13rem;
+  flex-shrink: 0;
+}
+
+.cg-sidebar--collapsed {
+  width: 4rem;
+  flex-shrink: 0;
+}
