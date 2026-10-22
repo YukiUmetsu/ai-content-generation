@@ -61,14 +61,29 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
   while(root.dataset.frame!==String(frame)||
     [...root.querySelectorAll<HTMLElement>("[data-km-camera-viewport-3d]")]
       .some(el=>el.dataset.cameraFrame!==String(frame)||
-        !el.querySelector<HTMLCanvasElement>("canvas")?.width)) {
+        !el.querySelector<HTMLCanvasElement>("canvas")?.width)||
+    root.querySelector("[data-km-caption-performer][data-caption-status=pending]")||
+    root.querySelector("[data-km-frame-clip][data-clip-status=pending]")||
+    [...root.querySelectorAll<HTMLElement>("[data-km-hero-viewer]")].some(el=>!el.querySelector("[role=alert]")&&
+      el.querySelector<HTMLCanvasElement>("canvas")?.dataset.kmHeroReady!=="true")) {
     if(performance.now()-start>15000)throw new Error("Video frame did not settle at "+frame+".");
     await nextPaint();
   }
-  if(root.querySelector("[data-km-explainer-fallback], [data-km-camera-viewport-3d] [role=alert]"))
+  if(root.querySelector("[data-km-explainer-fallback], [data-km-camera-viewport-3d] [role=alert], [data-km-hero-viewer] [role=alert]"))
     throw new Error("Video frame has layout or 3D rendering errors.");
   const stage=root.querySelector<HTMLElement>("[data-km-explainer-stage]");
   if(stage&&stage.dataset.layoutStatus!=="ready")throw new Error("Explainer layout is not capture-ready.");
+  if(root.querySelector("[data-km-safe-frame-guides]"))
+    throw new Error("Safe-frame authoring guides are visible; disable guides for export.");
+  if(root.querySelector("[data-km-safe-frame][data-safe-frame-status=error]"))
+    throw new Error("Safe-frame layout has errors at frame "+frame+".");
+  if(root.querySelector("[data-km-caption-performer][data-caption-status=error]"))
+    throw new Error("Captions have timing or layout errors at frame "+frame+".");
+  for(const clip of root.querySelectorAll<HTMLElement>("[data-km-frame-clip]")){
+    if(clip.dataset.clipStatus==="error")throw new Error("Footage frame failed at output frame "+frame+".");
+    if(clip.dataset.clipStatus!=="hidden"&&clip.dataset.sourceFrame!==clip.dataset.expectedSourceFrame)
+      throw new Error("Footage shows source frame "+clip.dataset.sourceFrame+", expected "+clip.dataset.expectedSourceFrame+".");
+  }
   await bounded(document.fonts?.ready??Promise.resolve(),15000,"Fonts");
   const images=[...root.querySelectorAll<HTMLImageElement>("img")];
   await bounded(Promise.all(images.map(async img=>{

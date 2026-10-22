@@ -66,4 +66,27 @@ describe("generic deterministic explainer scene", () => {
     expect(svg.match(/width="680" height="94"/g)).toHaveLength(4);
     expect(svg).not.toContain('height="23"');
   });
+
+  it("draws a measured chart with visible source title, locator and exact disclosure instead of an unrelated diagram", () => {
+    const chartPlan: GeneralVisualPlan = {
+      ...plan,
+      evidence: [{ id: "source-1", title: "Budget report", sourceUri: "https://example.org/report",
+        retrievedAt: "2026-10-22T00:00:00.000Z", passageLocator: "Table 4", snapshotSha256: "a".repeat(64) }],
+      chapters: plan.chapters.map((chapter) => chapter.id === "path" ? { ...chapter, visual: {
+        ...chapter.visual,
+        chart: { kind: "quantitative-chart-v1", categories: ["A", "B"], unit: "USD",
+          series: [{ id: "cost", label: "Annual cost", values: [10, 15] }],
+          provenance: { basis: "measured", disclosure: "Measured values; editorial review still required.", claimRefs: ["claim-a"], evidenceRefs: ["source-1"] },
+        },
+      } } : chapter),
+    };
+    const rendered = renderToStaticMarkup(<GeneralExportScene plan={chartPlan} frame={75} />);
+    expect(rendered).toContain('data-km-chart-story=""');
+    expect(rendered).toContain('data-chart-provenance-basis="measured"');
+    expect(rendered).toContain("Measured values; editorial review still required.");
+    expect(rendered).toContain("Budget report");
+    expect(rendered).toContain("Table 4");
+    expect(rendered).toContain('data-chart-story-status="ready"');
+    expect(rendered).not.toContain('data-general-node=');
+  });
 });

@@ -27,7 +27,7 @@ export function compileGeneralVisuals(job, timeline) {
   const payoffEventId = job.topic.payoffEventId;
   if (timeline.eventFrames?.[payoffEventId] !== chapters.at(-1).startFrame || !chapters.at(-1).eventIds.includes(payoffEventId)) fail("payoff event must start the final payoff beat");
   return {
-    schemaVersion: 1, kind: "general-explainer-visual-plan", title: job.topic.title,
+    schemaVersion: 1, kind: "general-explainer-visual-plan", title: job.topic.title, locale: job.locale,
     manifest: { schemaVersion: 1, id: job.id, durationFrames: timeline.totalFrames, width: 1920, height: 1080, fps: { ...job.destination.fps }, preset: "youtube" },
     chapters, claims: structuredClone(job.claims), evidence: structuredClone(job.evidence ?? []),
     events: { ...timeline.eventFrames }, payoffEventId,

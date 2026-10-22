@@ -60,3 +60,14 @@ test("missing, tampered or incomplete first/end visual review frames block techn
   assert.throws(() => buildQaReport({ ...base, render: { ...base.render, reviewStills: [{ frame: 0, file: "stills/frame-000000.png", sha256: "f".repeat(64) }] } }), /review still|frame/i);
   assert.throws(() => buildQaReport({ ...base, render: { ...base.render, reviewStills: [base.render.reviewStills[0], { frame: 149, file: "../escape.png", sha256: "e".repeat(64) }] } }), /review still|file/i);
 });
+
+test("measured caption readability warnings appear in draft QA without blocking technical completion", () => {
+  const captionReadability = {
+    ok: true, findings: [{ code: "caption-reading-speed", severity: "warning", beatId: "intro", message: "Beat intro may be too fast to read" }],
+  };
+  const report = buildQaReport({ ...base, captionReadability });
+  assert.equal(report.technicalPass, true);
+  assert.equal(report.findings[0].code, "caption-reading-speed");
+  assert.equal(report.commercialReady, false);
+  assert.throws(() => buildQaReport({ ...base, captionReadability: { ok: false, findings: [{ code: "caption-missing", severity: "error", beatId: "intro", message: "Missing" }] } }), /caption/i);
+});

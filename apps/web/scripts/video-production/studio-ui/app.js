@@ -66,6 +66,73 @@ function showMode() {
     : "Illustrative House Math scenario · YouTube landscape · 30 fps";
 }
 
+function showClaims(job) {
+  const list = $("draft-claim-list");
+  list.replaceChildren();
+  const claims = Array.isArray(job.claims) ? job.claims : [];
+  const evidence = new Map((Array.isArray(job.evidence) ? job.evidence : []).map((source) => [source.id, source]));
+  $("draft-claim-count").textContent = `${claims.length} ${claims.length === 1 ? "claim" : "claims"}`;
+  if (!claims.length) {
+    const empty = document.createElement("p");
+    empty.className = "draft-claims-empty";
+    empty.textContent = "No claims declared. Review narration and diagrams for factual statements that still need sources.";
+    list.append(empty);
+    return;
+  }
+  const labels = { verified: "Verified (declared)", unverified: "Unverified", illustrative: "Illustrative", disputed: "Disputed" };
+  for (const [index, claim] of claims.entries()) {
+    const article = document.createElement("article");
+    article.className = "draft-claim";
+    article.dataset.status = Object.hasOwn(labels, claim.status) ? claim.status : "unknown";
+    const header = document.createElement("div");
+    header.className = "draft-claim-header";
+    const badge = document.createElement("span");
+    badge.className = "draft-claim-status";
+    badge.textContent = labels[claim.status] || "Unknown status";
+    const id = document.createElement("span");
+    id.className = "draft-claim-id";
+    id.textContent = claim.id || `Claim ${index + 1}`;
+    header.append(badge, id);
+    const statement = document.createElement("p");
+    statement.className = "draft-claim-text";
+    statement.textContent = claim.text || "No claim text provided.";
+    article.append(header, statement);
+    const refs = Array.isArray(claim.sourceRefs) ? claim.sourceRefs : [];
+    if (!refs.length) {
+      const warning = document.createElement("p");
+      warning.className = "draft-claim-warning";
+      warning.textContent = "No source linked — independently verify or mark this statement as illustrative.";
+      article.append(warning);
+    } else {
+      const sources = document.createElement("ul");
+      sources.className = "draft-claim-sources";
+      for (const ref of refs) {
+        const source = evidence.get(ref);
+        const item = document.createElement("li");
+        const reference = document.createElement("strong");
+        reference.textContent = `Source ${ref}`;
+        item.append(reference);
+        if (source) {
+          for (const [key, prefix] of [["title", "Title"], ["passageLocator", "Locator"], ["sourceUri", "URI"]]) {
+            if (!source[key]) continue;
+            const detail = document.createElement("span");
+            detail.textContent = `${prefix}: ${source[key]}`;
+            item.append(detail);
+          }
+        } else {
+          const warning = document.createElement("span");
+          warning.className = "draft-claim-warning";
+          warning.textContent = "Missing source record — review this reference.";
+          item.append(warning);
+        }
+        sources.append(item);
+      }
+      article.append(sources);
+    }
+    list.append(article);
+  }
+}
+
 function showDraft(draft) {
   if (!draft?.job) return;
   currentDraftId = draft.job.id;
@@ -85,6 +152,7 @@ function showDraft(draft) {
     article.append(strategy, title, description);
     container.append(article);
   }
+  showClaims(draft.job);
   $("draft-json").value = JSON.stringify(draft.job, null, 2);
   showMode();
 }

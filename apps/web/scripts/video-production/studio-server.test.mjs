@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { JSDOM } from "jsdom";
 import { createStudioJob, startVideoStudio } from "./studio-server.mjs";
 
 const fishConfig = {
@@ -239,4 +240,48 @@ test("serves an interactive accessible frontend with local-only script and styli
   assert.match(client, /\/api\/preflight/);
   assert.match(client, /\$\("topic-locale"\)\.value/);
   assert.equal((await studio.send("/studio.css")).status, 200);
+});
+
+async function localStudioPage(t) {
+  const html = await readFile(new URL("./studio-ui/index.html", import.meta.url), "utf8");
+  const client = await readFile(new URL("./studio-ui/app.js", import.meta.url), "utf8");
+  const dom = new JSDOM(html, { url: "http://127.0.0.1/", runScripts: "outside-only" });
+  t.after(() => dom.window.close());
+  dom.window.fetch = async () => ({ ok: true, json: async () => ({ status: "idle", message: "Idle" }) });
+  dom.window.setInterval = () => 0;
+  dom.window.eval(client);
+  dom.window.document.querySelector('input[name="mode"][value="topic"]').checked = true;
+  return dom;
+}
+
+test("generated topic claims show declared statuses, source provenance and clear unsourced warnings safely", async (t) => {
+  const dom = await localStudioPage(t);
+  const draft = { job: { id: "topic-claim-review", topic: { title: "Heat pumps" }, beats: [{ id: "beat-01" }],
+    claims: [
+      { id: "c1", status: "verified", text: "<img src=x onerror=alert(1)> Heat moves.", sourceRefs: ["src-1"] },
+      { id: "c2", status: "unverified", text: "No source attached" },
+      { id: "c3", status: "illustrative", text: "Diagram is schematic" },
+      { id: "c4", status: "disputed", text: "The estimate is contested", sourceRefs: ["missing-source"] },
+    ], evidence: [{ id: "src-1", title: "<script>Source title</script>",
+      passageLocator: "Section 2, paragraph 3", sourceUri: "https://example.org/report" }] } };
+  dom.window.__testDraft = draft;
+  dom.window.eval("showDraft(window.__testDraft)");
+  const document = dom.window.document;
+  assert.equal(document.getElementById("topic-review").hidden, false);
+  assert.deepEqual([...document.querySelectorAll(".draft-claim")].map((row) => row.dataset.status),
+    ["verified", "unverified", "illustrative", "disputed"]);
+  const summary = document.getElementById("draft-claims").textContent;
+  for (const label of ["Verified (declared)", "Unverified", "Illustrative", "Disputed",
+    "src-1", "<script>Source title</script>", "Section 2, paragraph 3", "https://example.org/report",
+    "No source linked", "missing-source", "Human review required"]) assert.ok(summary.includes(label), label);
+  assert.equal(document.querySelector("#draft-claims img, #draft-claims script"), null);
+  assert.match(document.getElementById("draft-json").value, /"claims"/);
+});
+
+test("generated topic claims review explains an empty claim registry", async (t) => {
+  const dom = await localStudioPage(t);
+  dom.window.__testDraft = { job: { id: "empty-claims", topic: { title: "Topic" }, beats: [], claims: [] } };
+  dom.window.eval("showDraft(window.__testDraft)");
+  assert.match(dom.window.document.getElementById("draft-claims").textContent, /No claims declared/);
+  assert.match(dom.window.document.getElementById("draft-claims").textContent, /Human review required/);
 });

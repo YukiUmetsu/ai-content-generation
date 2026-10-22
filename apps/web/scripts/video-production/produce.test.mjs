@@ -65,6 +65,7 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(ctx.status().closed, true);
   assert.equal(result.qa.technicalPass, true);
   assert.equal(result.qa.commercialReady, false);
+  assert.ok(result.qa.findings.some(({ code, severity }) => code === "caption-reading-speed" && severity === "warning"));
   assert.match(await readFile(join(result.releaseDir, "video.mp4"), "utf8"), /muxed-film/);
   assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "master.wav", "qa-report.json", "render-manifest.json", "stills", "video.mp4", "voice.wav"]);
   assert.equal(result.qa.reviewStills.length >= 2, true);

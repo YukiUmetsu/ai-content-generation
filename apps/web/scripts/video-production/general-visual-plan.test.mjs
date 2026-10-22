@@ -16,6 +16,12 @@ test("generic storyboard compiles to sample-driven chapters with meaningful diag
   assert.equal(plan.commercialReady, false);
 });
 
+test("compiled visuals preserve the script locale so Kumiki charts choose the right text segmentation", () => {
+  const localized = { ...source, locale: "ja-JP", voice: { ...source.voice, locale: "ja-JP" } };
+  const result = compileGeneralVisuals(localized, timeline);
+  assert.equal(result.locale, "ja-JP");
+});
+
 test("generic payoff starts hidden; sequential content reveals deterministically on direct seeks", () => {
   const plan = compileGeneralVisuals(source, timeline);
   const start = getGeneralFrame(plan, plan.chapters[1].startFrame);
@@ -42,10 +48,17 @@ test("compiled chapters retain the exact source snapshot locator behind verified
   job.claims[0] = { id: "finding", status: "verified", text: "An author-reviewed statement", sourceRefs: ["study"] };
   job.beats.forEach((beat) => { beat.claimRefs = []; });
   job.beats[1].claimRefs = ["finding"];
+  job.beats[1].visual.chart = {
+    kind: "quantitative-chart-v1", categories: ["Before", "After"],
+    series: [{ id: "observations", label: "Recorded count", values: [8, null] }],
+    unit: "events", provenance: { basis: "measured", disclosure: "Measured test-fixture values only.",
+      claimRefs: ["finding"], evidenceRefs: ["study"] },
+  };
   const plan = compileGeneralVisuals(job, timeline);
   assert.deepEqual(plan.chapters[1].evidenceRefs, ["study"]);
   assert.deepEqual(plan.evidence, job.evidence);
   assert.deepEqual(plan.chapters[0].evidenceRefs, []);
+  assert.deepEqual(plan.chapters[1].visual.chart, job.beats[1].visual.chart);
   // Never confuse provenance-record presence with human validation of the render.
   assert.equal(plan.commercialReady, false);
 });

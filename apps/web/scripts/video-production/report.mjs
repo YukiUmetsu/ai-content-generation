@@ -7,7 +7,7 @@ const hash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(valu
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
 
 /** No caller can set commercialReady. A separate verified human-review workflow is mandatory. */
-export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, toolVersions, reviewStatus = "not-reviewed" }) {
+export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, toolVersions, reviewStatus = "not-reviewed", captionReadability }) {
   const fps = job?.destination?.fps;
   if (!integer(fps?.num, 1) || !integer(fps?.den, 1) || fps.num / fps.den > 120) fail("invalid rational FPS");
   if (job.destination.presetId !== "youtube") fail("unsupported release output profile");
@@ -47,6 +47,8 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
   if (!Object.values(artifacts ?? {}).length || !Object.values(artifacts).every(hash)) fail("all published artifact hashes must be valid SHA-256 values");
   if (!integer(render.peakScratchBytes, 0) || !toolVersions?.ffmpeg || !toolVersions?.ffprobe) fail("resource peak or media tool version is missing");
   if (!Array.isArray(audio.findings)) fail("audio rights/QA findings must be explicit");
+  if (captionReadability !== undefined && (!captionReadability?.ok || !Array.isArray(captionReadability.findings) ||
+    captionReadability.findings.some((f) => !["warning", "error"].includes(f.severity) || f.severity === "error"))) fail("caption readability must have no unresolved errors");
   if (reviewStatus !== "not-reviewed" && reviewStatus !== "human-reviewed") fail("review status must be explicit");
 
   const rightsVerified = job.approval === "approved" && job.policy?.commercialRightsVerified === true &&
@@ -58,7 +60,7 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
     audioVideoDriftSeconds: Math.abs(durationSeconds - videoFromFrames), namedPayoffFrame,
     peakScratchBytes: render.peakScratchBytes, loudness: audio.loudness,
     artifacts, segments: render.segmentHashes, reviewStills, tools: toolVersions,
-    findings: [...audio.findings, {
+    findings: [...audio.findings, ...(captionReadability?.findings ?? []), {
       severity: "warning", code: "human-review-required",
       message: "Watch and listen to the entire exported film at normal speed and verify commercial rights before publication.",
     }],
