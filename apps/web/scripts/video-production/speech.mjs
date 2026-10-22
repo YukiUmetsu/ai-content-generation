@@ -60,7 +60,7 @@ function validateProbe(probe) {
 
 /**
  * @param {object} job validated video-production-job v1
- * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,paidUsageApproved?:boolean,direction?:object}} options
+ * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,paidUsageApproved?:boolean,budgetUsd?:number,direction?:object}} options
  */
 export async function synthesizeNarration(job, options) {
   const voice = job?.voice;
@@ -84,7 +84,7 @@ export async function synthesizeNarration(job, options) {
     ? synthesizeFishBeat({
       ...request, allowNetwork: options.allowNetwork,
       rightsContext: { voiceReferenceConsent: options.voiceReferenceConsent, textTransmissionApproved: options.textTransmissionApproved, commercialRightsVerified: job.policy?.commercialRightsVerified },
-    }, { apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: job.policy?.maxCostUsd, signal: options.signal })
+    }, { apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal })
     : synthesizeLocalBeat({
       ...request, endpoint: voice.endpoint,
       rightsContext: { localVoiceAuthorized: options.localVoiceAuthorized, commercialRightsVerified: job.policy?.commercialRightsVerified },

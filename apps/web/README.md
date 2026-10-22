@@ -10,29 +10,49 @@ five feature slots are independently owned: **Brand & appearance** and **Motion
 remain integration slots. The shell, split pane, preview canvas, inspector,
 appearance/density axes and error boundary are provided.
 
-## Headless video production (foundation slice)
+## Headless video production (draft MP4 pipeline)
 
-The CLI currently validates versioned inputs and gives a no-network preflight. **It does not synthesize or export media yet**. The mock/demo fixture is explicitly test-only.
+The headless command now connects automatic Fish Audio or local-loopback narration to sample-accurate scene timing, SFX, a Kumiki frame-export scene, bounded browser capture, FFmpeg encoding/muxing, and a measured QA report. **This is an automated *draft*, not a published or commercially approved video.** The example House Math jobs are hypothetical and test-only; neither a live Fish API request nor real browser playback has been verified by CI.
+
+Prerequisites: Node `>=22.12`, pnpm, FFmpeg/FFprobe, the production `apps/web/dist` build, an **already installed** Chrome/Chromium executable, and `playwright-core` (installed from this app's pinned pnpm lockfile; it does not download a browser). Supply your own permitted voice reference and TTS service. Run on an explicitly chosen, job-owned directory with sufficient disk space; ~8-minute 1080p videos require lengthy frame capture.
 
 ```bash
 cd apps/web
+pnpm install --frozen-lockfile
+pnpm build
 pnpm test:video:headless
-pnpm video:produce -- --job ../../examples/video-production-house-math-smoke.json --provider fish --dry-run --out ../../outputs/house-math-smoke
+
+# In the job JSON, replace the placeholder voiceId with an authorized ID.
+# Set FISH_AUDIO_API_KEY and CONTENTGEN_CHROMIUM_EXECUTABLE in your local environment.
+pnpm video:produce -- \
+  --job ../../examples/video-production-house-math-smoke.json \
+  --provider fish --provider-revision fish-api-v1 --out ../../outputs/house-math-smoke \
+  --allow-network --voice-consent --transmit-text --allow-test-assets --dry-run
+
+# Remove --dry-run only after reviewing the preflight findings and permissions.
+# Output: <out>/release/video.mp4, master.wav, voice.wav, captions.srt,
+# render-manifest.json and qa-report.json.
 ```
 
-Dry-run checks the Fish credential's **presence** without revealing it, explicit network permission, FFmpeg/FFprobe and a configured existing browser (`CONTENTGEN_CHROMIUM_EXECUTABLE`). No API request or media render happens. Later production tasks will add generated Fish or local narration and actual browser-to-FFmpeg output; these must not be marked complete from this dry-run alone. Never commit `FISH_AUDIO_API_KEY` or an unlicensed voice reference.
+For long-form production start from `../../examples/video-production-house-math-long.json`: its 26 script beats target at least **480 measured seconds**, not a rough word-count duration. The QA gate refuses any shorter real narration. Short-form jobs and portrait rendering remain future work, with **no forced 30–60-second length** for shorts. The first renderer accepts YouTube landscape only.
+
+`--dry-run` is side-effect-free: it checks consent, credentials' **presence**, local FFmpeg/FFprobe, available Chromium, voice/rights metadata and budget policy without calling providers, starting a server, or producing media. For Fish, the video orchestrator currently accepts **only the `s2.1-pro-free` model ID**, and makes no guarantee that the provider offers unlimited free use or commercial licensing. Paid models are blocked because per-job usage metering is not yet implemented; paid-use approval flags alone cannot override that. Never commit `FISH_AUDIO_API_KEY` or an unlicensed voice reference.
+
+For user-installed **local TTS**, change the job voice to `provider: "local"`, an authorized voice and a local model/engine revision; supply `endpoint: "http://127.0.0.1:8765"`. Run with `--provider local --provider-revision <actual-engine-version> --local-voice-authorized` and omit Fish-only network flags. Use `--local-endpoint http://127.0.0.1:8765` only if you need to override the job endpoint. No model is downloaded, installed, or activated by this CLI.
+
+Each release is atomically exposed only after a finished MP4 has been probed for FPS, dimensions, frame count, duration drift, loudness and required story payoff. Failed captures leave a non-published staging area cleaned up and preserve per-beat caches and hashed render segments for safe resumption; a prior `release/` is never overwritten. Every successful run still reports `commercialReady: false` and requires normal-speed audio/video inspection plus explicit commercial-asset/voice licensing review before any publication.
 
 ### Narration adapters (opt-in, currently offline-tested only)
 
-- **Fish Audio:** supply `FISH_AUDIO_API_KEY` at runtime, an authorized voice-reference ID, locale, and explicit model. The adapter uses `POST https://api.fish.audio/v1/tts`, a versioned request with `model: s2.1-pro-free` for evaluation, and checks WAV bytes. No API call occurs without `--allow-network` and voice/text-transmission consent. Paid models additionally require an explicit budget/paid-use approval. Availability and commercial licensing of any free model or voice must be independently verified before release; no real Fish request has been made during this foundation implementation.
+- **Fish Audio:** supply `FISH_AUDIO_API_KEY` at runtime, an authorized voice-reference ID, locale, and explicit model. The adapter uses `POST https://api.fish.audio/v1/tts`, a versioned request with `model: s2.1-pro-free` for evaluation, and checks WAV bytes. No API call occurs without `--allow-network` and voice/text-transmission consent. The standalone adapter accepts paid models with explicit approval, but the multi-beat production CLI blocks them until reliable budget metering exists. Availability and commercial licensing of any free model or voice must be independently verified before release; no real Fish request has been made during this foundation implementation.
 - **Local:** a **user-installed and running** TTS bridge can be configured with a bare loopback origin such as `http://127.0.0.1:8765`. The adapter POSTs to `/v1/speech` with JSON `{schema_version:1,text,locale,voice_id,model_id,direction,format:"wav"}`. The bridge must return 200, mono 16-bit PCM WAV with `Content-Type: audio/wav` and `X-TTS-Engine-Version: <actual engine version>`. No model is installed or started by ContentGen. Redirects and non-loopback endpoints are refused. The caller must confirm local voice authorization; engine/model identity is recorded for future cache isolation. No installed TTS bridge has been verified yet.
-- Both adapters expose per-beat generated WAV bytes and fail closed on invalid audio. The CLI orchestration, 48 kHz normalization, audio mastering and final video export are subsequent tasks; passing mocked adapter tests is **not** an exported film.
+- Both adapters expose per-beat generated WAV bytes and fail closed on invalid audio. The CLI consumes them automatically; the full command has offline tests with injected provider/browser dependencies but **a real provider-to-browser end-to-end film has not yet been produced**.
 
 ### Measured speech and audio-mastering modules
 
 The independently testable worker modules (`scripts/video-production/{speech,timeline,audio}.mjs`) now generate narration per beat, normalize it through FFmpeg to mono 48 kHz/16-bit PCM, probe the *actual* sample count with FFprobe, and cache by script, provider/engine revision, voice settings, and rights scope. Corrupt cache entries are regenerated; revoked voice authorization still blocks cache use. `buildSampleTimeline` uses half-open sample ranges and rounds to picture frames only at the boundary. Beat-level SRT captions exclude deliberate pauses and never masquerade as word alignment.
 
-`renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. These modules have FFmpeg-backed tests, but the CLI is still preflight-only until orchestration and browser export land.
+`renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. The speech, mastering, segmented encoding and final MP4 mux each have FFmpeg-backed tests; the orchestration integration test uses an injected provider and browser, so **real visual playback remains unverified**.
 
 ## Run and verify
 
