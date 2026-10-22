@@ -26,10 +26,11 @@ describe("MotionMediaShowcase", () => {
     expect(screen.getByRole("button", { name: /Download SVG/i })).toBeInTheDocument();
   });
 
-  it("shows a Japanese interface while keeping authored demo artwork explicit", () => {
+  it("shows the Japanese interface and localized illustrative-data disclaimer", async () => {
+    const user = userEvent.setup();
     render(<MotionMediaShowcase locale="ja" />);
     expect(screen.getByRole("heading", { name: "モーションとメディアのラボ" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "図解" })).toBeInTheDocument();
-    expect(screen.getByText(/合成データ/)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "図解" }));
+    expect(screen.getByText(/合計 \$12,400 は説明用の合成データ/)).toBeInTheDocument();
   });
 });
