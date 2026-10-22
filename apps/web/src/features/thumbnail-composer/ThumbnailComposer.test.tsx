@@ -1,0 +1,110 @@
+import { useState } from "react";
+import type { ReactNode } from "react";
+import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { App } from "@/App";
+import { copyFor } from "./i18n";
+import { ThumbnailComposer } from "./index";
+
+function Harness({ locale = "en" as "en" | "ja" }) {
+  const [preview, setPreview] = useState<ReactNode | null>(null);
+  return (
+    <div>
+      <ThumbnailComposer projectId="test-project" locale={locale} onPreviewChange={setPreview} />
+      <div data-testid="shared-preview">{preview}</div>
+    </div>
+  );
+}
+
+describe("ThumbnailComposer", () => {
+  it("opens on a finished concept and publishes it to the shared preview", () => {
+    render(<Harness />);
+    const copy = copyFor("en");
+    const preview = screen.getByTestId("shared-preview");
+
+    expect(screen.getByRole("heading", { name: copy.title })).toBeInTheDocument();
+    expect(within(preview).getByTestId("thumbnail-live-preview")).toBeInTheDocument();
+    expect(within(preview).getByTestId("thumbnail-preview-stage")).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("$12,400?")
+    );
+    expect(screen.getByRole("radio", { name: /price shock/i })).toBeChecked();
+    expect(screen.getByTestId("thumbnail-mini-320")).toBeInTheDocument();
+    expect(screen.getByTestId("thumbnail-mini-160")).toBeInTheDocument();
+  });
+
+  it("updates the shared preview while the headline is edited", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const copy = copyFor("en");
+    const headline = screen.getByLabelText(copy.headlineLabel) as HTMLInputElement;
+    expect(headline.value).toBe("Same house. A new system. A new price.");
+
+    await user.clear(headline);
+    await user.type(headline, "The quote hides four costs");
+
+    const stage = within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage");
+    expect(stage).toHaveAttribute("aria-label", expect.stringContaining("The quote hides four costs"));
+    expect(headline.value).toBe("The quote hides four costs");
+  });
+
+  it("switches composition and keeps each concept's edits", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const copy = copyFor("en");
+    const headline = screen.getByLabelText(copy.headlineLabel) as HTMLInputElement;
+
+    await user.clear(headline);
+    await user.type(headline, "Price shock edit");
+    await user.click(screen.getByRole("radio", { name: /hidden complexity/i }));
+
+    expect(screen.getByRole("radio", { name: /hidden complexity/i })).toBeChecked();
+    const hiddenStage = within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage");
+    expect(hiddenStage).toHaveAttribute("aria-label", expect.stringContaining("The quote is never one number."));
+
+    await user.clear(screen.getByLabelText(copy.headlineLabel));
+    await user.type(screen.getByLabelText(copy.headlineLabel), "Hidden edit");
+    await user.click(screen.getByRole("radio", { name: /price shock/i }));
+
+    expect((screen.getByLabelText(copy.headlineLabel) as HTMLInputElement).value).toBe("Price shock edit");
+    await user.click(screen.getByRole("radio", { name: /hidden complexity/i }));
+    expect((screen.getByLabelText(copy.headlineLabel) as HTMLInputElement).value).toBe("Hidden edit");
+  });
+
+  it("warns about long copy without blocking the render", () => {
+    render(<Harness />);
+    const copy = copyFor("en");
+    const headline = screen.getByLabelText(copy.headlineLabel);
+    fireEvent.change(headline, {
+      target: {
+        value:
+          "Why a replacement quote bundles equipment labour ductwork permits and disposal into one number that hides the real installed cost",
+      },
+    });
+    const diagnostics = screen.getByTestId("thumbnail-diagnostics");
+    expect(within(diagnostics).getByText(copy.issueCopy["headline-too-long"].title)).toBeInTheDocument();
+    expect(within(diagnostics).getAllByText(copy.severityWarning).length).toBeGreaterThan(0);
+  });
+
+  it("renders Japanese interface copy and artwork", () => {
+    render(<Harness locale="ja" />);
+    const copy = copyFor("ja");
+    expect(screen.getByLabelText(copy.topicLabel)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: copy.title })).toBeInTheDocument();
+    expect(within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage")).toHaveAttribute(
+      "aria-label",
+      expect.stringContaining("同じ家")
+    );
+  });
+
+  it("appears inside the existing Create workspace tab", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("tab", { name: /thumbnail composer/i }));
+    const editor = screen.getByTestId("thumbnail-composer");
+    expect(within(editor).getByRole("heading", { name: "Thumbnail composer" })).toBeInTheDocument();
+    expect(screen.getByTestId("thumbnail-live-preview")).toBeInTheDocument();
+    expect(within(editor).getByLabelText("Video topic")).toBeInTheDocument();
+  });
+});
