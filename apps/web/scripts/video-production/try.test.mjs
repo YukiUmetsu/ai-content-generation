@@ -119,3 +119,11 @@ test("invalid options fail before browser, build or provider work", async () => 
   assert.equal(calls.builds, 0);
   assert.equal(calls.productions.length, 0);
 });
+
+test("missing browser fails immediately without collecting a Fish key or voice data", async () => {
+  const { calls, deps } = harness({ findBrowser: async () => { throw new Error("Chrome unavailable"); } });
+  await assert.rejects(runGuidedTrial([], deps), /Chrome unavailable/);
+  assert.deepEqual(calls.answers, []);
+  assert.equal(calls.builds, 0);
+  assert.equal(calls.productions.length, 0);
+});

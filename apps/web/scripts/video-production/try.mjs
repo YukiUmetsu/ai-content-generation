@@ -102,6 +102,7 @@ export async function runGuidedTrial(args = [], deps = {}) {
   const output = deps.output ?? ((message) => process.stdout.write(message + "\n"));
   const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
   const job = structuredClone(fixture);
+  const browserExecutable = await (deps.findBrowser ?? (() => findChromium(env)))();
   let providerRevision, apiKey = undefined, networkApproved = false;
 
   if (provider === "fish") {
@@ -124,7 +125,6 @@ export async function runGuidedTrial(args = [], deps = {}) {
     job.voice = { ...job.voice, provider: "local", modelId: modelId.trim(), voiceId: voiceId.trim(), endpoint, licenseStatus: "unknown" };
   }
 
-  const browserExecutable = await (deps.findBrowser ?? (() => findChromium(env)))();
   const out = defaultOutput(deps.home ?? homedir(), (deps.now ?? (() => new Date()))(), (deps.random ?? (() => randomBytes(4).toString("hex")))());
   const options = {
     out, provider, providerRevision, apiKey, browserExecutable,
