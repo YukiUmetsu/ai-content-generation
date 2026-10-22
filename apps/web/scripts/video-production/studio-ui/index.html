@@ -114,6 +114,11 @@
             <div id="activity" class="activity" role="status" aria-live="polite"><span class="activity-marker" aria-hidden="true"></span><p id="activity-message">Choose a test and check readiness to begin.</p></div>
             <div id="frame-progress" class="frame-progress" hidden><div class="frame-count"><span>Verified frames</span><strong id="frame-count">0 / 0</strong></div><div class="meter"><span id="frame-meter"></span></div></div>
             <div id="findings" class="findings" hidden><h3>Readiness / QA findings</h3><ul id="findings-list"></ul></div>
+            <details id="fish-diagnostics" class="findings" hidden>
+              <summary>Fish Audio request diagnostics (no credentials or audio)</summary>
+              <p class="helper">Per-beat request, HTTP response, timing, bytes and format. API keys, narration and raw audio are never included.</p>
+              <pre id="fish-diagnostics-text" class="fish-debug-output"></pre>
+            </details>
           </section>
 
           <section class="panel preview-panel" aria-labelledby="preview-heading">
