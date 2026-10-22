@@ -47,6 +47,8 @@ interface WorkspaceProps {
   activeFeatureId: FeatureId;
   onFeatureChange: (id: FeatureId) => void;
   onOpenNav: () => void;
+  toolGuideOpen: boolean;
+  onToolGuideOpenChange: (open: boolean) => void;
 }
 
 export function Workspace({
@@ -55,6 +57,8 @@ export function Workspace({
   activeFeatureId,
   onFeatureChange,
   onOpenNav,
+  toolGuideOpen,
+  onToolGuideOpenChange,
 }: WorkspaceProps) {
   const isWide = useWide();
   const { ref: tabsListRef, overflowing: tabsOverflowing } = useHorizontalOverflow<HTMLDivElement>();
@@ -154,7 +158,13 @@ export function Workspace({
               </div>
             }
             secondary={
-              <PreviewCanvas locale={locale} featureId={activeFeatureId} preview={currentPreview} />
+              <PreviewCanvas
+                locale={locale}
+                featureId={activeFeatureId}
+                preview={currentPreview}
+                toolGuideOpen={toolGuideOpen}
+                onToolGuideOpenChange={onToolGuideOpenChange}
+              />
             }
           />
         </Tabs.Panel>
