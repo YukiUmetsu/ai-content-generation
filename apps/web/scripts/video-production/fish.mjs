@@ -3,7 +3,8 @@ const API_URL = "https://api.fish.audio/v1/tts";
 const MAX_WAV_BYTES = 16 * 1024 * 1024;
 const ACCEPTED_MODELS = new Set(["s1", "s2-pro", "s2.1-pro", "s2.1-pro-free", "drama-3"]);
 const PAID_MODELS = new Set(["s1", "s2-pro", "s2.1-pro", "drama-3"]);
-const WAV_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "application/octet-stream"]);
+const PCM_TYPES = new Set(["audio/pcm", "audio/x-pcm", "audio/l16", "application/octet-stream"]);
+const SAMPLE_RATE = 44100;
 
 export class FishSynthesisError extends Error {
   constructor(code, message, status = null) {
@@ -64,12 +65,41 @@ function validateWave(bytes) {
   return normalized;
 }
 
+/** Assemble a seekable WAV from Fish's completed raw PCM16 stream.
+ * The rest of ContentGen still consumes 44.1 kHz mono WAV bytes.
+ */
+function wrapPcmAsWave(pcm) {
+  if (pcm.byteLength < 2 || pcm.byteLength % 2 !== 0) {
+    throw fail("invalid-pcm", "Fish returned empty or incomplete 16-bit PCM samples.");
+  }
+  if (pcm.byteLength > MAX_WAV_BYTES - 44) {
+    throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
+  }
+  const output = Buffer.allocUnsafe(44 + pcm.byteLength);
+  output.write("RIFF", 0);
+  output.writeUInt32LE(output.length - 8, 4);
+  output.write("WAVE", 8);
+  output.write("fmt ", 12);
+  output.writeUInt32LE(16, 16);
+  output.writeUInt16LE(1, 20);
+  output.writeUInt16LE(1, 22);
+  output.writeUInt32LE(SAMPLE_RATE, 24);
+  output.writeUInt32LE(SAMPLE_RATE * 2, 28);
+  output.writeUInt16LE(2, 32);
+  output.writeUInt16LE(16, 34);
+  output.write("data", 36);
+  output.writeUInt32LE(pcm.byteLength, 40);
+  Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).copy(output, 44);
+  validateWave(output);
+  return output;
+}
+
 async function readBounded(response, signal) {
   const mediaType = (response.headers?.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  if (!WAV_TYPES.has(mediaType)) throw fail("wrong-content-type", "Fish returned an unexpected audio content type.");
+  if (!PCM_TYPES.has(mediaType)) throw fail("wrong-content-type", `Fish returned ${mediaType || "no content type"}, not the requested raw PCM format.`);
   const declared = response.headers?.get("content-length");
-  if (declared && Number(declared) > MAX_WAV_BYTES) throw fail("response-too-large", "Fish WAV exceeded the per-beat size limit.");
-  if (!response.body) throw fail("invalid-wav", "Fish response had no WAV body.");
+  if (declared && Number(declared) > MAX_WAV_BYTES - 44) throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
+  if (!response.body) throw fail("invalid-pcm", "Fish response had no PCM audio body.");
   const reader = response.body.getReader();
   const chunks = [];
   let length = 0;
@@ -79,7 +109,7 @@ async function readBounded(response, signal) {
       const part = await reader.read();
       if (part.done) break;
       length += part.value.byteLength;
-      if (length > MAX_WAV_BYTES) throw fail("response-too-large", "Fish WAV exceeded the per-beat size limit.");
+      if (length > MAX_WAV_BYTES - 44) throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
       chunks.push(part.value);
     }
   } catch (error) {
@@ -91,7 +121,10 @@ async function readBounded(response, signal) {
   const result = new Uint8Array(length);
   let written = 0;
   for (const chunk of chunks) { result.set(chunk, written); written += chunk.byteLength; }
-  return validateWave(result);
+  if (result.length >= 4 && Buffer.from(result).toString("ascii", 0, 4) === "RIFF") {
+    throw fail("wrong-audio-format", "Fish returned WAV despite the requested PCM format; check the provider response format.");
+  }
+  return wrapPcmAsWave(result);
 }
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -123,14 +156,14 @@ export async function synthesizeFishBeat(request, dependencies = {}) {
     reference_id: request.voiceId,
     language: request.locale,
     normalize: true,
-    format: "wav",
+    format: "pcm",
     sample_rate: 44100,
     prosody: { speed: pace, volume: 0, normalize_loudness: true },
   };
   const headers = {
     Authorization: `Bearer ${dependencies.apiKey}`,
     "Content-Type": "application/json",
-    Accept: "audio/wav",
+    Accept: "audio/pcm",
     model: request.modelId,
   };
 
