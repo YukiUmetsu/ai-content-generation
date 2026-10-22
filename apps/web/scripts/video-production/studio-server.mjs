@@ -34,6 +34,35 @@ const headers = {
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
 };
 
+/** Strictly select non-secret Fish telemetry; never serialize API request/response bodies. */
+function publicFishDiagnostic(source, apiKey) {
+  if (!source || source.kind !== "fish-diagnostic") return null;
+  const entry = {};
+  const values = {
+    event: ["request", "response", "complete", "failure"],
+    requestedFormat: ["pcm"],
+    audioSignature: ["empty", "WAV", "MP3", "Ogg", "unrecognized-or-raw-PCM"],
+    errorCode: ["unauthorized", "payment-required", "usage-denied", "rate-limited",
+      "provider-unavailable", "provider-rejected", "provider-network", "provider-timeout",
+      "provider-stream", "invalid-pcm", "wrong-content-type", "response-too-large",
+      "wrong-audio-format", "invalid-wav", "unsupported-wav"],
+  };
+  for (const [key, allowed] of Object.entries(values)) {
+    if (allowed.includes(source[key])) entry[key] = source[key];
+  }
+  for (const key of ["attempt", "maxAttempts", "sampleRate", "httpStatus",
+      "declaredBytes", "receivedBytes", "wavBytes", "elapsedMs"]) {
+    const value = source[key];
+    if (Number.isSafeInteger(value) && value >= 0 && value < 1e12) entry[key] = value;
+  }
+  for (const key of ["model", "contentType", "requestId", "beatId"]) {
+    const value = source[key];
+    if (typeof value === "string" && /^[A-Za-z0-9._:/-]{1,80}$/.test(value) &&
+        !(apiKey && value.includes(apiKey))) entry[key] = value;
+  }
+  return Object.keys(entry).length ? entry : null;
+}
+
 class ClientError extends Error {
   constructor(message, code = 400) { super(message); this.status = code; }
 }
@@ -175,7 +204,7 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
   let busy = false, validatedSignature = "", abort = null, activeKey = "", releaseDir = null;
   let generatedDraft = null;
   let snapshot = { status: "idle", phase: "idle", message: "Choose a test and check readiness.",
-    findings: [], report: null, progress: null, artifacts: null, qa: null, outputDir: null };
+    findings: [], report: null, progress: null, artifacts: null, qa: null, outputDir: null, fishDiagnostics: [] };
   const update = (patch) => { snapshot = { ...snapshot, ...patch }; };
   const publicStatus = () => snapshot;
   const handleTopic = async (req, res) => {
@@ -276,7 +305,7 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
     validatedSignature = "";
     releaseDir = null;
     update({ status: "rendering", phase: "starting", message: "Starting actual media production…",
-      progress: null, artifacts: null, qa: null, outputDir: out, findings: [] });
+      progress: null, artifacts: null, qa: null, outputDir: out, findings: [], fishDiagnostics: [] });
     json(res, 202, { started: true });
     void (async () => {
       try {
@@ -290,6 +319,12 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
           textTransmissionApproved: config.transmitText === true, localVoiceAuthorized: config.localVoiceAuthorized === true,
           localEndpoint: config.endpoint, signal: controller.signal,
           onProgress: (progress) => {
+            if (controller.signal.aborted) return;
+            if (progress?.kind === "fish-diagnostic") {
+              const diagnostic = publicFishDiagnostic(progress, activeKey);
+              if (diagnostic) update({ fishDiagnostics: [...(snapshot.fishDiagnostics || []), diagnostic].slice(-32) });
+              return;
+            }
             if (!controller.signal.aborted) update({ phase: progress.phase, progress,
               message: progress.completedFrames !== undefined
                 ? `Captured ${progress.completedFrames.toLocaleString()} of ${progress.totalFrames.toLocaleString()} verified frames.`
