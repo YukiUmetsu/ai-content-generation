@@ -307,8 +307,10 @@ export function MotionMediaShowcase({ locale, className }: Pick<FeatureSlotProps
       const rect = viewport.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) setCaptureScale(Math.min(rect.width / manifest.width, rect.height / manifest.height));
     };
-    update();
-    if (typeof ResizeObserver === "undefined") return;
+    if (typeof ResizeObserver === "undefined") {
+      const request = requestAnimationFrame(update);
+      return () => cancelAnimationFrame(request);
+    }
     const observer = new ResizeObserver(update);
     observer.observe(viewport);
     return () => observer.disconnect();
