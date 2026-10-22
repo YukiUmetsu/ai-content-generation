@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="studio-token" content="STUDIO_TOKEN_PLACEHOLDER">
+  <meta name="color-scheme" content="dark">
+  <title>Video Test Studio · ContentGen</title>
+  <link rel="stylesheet" href="/studio.css">
+  <script type="module" src="/studio.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div><span>contentgen</span><span class="brand-separator">/</span><span class="brand-subtitle">Video Test Studio</span></div>
+      <div class="topbar-right"><span class="live-dot" aria-hidden="true"></span><span>LOCAL SESSION</span><span class="header-divider"></span><span>Drafts only</span></div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="page-title">
+        <div class="eyebrow"><span class="eyebrow-line"></span> END-TO-END PRODUCTION TEST</div>
+        <h1 id="page-title">From script to <em>finished frame.</em></h1>
+        <p>Run real narration, animation, sound and encoding with one guided workflow. Inspect what the system actually produced—before trusting it.</p>
+      </section>
+
+      <div class="workspace">
+        <form id="configuration" class="config-column" autocomplete="off" novalidate>
+          <section class="panel" aria-labelledby="format-heading">
+            <div class="section-heading"><span class="step-index">01</span><div><h2 id="format-heading">Choose your test</h2><p>Start small, then qualify the longer production.</p></div></div>
+            <div class="mode-options">
+              <label class="choice"><input type="radio" name="mode" value="smoke" checked><span class="choice-body"><span class="choice-top"><strong>Quick smoke test</strong><span class="pill">START HERE</span></span><span>3 narration beats · approx. 30–60 sec</span><small>Check the full pipeline without a long render.</small></span><span class="choice-indicator" aria-hidden="true"></span></label>
+              <label class="choice"><input type="radio" name="mode" value="long"><span class="choice-body"><span class="choice-top"><strong>Long-form YouTube</strong><span class="pill pill-muted">8 MIN+</span></span><span>26 narration beats · 1920 × 1080</span><small>15,000+ frames; capture may take a long time.</small></span><span class="choice-indicator" aria-hidden="true"></span></label>
+            </div>
+            <div class="fixture-caption" id="fixture-caption">Illustrative House Math scenario · YouTube landscape · 30 fps</div>
+          </section>
+
+          <section class="panel" aria-labelledby="narrator-heading">
+            <div class="section-heading"><span class="step-index">02</span><div><h2 id="narrator-heading">Configure narration</h2><p>Speech is synthesized automatically for every beat.</p></div></div>
+            <fieldset class="provider-options"><legend>Voice provider</legend>
+              <label><input type="radio" name="provider" value="fish" checked><span>Fish Audio API</span></label>
+              <label><input type="radio" name="provider" value="local"><span>Local TTS bridge</span></label>
+            </fieldset>
+            <div class="field-group">
+              <label for="voice-id">Authorized voice ID <span class="required-mark">*</span></label>
+              <input id="voice-id" name="voiceId" type="text" placeholder="Enter a voice reference you may use" required maxlength="180" spellcheck="false">
+              <p class="helper">Use a voice you created or have permission to synthesize.</p>
+            </div>
+            <div id="fish-fields">
+              <div class="static-field"><span>Model</span><strong>s2.1-pro-free</strong><span class="status-outline">Fixed · test only</span></div>
+              <div class="field-group"><label for="fish-key">Fish Audio API key</label><input id="fish-key" name="apiKey" type="password" placeholder="Paste key or use FISH_AUDIO_API_KEY env" autocomplete="off" spellcheck="false"><p class="helper">Passed only to your local worker. Never stored in files or browser storage.</p></div>
+            </div>
+            <div id="local-fields" hidden>
+              <div class="field-group"><label for="model-id">Installed model ID <span class="required-mark">*</span></label><input id="model-id" name="modelId" type="text" placeholder="e.g. installed-qwen-tts" maxlength="180" spellcheck="false"></div>
+              <div class="field-group"><label for="local-endpoint">Local bridge URL <span class="required-mark">*</span></label><input id="local-endpoint" name="endpoint" type="url" value="http://127.0.0.1:8765" maxlength="240" spellcheck="false"><p class="helper">An already-running bridge on this computer; no models are downloaded.</p></div>
+            </div>
+            <div class="field-group"><label for="provider-revision">Provider / engine revision <span class="required-mark">*</span></label><input id="provider-revision" name="providerRevision" type="text" value="fish-api-v1" maxlength="180" spellcheck="false"><p class="helper">Pins the narration cache to an actual API or local engine version.</p></div>
+          </section>
+
+          <section class="panel" aria-labelledby="permissions-heading">
+            <div class="section-heading"><span class="step-index">03</span><div><h2 id="permissions-heading">Permissions &amp; run</h2><p>Preflight is local. Rendering may call your chosen voice service.</p></div></div>
+            <div id="fish-permissions" class="consent-list">
+              <label><input id="voice-consent" type="checkbox"><span>I am authorized to use this Fish voice reference.</span></label>
+              <label><input id="transmit-text" type="checkbox"><span>I authorize sending the example narration text to Fish Audio for this test.</span></label>
+            </div>
+            <div id="local-permissions" class="consent-list" hidden><label><input id="local-authorized" type="checkbox"><span>I am authorized to use this voice with my local TTS engine.</span></label></div>
+            <div class="notice"><span class="notice-icon" aria-hidden="true">i</span><p>The sample facts and chime are <strong>test-only</strong>. This studio will never publish a video, call paid Fish models or mark commercial rights verified.</p></div>
+            <div class="action-stack">
+              <button id="preflight-button" class="button button-secondary" type="button"><span class="button-icon" aria-hidden="true">◎</span> Check readiness <span class="button-arrow" aria-hidden="true">→</span></button>
+              <button id="render-button" class="button button-primary" type="button" disabled><span class="button-icon" aria-hidden="true">▶</span> Render test video <span class="button-arrow" aria-hidden="true">→</span></button>
+              <button id="cancel-button" class="button button-danger" type="button" hidden>Stop current render</button>
+            </div>
+          </section>
+        </form>
+
+        <div class="review-column">
+          <section class="panel result-panel" aria-labelledby="status-heading">
+            <div class="result-title"><div><div class="overline">PRODUCTION CONSOLE</div><h2 id="status-heading">Live run status</h2></div><span id="status-badge" class="status-badge" data-state="idle">NOT STARTED</span></div>
+            <div class="timeline">
+              <div class="timeline-step" data-step="build"><span class="timeline-dot">1</span><div><strong>Build &amp; validate</strong><small>Scene assets, browser, voice and system tools</small></div></div>
+              <div class="timeline-step" data-step="speech"><span class="timeline-dot">2</span><div><strong>Synthesize narration</strong><small>Real speech generation and audio timeline</small></div></div>
+              <div class="timeline-step" data-step="render"><span class="timeline-dot">3</span><div><strong>Render &amp; mix</strong><small>Frame batches, sound, captions and MP4</small></div></div>
+              <div class="timeline-step" data-step="review"><span class="timeline-dot">4</span><div><strong>Verify output</strong><small>Technical QA and human review artifacts</small></div></div>
+            </div>
+            <div id="activity" class="activity" role="status" aria-live="polite"><span class="activity-marker" aria-hidden="true"></span><p id="activity-message">Choose a test and check readiness to begin.</p></div>
+            <div id="frame-progress" class="frame-progress" hidden><div class="frame-count"><span>Verified frames</span><strong id="frame-count">0 / 0</strong></div><div class="meter"><span id="frame-meter"></span></div></div>
+            <div id="findings" class="findings" hidden><h3>Readiness / QA findings</h3><ul id="findings-list"></ul></div>
+          </section>
+
+          <section class="panel preview-panel" aria-labelledby="preview-heading">
+            <div class="result-title"><div><div class="overline">OUTPUT REVIEW</div><h2 id="preview-heading">See the actual result</h2></div><span class="pill pill-muted">LOCAL FILES</span></div>
+            <div id="empty-preview" class="empty-preview"><div class="empty-graphic" aria-hidden="true"><span class="play-outline">▶</span><span class="frame-tick frame-tick-1"></span><span class="frame-tick frame-tick-2"></span></div><strong>Your render will appear here</strong><p>After a successful run, inspect the video, voice, mastered audio, captions, frames and machine-readable QA.</p></div>
+            <div id="review-content" hidden>
+              <div class="media-frame"><video id="film-preview" controls playsinline preload="metadata" aria-label="Finished draft video"></video></div>
+              <div class="review-warning"><strong>Human review required</strong><span>Watch at normal speed and check sound, pacing, text, and rights.</span></div>
+              <div id="review-metrics" class="metrics"></div>
+              <div class="artifact-grid"><a id="download-video" target="_blank" rel="noopener" download="video.mp4">MP4 video <span>↗</span></a><a id="download-captions" target="_blank" rel="noopener" download="captions.srt">Captions · SRT <span>↗</span></a><a id="download-qa" target="_blank" rel="noopener" download="qa-report.json">QA report <span>↗</span></a><a id="download-manifest" target="_blank" rel="noopener" download="render-manifest.json">Render manifest <span>↗</span></a></div>
+              <h3 class="review-section-title">Listen separately</h3><label class="audio-label" for="voice-audio">Generated voice only</label><audio id="voice-audio" controls preload="none"></audio><label class="audio-label" for="master-audio">Master mix · voice + sound</label><audio id="master-audio" controls preload="none"></audio>
+              <h3 class="review-section-title">Review frames</h3><div id="stills" class="stills-grid"></div>
+              <p class="output-path">Output folder: <code id="output-folder"></code></p>
+            </div>
+          </section>
+        </div>
+      </div>
+      <footer>CONTENTGEN · LOCAL-FIRST VIDEO PRODUCTION <span>Not a publishing or commercial approval interface.</span></footer>
+    </main>
+  </div>
+</body>
+</html>

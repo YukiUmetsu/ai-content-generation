@@ -68,7 +68,7 @@ async function toolVersions() {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -96,6 +96,7 @@ export async function produceVideo(candidate, options, deps = {}) {
   if (await exists(releaseDir)) fail("release already exists; choose a new output directory instead of overwriting published files");
   const distRoot = options.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
   // This potentially costly browser/build check MUST finish before provider transmission.
+  options.onProgress?.({ phase: "browser-preflight", message: "Opening Chromium to verify the render environment…" });
   const preflight = await (deps.preflightExport ?? (async () => {
     const buildHash = await fingerprintBuiltStage(distRoot);
     await probeBrowserExecutable(options.browserExecutable);
@@ -107,6 +108,7 @@ export async function produceVideo(candidate, options, deps = {}) {
   const working = await mkdtemp(join(out, ".release-staging-"));
   let stage;
   try {
+    options.onProgress?.({ phase: "narration", message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
       allowNetwork: options.allowNetwork, voiceReferenceConsent: options.voiceReferenceConsent,
@@ -114,6 +116,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
     });
+    options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
     const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const plan = compileHouseMathVisuals(job, timeline);
     const frames = plan.manifest.durationFrames;
@@ -125,6 +128,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     const sfx = job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
     }));
+    options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…" });
     const audio = await (deps.renderMasterAudio ?? renderMasterAudio)({ beats: speech, timeline, sfx }, {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
@@ -133,9 +137,10 @@ export async function produceVideo(candidate, options, deps = {}) {
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {
+      options.onProgress?.({ phase: "rendering", completedFrames: 0, totalFrames: frames });
       render = await (deps.renderVideoSegments ?? renderVideoSegments)({
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
-        outDir: join(out, ".render"), browserExecutable: options.browserExecutable,
+        outDir: join(out, ".render"), browserExecutable: options.browserExecutable, onProgress: options.onProgress,
         maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
       });
     } finally { await stage.close(); stage = null; }
@@ -154,6 +159,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       publishedStills.push({ frame, file: `stills/${filename}`, sha256: still.sha256 });
     }
 
+    options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…" });
     const video = join(working, "video.mp4");
     await (deps.mux ?? muxVideo)(render.videoOnlyPath, audio.wavPath, video, options);
     const mp4 = await (deps.probeMp4 ?? probeMuxedMp4)(video, {
@@ -170,6 +176,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       captions: sha256(await readFile(captions)),
     };
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
+    options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…" });
     const versions = deps.toolVersions ?? await toolVersions();
     const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed" });
     const manifestPath = join(working, "render-manifest.json");
@@ -185,6 +192,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     // Multi-artifact commit: until this rename, there is no top-level successful release.
     if (await exists(releaseDir)) fail("release appeared concurrently; refusing to overwrite");
     await rename(working, releaseDir);
+    options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening." });
     return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash };
   } finally {
     if (stage) await stage.close();

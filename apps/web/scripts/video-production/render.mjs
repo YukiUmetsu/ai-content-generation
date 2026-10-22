@@ -143,7 +143,7 @@ async function defaultConcat(paths, outputPath, { ffmpeg, signal }) {
 }
 
 /**
- * @param {{stageUrl:string,manifest:object,planHash:string,buildHash:string,outDir:string,maxBatchFrames?:number,reviewFrames?:number[],browserExecutable?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
+ * @param {{stageUrl:string,manifest:object,planHash:string,buildHash:string,outDir:string,maxBatchFrames?:number,reviewFrames?:number[],browserExecutable?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:{phase:string,completedFrames:number,totalFrames:number})=>void}} options
  * @param {{openCapture?:Function,encodeBatch?:Function,probeSegment?:Function,concatSegments?:Function,probeFinal?:Function}} dependencies
  */
 export async function renderVideoSegments(options, dependencies = {}) {
@@ -219,6 +219,8 @@ export async function renderVideoSegments(options, dependencies = {}) {
         }
       }
       segments.push({ path, sha256: segmentHash, startFrame, frameCount });
+      // Report verified progress only after segment metadata and probe succeed, including safe resume.
+      options.onProgress?.({ phase: "rendering", completedFrames: startFrame + frameCount, totalFrames: manifest.durationFrames });
     }
     if (reviewFrames.length) await mkdir(join(dir, "stills"), { recursive: true });
     for (const frame of reviewFrames) {

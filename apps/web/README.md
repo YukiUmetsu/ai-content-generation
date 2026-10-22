@@ -21,6 +21,22 @@ With Node >=22.12, pnpm, FFmpeg/FFprobe and an already-installed Chrome/Chromium
 ```bash
 cd apps/web
 pnpm install --frozen-lockfile  # one time
+pnpm video:studio
+```
+
+Open **http://127.0.0.1:8788**. The **local Video Test Studio** offers a complete browser test path:
+
+1. Choose **Quick smoke test** (3 beats, ~30–60 seconds) or **Long-form YouTube** (26 beats, at least 8 measured minutes; potentially a lengthy render).
+2. Select **Fish Audio API** or your own installed **local TTS bridge**. Enter an authorized voice reference and, for Fish, an API key (or set `FISH_AUDIO_API_KEY` in the launching terminal). The Fish model is fixed to the test-only `s2.1-pro-free` ID; paid models cannot be selected.
+3. Check the voice permissions and click **Check readiness**. The studio builds the export scene and checks dependencies/browser/consent **without any TTS request**. Read actionable findings if blocked.
+4. Click **Render test video** and confirm this specific run. Watch real worker stages and completed verified frame batches, or cancel. Then play the real MP4, audition voice/master audio, check review stills, and download captions, render manifest and QA report. The job-owned output directory is displayed below the player.
+
+No arbitrary file paths, online publishing, model downloads or commercial approval are exposed. The server only listens on `127.0.0.1`, requires a local token for changes/artifact downloads, does not persist credentials and creates unique directories under `~/Movies/ContentGen/`. Close the studio with Ctrl-C. Run a long-form test only after the smoke test succeeds and you have adequate time/disk space; 8 minutes at 30 fps requires **at least 14,400 frames** and can take a long time to capture.
+
+### Terminal alternative
+
+```bash
+cd apps/web
 pnpm video:try
 ```
 

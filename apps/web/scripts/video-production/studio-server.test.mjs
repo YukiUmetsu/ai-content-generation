@@ -1,0 +1,205 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createStudioJob, startVideoStudio } from "./studio-server.mjs";
+
+const fishConfig = {
+  mode: "smoke", provider: "fish", voiceId: "my-licensed-reference", apiKey: "SUPER-SECRET-FISH-KEY",
+  providerRevision: "fish-api-v1", voiceConsent: true, transmitText: true,
+};
+const localConfig = {
+  mode: "long", provider: "local", voiceId: "my-voice", modelId: "installed-local-model",
+  providerRevision: "local-build-1", endpoint: "http://127.0.0.1:8765", localVoiceAuthorized: true,
+};
+
+async function harness(t, overrides = {}) {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-studio-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const counts = { build: 0, inspect: 0, produce: 0 };
+  const calls = [];
+  const studio = await startVideoStudio({
+    port: 0,
+    outputRoot: root,
+    build: async () => { counts.build++; },
+    findBrowser: async () => "/usr/bin/mock-browser",
+    inspect: async (job, options) => {
+      counts.inspect++;
+      calls.push({ kind: "inspect", job, options });
+      return { ready: true, findings: [], provider: options.provider, tools: { browser: { available: true } } };
+    },
+    produce: async (job, options) => {
+      counts.produce++;
+      calls.push({ kind: "produce", job, options });
+      options.onProgress?.({ phase: "rendering", completedFrames: 150, totalFrames: 300 });
+      const releaseDir = join(options.out, "release");
+      await mkdir(join(releaseDir, "stills"), { recursive: true });
+      await writeFile(join(releaseDir, "video.mp4"), "0123456789abcdef");
+      await writeFile(join(releaseDir, "master.wav"), "wave");
+      await writeFile(join(releaseDir, "voice.wav"), "speech");
+      await writeFile(join(releaseDir, "captions.srt"), "captions");
+      await writeFile(join(releaseDir, "qa-report.json"), JSON.stringify({ technicalPass: true, commercialReady: false }));
+      await writeFile(join(releaseDir, "render-manifest.json"), "{}");
+      await writeFile(join(releaseDir, "stills", "frame-000000.png"), "fake-png");
+      return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa: { technicalPass: true, commercialReady: false } };
+    },
+    ...overrides,
+  });
+  t.after(() => studio.close());
+  const send = (path, method = "GET", body, headers = {}) => fetch(`${studio.url}${path}`, {
+    method,
+    headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(method === "GET" ? {} : { "X-ContentGen-Studio-Token": studio.token }), ...headers },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  return { ...studio, root, counts, calls, send };
+}
+
+async function until(studio, predicate) {
+  for (let i = 0; i < 100; i++) {
+    const state = await (await studio.send("/api/status")).json();
+    if (predicate(state)) return state;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail("studio state did not settle");
+}
+
+test("fixture selection changes the validated job duration and provider without mutating checked-in examples", () => {
+  const smoke = createStudioJob(fishConfig);
+  const long = createStudioJob(localConfig);
+  assert.equal(smoke.mode, "smoke");
+  assert.equal(smoke.voice.modelId, "s2.1-pro-free");
+  assert.equal(smoke.voice.voiceId, "my-licensed-reference");
+  assert.equal(long.mode, "youtube-long");
+  assert.equal(long.destination.minimumDurationSeconds, 480);
+  assert.equal(long.voice.provider, "local");
+  assert.equal(long.voice.endpoint, "http://127.0.0.1:8765");
+  assert.equal(JSON.stringify(long).includes("SUPER-SECRET-FISH-KEY"), false);
+});
+
+test("preflight is side-effect-free for Fish TTS, reports actual findings, and keeps the key out of status", async (t) => {
+  const studio = await harness(t);
+  const response = await studio.send("/api/preflight", "POST", fishConfig);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).ready, true);
+  assert.equal(studio.counts.build, 1);
+  assert.equal(studio.counts.inspect, 1);
+  assert.equal(studio.counts.produce, 0);
+  assert.equal(studio.calls[0].options.env.FISH_AUDIO_API_KEY, fishConfig.apiKey);
+  const state = await (await studio.send("/api/status")).text();
+  assert.equal(state.includes(fishConfig.apiKey), false);
+  assert.equal(state.includes("ready"), true);
+});
+
+test("render is blocked before preflight and after voice changes; explicit confirmed matching render returns real artifact links", async (t) => {
+  const studio = await harness(t);
+  assert.equal((await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true })).status, 409);
+  await studio.send("/api/preflight", "POST", fishConfig);
+  assert.equal((await studio.send("/api/render", "POST", { ...fishConfig, voiceId: "different", confirmRender: true })).status, 409);
+  assert.equal((await studio.send("/api/render", "POST", { ...fishConfig, apiKey: "different-key", confirmRender: true })).status, 409);
+  assert.equal((await studio.send("/api/render", "POST", fishConfig)).status, 400);
+  const response = await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true });
+  assert.equal(response.status, 202);
+  const result = await until(studio, (state) => state.status === "completed");
+  assert.equal(result.progress.completedFrames, 150);
+  assert.equal(result.artifacts.stills.length, 1);
+  assert.match(result.artifacts.video, /\/artifact\//);
+  assert.equal(result.qa.technicalPass, true);
+  assert.equal(result.qa.commercialReady, false);
+  assert.equal(studio.counts.produce, 1);
+  const saved = JSON.parse(await readFile(join(result.outputDir, "job.json"), "utf8"));
+  assert.equal(saved.voice.voiceId, fishConfig.voiceId);
+  assert.equal(JSON.stringify(saved).includes(fishConfig.apiKey), false);
+  assert.equal(JSON.stringify(studio.calls[1].options).includes(fishConfig.apiKey), true);
+});
+
+test("readiness failure exposes concrete findings without starting a render", async (t) => {
+  const studio = await harness(t, { inspect: async () => ({ ready: false,
+    findings: [{ severity: "error", code: "tool-unavailable", message: "ffmpeg is missing" }] }) });
+  const response = await studio.send("/api/preflight", "POST", fishConfig);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).ready, false);
+  const state = await (await studio.send("/api/status")).json();
+  assert.equal(state.status, "blocked");
+  assert.match(state.findings[0].message, /ffmpeg/i);
+  assert.equal((await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true })).status, 409);
+  assert.equal(studio.counts.produce, 0);
+});
+
+test("worker errors redact any provider key and never expose incomplete media", async (t) => {
+  const studio = await harness(t, { produce: async () => { throw new Error(`Provider failed: ${fishConfig.apiKey}`); } });
+  await studio.send("/api/preflight", "POST", fishConfig);
+  await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true });
+  const state = await until(studio, (s) => s.status === "failed");
+  assert.match(state.message, /\[redacted\]/);
+  assert.equal(JSON.stringify(state).includes(fishConfig.apiKey), false);
+  assert.equal(state.artifacts, null);
+});
+
+test("local voice setup requires loopback and explicit authorization", async (t) => {
+  const studio = await harness(t);
+  assert.equal((await studio.send("/api/preflight", "POST", { ...localConfig, endpoint: "https://remote.example" })).status, 400);
+  assert.equal((await studio.send("/api/preflight", "POST", { ...localConfig, localVoiceAuthorized: false })).status, 400);
+  const response = await studio.send("/api/preflight", "POST", localConfig);
+  assert.equal((await response.json()).ready, true);
+  assert.equal(studio.calls.at(-1).job.voice.modelId, localConfig.modelId);
+});
+
+test("mutations require token and same origin; no wildcard CORS or echoing credentials", async (t) => {
+  const studio = await harness(t);
+  assert.equal((await fetch(`${studio.url}/api/preflight`, { method: "POST", body: JSON.stringify(fishConfig), headers: { "Content-Type": "application/json" } })).status, 403);
+  assert.equal((await studio.send("/api/preflight", "POST", fishConfig, { Origin: "https://untrusted.example" })).status, 403);
+  assert.equal((await studio.send("/api/preflight", "POST", fishConfig, { Origin: studio.url })).status, 200);
+  assert.equal((await studio.send("/api/preflight", "POST", { ...fishConfig, apiKey: "A".repeat(1024 * 1024 + 1) })).status, 413);
+  const invalid = await (await studio.send("/api/status")).text();
+  assert.equal(invalid.includes(fishConfig.apiKey), false);
+});
+
+test("artifact serving uses an allowlist and supports byte-range video playback", async (t) => {
+  const studio = await harness(t);
+  await studio.send("/api/preflight", "POST", fishConfig);
+  await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true });
+  const done = await until(studio, (s) => s.status === "completed");
+  assert.equal((await studio.send(done.artifacts.video)).status, 200);
+  const partial = await studio.send(done.artifacts.video, "GET", undefined, { Range: "bytes=2-5" });
+  assert.equal(partial.status, 206);
+  assert.equal(partial.headers.get("content-range"), "bytes 2-5/16");
+  assert.equal(await partial.text(), "2345");
+  assert.equal((await studio.send("/artifact/bad-token/video.mp4")).status, 403);
+  assert.equal((await studio.send(`/artifact/${studio.token}/../../package.json`)).status, 404);
+  assert.equal((await studio.send(`/artifact/${studio.token}/private.txt`)).status, 404);
+});
+
+test("cancel interrupts only the current render, does not fabricate a completed release", async (t) => {
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const studio = await harness(t, { produce: async (_job, options) => {
+    entered();
+    await new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("cancelled by user")), { once: true });
+    });
+  } });
+  await studio.send("/api/preflight", "POST", localConfig);
+  assert.equal((await studio.send("/api/render", "POST", { ...localConfig, confirmRender: true })).status, 202);
+  await started;
+  assert.equal((await studio.send("/api/render", "POST", { ...localConfig, confirmRender: true })).status, 409);
+  assert.equal((await studio.send("/api/cancel", "POST", {})).status, 202);
+  const state = await until(studio, (s) => s.status === "cancelled");
+  assert.equal(state.artifacts, null);
+  assert.equal(state.qa, null);
+});
+
+test("serves an interactive accessible frontend with local-only script and styling", async (t) => {
+  const studio = await harness(t);
+  const html = await (await studio.send("/")).text();
+  assert.match(html, /Video Test Studio/);
+  assert.match(html, /Check readiness/);
+  assert.match(html, /Render test video/);
+  assert.match(html, /type="password"/);
+  assert.match(html, /studio-token/);
+  const js = await studio.send("/studio.js");
+  assert.equal(js.status, 200);
+  assert.match(await js.text(), /\/api\/preflight/);
+  assert.equal((await studio.send("/studio.css")).status, 200);
+});

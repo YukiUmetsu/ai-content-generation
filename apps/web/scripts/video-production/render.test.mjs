@@ -92,6 +92,17 @@ test("301 frames use verified 150+150+1 segments and only absolute seeks", async
   assert.equal((await readdir(dir)).some((file) => file.startsWith(".capture-")), false, "only the owned PNG batch is reclaimed");
 });
 
+test("capture progress counts only batches that passed hashing and frame probes", async (t) => {
+  const { dir, dependencies } = await harness(t);
+  const updates = [];
+  await renderVideoSegments({ ...config(dir), onProgress: (event) => updates.push(event) }, dependencies);
+  assert.deepEqual(updates, [
+    { phase: "rendering", completedFrames: 150, totalFrames: 301 },
+    { phase: "rendering", completedFrames: 300, totalFrames: 301 },
+    { phase: "rendering", completedFrames: 301, totalFrames: 301 },
+  ]);
+});
+
 test("resume validates hash, manifest and probe before skipping completed segments", async (t) => {
   const { dir, dependencies, stats } = await harness(t);
   await renderVideoSegments(config(dir, 151), dependencies);

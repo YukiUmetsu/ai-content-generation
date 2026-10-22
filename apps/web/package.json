@@ -17,6 +17,7 @@
     "fixtures:creative": "node scripts/serve-fixtures.mjs",
     "video:produce": "node scripts/video-production/cli.mjs",
     "video:try": "node scripts/video-production/try.mjs",
+    "video:studio": "node scripts/video-production/studio-server.mjs",
     "test:video:headless": "node --test scripts/video-production/*.test.mjs"
   },
   "dependencies": {

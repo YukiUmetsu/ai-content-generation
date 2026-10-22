@@ -80,6 +80,21 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(manifest.narration[0].sha256, hash(ctx.job.beats[0].narration));
 });
 
+test("production emits real stage transitions and forwards verified capture frame progress", async (t) => {
+  const ctx = await context(t);
+  const events = [];
+  const originalRender = ctx.injected.renderVideoSegments;
+  ctx.injected.renderVideoSegments = async (options) => {
+    options.onProgress?.({ phase: "rendering", completedFrames: 90, totalFrames: 90 });
+    return originalRender(options);
+  };
+  await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
+  const phases = events.map((event) => event.phase);
+  assert.deepEqual(phases, ["browser-preflight", "narration", "timeline", "audio", "rendering", "rendering", "mux", "qa", "review"]);
+  assert.deepEqual(events.find((event) => event.completedFrames === 90),
+    { phase: "rendering", completedFrames: 90, totalFrames: 90 });
+});
+
 test("stage/render failure closes the local server and never publishes an incomplete release", async (t) => {
   const ctx = await context(t);
   ctx.injected.renderVideoSegments = async () => { throw new Error("mock browser crash"); };
