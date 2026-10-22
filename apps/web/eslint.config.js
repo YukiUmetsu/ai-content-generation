@@ -8,7 +8,7 @@ export default tseslint.config(
   {
     // Vendored Kumiki source is upstream code pinned byte-for-byte; lint it upstream,
     // not here, so a pin bump never fails on unrelated rule drift.
-    ignores: ["dist", "coverage", "node_modules", "src/components/ui", "src/styles/kumiki"],
+    ignores: ["dist", "coverage", "node_modules", "src/components", "src/styles/kumiki"],
   },
   {
     files: ["**/*.{ts,tsx}"],

@@ -1,11 +1,11 @@
 import type { FeatureSlotProps } from "@/features/registry";
-import { FEATURE_METADATA } from "@/features/registry";
-import { FeatureSlotShell } from "@/app/feature-slot-shell";
+import { MotionMediaShowcase } from "./MotionMediaShowcase";
+
+export { MotionMediaShowcase } from "./MotionMediaShowcase";
 
 export default function MotionGallerySlot(props: FeatureSlotProps) {
   return (
-    <FeatureSlotShell
-      meta={FEATURE_METADATA["motion-gallery"]}
+    <MotionMediaShowcase
       locale={props.locale}
       className={props.className}
     />

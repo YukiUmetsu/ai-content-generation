@@ -1,0 +1,19 @@
+.mg-capture-viewport {
+  position: relative;
+  container-type: inline-size;
+}
+
+.mg-capture-stage {
+  transform: scale(var(--mg-capture-scale, 1));
+  transform-origin: top left;
+}
+
+.mg-showcase .tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-capture-stage {
+    transition: none !important;
+  }
+}

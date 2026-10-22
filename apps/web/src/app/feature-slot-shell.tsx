@@ -2,10 +2,10 @@ import type { FeatureMetadata, FeatureSlotProps } from "@/features/registry";
 import { Surface } from "@/components/ui/surface-card";
 
 /**
- * Placeholder body shared by the five feature slots. It is a composition of a
- * Kumiki Surface, not a second card primitive. `min-h-full` lets the slot grow
- * and the surrounding SplitPane scroll on short mobile viewports instead of
- * clipping the description and metadata behind `overflow-hidden`.
+ * Placeholder body shared by feature slots that are not yet wired. It is a
+ * composition of a Kumiki Surface, not a second card primitive. `min-h-full`
+ * lets the slot grow and the surrounding SplitPane scroll on short mobile
+ * viewports instead of clipping metadata behind `overflow-hidden`.
  */
 export function FeatureSlotShell({
   meta,

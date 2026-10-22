@@ -85,12 +85,12 @@ export const FEATURE_METADATA: Record<FeatureId, FeatureMetadata> = {
   },
   "motion-gallery": {
     id: "motion-gallery",
-    title: "Motion gallery",
-    titleJa: "モーション",
-    outcome: "Audition motion recipes and camera behavior against a scene at real duration.",
-    outcomeJa: "実際の再生時間でモーションレシピとカメラ挙動を試聴・確認します。",
-    consumes: ["Motion presets", "Reduced-motion preference", "Preview canvas scope"],
-    produces: ["Selected motion recipe", "Motion override manifest"],
+    title: "Motion & media lab",
+    titleJa: "モーション・メディア",
+    outcome: "Preview deterministic camera motion, data-led infographics, still exports and capture-ready video frames in one place.",
+    outcomeJa: "カメラモーション、インフォグラフィック、静止画書き出し、動画キャプチャ準備を一か所で確認します。",
+    consumes: ["BrandKit palette and type roles", "MotionDirector + CameraStage", "Platform preset manifests", "Illustrative cost data"],
+    produces: ["Frame-addressed motion sample", "Validated still export", "Capture-ready video frame", "QA diagnostics"],
   },
   "platform-composer": {
     id: "platform-composer",
