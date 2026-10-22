@@ -217,7 +217,7 @@ adds no new runtime dependencies.
 
 ### Upstream adoption candidates (checked 2026-10-22)
 
-Kumiki main had advanced **22 commits** beyond this pin at the audit (140 registry items vs 110 at the pin). Generic `general-flow` beats with two to five stages now use the **existing pinned** `DiagramStage` + `ProcessJourney` components: fixed non-overlapping layouts, connected graph routes, one frame-addressable traveling subject, explicit stage handoffs, deterministic seeking, SVG text labels, and a still fallback for very short beats. Intro/comparison/breakdown/payoff views remain unchanged. Browser preflight rejects reported diagram node overlap; real-time 16:9 export and visual inspection are still required before production sign-off.
+Kumiki main had advanced **22 commits** beyond this pin at the audit (140 registry items vs 110 at the pin). Generic `general-flow` beats with two to five stages now use the **existing pinned** `DiagramStage` + `ProcessJourney` components: fixed non-overlapping layouts, connected graph routes, one frame-addressable traveling subject, explicit stage handoffs, deterministic seeking, SVG text labels, and a still fallback for very short beats. Breakdown beats display equal-size **qualitative categories** rather than invented proportional bars; numeric charts require a separate source-backed data contract. Intro/comparison/payoff views remain unchanged. Browser preflight rejects reported diagram node overlap; real-time 16:9 export and visual inspection are still required before production sign-off.
 
 Further **separately validated** registry upgrades should target:
 
