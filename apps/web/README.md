@@ -22,6 +22,12 @@ pnpm video:produce -- --job ../../examples/video-production-house-math-smoke.jso
 
 Dry-run checks the Fish credential's **presence** without revealing it, explicit network permission, FFmpeg/FFprobe and a configured existing browser (`CONTENTGEN_CHROMIUM_EXECUTABLE`). No API request or media render happens. Later production tasks will add generated Fish or local narration and actual browser-to-FFmpeg output; these must not be marked complete from this dry-run alone. Never commit `FISH_AUDIO_API_KEY` or an unlicensed voice reference.
 
+### Narration adapters (opt-in, currently offline-tested only)
+
+- **Fish Audio:** supply `FISH_AUDIO_API_KEY` at runtime, an authorized voice-reference ID, locale, and explicit model. The adapter uses `POST https://api.fish.audio/v1/tts`, a versioned request with `model: s2.1-pro-free` for evaluation, and checks WAV bytes. No API call occurs without `--allow-network` and voice/text-transmission consent. Paid models additionally require an explicit budget/paid-use approval. Availability and commercial licensing of any free model or voice must be independently verified before release; no real Fish request has been made during this foundation implementation.
+- **Local:** a **user-installed and running** TTS bridge can be configured with a bare loopback origin such as `http://127.0.0.1:8765`. The adapter POSTs to `/v1/speech` with JSON `{schema_version:1,text,locale,voice_id,model_id,direction,format:"wav"}`. The bridge must return 200, mono 16-bit PCM WAV with `Content-Type: audio/wav` and `X-TTS-Engine-Version: <actual engine version>`. No model is installed or started by ContentGen. Redirects and non-loopback endpoints are refused. The caller must confirm local voice authorization; engine/model identity is recorded for future cache isolation. No installed TTS bridge has been verified yet.
+- Both adapters expose per-beat generated WAV bytes and fail closed on invalid audio. The CLI orchestration, 48 kHz normalization, audio mastering and final video export are subsequent tasks; passing mocked adapter tests is **not** an exported film.
+
 ## Run and verify
 
 Requirements: Node `>=22.12`, pnpm `11.22` (declared in `package.json`).
