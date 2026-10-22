@@ -203,26 +203,27 @@ Selected items and their dependency closure:
 - **Infographics:** `infographic-economic-charts`, plus
   `infographic-system` and `infographic-view`.
 - **Motion:** `motion-director`, `camera-stage`, and
-  `visual-transformation`. The closure includes `motion-track`,
+  `visual-transformation`, `diagram-stage`, and `process-journey`. The closure includes `motion-track`,
   `motion-preset`, `scene-storyboard`, `motion-react`, and the required
   timeline/path/mask/morph/animated-text modules.
 - **Video delivery:** `video-export-stage` and `video-platform-presets`.
 - **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
   `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
-The configuration selects 17 top-level items; the pinned registry resolves
-32 items and vendors 82 unique files including the two stylesheets. All
+The configuration selects 19 top-level items; the pinned registry resolves
+34 items and vendors 85 unique files including the two stylesheets. All
 required npm dependencies already exist in `package.json`; this expansion
 adds no new runtime dependencies.
 
 ### Upstream adoption candidates (checked 2026-10-22)
 
-Kumiki main has advanced **22 commits** beyond this pin (140 registry items vs 110 at the pin). The general-topic renderer still uses its own simple SVG story layouts; the next **separately validated** registry upgrade should target:
+Kumiki main had advanced **22 commits** beyond this pin at the audit (140 registry items vs 110 at the pin). Generic `general-flow` beats with two to five stages now use the **existing pinned** `DiagramStage` + `ProcessJourney` components: fixed non-overlapping layouts, connected graph routes, one frame-addressable traveling subject, explicit stage handoffs, deterministic seeking, SVG text labels, and a still fallback for very short beats. Intro/comparison/breakdown/payoff views remain unchanged. Browser preflight rejects reported diagram node overlap; real-time 16:9 export and visual inspection are still required before production sign-off.
 
-1. `diagram-stage` + `process-journey` for authored node/edge identities, moving packets and semantic route explanations; require normal-speed 16:9 browser export and shuffled-frame seek parity before replacing the generic-flow renderer.
-2. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
-3. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
-4. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
+Further **separately validated** registry upgrades should target:
+
+1. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
+2. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
+3. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
 
 `evidence-stage` is useful later for authorized source visuals. Its dependency tree is broader, and recent Short/Video items still document pending human inspection. **Do not silently move the Kumiki commit pin or call uninstalled registry APIs.** Adopt an item through `kumiki:update`, hash verification, consumer typecheck/build and actual video playback checks in a dedicated change.
 

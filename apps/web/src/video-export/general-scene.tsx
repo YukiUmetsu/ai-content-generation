@@ -1,6 +1,12 @@
 import { fitSvgText } from "../../scripts/video-production/text-layout.mjs";
 import { getGeneralFrame } from "../../scripts/video-production/general-visual-plan.mjs";
 import type { GeneralFrame, GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
+import { useMemo } from "react";
+import type { ReactNode } from "react";
+import { DiagramStage } from "@/components/motion/diagram-stage-react";
+import { evaluateProcessJourney } from "@/components/motion/process-journey";
+import { createGeneralJourney, GENERAL_JOURNEY_VIEWPORT } from "./general-journey";
+import type { RationalFps } from "@/components/motion/types";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -17,9 +23,48 @@ function Node({ x, y, width, height, label, index, highlight = false }: { x: num
   </g>;
 }
 
-function Diagram({ state }: { state: GeneralFrame }) {
+function Journey({ items, fps, chapterFrames, frame, fallback }: { items: string[]; fps: RationalFps; chapterFrames: number; frame: number; fallback: ReactNode }) {
+  const plan = useMemo(() => createGeneralJourney(items, chapterFrames, fps), [items, chapterFrames, fps.num, fps.den]);
+  if (!plan) return fallback;
+  const sample = evaluateProcessJourney(plan, frame);
+  const overlay = <>
+    <circle cx={sample.position.x} cy={sample.position.y} r="25" fill={turquoise} opacity=".15" />
+    <circle data-process-journey-subject={sample.subjectId} cx={sample.position.x} cy={sample.position.y} r="13" fill={accent} stroke="#101D2D" strokeWidth="4" />
+  </>;
+  return <g transform="translate(1040 242)">
+    <DiagramStage graph={plan.graph} timeline={plan.diagramTimeline} frame={frame}
+      width={GENERAL_JOURNEY_VIEWPORT.width} height={GENERAL_JOURNEY_VIEWPORT.height}
+      ariaLabel="Illustrative process showing how the stages connect" reducedMotion={false}
+      focusedNodeIds={sample.focusedNodeIds} overlay={overlay}
+      style={{ width: "770px", height: "640px", background: "transparent", overflow: "visible" }}
+      theme={{ node: "#203743", edge: "#72929F", accent, ink, fontSize: 28, strokeWidth: 3 }}
+      renderNode={({ node, bounds, focused }) => <g opacity={focused ? 1 : .8}>
+        <Node x={0} y={0} width={bounds.width} height={bounds.height} label={node.label}
+          index={Number(node.id.slice("step-".length))} highlight={focused} />
+      </g>}
+    />
+  </g>;
+}
+
+function StaticVerticalDiagram({ state }: { state: GeneralFrame }) {
   const items = state.visual.items.slice(0, state.visibleItems);
   const all = state.visual.items;
+  const height = 110;
+  const gap = all.length === 5 ? 18 : all.length === 4 ? 26 : 46;
+  const startY = Math.max(240, 540 - (all.length * height + (all.length - 1) * gap) / 2);
+  return <g>
+    {items.map((label, i) => <g key={`${label}-${i}`}>
+      <Node x={1150} y={startY + i * (height + gap)} width={555} height={height} label={label} index={i} highlight={state.intent === "general-payoff" && i === all.length - 1} />
+      {i > 0 && <g><path d={`M1427 ${startY + i * (height + gap) - gap + 4} v${gap - 14}`} stroke={accent} strokeWidth="4" strokeLinecap="round"/><path d={`M1418 ${startY + i * (height + gap) - 14} l9 11 9 -11`} fill="none" stroke={accent} strokeWidth="4" strokeLinejoin="round"/></g>}
+    </g>)}
+  </g>;
+}
+
+function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: RationalFps; chapterFrames: number }) {
+  const items = state.visual.items.slice(0, state.visibleItems);
+  const all = state.visual.items;
+  if (state.intent === "general-flow") return <Journey items={all} fps={fps} chapterFrames={chapterFrames}
+    frame={state.localFrame} fallback={<StaticVerticalDiagram state={state} />} />;
   if (state.intent === "general-comparison" && all.length <= 3) {
     const width = all.length === 3 ? 220 : 325;
     const gap = all.length === 3 ? 25 : 40;
@@ -39,15 +84,7 @@ function Diagram({ state }: { state: GeneralFrame }) {
       </g>)}
     </g>;
   }
-  const height = 110;
-  const gap = all.length === 5 ? 18 : all.length === 4 ? 26 : 46;
-  const startY = Math.max(240, 540 - (all.length * height + (all.length - 1) * gap) / 2);
-  return <g>
-    {items.map((label, i) => <g key={`${label}-${i}`}>
-      <Node x={1150} y={startY + i * (height + gap)} width={555} height={height} label={label} index={i} highlight={state.intent === "general-payoff" && i === all.length - 1} />
-      {i > 0 && <g><path d={`M1427 ${startY + i * (height + gap) - gap + 4} v${gap - 14}`} stroke={accent} strokeWidth="4" strokeLinecap="round"/><path d={`M1418 ${startY + i * (height + gap) - 14} l9 11 9 -11`} fill="none" stroke={accent} strokeWidth="4" strokeLinejoin="round"/></g>}
-    </g>)}
-  </g>;
+  return <StaticVerticalDiagram state={state} />;
 }
 
 export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; frame: number }) {
@@ -72,7 +109,8 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    <Diagram state={state}/>
+    <Diagram state={state} fps={plan.manifest.fps}
+      chapterFrames={plan.chapters[state.chapterIndex].endFrame - plan.chapters[state.chapterIndex].startFrame} />
     <path d="M120 978 H1800" stroke="#4C6570" strokeWidth="2" />
     <rect x="120" y="978" width={1680 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="5" fill={accent} />
     <text x="120" y="1034" fill={muted} fontSize="22">{state.disclaimer}</text>
