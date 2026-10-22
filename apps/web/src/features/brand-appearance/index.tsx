@@ -8,6 +8,7 @@ export default function BrandAppearanceSlot(props: FeatureSlotProps) {
     <BrandAppearanceStudio
       locale={props.locale}
       className={props.className}
+      onPreviewChange={props.onPreviewChange}
     />
   );
 }
