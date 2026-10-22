@@ -24,6 +24,7 @@ export function Shell() {
   const [activeSection, setActiveSection] = useState<SectionId>("create");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
+  const [toolGuideOpen, setToolGuideOpen] = useState(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
@@ -96,6 +97,8 @@ export function Shell() {
               activeFeatureId={activeFeatureId}
               onFeatureChange={setActiveFeatureId}
               onOpenNav={() => setMobileNavOpen(true)}
+              toolGuideOpen={toolGuideOpen}
+              onToolGuideOpenChange={setToolGuideOpen}
             />
           ) : activeSection === "research" ? (
             <ResearchWorkspace locale={locale} />
@@ -114,7 +117,14 @@ export function Shell() {
             </main>
           )}
 
-          {activeSection === "create" && <InspectorPanel meta={activeMeta} locale={locale} />}
+          {activeSection === "create" && (
+            <InspectorPanel
+              meta={activeMeta}
+              locale={locale}
+              open={toolGuideOpen}
+              onOpenChange={setToolGuideOpen}
+            />
+          )}
         </div>
       </div>
 

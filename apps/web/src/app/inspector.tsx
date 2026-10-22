@@ -1,14 +1,16 @@
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, PanelRightClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { FeatureMetadata, Locale } from "@/features/registry";
 
 interface InspectorProps {
   meta: FeatureMetadata | null;
   locale: Locale;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
-export function InspectorPanel({ meta, locale }: InspectorProps) {
+export function InspectorPanel({ meta, locale, open, onOpenChange }: InspectorProps) {
   const [expanded, setExpanded] = useState(false);
   const title = locale === "ja" ? "使い方" : "How to use this tool";
   const planned = meta?.availability === "planned";
@@ -19,7 +21,7 @@ export function InspectorPanel({ meta, locale }: InspectorProps) {
       : meta.availability === "live" ? "Live preview" : meta.availability === "demo" ? "Interactive demo" : "Planned";
 
   return (
-    <div className="border-t border-border bg-surface lg:border-t-0 lg:border-l">
+    <div className={"border-t border-border bg-surface lg:border-t-0 lg:border-l " + (open ? "lg:flex" : "lg:hidden")}>
       <Button
         variant="subtle"
         size="sm"
@@ -40,11 +42,22 @@ export function InspectorPanel({ meta, locale }: InspectorProps) {
       >
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-foreground">{locale === "ja" ? "ツールガイド" : "Tool guide"}</h2>
-          {meta && (
-            <span className="rounded-full border border-border bg-surface-subtle px-2 py-1 text-caption text-muted-foreground">
-              {status}
-            </span>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {meta && (
+              <span className="rounded-full border border-border bg-surface-subtle px-2 py-1 text-caption text-muted-foreground">
+                {status}
+              </span>
+            )}
+            <Button
+              variant="subtle"
+              size="icon"
+              className="hidden lg:inline-flex"
+              aria-label={locale === "ja" ? "ガイドを閉じる" : "Close tool guide"}
+              title={locale === "ja" ? "ガイドを閉じる" : "Close tool guide"}
+              icon={<PanelRightClose aria-hidden="true" className="size-4" />}
+              onClick={() => onOpenChange(false)}
+            />
+          </div>
         </div>
 
         {meta ? (

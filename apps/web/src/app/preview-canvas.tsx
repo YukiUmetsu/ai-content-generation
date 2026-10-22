@@ -1,4 +1,4 @@
-import { Eye } from "lucide-react";
+import { Eye, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { ReactNode } from "react";
 import { FEATURE_METADATA, type FeatureId, type Locale } from "@/features/registry";
 import { FeaturePreview } from "./feature-preview";
@@ -7,9 +7,17 @@ interface PreviewCanvasProps {
   locale: Locale;
   featureId: FeatureId;
   preview: ReactNode | null;
+  toolGuideOpen: boolean;
+  onToolGuideOpenChange: (open: boolean) => void;
 }
 
-export function PreviewCanvas({ locale, featureId, preview }: PreviewCanvasProps) {
+export function PreviewCanvas({
+  locale,
+  featureId,
+  preview,
+  toolGuideOpen,
+  onToolGuideOpenChange,
+}: PreviewCanvasProps) {
   const meta = FEATURE_METADATA[featureId];
   const live = preview !== null;
   const heading = locale === "ja" ? "プレビュー" : "Preview";
@@ -38,9 +46,30 @@ export function PreviewCanvas({ locale, featureId, preview }: PreviewCanvasProps
           </h2>
           <p className="mt-1 text-caption text-muted-foreground">{description}</p>
         </div>
-        <span className="shrink-0 rounded-full border border-border bg-surface px-2 py-1 text-caption font-medium text-muted-foreground">
-          {status}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full border border-border bg-surface px-2 py-1 text-caption font-medium text-muted-foreground">
+            {status}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="hidden lg:inline-flex"
+            aria-label={toolGuideOpen
+              ? locale === "ja" ? "ガイドを非表示" : "Hide tool guide"
+              : locale === "ja" ? "ガイドを表示" : "Show tool guide"}
+            title={toolGuideOpen
+              ? locale === "ja" ? "ガイドを非表示" : "Hide tool guide"
+              : locale === "ja" ? "ガイドを表示" : "Show tool guide"}
+            icon={toolGuideOpen
+              ? <PanelRightClose aria-hidden="true" className="size-4" />
+              : <PanelRightOpen aria-hidden="true" className="size-4" />}
+            onClick={() => onToolGuideOpenChange(!toolGuideOpen)}
+          >
+            {toolGuideOpen
+              ? locale === "ja" ? "ガイドを閉じる" : "Hide guide"
+              : locale === "ja" ? "ガイドを開く" : "Show guide"}
+          </Button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4" data-testid="preview-content">
