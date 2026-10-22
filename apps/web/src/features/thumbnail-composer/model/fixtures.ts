@@ -20,6 +20,20 @@ export const HVAC_EXAMPLE_JA = {
   promise: "見積もりを承認する前に、お金がどこへ消えるのかを理解する。",
 } as const;
 
+/**
+ * Locale-keyed defaults, so the editor can follow the interface language while
+ * the topic and promise are still untouched example copy.
+ */
+export const EXAMPLE_TOPIC: Record<Locale, string> = {
+  en: HVAC_EXAMPLE.topic,
+  ja: HVAC_EXAMPLE_JA.topic,
+};
+
+export const EXAMPLE_PROMISE: Record<Locale, string> = {
+  en: HVAC_EXAMPLE.promise,
+  ja: HVAC_EXAMPLE_JA.promise,
+};
+
 /** Local brand-style boundary. An approved BrandKit can replace these records later. */
 export const THUMBNAIL_BRANDS: Record<string, ThumbnailBrandStyle> = {
   "house-math": {

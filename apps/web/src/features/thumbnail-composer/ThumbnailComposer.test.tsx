@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { copyFor } from "./i18n";
 import { ThumbnailComposer } from "./index";
+import { HVAC_EXAMPLE, HVAC_EXAMPLE_JA } from "./model/fixtures";
 
 function Harness({ locale = "en" as "en" | "ja" }) {
   const [preview, setPreview] = useState<ReactNode | null>(null);
@@ -123,5 +124,60 @@ describe("ThumbnailComposer", () => {
     expect(within(editor).getByRole("heading", { name: "Thumbnail composer" })).toBeInTheDocument();
     expect(screen.getByTestId("thumbnail-live-preview")).toBeInTheDocument();
     expect(within(editor).getByLabelText("Video topic")).toBeInTheDocument();
+  });
+
+  it("blocks export until the price-versus-quote concept has a comparison figure", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const copy = copyFor("en");
+    await user.click(screen.getByRole("radio", { name: /price vs\. quote/i }));
+
+    const field = screen.getByLabelText(copy.compareLabel) as HTMLInputElement;
+    expect(field.value).toBe("$4,800");
+
+    await user.clear(field);
+
+    expect(screen.getByText(copy.compareRequired)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: copy.exportSvg })).toBeDisabled();
+    expect(screen.getByRole("button", { name: copy.exportPng })).toBeDisabled();
+    const diagnostics = screen.getByTestId("thumbnail-diagnostics");
+    expect(within(diagnostics).getByText(copy.issueCopy["compare-empty"].title)).toBeInTheDocument();
+  });
+
+  it("follows the interface language for untouched example copy only", async () => {
+    const { rerender } = render(<Harness />);
+    const en = copyFor("en");
+    const enTopic = screen.getByLabelText(en.topicLabel) as HTMLInputElement;
+    expect(enTopic.value).toBe(HVAC_EXAMPLE.topic);
+
+    rerender(<Harness locale="ja" />);
+    const ja = copyFor("ja");
+    expect((screen.getByLabelText(ja.topicLabel) as HTMLInputElement).value).toBe(HVAC_EXAMPLE_JA.topic);
+
+    await userEvent.setup().type(screen.getByLabelText(ja.topicLabel), " 追記");
+    rerender(<Harness locale="en" />);
+    const edited = screen.getByLabelText(en.topicLabel) as HTMLInputElement;
+    expect(edited.value).toBe(`${HVAC_EXAMPLE_JA.topic} 追記`);
+  });
+
+  it("drops the export confirmation when the content changes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => "blob:thumbnail-test",
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: () => undefined,
+    });
+
+    render(<Harness />);
+    const copy = copyFor("en");
+    await user.click(screen.getByRole("button", { name: copy.exportSvg }));
+    expect(screen.getByText(copy.exportSuccessSvg)).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(copy.headlineLabel), "!");
+    expect(screen.queryByText(copy.exportSuccessSvg)).not.toBeInTheDocument();
   });
 });

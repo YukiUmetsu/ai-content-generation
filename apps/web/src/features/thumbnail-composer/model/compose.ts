@@ -822,10 +822,13 @@ function composeQuoteGap(ctx: Context): { layers: Layer[]; text: ComposedThumbna
   });
   layers.push(labelRight.layer);
 
+  // No invented fallback figure: an empty comparison is drawn as an explicit
+  // placeholder and QA blocks export until a real value is entered.
+  const compareValue = ctx.copy.compareValue?.trim() ?? "";
   const compare = textLayer({
     id: "c-value-left",
     name: "Equipment figure",
-    text: ctx.copy.compareValue ?? "$4,800",
+    text: compareValue === "" ? "—" : compareValue,
     x: 112,
     y: 262,
     width: 480,
@@ -840,8 +843,9 @@ function composeQuoteGap(ctx: Context): { layers: Layer[]; text: ComposedThumbna
     minSize: 62,
     maxSize: 112,
     language: ctx.language,
-    summary: `Equipment price ${ctx.copy.compareValue ?? ""}`,
+    summary: compareValue === "" ? "Comparison figure not set" : `Equipment price ${compareValue}`,
   });
+  if (compareValue === "") compare.layer.opacity = 0.55;
   layers.push(compare.layer);
 
   const value = textLayer({

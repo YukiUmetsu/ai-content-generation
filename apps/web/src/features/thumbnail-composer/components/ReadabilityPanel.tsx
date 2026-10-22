@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { MediaDocument } from "@/components/media/document";
 import type { ComposerCopy } from "../i18n";
 import type { ThumbnailIssue } from "../model/types";
@@ -11,6 +12,78 @@ export interface ReadabilityPanelProps {
   copy: ComposerCopy;
   /** Accessible summary of the artwork, reused from the concept. */
   label: string;
+}
+
+const DESIGN_WIDTH = 1280;
+
+/**
+ * Width the figure actually gets. The check is a real fixed-size render, so the
+ * narrow pane must scale it down instead of clipping it; the caption then says
+ * that it is shown scaled rather than pretending it is the full size.
+ */
+function useMeasuredWidth(fallback: number): {
+  ref: React.RefObject<HTMLElement | null>;
+  width: number;
+} {
+  const ref = useRef<HTMLElement | null>(null);
+  const [width, setWidth] = useState(fallback);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const measure = () => {
+      const next = node.clientWidth;
+      if (next > 0) setWidth(next);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, width };
+}
+
+interface MiniFigureProps {
+  media: MediaDocument;
+  /** Target inspection width: 320 or 160 CSS px. */
+  targetWidth: number;
+  copy: ComposerCopy;
+  label: string;
+}
+
+function MiniFigure({ media, targetWidth, copy, label }: MiniFigureProps) {
+  const { ref, width } = useMeasuredWidth(targetWidth);
+  const stageWidth = Math.max(1, Math.min(targetWidth, width));
+  const stageHeight = (stageWidth * 9) / 16;
+  const scale = stageWidth / DESIGN_WIDTH;
+  const scaled = stageWidth < targetWidth;
+
+  return (
+    <figure className="tc-mini" ref={ref} style={{ flexBasis: targetWidth }}>
+      <div
+        className="tc-mini__viewport"
+        style={{ width: stageWidth, height: stageHeight }}
+        data-scaled={scaled ? "true" : "false"}
+      >
+        <div className="tc-mini__frame" style={{ transform: `scale(${scale})` }}>
+          <ThumbnailStage
+            media={media}
+            fit="none"
+            testId={`thumbnail-mini-${targetWidth}`}
+            label={`${label} — ${copy.sizeAt(targetWidth)}`}
+          />
+        </div>
+      </div>
+      <figcaption className="tc-mini__caption">
+        <span className="tc-mini__size">{copy.sizeAt(targetWidth)}</span>
+        {scaled ? (
+          <span className="tc-mini__scale">{copy.scaledAt(Math.round(scale * 100))}</span>
+        ) : null}
+      </figcaption>
+    </figure>
+  );
 }
 
 /**
@@ -29,29 +102,9 @@ export function ReadabilityPanel({ media, issues, copy, label }: ReadabilityPane
       </div>
 
       <div className="tc-minis">
-        {INSPECTION_WIDTHS.map((width) => {
-          const height = Math.round((width * 9) / 16);
-          return (
-            <figure key={width} className="tc-mini">
-              <div className="tc-mini__viewport" style={{ width, height }}>
-                <div
-                  className="tc-mini__frame"
-                  style={{ transform: `scale(${width / 1280})` }}
-                >
-                  <ThumbnailStage
-                    media={media}
-                    fit="none"
-                    testId={`thumbnail-mini-${width}`}
-                    label={`${label} — ${copy.sizeAt(width)}`}
-                  />
-                </div>
-              </div>
-              <figcaption className="tc-mini__caption">
-                <span className="tc-mini__size">{copy.sizeAt(width)}</span>
-              </figcaption>
-            </figure>
-          );
-        })}
+        {INSPECTION_WIDTHS.map((width) => (
+          <MiniFigure key={width} media={media} targetWidth={width} copy={copy} label={label} />
+        ))}
       </div>
 
       <div className="tc-readability__checks">

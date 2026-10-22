@@ -158,11 +158,17 @@ function copyChecks({ composed, variantId, locale }: CheckContext): ThumbnailIss
   }
 
   const secondaryText = secondary.spec.spans.map((span) => span.text).join("");
-  if (textLength(secondaryText) > limits.secondary) {
+  const secondaryLayout = layoutText(secondary.spec, secondary.box, composed.media.fonts, estimateMeasure);
+  if (
+    textLength(secondaryText) > limits.secondary ||
+    secondaryLayout.overflow ||
+    secondaryLayout.truncated ||
+    secondaryLayout.width > secondary.box.width
+  ) {
     issues.push(
       issue("secondary-too-long", "warning", variantId, locale, {
         layerId: secondary.layerId,
-        detail: `chars=${textLength(secondaryText)}`,
+        detail: `chars=${textLength(secondaryText)};lines=${secondaryLayout.lineCount};width=${secondaryLayout.width}/${secondary.box.width};overflow=${secondaryLayout.overflow};truncated=${secondaryLayout.truncated}`,
       })
     );
   }
@@ -170,7 +176,15 @@ function copyChecks({ composed, variantId, locale }: CheckContext): ThumbnailIss
   if (compare) {
     const compareText = compare.spec.spans.map((span) => span.text).join("");
     const compareLayout = layoutText(compare.spec, compare.box, composed.media.fonts, estimateMeasure);
-    if (textLength(compareText) > CONTENT_LIMITS.valueChars || compareLayout.overflow) {
+    const authoredCompare = composed.variant.copy[locale]?.compareValue?.trim() ?? "";
+    if (authoredCompare === "") {
+      issues.push(
+        issue("compare-empty", "error", variantId, locale, {
+          layerId: compare.layerId,
+          detail: "compareValue=",
+        })
+      );
+    } else if (textLength(compareText) > CONTENT_LIMITS.valueChars || compareLayout.overflow) {
       issues.push(
         issue("value-too-long", "warning", variantId, locale, {
           layerId: compare.layerId,
@@ -304,7 +318,14 @@ export function collectIssues(document: ThumbnailDocument): ThumbnailIssue[] {
       let composed: ComposedThumbnail;
       try {
         composed = composeThumbnail(document, { variantId: variant.id, locale });
-      } catch {
+      } catch (error) {
+        // A failed composition is never a pass: surface it as a blocking issue
+        // with the machine reason, so export cannot silently ship nothing.
+        issues.push(
+          issue("composition-failed", "error", variant.id, locale, {
+            detail: error instanceof Error ? error.message : String(error),
+          })
+        );
         continue;
       }
       const context: CheckContext = { document, composed, variantId: variant.id, locale };

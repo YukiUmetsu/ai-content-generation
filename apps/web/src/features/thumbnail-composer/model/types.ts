@@ -119,10 +119,12 @@ export type ThumbnailIssueCode =
   | "secondary-too-long"
   | "headline-empty"
   | "value-empty"
+  | "compare-empty"
   | "safe-margin"
   | "small-size-legibility"
   | "low-contrast"
-  | "text-overlap";
+  | "text-overlap"
+  | "composition-failed";
 
 export interface ThumbnailIssue {
   code: ThumbnailIssueCode;

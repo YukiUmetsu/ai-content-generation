@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { updateCopy } from "./edit";
+import { selectConcept, updateCopy } from "./edit";
 import { createThumbnailDocument, VARIANT_ID_BY_CONCEPT } from "./fixtures";
-import { collectIssues, contrastRatio, issuesFor, refreshQa } from "./qa";
+import { collectIssues, contrastRatio, issuesFor, qaStatus, refreshQa } from "./qa";
+import type { ThumbnailDocument } from "./types";
 
 describe("thumbnail QA", () => {
   it("passes the deterministic fixture without inventing problems", () => {
@@ -74,5 +75,55 @@ describe("thumbnail QA", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 5);
     expect(contrastRatio("#ffffff", "#ffffff")).toBeCloseTo(1, 5);
     expect(contrastRatio("rgb(0,0,0)", "#ffffff")).toBeNull();
+  });
+
+  it("blocks the comparison concept when its comparison figure is empty", () => {
+    const document = createThumbnailDocument();
+    const quote = selectConcept(document, VARIANT_ID_BY_CONCEPT["quote-gap"]);
+    const cleared = updateCopy(quote, "en", { compareValue: "" });
+    const issues = issuesFor(cleared, VARIANT_ID_BY_CONCEPT["quote-gap"], "en");
+    const empty = issues.find((issue) => issue.code === "compare-empty");
+    expect(empty).toBeDefined();
+    expect(empty?.severity).toBe("error");
+    expect(cleared.qa.status).toBe("blocked");
+    // The Japanese locale is untouched and stays valid.
+    expect(issuesFor(cleared, VARIANT_ID_BY_CONCEPT["quote-gap"], "ja")).toEqual([]);
+  });
+
+  it("detects a secondary line that overflows its box, not just its character budget", () => {
+    const document = createThumbnailDocument();
+    // 95 characters is under the English budget but needs two lines at 640 px
+    // wide, which exceeds the 44 px single-line box.
+    const dense = "costs ".repeat(16).trim();
+    expect(dense.length).toBeLessThanOrEqual(96);
+    const edited = updateCopy(document, "en", { secondary: dense });
+    const warning = issuesFor(edited, VARIANT_ID_BY_CONCEPT["price-shock"], "en").find(
+      (issue) => issue.code === "secondary-too-long"
+    );
+    expect(warning).toBeDefined();
+    expect(warning?.detail).toContain("overflow=true");
+  });
+
+  it("reports a failed composition as a blocking issue instead of passing silently", () => {
+    const document = createThumbnailDocument();
+    const broken = {
+      ...document,
+      variants: document.variants.map((variant) => ({ ...variant, copy: {} as never })),
+    } as ThumbnailDocument;
+    const issues = collectIssues(broken);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.every((issue) => issue.code === "composition-failed")).toBe(true);
+    expect(issues.every((issue) => issue.severity === "error")).toBe(true);
+    expect(qaStatus(issues)).toBe("blocked");
+  });
+
+  it("keeps validation failures visible in the refreshed QA snapshot", () => {
+    const document = createThumbnailDocument();
+    const broken = refreshQa({
+      ...document,
+      variants: document.variants.map((variant) => ({ ...variant, copy: {} as never })),
+    });
+    expect(broken.qa.status).toBe("blocked");
+    expect(broken.qa.issues.some((issue) => issue.code === "composition-failed")).toBe(true);
   });
 });

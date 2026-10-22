@@ -1,5 +1,5 @@
 import { CONCEPT_ELEMENTS } from "./concepts";
-import { defaultVariantCopy } from "./fixtures";
+import { defaultVariantCopy, EXAMPLE_PROMISE, EXAMPLE_TOPIC } from "./fixtures";
 import { refreshQa } from "./qa";
 import type {
   ConceptId,
@@ -94,6 +94,129 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string";
 }
 
+function isPaletteId(value: unknown): value is PaletteId {
+  return PALETTES.includes(value as PaletteId);
+}
+
+function positiveInteger(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+}
+
+/** Authoring canvases outside this range are not YouTube stills. */
+const MIN_OUTPUT_EDGE = 320;
+const MAX_OUTPUT_EDGE = 4096;
+const MAX_SOURCES = 24;
+const MAX_SOURCE_TEXT = 240;
+
+function validateOutput(value: unknown, issues: string[]): void {
+  if (!isRecord(value)) {
+    issues.push("output: expected dimensions");
+    return;
+  }
+  const widthOk = positiveInteger(value.width, MIN_OUTPUT_EDGE, MAX_OUTPUT_EDGE);
+  const heightOk = positiveInteger(value.height, MIN_OUTPUT_EDGE, MAX_OUTPUT_EDGE);
+  if (!widthOk) {
+    issues.push(`output.width: expected an integer between ${MIN_OUTPUT_EDGE} and ${MAX_OUTPUT_EDGE}`);
+  }
+  if (!heightOk) {
+    issues.push(`output.height: expected an integer between ${MIN_OUTPUT_EDGE} and ${MAX_OUTPUT_EDGE}`);
+  }
+  if (widthOk && heightOk && Math.abs(Number(value.width) / Number(value.height) - 16 / 9) > 0.02) {
+    issues.push("output: expected a 16:9 frame");
+  }
+  if (
+    value.safeInset !== undefined &&
+    (typeof value.safeInset !== "number" ||
+      !Number.isFinite(value.safeInset) ||
+      value.safeInset < 0 ||
+      value.safeInset >= 0.5)
+  ) {
+    issues.push("output.safeInset: expected a ratio between 0 and 0.5");
+  }
+}
+
+function validateTypeStyle(value: unknown, label: string, issues: string[]): void {
+  if (!isRecord(value)) {
+    issues.push(`${label}: expected a font family and weight`);
+    return;
+  }
+  if (!nonEmptyString(value.family) || value.family.trim() === "" || value.family.length > 80) {
+    issues.push(`${label}.family: expected a font family name`);
+  }
+  if (
+    typeof value.weight !== "number" ||
+    !Number.isFinite(value.weight) ||
+    value.weight < 100 ||
+    value.weight > 900
+  ) {
+    issues.push(`${label}.weight: expected a weight between 100 and 900`);
+  }
+}
+
+function validateBrand(value: unknown, issues: string[]): void {
+  if (!isRecord(value)) {
+    issues.push("brand: expected a brand style reference");
+    return;
+  }
+  if (!nonEmptyString(value.brandId) || value.brandId.trim() === "") {
+    issues.push("brand.brandId: expected a non-empty id");
+  }
+  if (!nonEmptyString(value.brandName) || value.brandName.trim() === "") {
+    issues.push("brand.brandName: expected a non-empty name");
+  }
+  if (!isPaletteId(value.paletteId)) {
+    issues.push("brand.paletteId: unknown palette");
+  }
+  if (!positiveInteger(value.revision, 1, 100000)) {
+    issues.push("brand.revision: expected a positive integer");
+  }
+  if (!isRecord(value.typography)) {
+    issues.push("brand.typography: expected display, numbers and body roles");
+    return;
+  }
+  validateTypeStyle(value.typography.display, "brand.typography.display", issues);
+  validateTypeStyle(value.typography.numbers, "brand.typography.numbers", issues);
+  validateTypeStyle(value.typography.body, "brand.typography.body", issues);
+}
+
+function validateProvenance(value: unknown, issues: string[]): void {
+  if (!isRecord(value)) {
+    issues.push("provenance: expected a provenance record");
+    return;
+  }
+  if (value.origin !== "fixture" && value.origin !== "user") {
+    issues.push('provenance.origin: expected "fixture" or "user"');
+  }
+  if (value.values !== "synthetic-demo") {
+    issues.push('provenance.values: expected "synthetic-demo"');
+  }
+  if (!nonEmptyString(value.note) || value.note.length > MAX_SOURCE_TEXT) {
+    issues.push(`provenance.note: expected text under ${MAX_SOURCE_TEXT} characters`);
+  }
+  if (!Array.isArray(value.sources)) {
+    issues.push("provenance.sources: expected a list of references");
+    return;
+  }
+  if (value.sources.length > MAX_SOURCES) {
+    issues.push(`provenance.sources: at most ${MAX_SOURCES} references`);
+  }
+  value.sources.forEach((source, index) => {
+    if (!isRecord(source)) {
+      issues.push(`provenance.sources[${index}]: expected an object`);
+      return;
+    }
+    if (!nonEmptyString(source.id) || source.id.trim() === "") {
+      issues.push(`provenance.sources[${index}].id: expected a non-empty id`);
+    }
+    if (!nonEmptyString(source.label) || source.label.trim() === "") {
+      issues.push(`provenance.sources[${index}].label: expected a non-empty label`);
+    }
+    if (source.note !== undefined && (!nonEmptyString(source.note) || source.note.length > MAX_SOURCE_TEXT)) {
+      issues.push(`provenance.sources[${index}].note: expected text under ${MAX_SOURCE_TEXT} characters`);
+    }
+  });
+}
+
 function parseCopy(value: unknown, label: string, issues: string[]): ThumbnailCopy | null {
   if (!isRecord(value)) {
     issues.push(`${label}: expected an object`);
@@ -170,25 +293,21 @@ export function parseThumbnailDocument(input: unknown): ThumbnailParseResult {
   if (!nonEmptyString(input.id) || input.id.trim() === "") {
     issues.push("id: expected a non-empty id");
   }
+  if (input.topic !== undefined && !nonEmptyString(input.topic)) {
+    issues.push("topic: expected text");
+  }
+  if (input.promise !== undefined && !nonEmptyString(input.promise)) {
+    issues.push("promise: expected text");
+  }
   if (!Array.isArray(input.variants) || input.variants.length === 0) {
     issues.push("variants: expected at least one variant");
   }
-  if (!isRecord(input.output)) {
-    issues.push("output: expected dimensions");
-  } else if (
-    typeof input.output.width !== "number" ||
-    typeof input.output.height !== "number" ||
-    !(input.output.width > 0) ||
-    !(input.output.height > 0)
-  ) {
-    issues.push("output: width and height must be positive numbers");
-  }
-  if (!PALETTES.includes(input.paletteId as PaletteId)) {
+  validateOutput(input.output, issues);
+  if (!isPaletteId(input.paletteId)) {
     issues.push("paletteId: unknown palette");
   }
-  if (!isRecord(input.brand) || !nonEmptyString((input.brand as Record<string, unknown>).brandName)) {
-    issues.push("brand: expected a brand style reference");
-  }
+  validateBrand(input.brand, issues);
+  validateProvenance(input.provenance, issues);
   if (issues.length > 0) {
     return { document: null, issues };
   }
@@ -199,6 +318,14 @@ export function parseThumbnailDocument(input: unknown): ThumbnailParseResult {
   if (variants.length === 0) {
     issues.push("variants: no valid variants");
     return { document: null, issues };
+  }
+  const seenIds = new Set<string>();
+  const seenConcepts = new Set<ConceptId>();
+  for (const variant of variants) {
+    if (seenIds.has(variant.id)) issues.push(`variants: duplicate id "${variant.id}"`);
+    if (seenConcepts.has(variant.concept)) issues.push(`variants: duplicate concept "${variant.concept}"`);
+    seenIds.add(variant.id);
+    seenConcepts.add(variant.concept);
   }
   if (issues.length > 0) {
     return { document: null, issues };
@@ -211,14 +338,7 @@ export function parseThumbnailDocument(input: unknown): ThumbnailParseResult {
 
   const brand = input.brand as ThumbnailDocument["brand"];
   const output = input.output as ThumbnailDocument["output"];
-  const provenance = isRecord(input.provenance)
-    ? (input.provenance as unknown as ThumbnailDocument["provenance"])
-    : {
-        origin: "user" as const,
-        values: "synthetic-demo" as const,
-        note: "Imported document.",
-        sources: [],
-      };
+  const provenance = input.provenance as ThumbnailDocument["provenance"];
 
   const document: ThumbnailDocument = {
     schemaVersion: THUMBNAIL_SCHEMA_VERSION,
@@ -243,7 +363,25 @@ export function parseThumbnailDocument(input: unknown): ThumbnailParseResult {
     provenance,
     qa: { status: "pass", checkedRevision: 1, issues: [] },
     lastExport: null,
-    revision: typeof input.revision === "number" && input.revision > 0 ? Math.round(input.revision) : 1,
+    revision: positiveInteger(input.revision, 1, 100000000) ? input.revision : 1,
   };
   return { document: refreshQa(document), issues: [] };
+}
+
+/**
+ * Follow the interface language while the brief is still the shipped example.
+ * A topic or promise the person has typed is never overwritten.
+ */
+export function localizeExampleDefaults(
+  document: ThumbnailDocument,
+  from: Locale,
+  to: Locale
+): ThumbnailDocument {
+  if (from === to) return document;
+  const topicIsExample = (Object.values(EXAMPLE_TOPIC) as string[]).includes(document.topic);
+  const promiseIsExample = (Object.values(EXAMPLE_PROMISE) as string[]).includes(document.promise);
+  const topic = topicIsExample ? EXAMPLE_TOPIC[to] : document.topic;
+  const promise = promiseIsExample ? EXAMPLE_PROMISE[to] : document.promise;
+  if (topic === document.topic && promise === document.promise) return document;
+  return commit(document, { topic, promise });
 }

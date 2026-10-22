@@ -10,6 +10,7 @@ import { ReadabilityPanel } from "./components/ReadabilityPanel";
 import { ThumbnailPreviewCard } from "./components/ThumbnailPreviewCard";
 import { composeThumbnail } from "./model/compose";
 import {
+  localizeExampleDefaults,
   recordExport,
   resetVariantCopy,
   selectConcept,
@@ -21,7 +22,7 @@ import {
 import { downloadBlob, downloadSvg, thumbnailPng, thumbnailSvg } from "./model/export";
 import { createThumbnailDocument, HVAC_EXAMPLE_JA, VARIANT_ID_BY_CONCEPT } from "./model/fixtures";
 import { issuesFor } from "./model/qa";
-import type { ConceptId, ThumbnailCopy } from "./model/types";
+import type { ConceptId, Locale, ThumbnailCopy } from "./model/types";
 import "./composer.css";
 
 const FIELD_LIMITS = {
@@ -35,10 +36,10 @@ const FIELD_LIMITS = {
 
 type ExportState =
   | { kind: "idle" }
-  | { kind: "busy" }
-  | { kind: "svg" }
-  | { kind: "png" }
-  | { kind: "error" };
+  | { kind: "busy"; revision: number }
+  | { kind: "svg"; revision: number }
+  | { kind: "png"; revision: number }
+  | { kind: "error"; revision: number };
 
 function joinClasses(...values: Array<string | undefined | false>): string {
   return values.filter(Boolean).join(" ");
@@ -60,6 +61,7 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
   );
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
   const mounted = useRef(true);
+  const previousLocale = useRef<Locale>(locale);
 
   useEffect(() => {
     mounted.current = true;
@@ -67,6 +69,15 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
       mounted.current = false;
     };
   }, []);
+
+  // Follow the interface language for untouched example copy only. Anything the
+  // person typed is preserved across a language switch.
+  useEffect(() => {
+    const from = previousLocale.current;
+    previousLocale.current = locale;
+    if (from === locale) return;
+    setDocument((current) => localizeExampleDefaults(current, from, locale));
+  }, [locale]);
 
   const variant =
     document.variants.find((candidate) => candidate.id === document.activeVariantId) ??
@@ -109,17 +120,16 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
   const updateArtwork = useCallback(
     (patch: Partial<ThumbnailCopy>) => {
       setDocument((current) => updateCopy(current, locale, patch));
-      setExportState({ kind: "idle" });
     },
     [locale]
   );
 
   const onSelectConcept = useCallback((concept: ConceptId) => {
     setDocument((current) => selectConcept(current, VARIANT_ID_BY_CONCEPT[concept]));
-    setExportState({ kind: "idle" });
   }, []);
 
   const handleSvg = useCallback(() => {
+    const revision = document.revision;
     try {
       const result = thumbnailSvg(document, { locale });
       downloadSvg(result);
@@ -129,17 +139,18 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
           width: result.size.width,
           height: result.size.height,
           fileName: result.filename,
-          revision: current.revision,
+          revision,
         })
       );
-      setExportState({ kind: "svg" });
+      setExportState({ kind: "svg", revision });
     } catch {
-      setExportState({ kind: "error" });
+      setExportState({ kind: "error", revision });
     }
   }, [document, locale]);
 
   const handlePng = useCallback(async () => {
-    setExportState({ kind: "busy" });
+    const revision = document.revision;
+    setExportState({ kind: "busy", revision });
     try {
       const result = await thumbnailPng(document, { locale });
       if (!mounted.current) return;
@@ -150,12 +161,12 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
           width: result.size.width,
           height: result.size.height,
           fileName: result.filename,
-          revision: current.revision,
+          revision,
         })
       );
-      setExportState({ kind: "png" });
+      setExportState({ kind: "png", revision });
     } catch {
-      if (mounted.current) setExportState({ kind: "error" });
+      if (mounted.current) setExportState({ kind: "error", revision });
     }
   }, [document, locale]);
 
@@ -239,6 +250,7 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
               <Field
                 label={copy.compareLabel}
                 hint={copy.compareHint}
+                error={artwork.compareValue?.trim() ? undefined : copy.compareRequired}
                 value={artwork.compareValue ?? ""}
                 maxLength={FIELD_LIMITS.compareValue}
                 onChange={(event) => updateArtwork({ compareValue: event.target.value })}
@@ -281,7 +293,6 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
           copy={copy}
           onSelect={(paletteId) => {
             setDocument((current) => setPalette(current, paletteId));
-            setExportState({ kind: "idle" });
           }}
         />
       </section>
@@ -339,17 +350,17 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
             {copy.exportSize(exported.size.width, exported.size.height)}
             {exported.filename ? <span className="tc-export__file">{exported.filename}</span> : null}
           </p>
-          {exportState.kind === "svg" ? (
+          {exportState.kind === "svg" && exportState.revision === document.revision ? (
             <p className="tc-export__status" role="status">
               {copy.exportSuccessSvg}
             </p>
           ) : null}
-          {exportState.kind === "png" ? (
+          {exportState.kind === "png" && exportState.revision === document.revision ? (
             <p className="tc-export__status" role="status">
               {copy.exportSuccessPng}
             </p>
           ) : null}
-          {exportState.kind === "error" ? (
+          {exportState.kind === "error" && exportState.revision === document.revision ? (
             <div className="tc-export__error" role="alert">
               <p className="tc-export__error-title">{copy.exportErrorTitle}</p>
               <p className="tc-export__error-hint">{copy.exportErrorHint}</p>

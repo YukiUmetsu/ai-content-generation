@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  localizeExampleDefaults,
   parseThumbnailDocument,
   resetVariantCopy,
   selectConcept,
   serializeThumbnailDocument,
   setPalette,
+  setTopic,
   updateCopy,
 } from "./edit";
-import { createThumbnailDocument, VARIANT_ID_BY_CONCEPT } from "./fixtures";
+import {
+  createThumbnailDocument,
+  HVAC_EXAMPLE_JA,
+  VARIANT_ID_BY_CONCEPT,
+} from "./fixtures";
 
 describe("thumbnail document editing", () => {
   it("keeps per-concept edits when switching concepts", () => {
@@ -91,5 +97,99 @@ describe("thumbnail document editing", () => {
     const document = createThumbnailDocument();
     const parsed = parseThumbnailDocument({ ...document, activeVariantId: "missing" });
     expect(parsed.document?.activeVariantId).toBe(document.variants[0].id);
+  });
+
+  it("validates brand typography and provenance references", () => {
+    const document = createThumbnailDocument();
+
+    const badWeight = parseThumbnailDocument({
+      ...document,
+      brand: {
+        ...document.brand,
+        typography: { ...document.brand.typography, display: { family: "X", weight: 5000 } },
+      },
+    });
+    expect(badWeight.document).toBeNull();
+    expect(badWeight.issues.join(" ")).toMatch(/brand\.typography\.display\.weight/);
+
+    const badFamily = parseThumbnailDocument({
+      ...document,
+      brand: {
+        ...document.brand,
+        typography: { ...document.brand.typography, body: { family: "  ", weight: 400 } },
+      },
+    });
+    expect(badFamily.document).toBeNull();
+
+    const badSource = parseThumbnailDocument({
+      ...document,
+      provenance: { ...document.provenance, sources: [{ id: "only-an-id" }] },
+    });
+    expect(badSource.document).toBeNull();
+    expect(badSource.issues.join(" ")).toMatch(/provenance\.sources\[0\]\.label/);
+
+    const badProvenance = parseThumbnailDocument({ ...document, provenance: "nope" });
+    expect(badProvenance.document).toBeNull();
+  });
+
+  it("bounds output dimensions and requires a 16:9 frame", () => {
+    const document = createThumbnailDocument();
+
+    const tiny = parseThumbnailDocument({
+      ...document,
+      output: { ...document.output, width: 10, height: 10 },
+    });
+    expect(tiny.document).toBeNull();
+    expect(tiny.issues.join(" ")).toMatch(/output\.width/);
+
+    const square = parseThumbnailDocument({
+      ...document,
+      output: { ...document.output, width: 1280, height: 1280 },
+    });
+    expect(square.document).toBeNull();
+    expect(square.issues.join(" ")).toMatch(/16:9/);
+  });
+
+  it("rejects duplicate variant ids and concepts", () => {
+    const document = createThumbnailDocument();
+    const duplicateId = parseThumbnailDocument({
+      ...document,
+      variants: [
+        document.variants[0],
+        { ...document.variants[1], id: document.variants[0].id },
+      ],
+    });
+    expect(duplicateId.document).toBeNull();
+    expect(duplicateId.issues.join(" ")).toMatch(/duplicate id/);
+
+    const duplicateConcept = parseThumbnailDocument({
+      ...document,
+      variants: [document.variants[0], { ...document.variants[1], concept: document.variants[0].concept }],
+    });
+    expect(duplicateConcept.document).toBeNull();
+    expect(duplicateConcept.issues.join(" ")).toMatch(/duplicate concept/);
+  });
+
+  it("round-trips an empty comparison figure without inventing a value", () => {
+    const quote = selectConcept(createThumbnailDocument(), VARIANT_ID_BY_CONCEPT["quote-gap"]);
+    const cleared = updateCopy(quote, "en", { compareValue: "" });
+    const parsed = parseThumbnailDocument(JSON.parse(serializeThumbnailDocument(cleared)));
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.document?.variants.find((variant) => variant.concept === "quote-gap")?.copy.en.compareValue).toBe("");
+    expect(parsed.document?.qa.status).toBe("blocked");
+  });
+
+  it("localizes untouched example copy on a language switch but keeps edits", () => {
+    const document = createThumbnailDocument();
+    const switched = localizeExampleDefaults(document, "en", "ja");
+    expect(switched.topic).toBe(HVAC_EXAMPLE_JA.topic);
+    expect(switched.promise).toBe(HVAC_EXAMPLE_JA.promise);
+    expect(switched.revision).toBe(document.revision + 1);
+    expect(localizeExampleDefaults(document, "en", "en")).toBe(document);
+
+    const edited = setTopic(document, "My own working title");
+    const kept = localizeExampleDefaults(edited, "en", "ja");
+    expect(kept.topic).toBe("My own working title");
+    expect(kept.promise).toBe(HVAC_EXAMPLE_JA.promise);
   });
 });

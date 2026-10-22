@@ -3,7 +3,7 @@ import { documentHash } from "@/components/media/document";
 import { documentToSvg } from "@/components/media/svg-export";
 import { CONCEPT_ELEMENTS } from "./concepts";
 import { composeThumbnail } from "./compose";
-import { updateCopy } from "./edit";
+import { selectConcept, updateCopy } from "./edit";
 import { createThumbnailDocument, VARIANT_ID_BY_CONCEPT } from "./fixtures";
 import type { ConceptId } from "./types";
 
@@ -81,6 +81,19 @@ describe("composeThumbnail", () => {
     expect(composed.text.value.spec.spans[0].text).toBe("$14,900");
     expect(svg).toContain("$14,900");
     expect(svg).not.toContain("12,400");
+  });
+
+  it("draws an explicit placeholder instead of an invented figure when the comparison is empty", () => {
+    const quote = selectConcept(createThumbnailDocument(), VARIANT_ID_BY_CONCEPT["quote-gap"]);
+    const cleared = updateCopy(quote, "en", { compareValue: "" });
+    const composed = composeThumbnail(cleared, {
+      variantId: VARIANT_ID_BY_CONCEPT["quote-gap"],
+      locale: "en",
+    });
+    expect(composed.text.compare?.spec.spans[0].text).toBe("—");
+    const svg = documentToSvg(composed.media).svg;
+    expect(svg).not.toContain("4,800");
+    expect(composed.variant.copy.en.compareValue).toBe("");
   });
 
   it("renders English and Japanese copy with the right language tag", () => {

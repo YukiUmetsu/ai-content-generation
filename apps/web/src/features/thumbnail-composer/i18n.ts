@@ -26,6 +26,7 @@ export interface ComposerCopy {
   secondaryHint: string;
   compareLabel: string;
   compareHint: string;
+  compareRequired: string;
   paletteHeading: string;
   paletteHint: string;
   paletteGroupLabel: string;
@@ -35,6 +36,7 @@ export interface ComposerCopy {
   readabilityHeading: string;
   readabilityHint: string;
   sizeAt: (width: number) => string;
+  scaledAt: (percent: number) => string;
   checksHeading: string;
   checksPass: string;
   checksPassShort: string;
@@ -102,6 +104,7 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
     secondaryHint: "Optional context. Keep it under one short sentence.",
     compareLabel: "Comparison figure",
     compareHint: "The advertised or equipment-only price shown on the left.",
+    compareRequired: "This concept needs a comparison figure before export.",
     paletteHeading: "Palette",
     paletteHint: "A bounded set of semantic roles. The accent is reserved for one idea.",
     paletteGroupLabel: "Colour palette",
@@ -112,6 +115,7 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
     readabilityHint:
       "Rendered at the two sizes YouTube actually shows. Text that survives here survives the feed.",
     sizeAt: (width) => `${width}×${Math.round((width * 9) / 16)}`,
+    scaledAt: (percent) => `shown at ${percent}% to fit`,
     checksHeading: "Checks",
     checksPass: "No geometry or copy issues at this revision.",
     checksPassShort: "Checks pass",
@@ -199,6 +203,10 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
         title: "Key figure is empty",
         hint: "The composition needs one dominant figure.",
       },
+      "compare-empty": {
+        title: "Comparison figure is empty",
+        hint: "Add the advertised or equipment-only price so both halves of the comparison stay honest.",
+      },
       "safe-margin": {
         title: "Content crosses the safe margin",
         hint: "Pull the layer inside the 5% inset so platform UI cannot crop it.",
@@ -214,6 +222,10 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
       "text-overlap": {
         title: "Text boxes collide",
         hint: "Shorten one line; the composition never overlaps essential text.",
+      },
+      "composition-failed": {
+        title: "This composition could not be rendered",
+        hint: "Restore the example copy or re-import the document. Export stays blocked until it renders.",
       },
     },
   },
@@ -238,6 +250,7 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
     secondaryHint: "任意の補足。短い一文までに。",
     compareLabel: "比較用の数字",
     compareHint: "左側に置く、広告上の機器価格。",
+    compareRequired: "このコンセプトでは、書き出し前に比較用の数字が必要です。",
     paletteHeading: "配色",
     paletteHint: "意味を持つ役割だけに絞った配色。アクセントはひとつの主張に使います。",
     paletteGroupLabel: "カラーパレット",
@@ -247,6 +260,7 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
     readabilityHeading: "可読性チェック",
     readabilityHint: "YouTube が実際に表示する2つのサイズで確認します。ここで読めればフィードでも読めます。",
     sizeAt: (width) => `${width}×${Math.round((width * 9) / 16)}`,
+    scaledAt: (percent) => `収まるよう ${percent}% で表示`,
     checksHeading: "チェック",
     checksPass: "このリビジョンに、形状・文面の指摘はありません。",
     checksPassShort: "チェック済み",
@@ -334,6 +348,10 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
         title: "主要な数字が空です",
         hint: "構図には主役となる数字がひとつ必要です。",
       },
+      "compare-empty": {
+        title: "比較用の数字が空です",
+        hint: "広告上の機器価格を入れてください。比較の両側が正確になります。",
+      },
       "safe-margin": {
         title: "安全余白を越えています",
         hint: "5% の内側に戻してください。プラットフォームの UI で切れます。",
@@ -349,6 +367,10 @@ export const COMPOSER_COPY: Record<Locale, ComposerCopy> = {
       "text-overlap": {
         title: "テキスト同士が重なっています",
         hint: "どちらかを短くしてください。必須テキストは重ねません。",
+      },
+      "composition-failed": {
+        title: "この構図を描画できませんでした",
+        hint: "サンプル文面に戻すか、ドキュメントを再読み込みしてください。描画できるまで書き出しは止まります。",
       },
     },
   },
