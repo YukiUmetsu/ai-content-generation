@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "kind": "video-production-job",
+  "id": "house-math-smoke-v1",
+  "mode": "smoke",
+  "locale": "en-US",
+  "approval": "test-only",
+  "topic": {
+    "title": "The Real 30-Year Cost of a $500,000 House",
+    "viewerQuestion": "Why is the asking price not the full cost?",
+    "payoffEventId": "lifetime-total-reveal"
+  },
+  "references": {
+    "brandKit": { "id": "brand_house_math", "revision": 1 },
+    "storyboard": { "id": "house_math_smoke_story", "revision": 1 },
+    "selectedPackagingId": "house-math-cost-reversal"
+  },
+  "destination": {
+    "presetId": "youtube",
+    "width": 1920,
+    "height": 1080,
+    "fps": { "num": 30, "den": 1 },
+    "targetDurationSeconds": [30, 60],
+    "minimumDurationSeconds": null
+  },
+  "voice": {
+    "profileId": "house-math-narrator",
+    "provider": "fish",
+    "modelId": "s2.1-pro-free",
+    "voiceId": "configure-a-licensed-reference",
+    "locale": "en-US",
+    "licenseStatus": "unknown"
+  },
+  "policy": {
+    "commercialRightsVerified": false,
+    "reviewerApproved": false,
+    "maxCostUsd": 0
+  },
+  "claims": [
+    {
+      "id": "assumption-purchase-price",
+      "status": "illustrative",
+      "text": "$500,000 home purchase price, hypothetical example"
+    },
+    {
+      "id": "assumption-carrying-costs",
+      "status": "illustrative",
+      "text": "Taxes, insurance, maintenance and financing are scenario assumptions, not market quotes"
+    }
+  ],
+  "beats": [
+    {
+      "id": "hook",
+      "narration": "A five hundred thousand dollar home costs far more than the number on the listing.",
+      "visualIntent": "house-intro",
+      "claimRefs": ["assumption-purchase-price"],
+      "eventIds": [],
+      "pauseAfterMs": 300
+    },
+    {
+      "id": "breakdown",
+      "narration": "Your real cost includes financing, property tax, insurance, and repairs. Those amounts depend on assumptions we should make visible.",
+      "visualIntent": "cost-breakdown",
+      "claimRefs": ["assumption-carrying-costs"],
+      "eventIds": [],
+      "pauseAfterMs": 300
+    },
+    {
+      "id": "reveal",
+      "narration": "The lifetime total is the meaningful comparison, but this is only an illustrative scenario. Actual numbers depend on your loan and home.",
+      "visualIntent": "cost-payoff",
+      "claimRefs": ["assumption-purchase-price", "assumption-carrying-costs"],
+      "eventIds": ["lifetime-total-reveal"],
+      "pauseAfterMs": 0
+    }
+  ],
+  "events": [
+    { "id": "lifetime-total-reveal", "beatId": "reveal" }
+  ],
+  "sounds": [
+    {
+      "id": "reveal-chime",
+      "eventId": "lifetime-total-reveal",
+      "category": "number.reveal",
+      "assetRef": "self-authored-test-chime",
+      "licenseStatus": "test-only"
+    }
+  ]
+}

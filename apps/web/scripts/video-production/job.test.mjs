@@ -1,0 +1,84 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { parseVideoProductionJob } from "./job.mjs";
+
+const original = JSON.parse(readFileSync(new URL("../../../../examples/video-production-house-math-smoke.json", import.meta.url), "utf8"));
+const modified = (change) => change(structuredClone(original));
+const errorCodes = (result) => result.findings.filter((item) => item.severity === "error").map((item) => item.code);
+
+test("validates the illustrative House Math smoke job", () => {
+  const result = parseVideoProductionJob(original);
+  assert.equal(result.ok, true, JSON.stringify(result.findings));
+  assert.equal(result.job.approval, "test-only");
+  assert.equal(result.job.destination.presetId, "youtube");
+});
+
+test("does not allow a duplicate beat or event identifier", () => {
+  const job = modified((value) => { value.beats.push(value.beats[0]); return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(job)).includes("duplicate-id"), true);
+  const events = modified((value) => { value.events.push(value.events[0]); return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(events)).includes("duplicate-id"), true);
+});
+
+test("rejects missing payoff and orphan cue references", () => {
+  const noPayoff = modified((value) => { value.events = []; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(noPayoff)).includes("missing-payoff"), true);
+  const orphan = modified((value) => { value.sounds[0].eventId = "made-up-event"; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(orphan)).includes("orphan-sound-event"), true);
+});
+
+test("rejects changed schema, unknown fields and missing voice mapping", () => {
+  const schema = modified((value) => { value.schemaVersion = 2; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(schema)).includes("unsupported-schema"), true);
+  const unknown = modified((value) => { value.apiKey = "should-never-appear"; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(unknown)).includes("unknown-field"), true);
+  const voice = modified((value) => { value.voice.modelId = ""; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(voice)).includes("required-text"), true);
+});
+
+test("long mode requires the 480-second policy and never mislabels smoke as commercial", () => {
+  const shortLong = modified((value) => { value.mode = "youtube-long"; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(shortLong)).includes("invalid-duration-policy"), true);
+  const validLongContract = modified((value) => {
+    value.mode = "youtube-long";
+    value.destination.minimumDurationSeconds = 480;
+    value.destination.targetDurationSeconds = [540, 900];
+    return value;
+  });
+  assert.equal(parseVideoProductionJob(validLongContract).ok, true);
+  const fakeApproval = modified((value) => { value.approval = "approved"; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(fakeApproval)).includes("commercial-approval-blocked"), true);
+});
+
+test("rejects ungrounded claims, wrong scene intent and mismatched output geometry", () => {
+  const claim = modified((value) => { value.beats[0].claimRefs = ["missing-claim"]; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(claim)).includes("unknown-claim-ref"), true);
+  const scene = modified((value) => { value.beats[0].visualIntent = "made-up-intent"; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(scene)).includes("unsupported-scene-intent"), true);
+  const dimensions = modified((value) => { value.destination.width = 100; return value; });
+  assert.equal(errorCodes(parseVideoProductionJob(dimensions)).includes("preset-raster-mismatch"), true);
+});
+
+test("missing or malformed nested data returns errors instead of throwing", () => {
+  for (const field of ["topic", "references", "destination", "voice", "policy", "beats", "events", "sounds", "claims"]) {
+    const value = modified((job) => { job[field] = null; return job; });
+    assert.doesNotThrow(() => parseVideoProductionJob(value), field);
+    assert.equal(parseVideoProductionJob(value).ok, false, field);
+  }
+  const missingEventArray = modified((job) => { delete job.beats[2].eventIds; return job; });
+  assert.doesNotThrow(() => parseVideoProductionJob(missingEventArray));
+  assert.equal(parseVideoProductionJob(missingEventArray).ok, false);
+});
+
+test("unverified voice license always blocks commercial approval", () => {
+  const unlicensed = modified((job) => {
+    job.approval = "approved";
+    job.policy.commercialRightsVerified = true;
+    job.policy.reviewerApproved = true;
+    job.claims.forEach((claim) => { claim.status = "verified"; claim.sourceRefs = ["synthetic-evidence-reference"]; });
+    job.sounds.forEach((sound) => { sound.licenseStatus = "verified"; });
+    return job;
+  });
+  assert.equal(errorCodes(parseVideoProductionJob(unlicensed)).includes("commercial-approval-blocked"), true);
+});

@@ -14,7 +14,9 @@
     "test:watch": "vitest",
     "kumiki:update": "node scripts/vendor-kumiki.mjs --update-lock",
     "kumiki:verify": "node scripts/vendor-kumiki.mjs",
-    "fixtures:creative": "node scripts/serve-fixtures.mjs"
+    "fixtures:creative": "node scripts/serve-fixtures.mjs",
+    "video:produce": "node scripts/video-production/cli.mjs",
+    "test:video:headless": "node --test scripts/video-production/*.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",

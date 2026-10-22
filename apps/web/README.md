@@ -10,6 +10,18 @@ five feature slots are independently owned: **Brand & appearance** and **Motion
 remain integration slots. The shell, split pane, preview canvas, inspector,
 appearance/density axes and error boundary are provided.
 
+## Headless video production (foundation slice)
+
+The CLI currently validates versioned inputs and gives a no-network preflight. **It does not synthesize or export media yet**. The mock/demo fixture is explicitly test-only.
+
+```bash
+cd apps/web
+pnpm test:video:headless
+pnpm video:produce -- --job ../../examples/video-production-house-math-smoke.json --provider fish --dry-run --out ../../outputs/house-math-smoke
+```
+
+Dry-run checks the Fish credential's **presence** without revealing it, explicit network permission, FFmpeg/FFprobe and a configured existing browser (`CONTENTGEN_CHROMIUM_EXECUTABLE`). No API request or media render happens. Later production tasks will add generated Fish or local narration and actual browser-to-FFmpeg output; these must not be marked complete from this dry-run alone. Never commit `FISH_AUDIO_API_KEY` or an unlicensed voice reference.
+
 ## Run and verify
 
 Requirements: Node `>=22.12`, pnpm `11.22` (declared in `package.json`).
