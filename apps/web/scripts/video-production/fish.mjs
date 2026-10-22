@@ -101,6 +101,8 @@ function audioSignature(bytes) {
       Buffer.from(bytes).toString("ascii", 8, 12) === "WAVE") return "WAV";
   if (bytes.length >= 3 && Buffer.from(bytes).toString("ascii", 0, 3) === "ID3") return "MP3";
   if (bytes.length >= 4 && Buffer.from(bytes).toString("ascii", 0, 4) === "OggS") return "Ogg";
+  const prefix = Buffer.from(bytes.subarray(0, Math.min(bytes.length, 16))).toString("ascii");
+  if (/^[ \t\r\n]*[{[]/.test(prefix) && /^[\x20-\x7e\r\n\t]*$/.test(prefix)) return "JSON-like";
   return "unrecognized-or-raw-PCM";
 }
 function safeMime(value) {
@@ -145,8 +147,11 @@ async function readBounded(response, signal, diagnostic) {
   let written = 0;
   for (const chunk of chunks) { result.set(chunk, written); written += chunk.byteLength; }
   diagnostic.audioSignature = audioSignature(result);
-  if (diagnostic.audioSignature === "WAV") {
-    throw fail("wrong-audio-format", "Fish returned WAV despite the requested PCM format; check the provider response format.");
+  if (diagnostic.declaredBytes !== null && diagnostic.declaredBytes !== result.length) {
+    throw fail("provider-stream", "Fish PCM body size differs from its declared Content-Length.");
+  }
+  if (["WAV", "MP3", "Ogg", "JSON-like"].includes(diagnostic.audioSignature)) {
+    throw fail("wrong-audio-format", `Fish returned ${diagnostic.audioSignature} despite the requested PCM format.`);
   }
   return wrapPcmAsWave(result);
 }
