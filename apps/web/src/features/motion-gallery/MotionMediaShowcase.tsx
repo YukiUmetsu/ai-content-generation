@@ -266,6 +266,7 @@ export function MotionMediaShowcase({ locale, className }: Pick<FeatureSlotProps
   const isJa = locale === "ja";
   const prefersReducedMotion = usePrefersReducedMotion();
   const [activeTab, setActiveTab] = useState(0);
+  const [selectedLayer, setSelectedLayer] = useState<string | null>("hero-title");
   const [frame, setFrame] = useState(0);
   const [presetId, setPresetId] = useState<VideoPlatformPresetId>("youtube");
   const [captureStatus, setCaptureStatus] = useState("");
