@@ -18,18 +18,28 @@ export class FishSynthesisError extends Error {
 
 const fail = (code, message, status) => new FishSynthesisError(code, message, status);
 
+/** Turn Fish's completed streaming WAV into a seekable PCM WAV.
+ * Some streamed responses use unknown-length RIFF/data markers. Repair only
+ * those explicit markers after the bounded HTTP stream has ended; never
+ * forgive a finite declared size that exceeds the received bytes.
+ */
 function validateWave(bytes) {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (buffer.length < 46 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
     throw fail("invalid-wav", "Fish returned an invalid or empty WAV file.");
   }
-  const declaredLength = buffer.readUInt32LE(4) + 8;
+  const riffSize = buffer.readUInt32LE(4);
+  const streamingRiff = riffSize === 0xffffffff || riffSize === 0x7fffeffc;
+  const declaredLength = streamingRiff ? buffer.length : riffSize + 8;
   if (declaredLength > buffer.length || declaredLength < 46) throw fail("invalid-wav", "Fish returned an incomplete WAV payload.");
-  let offset = 12, foundFormat = false, foundSamples = false;
+  let offset = 12, foundFormat = false, foundSamples = false, rewriteDataAt = -1, rewriteDataLength = 0;
   while (offset + 8 <= declaredLength) {
     const kind = buffer.toString("ascii", offset, offset + 4);
-    const length = buffer.readUInt32LE(offset + 4);
+    const rawLength = buffer.readUInt32LE(offset + 4);
     const dataStart = offset + 8;
+    const unknownDataLength = kind === "data" && streamingRiff &&
+      (rawLength === 0xffffffff || rawLength === 0x7fffeffc || rawLength === 0);
+    const length = unknownDataLength ? declaredLength - dataStart : rawLength;
     if (dataStart + length > declaredLength) throw fail("invalid-wav", "Fish returned a truncated WAV chunk.");
     if (kind === "fmt " && length >= 16) {
       if (buffer.readUInt16LE(dataStart) !== 1 || buffer.readUInt16LE(dataStart + 2) !== 1 ||
@@ -38,10 +48,20 @@ function validateWave(bytes) {
       }
       foundFormat = true;
     }
-    if (kind === "data" && length > 0) foundSamples = true;
+    if (kind === "data" && length > 0) {
+      if (unknownDataLength && length % 2 !== 0) throw fail("invalid-wav", "Fish returned an incomplete PCM sample.");
+      foundSamples = true;
+      if (unknownDataLength) { rewriteDataAt = offset + 4; rewriteDataLength = length; }
+    }
+    if (unknownDataLength) break;
     offset = dataStart + length + (length % 2);
   }
   if (!foundFormat || !foundSamples) throw fail("invalid-wav", "Fish returned a WAV without audio samples.");
+  if (!streamingRiff) return bytes;
+  const normalized = Buffer.from(buffer);
+  normalized.writeUInt32LE(normalized.length - 8, 4);
+  if (rewriteDataAt !== -1) normalized.writeUInt32LE(rewriteDataLength, rewriteDataAt);
+  return normalized;
 }
 
 async function readBounded(response, signal) {
@@ -71,8 +91,7 @@ async function readBounded(response, signal) {
   const result = new Uint8Array(length);
   let written = 0;
   for (const chunk of chunks) { result.set(chunk, written); written += chunk.byteLength; }
-  validateWave(result);
-  return result;
+  return validateWave(result);
 }
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
