@@ -108,6 +108,41 @@ test("source-unknown model claims remain valid drafts but cannot be commercially
   assert.ok(errorCodes(parseVideoProductionJob(authored)).includes("commercial-approval-blocked"));
 });
 
+test("verified claims need a resolvable, versioned source with a passage locator", () => {
+  const supported = structuredClone(general);
+  supported.evidence = [{
+    id: "research-1", title: "Network architecture reference",
+    sourceUri: "https://example.org/networking/reference",
+    retrievedAt: "2026-10-22T14:00:00.000Z", passageLocator: "section 3, paragraph 2",
+    snapshotSha256: "a".repeat(64),
+  }];
+  supported.claims[0] = { id: "network-fact", text: "Packets can traverse intermediary devices.", status: "verified", sourceRefs: ["research-1"] };
+  supported.beats.forEach((beat) => { beat.claimRefs = ["network-fact"]; });
+  assert.equal(parseVideoProductionJob(supported).ok, true, JSON.stringify(parseVideoProductionJob(supported).findings));
+
+  const cases = [
+    ["without registry", (j) => { delete j.evidence; }, "unknown-source-ref"],
+    ["missing locator", (j) => { delete j.evidence[0].passageLocator; }, "invalid-evidence"],
+    ["missing hash", (j) => { j.evidence[0].snapshotSha256 = "not-a-content-hash"; }, "invalid-evidence"],
+    ["insecure URL", (j) => { j.evidence[0].sourceUri = "http://example.org/"; }, "invalid-evidence"],
+    ["invalid timestamp", (j) => { j.evidence[0].retrievedAt = "yesterday"; }, "invalid-evidence"],
+    ["duplicate evidence", (j) => { j.evidence.push(j.evidence[0]); }, "duplicate-id"],
+    ["orphan reference", (j) => { j.claims[0].sourceRefs = ["unknown-id"]; }, "unknown-source-ref"],
+  ];
+  for (const [label, change, code] of cases) {
+    const broken = structuredClone(supported);
+    change(broken);
+    assert.ok(errorCodes(parseVideoProductionJob(broken)).includes(code), label);
+  }
+});
+
+test("model-authored drafts need no evidence registry, but cannot launder fake source references", () => {
+  assert.equal(parseVideoProductionJob(general).ok, true);
+  const fake = structuredClone(general);
+  fake.claims[0].sourceRefs = ["invented-article"];
+  assert.ok(errorCodes(parseVideoProductionJob(fake)).includes("unknown-source-ref"));
+});
+
 test("scenario economics and per-beat visual copy must be finite and fit authored scenes", () => {
   const valid = modified((j) => {
     j.scenario = { kind: "house-cost-v1", purchasePrice: 500000, downPayment: 100000, annualInterestRatePct: 6, years: 30, annualPropertyTax: 7000, annualInsurance: 3000, annualMaintenance: 5000 };

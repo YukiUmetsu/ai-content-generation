@@ -34,3 +34,18 @@ test("generic compiler rejects incompatible source, mismatched beats and short l
   assert.throws(() => compileGeneralVisuals(source, { ...timeline, beats: timeline.beats.slice(1) }), /beat|chapter/i);
   assert.throws(() => compileGeneralVisuals({ ...source, mode: "youtube-long", destination: { ...source.destination, minimumDurationSeconds: 480, targetDurationSeconds: [480, 900] } }, timeline), /480|duration/i);
 });
+
+test("compiled chapters retain the exact source snapshot locator behind verified narration", () => {
+  const job = structuredClone(source);
+  job.evidence = [{ id: "study", title: "Named article", sourceUri: "https://example.org/reading",
+    retrievedAt: "2026-10-22T14:00:00.000Z", passageLocator: "§2 ¶5", snapshotSha256: "b".repeat(64) }];
+  job.claims[0] = { id: "finding", status: "verified", text: "An author-reviewed statement", sourceRefs: ["study"] };
+  job.beats.forEach((beat) => { beat.claimRefs = []; });
+  job.beats[1].claimRefs = ["finding"];
+  const plan = compileGeneralVisuals(job, timeline);
+  assert.deepEqual(plan.chapters[1].evidenceRefs, ["study"]);
+  assert.deepEqual(plan.evidence, job.evidence);
+  assert.deepEqual(plan.chapters[0].evidenceRefs, []);
+  // Never confuse provenance-record presence with human validation of the render.
+  assert.equal(plan.commercialReady, false);
+});

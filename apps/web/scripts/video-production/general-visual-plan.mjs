@@ -13,20 +13,24 @@ export function compileGeneralVisuals(job, timeline) {
   const minimumSeconds = Math.max(job.mode === "youtube-long" ? 480 : 0, job.destination.minimumDurationSeconds ?? 0);
   if (timeline.totalSamples < minimumSeconds * 48000) fail(`video requires ${minimumSeconds} seconds of measured narration`);
   if (!Array.isArray(timeline.beats) || timeline.beats.length !== job.beats.length) fail("narrated beat count mismatch");
+  const claimsById = new Map(job.claims.map((claim) => [claim.id, claim]));
   const chapters = job.beats.map((beat, index) => {
     const range = timeline.beats[index];
     if (range?.id !== beat.id) fail(`beat ${beat.id} timeline mismatch`);
     const startFrame = range.startFrame;
     const endFrame = index === job.beats.length - 1 ? timeline.totalFrames : timeline.beats[index + 1].startFrame;
     if (endFrame <= startFrame) fail(`beat ${beat.id} is too short to render`);
-    return { id: beat.id, intent: beat.visualIntent, visual: structuredClone(beat.visual), startFrame, endFrame, claimRefs: [...beat.claimRefs], eventIds: [...beat.eventIds] };
+    const evidenceRefs = [...new Set(beat.claimRefs.flatMap((id) => claimsById.get(id)?.sourceRefs ?? []))];
+    return { id: beat.id, intent: beat.visualIntent, visual: structuredClone(beat.visual), startFrame, endFrame,
+      claimRefs: [...beat.claimRefs], evidenceRefs, eventIds: [...beat.eventIds] };
   });
   const payoffEventId = job.topic.payoffEventId;
   if (timeline.eventFrames?.[payoffEventId] !== chapters.at(-1).startFrame || !chapters.at(-1).eventIds.includes(payoffEventId)) fail("payoff event must start the final payoff beat");
   return {
     schemaVersion: 1, kind: "general-explainer-visual-plan", title: job.topic.title,
     manifest: { schemaVersion: 1, id: job.id, durationFrames: timeline.totalFrames, width: 1920, height: 1080, fps: { ...job.destination.fps }, preset: "youtube" },
-    chapters, events: { ...timeline.eventFrames }, payoffEventId,
+    chapters, claims: structuredClone(job.claims), evidence: structuredClone(job.evidence ?? []),
+    events: { ...timeline.eventFrames }, payoffEventId,
     disclaimer: "UNVERIFIED EDITORIAL DRAFT · REVIEW CLAIMS AND RIGHTS",
     commercialReady: false,
   };

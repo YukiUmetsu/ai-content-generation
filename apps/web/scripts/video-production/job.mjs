@@ -68,7 +68,7 @@ export function parseVideoProductionJob(input) {
     if (!integer(value.revision, 1)) add("invalid-revision", `${path}.revision`, "Revision must be a positive integer.");
   };
 
-  if (!fields(input, "$", ["schemaVersion", "kind", "visualFamily", "id", "mode", "locale", "approval", "topic", "references", "destination", "voice", "policy", "claims", "beats", "events", "sounds", "scenario"])) {
+  if (!fields(input, "$", ["schemaVersion", "kind", "visualFamily", "id", "mode", "locale", "approval", "topic", "references", "destination", "voice", "policy", "evidence", "claims", "beats", "events", "sounds", "scenario"])) {
     return { ok: false, findings };
   }
   if (input.schemaVersion !== 1 || input.kind !== "video-production-job") {
@@ -142,11 +142,34 @@ export function parseVideoProductionJob(input) {
     }
   }
 
+  // Evidence records are metadata for an immutable source snapshot, not proof
+  // that the linked passage supports the claim. That judgment belongs to review.
+  const evidence = has(input, "evidence") ? objects(input.evidence, "evidence", ["id", "title", "sourceUri", "retrievedAt", "passageLocator", "snapshotSha256"]) : [];
+  const evidenceIds = new Set(evidence.filter((entry) => string(entry.id)).map((entry) => entry.id));
+  evidence.forEach((entry, index) => {
+    const path = `evidence[${index}]`;
+    const canonicalDate = string(entry.retrievedAt) && !Number.isNaN(Date.parse(entry.retrievedAt))
+      && new Date(entry.retrievedAt).toISOString() === entry.retrievedAt;
+    let httpsSource = false;
+    if (string(entry.sourceUri)) {
+      try {
+        const uri = new URL(entry.sourceUri);
+        httpsSource = uri.protocol === "https:" && !!uri.hostname && !uri.username && !uri.password;
+      } catch { /* invalid URL is reported below */ }
+    }
+    if (!string(entry.title) || !httpsSource || !canonicalDate || !string(entry.passageLocator)
+      || !/^[a-f\d]{64}$/i.test(entry.snapshotSha256 ?? "")) {
+      add("invalid-evidence", path, "Evidence needs a title, HTTPS source URL, UTC snapshot time, precise passage locator and SHA-256 snapshot hash.");
+    }
+  });
+
   const claims = objects(input.claims, "claims", ["id", "status", "text", "sourceRefs"]);
   for (const [index, claim] of claims.entries()) {
     text(claim.text, `claims[${index}].text`);
     if (!["illustrative", "unverified", "verified", "disputed"].includes(claim.status)) add("invalid-claim-status", `claims[${index}].status`, "Claim status must be illustrative, unverified, verified or disputed.");
-    if (has(claim, "sourceRefs")) idList(claim.sourceRefs, `claims[${index}].sourceRefs`);
+    if (has(claim, "sourceRefs")) for (const ref of idList(claim.sourceRefs, `claims[${index}].sourceRefs`)) {
+      if (!evidenceIds.has(ref)) add("unknown-source-ref", `claims[${index}].sourceRefs`, `Claim references an unknown evidence snapshot: ${ref}.`);
+    }
     if (claim.status === "verified" && (!Array.isArray(claim.sourceRefs) || claim.sourceRefs.length === 0)) add("missing-source", `claims[${index}].sourceRefs`, "A verified claim needs a source reference.");
   }
   const claimIds = new Set(claims.map((item) => item.id));

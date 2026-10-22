@@ -227,6 +227,22 @@ Further **separately validated** registry upgrades should target:
 
 `evidence-stage` is useful later for authorized source visuals. Its dependency tree is broader, and recent Short/Video items still document pending human inspection. **Do not silently move the Kumiki commit pin or call uninstalled registry APIs.** Adopt an item through `kumiki:update`, hash verification, consumer typecheck/build and actual video playback checks in a dedicated change.
 
+### Evidence snapshots for quantitative scenes
+
+`video-production-job/v1` now accepts an optional top-level `evidence` array. It is **not required for illustrative or unverified drafts**. Every `claims[].sourceRefs` identifier must resolve to an `evidence[].id`, and a `verified` claim requires at least one reference. Example source record:
+
+```json
+{
+  "id": "source-2026-study", "title": "Reviewed source title",
+  "sourceUri": "https://example.org/research/document",
+  "retrievedAt": "2026-10-22T14:00:00.000Z",
+  "passageLocator": "section 2, table 4, row A",
+  "snapshotSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+The hash above is **only a format example**, not genuine retrieved evidence. A real source record must use the SHA-256 of the *actual preserved content snapshot*, a precise passage locator, and its retrieval time. The validator checks shape, reference integrity and immutable-source metadata; it does **not** fetch a source, recalculate its hash or decide whether a quoted claim is true. The general visual compiler retains the claim-to-snapshot reference chain for future `chart-story` rendering and review. Model-generated jobs remain unverified and must not invent these records. Numeric chart visuals are **not yet enabled** by this metadata contract.
+
 Kumiki has one root `registry.json`, not per-item JSON files expected by the
 shadcn GitHub registry flow. `scripts/vendor-kumiki.mjs` is the reproducible
 installer: it resolves `registryDependencies`, preserves each source path

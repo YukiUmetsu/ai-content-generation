@@ -27,14 +27,20 @@ test("real SIGINT reaches production AbortSignal and lets owned staging clean up
         const keepAlive = setInterval(() => {}, 100);
         // Arm abort before publishing the ready marker: the parent may send SIGINT
         // as soon as the file appears. Otherwise an early abort is lost forever.
-        const aborted = new Promise((_, reject) => {
-          const onAbort = () => reject(new Error("cancelled"));
+        // A signal may arrive while writing the ready marker. Keep the promise
+        // fulfilled until it is awaited so Node cannot report an unhandled
+        // rejection before the cancellation path attaches its handler.
+        const aborted = new Promise((resolve) => {
+          const onAbort = () => resolve();
           if (options.signal?.aborted) onAbort();
           else options.signal?.addEventListener("abort", onAbort, { once: true });
         });
         try {
           await writeFile(${JSON.stringify(ready)}, "started");
+          // Model a short I/O gap: SIGINT can arrive immediately after ready is written.
+          await new Promise(resolve => setTimeout(resolve, 100));
           await aborted;
+          throw new Error("cancelled");
         }
         finally { clearInterval(keepAlive); await writeFile(${JSON.stringify(cleanup)}, "clean"); }
       },

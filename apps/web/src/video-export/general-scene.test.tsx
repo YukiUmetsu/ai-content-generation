@@ -7,11 +7,11 @@ const plan: GeneralVisualPlan = {
   schemaVersion: 1, kind: "general-explainer-visual-plan", title: "The invisible network",
   manifest: { schemaVersion: 1, id: "test", durationFrames: 180, width: 1920, height: 1080, fps: { num: 30, den: 1 }, preset: "youtube" },
   chapters: [
-    { id: "question", intent: "general-intro", visual: { headline: "WHAT HAPPENS TO A MESSAGE?", subhead: "An illustrative model", emphasis: "QUESTION", items: ["Phone", "Router", "Destination"] }, startFrame: 0, endFrame: 60, claimRefs: [], eventIds: [] },
-    { id: "path", intent: "general-flow", visual: { headline: "A PACKET MOVES", subhead: "Across the network", emphasis: "PROCESS", items: ["Phone", "Router", "Network", "Receiver"] }, startFrame: 60, endFrame: 120, claimRefs: [], eventIds: [] },
-    { id: "answer", intent: "general-payoff", visual: { headline: "DELIVERED, NOT MAGIC", subhead: "A useful mental model", emphasis: "ANSWER", items: ["Send", "Route", "Deliver"] }, startFrame: 120, endFrame: 180, claimRefs: [], eventIds: ["message-arrives"] },
+    { id: "question", intent: "general-intro", visual: { headline: "WHAT HAPPENS TO A MESSAGE?", subhead: "An illustrative model", emphasis: "QUESTION", items: ["Phone", "Router", "Destination"] }, startFrame: 0, endFrame: 60, claimRefs: [], evidenceRefs: [], eventIds: [] },
+    { id: "path", intent: "general-flow", visual: { headline: "A PACKET MOVES", subhead: "Across the network", emphasis: "PROCESS", items: ["Phone", "Router", "Network", "Receiver"] }, startFrame: 60, endFrame: 120, claimRefs: [], evidenceRefs: [], eventIds: [] },
+    { id: "answer", intent: "general-payoff", visual: { headline: "DELIVERED, NOT MAGIC", subhead: "A useful mental model", emphasis: "ANSWER", items: ["Send", "Route", "Deliver"] }, startFrame: 120, endFrame: 180, claimRefs: [], evidenceRefs: [], eventIds: ["message-arrives"] },
   ],
-  events: { "message-arrives": 120 }, payoffEventId: "message-arrives", commercialReady: false,
+  claims: [], evidence: [], events: { "message-arrives": 120 }, payoffEventId: "message-arrives", commercialReady: false,
   disclaimer: "UNVERIFIED EDITORIAL DRAFT · REVIEW CLAIMS AND RIGHTS",
 };
 
