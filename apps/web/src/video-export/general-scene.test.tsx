@@ -54,4 +54,16 @@ describe("generic deterministic explainer scene", () => {
     expect(cards).toHaveLength(3);
     for (const card of cards) expect(Number(card[1]) + Number(card[2])).toBeLessThanOrEqual(1800);
   });
+
+  it("shows qualitative breakdowns as equal-sized categories, never invented quantitative bars", () => {
+    const breakdown: GeneralVisualPlan = { ...plan, chapters: plan.chapters.map((chapter) => chapter.id === "path"
+      ? { ...chapter, intent: "general-breakdown", visual: { ...chapter.visual, items: ["Labor", "Materials", "Permits", "Equipment"] } }
+      : chapter) };
+    const svg = renderToStaticMarkup(<GeneralExportScene plan={breakdown} frame={119} />);
+    expect(svg).toContain('data-general-breakdown="qualitative"');
+    expect(svg).toContain("QUALITATIVE · NOT TO SCALE");
+    expect(svg.match(/data-general-node=/g)).toHaveLength(4);
+    expect(svg.match(/width="680" height="94"/g)).toHaveLength(4);
+    expect(svg).not.toContain('height="23"');
+  });
 });

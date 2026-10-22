@@ -24,7 +24,7 @@ function Node({ x, y, width, height, label, index, highlight = false }: { x: num
 }
 
 function Journey({ items, fps, chapterFrames, frame, fallback }: { items: string[]; fps: RationalFps; chapterFrames: number; frame: number; fallback: ReactNode }) {
-  const plan = useMemo(() => createGeneralJourney(items, chapterFrames, fps), [items, chapterFrames, fps.num, fps.den]);
+  const plan = useMemo(() => createGeneralJourney(items, chapterFrames, fps), [items, chapterFrames, fps]);
   if (!plan) return fallback;
   const sample = evaluateProcessJourney(plan, frame);
   const overlay = <>
@@ -76,12 +76,16 @@ function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: Rati
     </g>;
   }
   if (state.intent === "general-breakdown") {
-    return <g>
-      {items.map((label, i) => <g key={`${label}-${i}`}>
-        <text x="1077" y={328 + 124 * i} fontSize="27" fill={ink}>{label}</text>
-        <rect x="1077" y={349 + 124 * i} width="680" height="23" rx="11" fill="#2F4751" />
-        <rect x="1077" y={349 + 124 * i} width={680 * (0.45 + 0.55 * (all.length - i) / all.length)} height="23" rx="11" fill={palette[i % palette.length]} />
-      </g>)}
+    // Labels are qualitative: never draw different bar lengths without sourced
+    // measurements and an honest zero-origin scale.
+    const height = 94;
+    const gap = 18;
+    const startY = 540 - (all.length * height + (all.length - 1) * gap) / 2;
+    return <g data-general-breakdown="qualitative">
+      {items.map((label, i) => <Node key={`${label}-${i}`} x={1077} y={startY + i * (height + gap)}
+        width={680} height={height} label={label} index={i} />)}
+      <text x="1417" y={startY + all.length * height + (all.length - 1) * gap + 44}
+        fontSize="20" fill={muted} letterSpacing="2" textAnchor="middle">QUALITATIVE · NOT TO SCALE</text>
     </g>;
   }
   return <StaticVerticalDiagram state={state} />;
