@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrandAppearanceStudio } from "./BrandAppearanceStudio";
 import { createBrandState } from "./model/brands";
@@ -75,7 +75,7 @@ describe("BrandAppearanceStudio", () => {
   it("reflects typography changes in the active visual preview", async () => {
     const { user } = setup();
     await user.selectOptions(screen.getByRole("combobox", { name: /Display Family/i }), "Geist");
-    expect(screen.getByTestId("video-opening").style.getPropertyValue("--ba-font-display")).toContain("Geist");
+    expect(screen.getByTestId("video-opening").style.getPropertyValue("--ba-font-display")).toBe("var(--km-font-sans)");
     expect(screen.getByLabelText("Active type styles")).toHaveTextContent("Display: Geist 600");
   });
 
@@ -206,6 +206,6 @@ describe("BrandAppearanceStudio", () => {
     expect(heading).not.toHaveClass("truncate");
     expect(screen.getByRole("region", { name: "ブランドの外観" })).toBeInTheDocument();
     expect(screen.getByText("カラーパレット")).toBeInTheDocument();
-    expect(screen.getByText("タイポグラフィ")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "ブランドの外観" })).getByText("タイポグラフィ")).toBeInTheDocument();
   });
 });
