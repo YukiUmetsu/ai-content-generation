@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "kind": "video-production-job",
+  "id": "house-math-thirty-years-long-v1",
+  "mode": "youtube-long",
+  "locale": "en-US",
+  "approval": "test-only",
+  "topic": {
+    "title": "The Real 30-Year Cost of a $500,000 House",
+    "viewerQuestion": "How does a listing price compare with the cash paid over thirty years?",
+    "payoffEventId": "lifetime-total-reveal"
+  },
+  "references": {
+    "brandKit": { "id": "brand_house_math", "revision": 1 },
+    "storyboard": { "id": "house_math_thirty_year_story", "revision": 1 },
+    "selectedPackagingId": "house-math-thirty-year-cost-reversal"
+  },
+  "destination": {
+    "presetId": "youtube", "width": 1920, "height": 1080,
+    "fps": { "num": 30, "den": 1 }, "targetDurationSeconds": [540, 900], "minimumDurationSeconds": 480
+  },
+  "voice": {
+    "profileId": "house-math-narrator", "provider": "fish", "modelId": "s2.1-pro-free",
+    "voiceId": "configure-a-licensed-reference", "locale": "en-US", "licenseStatus": "unknown"
+  },
+  "policy": { "commercialRightsVerified": false, "reviewerApproved": false, "maxCostUsd": 0 },
+  "scenario": {
+    "kind": "house-cost-v1", "purchasePrice": 500000, "downPayment": 100000,
+    "annualInterestRatePct": 6, "years": 30, "annualPropertyTax": 7000,
+    "annualInsurance": 3000, "annualMaintenance": 5000
+  },
+  "claims": [
+    { "id": "price", "status": "illustrative", "text": "A hypothetical $500,000 purchase with $100,000 down payment." },
+    { "id": "loan", "status": "illustrative", "text": "$400,000 financed at an invented fixed annual rate of 6% for 360 monthly payments." },
+    { "id": "carrying", "status": "illustrative", "text": "Flat annual property tax $7,000, homeowners insurance $3,000, maintenance reserve $5,000." },
+    { "id": "caveat", "status": "illustrative", "text": "Illustrative cash outflows exclude resale proceeds, closing costs, improvements, utilities, inflation, investment opportunity cost and tax effects. Not a market estimate or net lifetime housing cost." }
+  ],
+  "beats": [
+    {
+      "id": "01-hook", "visualIntent": "house-intro", "visual": { "headline": "THE PRICE ISN'T THE COST", "subhead": "A listing price tells only the beginning", "emphasis": "$500,000" },
+      "narration": "Imagine finding the right house. It has the space you need, the neighborhood feels right, and the listing says five hundred thousand dollars. You might assume that five hundred thousand is what the house will cost you. But what if we followed every major payment for thirty years? The answer would look very different. Before we show the total, let's understand precisely what we are counting, and what that number cannot tell us.",
+      "claimRefs": ["price", "caveat"], "eventIds": [], "pauseAfterMs": 450
+    },
+    {
+      "id": "02-question", "visualIntent": "cost-comparison", "visual": { "headline": "TWO DIFFERENT NUMBERS", "subhead": "Purchase price versus cumulative cash outflow", "emphasis": "WHICH COST?" },
+      "narration": "There are two numbers people often confuse: the purchase price of a property, and the cash that leaves your accounts while you own it. Neither one is the same as your eventual financial loss. You build equity, you may sell the home, and the value might rise or fall. Today we will follow cash outflow, because that is the part a listing does not reveal. Keep that distinction in mind as the graph grows.",
+      "claimRefs": ["price", "caveat"], "eventIds": [], "pauseAfterMs": 350
+    },
+    {
+      "id": "03-scenario", "visualIntent": "house-intro", "visual": { "headline": "ONE HYPOTHETICAL HOUSE", "subhead": "Fixed assumptions make the math understandable", "emphasis": "A MODEL, NOT A QUOTE" },
+      "narration": "Let's build a deliberately simple example. The purchase price is five hundred thousand dollars. You pay one hundred thousand dollars up front and finance the remaining four hundred thousand. The mortgage has a fixed six percent annual interest rate and a thirty-year repayment schedule. None of these figures is a recommendation or a current mortgage offer. Real loans include extra conditions, and your actual expenses will vary by location and by year.",
+      "claimRefs": ["price", "loan", "caveat"], "eventIds": [], "pauseAfterMs": 500
+    },
+    {
+      "id": "04-down-payment", "visualIntent": "cost-breakdown", "visual": { "headline": "THE FIRST $100,000", "subhead": "Down payment is cash paid on day one", "emphasis": "DOWN PAYMENT" },
+      "narration": "Start with the down payment. In our model, one hundred thousand dollars leaves your savings when you buy the house. That money is not simply gone; it helps purchase ownership in the property. Still, it is cash you no longer have available for other uses. You may also pay closing costs, inspections, moving expenses and initial repairs, but we are deliberately leaving those out so the arithmetic stays transparent.",
+      "claimRefs": ["price", "caveat"], "eventIds": [], "pauseAfterMs": 330
+    },
+    {
+      "id": "05-principal", "visualIntent": "cost-breakdown", "visual": { "headline": "THE $400,000 LOAN", "subhead": "Borrowed principal is not another upfront payment", "emphasis": "PRINCIPAL" },
+      "narration": "Now consider the remaining four hundred thousand dollars. That is the principal you borrow. The lender pays the seller on your behalf, then you repay the lender over time. It would be misleading to add the original four hundred thousand on top of every mortgage payment. The principal is already part of those payments. To avoid double counting, our running cash total includes the down payment and the actual monthly installments, not the initial loan balance again.",
+      "claimRefs": ["loan", "caveat"], "eventIds": [], "pauseAfterMs": 400
+    },
+    {
+      "id": "06-rate", "visualIntent": "cost-breakdown", "visual": { "headline": "INTEREST CHANGES THE SCALE", "subhead": "Six percent is an assumed fixed rate", "emphasis": "6% APR ASSUMPTION" },
+      "narration": "Why do the monthly installments exceed a simple repayment of four hundred thousand divided by three hundred sixty? Because the bank charges interest on the remaining balance. Early in a standard amortizing loan, more of each payment goes toward interest. Later, more goes toward principal. Our scenario assumes a fixed six percent nominal annual rate, divided into monthly interest periods. The calculation is simplified, and it excludes lender fees and mortgage insurance.",
+      "claimRefs": ["loan", "caveat"], "eventIds": [], "pauseAfterMs": 360
+    },
+    {
+      "id": "07-monthly-payment", "visualIntent": "cost-comparison", "visual": { "headline": "ABOUT $2,398 EVERY MONTH", "subhead": "Principal and interest only, before taxes and insurance", "emphasis": "MONTHLY MORTGAGE" },
+      "narration": "With four hundred thousand dollars borrowed at six percent for thirty years, the formula gives a monthly principal-and-interest payment of roughly two thousand three hundred ninety-eight dollars. That number may feel manageable compared with local rents or your current housing payment. But it is only one line of the budget. Property taxes, insurance, maintenance, utilities and unexpected repairs still exist outside that quoted principal-and-interest figure.",
+      "claimRefs": ["loan", "carrying"], "eventIds": [], "pauseAfterMs": 400
+    },
+    {
+      "id": "08-three-hundred-sixty", "visualIntent": "cost-timeline", "visual": { "headline": "360 MONTHLY PAYMENTS", "subhead": "The compounding effect becomes visible across decades", "emphasis": "THIRTY YEARS" },
+      "narration": "Now stretch the payment across the entire schedule: twelve months a year, for thirty years. That gives three hundred sixty installments. In this example, the sum of principal and interest payments is about eight hundred sixty-three thousand dollars. It does not mean the bank somehow sold you an eight hundred sixty-three thousand dollar house. It means the loan requires repayment of the borrowed principal plus the financing charge spread across a long period.",
+      "claimRefs": ["loan", "caveat"], "eventIds": [], "pauseAfterMs": 380
+    },
+    {
+      "id": "09-interest-total", "visualIntent": "cost-breakdown", "visual": { "headline": "INTEREST: ABOUT $463,000", "subhead": "The difference between loan repayments and principal", "emphasis": "FINANCING COST" },
+      "narration": "Subtract the original four hundred thousand dollar principal from those repayments. The difference is approximately four hundred sixty-three thousand dollars in interest over the full thirty years. The exact amount depends on payment timing, rate, fees and whether the loan runs to maturity. Refinancing or paying extra principal would change this. The important insight is that financing has a large time dimension. Your monthly payment alone does not show its cumulative effect.",
+      "claimRefs": ["loan"], "eventIds": [], "pauseAfterMs": 410
+    },
+    {
+      "id": "10-taxes", "visualIntent": "cost-breakdown", "visual": { "headline": "PROPERTY TAX KEEPS COMING", "subhead": "Our simplified example assumes $7,000 every year", "emphasis": "PROPERTY TAX" },
+      "narration": "The mortgage is not the only recurring payment. Local governments often levy property taxes, and those taxes depend on assessment rules, exemptions and future changes. For this illustration, let's assume seven thousand dollars per year, held completely flat for thirty years. That adds two hundred ten thousand dollars of cash outflow. In reality, the tax bill may go up or down. A flat amount is a modeling convenience, not a prediction.",
+      "claimRefs": ["carrying", "caveat"], "eventIds": [], "pauseAfterMs": 400
+    },
+    {
+      "id": "11-insurance", "visualIntent": "cost-breakdown", "visual": { "headline": "INSURANCE ISN'T OPTIONAL MATH", "subhead": "We model $3,000 annually, flat for thirty years", "emphasis": "HOMEOWNERS INSURANCE" },
+      "narration": "Next is homeowners insurance. A lender typically requires suitable coverage, and even after a mortgage ends, the exposure to major losses remains. Our invented assumption is three thousand dollars annually, or ninety thousand dollars across thirty years. This deliberately ignores premium increases, deductible changes, coverage exclusions and special risks. Insurance is one of the categories where an average quoted today may be particularly poor at predicting what happens decades later.",
+      "claimRefs": ["carrying", "caveat"], "eventIds": [], "pauseAfterMs": 380
+    },
+    {
+      "id": "12-maintenance", "visualIntent": "cost-breakdown", "visual": { "headline": "HOUSES REQUIRE MAINTENANCE", "subhead": "A $5,000 annual reserve is not a repair guarantee", "emphasis": "REPAIRS & UPKEEP" },
+      "narration": "Then consider everything that wears out: roofs, heating equipment, plumbing, appliances, paint, flooring and the smaller repairs that never make a listing photograph. We will place five thousand dollars a year into a hypothetical maintenance budget. Over thirty years, that sums to one hundred fifty thousand dollars. Some years might be quiet and another might contain a large roof replacement. A steady reserve simplifies the graph; it does not eliminate that uncertainty.",
+      "claimRefs": ["carrying", "caveat"], "eventIds": [], "pauseAfterMs": 420
+    },
+    {
+      "id": "13-monthly-budget", "visualIntent": "cost-comparison", "visual": { "headline": "THE MONTHLY BILL GROWS", "subhead": "Mortgage plus a reserve for other carrying costs", "emphasis": "BUDGET REALITY" },
+      "narration": "Put those recurring assumptions beside the loan payment. Seven thousand in yearly tax, three thousand in insurance, and five thousand in upkeep add up to fifteen thousand per year. Spread evenly, that is an additional twelve hundred fifty dollars per month. Combined with the mortgage payment, the modeled monthly cash burden is roughly three thousand six hundred forty-eight dollars, before utilities and other ownership costs. That is why comparing only the advertised mortgage payment with rent can mislead.",
+      "claimRefs": ["loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 450
+    },
+    {
+      "id": "14-year-one", "visualIntent": "cost-timeline", "visual": { "headline": "YEAR ONE: A BIG HEAD START", "subhead": "The down payment changes the cash-flow picture", "emphasis": "YEAR 1" },
+      "narration": "Let's zoom out to the first year. The buyer starts with a hundred thousand dollars of down payment. Add twelve mortgage installments and fifteen thousand of our assumed recurring costs. The cumulative cash paid is already well above the listing-price comparison that many shoppers make each month. Of course, the buyer now also owns an interest in a house. The cash-flow chart is deliberately not a balance sheet of assets and liabilities.",
+      "claimRefs": ["price", "loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 390
+    },
+    {
+      "id": "15-five-years", "visualIntent": "cost-timeline", "visual": { "headline": "FIVE YEARS LATER", "subhead": "A relatively short stay can have different economics", "emphasis": "YEAR 5" },
+      "narration": "At five years, a real homeowner might be thinking about selling, refinancing, or relocating. Our chart still assumes the same loan payment and flat carrying costs. It makes those cash outflows visible, but it cannot tell you whether buying was better than renting for a five-year stay. That answer would need transaction costs, the home sale price, taxes, rent changes, and what you could have earned on the cash tied up in the property.",
+      "claimRefs": ["loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 420
+    },
+    {
+      "id": "16-ten-years", "visualIntent": "cost-timeline", "visual": { "headline": "THE TEN-YEAR MARK", "subhead": "Repeated small-looking bills become large totals", "emphasis": "YEAR 10" },
+      "narration": "By year ten, taxes, insurance and maintenance have become substantial cumulative amounts. None of the individual annual assumptions looked extraordinary when placed beside a five hundred thousand dollar purchase. But multiply by ten, then twenty, and they stop feeling small. This is why the shape of a long-term budget matters more than one month's affordability test. It is also why a home with cheaper purchase price can still be expensive to operate.",
+      "claimRefs": ["carrying", "caveat"], "eventIds": [], "pauseAfterMs": 370
+    },
+    {
+      "id": "17-twenty-years", "visualIntent": "cost-timeline", "visual": { "headline": "TWENTY YEARS IN", "subhead": "The loan balance shrinks, but owning still costs money", "emphasis": "YEAR 20" },
+      "narration": "At the twenty-year mark, more of each mortgage payment typically goes toward principal than it did at the beginning of an amortizing loan. That is an important change in the balance sheet. But the insurance bill, tax bill and maintenance needs do not politely disappear as the loan balance falls. A house can be a valuable asset and a continuing cash obligation at the same time. Both statements can be true without contradiction.",
+      "claimRefs": ["loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 440
+    },
+    {
+      "id": "18-loan-ending", "visualIntent": "cost-timeline", "visual": { "headline": "THIRTY YEARS: LOAN REPAID", "subhead": "Mortgage payments stop; ownership costs may not", "emphasis": "YEAR 30" },
+      "narration": "In our fixed-rate scenario, the three hundred sixtieth scheduled mortgage payment finishes the loan. The principal balance reaches zero. That is a meaningful milestone, but not the end of ownership costs. Property tax can continue. Homeowners insurance and major repairs can continue. And if you stay beyond thirty years, the property still needs to be maintained. Our chart stops at thirty years because that is the chosen question, not because a house suddenly becomes free to own.",
+      "claimRefs": ["loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 440
+    },
+    {
+      "id": "19-carrying-total", "visualIntent": "cost-breakdown", "visual": { "headline": "$450,000 IN CARRYING COSTS", "subhead": "Tax, insurance and maintenance under flat assumptions", "emphasis": "OPERATING CASH" },
+      "narration": "Add the three modeled non-mortgage categories across thirty years. Tax contributes two hundred ten thousand dollars. Insurance contributes ninety thousand. The maintenance reserve contributes one hundred fifty thousand. Together, that is four hundred fifty thousand dollars of carrying cash. The sum is exact only within our invented flat-price assumptions. Inflation, changing assessments and unexpected repairs could move it substantially. We are using round numbers to illuminate the structure, not to forecast a real home.",
+      "claimRefs": ["carrying", "caveat"], "eventIds": [], "pauseAfterMs": 440
+    },
+    {
+      "id": "20-price-vs-outflow", "visualIntent": "cost-comparison", "visual": { "headline": "THE GAP IS THE LESSON", "subhead": "One-time price and thirty years of payments aren't peers", "emphasis": "COMPARE CAREFULLY" },
+      "narration": "We can now put the listing price beside the cumulative cash payments. The gap is striking, but be careful with the label. A purchase price describes the asset transaction at one point in time. Cumulative outflow adds financing and operating expenses over decades. Those are different measurements. It would be wrong to call the difference a loss, and just as wrong to hide the future payments when deciding whether a house fits a household's budget.",
+      "claimRefs": ["price", "loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 380
+    },
+    {
+      "id": "21-equity", "visualIntent": "cost-comparison", "visual": { "headline": "OUTFLOW IS NOT LOST WEALTH", "subhead": "The home may be sold; principal becomes equity", "emphasis": "EQUITY MATTERS" },
+      "narration": "Where does the money go? Some pays for interest, taxes, insurance and upkeep. Some reduces the loan balance and increases your ownership equity. The home itself might appreciate, depreciate, or require improvements before sale. To calculate a true economic cost, you would need a future resale scenario and a fair comparison with renting or another investment. We cannot honestly derive that from the listing price and five annual assumptions alone.",
+      "claimRefs": ["price", "loan", "caveat"], "eventIds": [], "pauseAfterMs": 410
+    },
+    {
+      "id": "22-sensitivity", "visualIntent": "cost-timeline", "visual": { "headline": "CHANGE AN ASSUMPTION", "subhead": "Rates and expenses can transform the curve", "emphasis": "WHAT IF?" },
+      "narration": "Try changing one variable before trusting any thirty-year prediction. A lower borrowing rate reduces monthly interest and the total financing charge. A higher property-tax bill increases the line that recurs every year. A major repair can create a sharp one-time spike. A shorter ownership period changes the relevance of closing costs and resale value. A useful model is not a single impressive total. It is a transparent set of assumptions you can challenge and recalculate.",
+      "claimRefs": ["loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 450
+    },
+    {
+      "id": "23-before-reveal", "visualIntent": "cost-comparison", "visual": { "headline": "SO WHAT DOES THIS ADD TO?", "subhead": "Down payment + mortgage repayments + carrying costs", "emphasis": "ONE FINAL SUM" },
+      "narration": "We have three buckets ready to combine. First, the one hundred thousand dollars paid up front. Second, approximately eight hundred sixty-three thousand dollars of scheduled mortgage repayments, including the original principal. Third, four hundred fifty thousand dollars of modeled tax, insurance and maintenance. We will add those buckets exactly once each. Remember the scope: cash outflow across thirty years, under static illustrative assumptions, with no resale proceeds or ownership benefits subtracted.",
+      "claimRefs": ["price", "loan", "carrying", "caveat"], "eventIds": [], "pauseAfterMs": 700
+    },
+    {
+      "id": "24-lifetime-reveal", "visualIntent": "cost-payoff", "visual": { "headline": "THE THIRTY-YEAR CASH TOTAL", "subhead": "A scenario calculation, not a guaranteed bill", "emphasis": "THE REVEAL" },
+      "narration": "Here is the result: roughly one million four hundred thirteen thousand dollars in cumulative cash outflow. More than the five hundred thousand dollar asking price, because the comparison now includes decades of interest and carrying costs. That total is not the home's net financial cost, and it is not money literally disappearing. It is a way to expose the commitments hidden by a single listing number. The surprise is useful only when the assumptions stay visible.",
+      "claimRefs": ["price", "loan", "carrying", "caveat"], "eventIds": ["lifetime-total-reveal"], "pauseAfterMs": 500
+    },
+    {
+      "id": "25-decision", "visualIntent": "cost-comparison", "visual": { "headline": "ASK BETTER QUESTIONS", "subhead": "Monthly affordability, lifetime payments, resale value", "emphasis": "THE DECISION CHECKLIST" },
+      "narration": "Before buying, ask at least three different questions. Can the monthly housing cash flow work, even after taxes, insurance and repairs? What happens to that budget if assumptions change? And if you expect to move, how might transaction costs and resale proceeds affect the outcome? Those questions are more valuable than any viral number by itself. A home can be emotionally important and financially sensible without pretending its sticker price tells the complete story.",
+      "claimRefs": ["caveat"], "eventIds": [], "pauseAfterMs": 440
+    },
+    {
+      "id": "26-outro", "visualIntent": "house-intro", "visual": { "headline": "THE LISTING IS CHAPTER ONE", "subhead": "Put assumptions in the open, then decide", "emphasis": "HOUSE MATH" },
+      "narration": "The real lesson is not that every five hundred thousand dollar house costs exactly this amount. It does not. The lesson is that homeownership has a time dimension that the listing hides. We used a fictional fixed-rate loan and flat annual bills to make that dimension visible. If you want to compare your own alternatives, replace those assumptions with verified local numbers, account for a possible sale, and look at both cash flow and net wealth separately.",
+      "claimRefs": ["caveat"], "eventIds": [], "pauseAfterMs": 0
+    }
+  ],
+  "events": [{ "id": "lifetime-total-reveal", "beatId": "24-lifetime-reveal" }],
+  "sounds": [{ "id": "reveal-chime", "eventId": "lifetime-total-reveal", "category": "number.reveal", "assetRef": "self-authored-test-chime", "licenseStatus": "test-only" }]
+}

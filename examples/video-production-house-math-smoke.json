@@ -36,6 +36,16 @@
     "reviewerApproved": false,
     "maxCostUsd": 0
   },
+  "scenario": {
+    "kind": "house-cost-v1",
+    "purchasePrice": 500000,
+    "downPayment": 100000,
+    "annualInterestRatePct": 6,
+    "years": 30,
+    "annualPropertyTax": 7000,
+    "annualInsurance": 3000,
+    "annualMaintenance": 5000
+  },
   "claims": [
     {
       "id": "assumption-purchase-price",
@@ -53,6 +63,7 @@
       "id": "hook",
       "narration": "A five hundred thousand dollar home costs far more than the number on the listing.",
       "visualIntent": "house-intro",
+      "visual": { "headline": "THE PRICE ISN'T THE COST", "subhead": "A hypothetical $500,000 house, over 30 years", "emphasis": "$500,000" },
       "claimRefs": ["assumption-purchase-price"],
       "eventIds": [],
       "pauseAfterMs": 300
@@ -61,6 +72,7 @@
       "id": "breakdown",
       "narration": "Your real cost includes financing, property tax, insurance, and repairs. Those amounts depend on assumptions we should make visible.",
       "visualIntent": "cost-breakdown",
+      "visual": { "headline": "WHAT THE LISTING LEAVES OUT", "subhead": "Financing · taxes · insurance · repairs", "emphasis": "5 COST DRIVERS" },
       "claimRefs": ["assumption-carrying-costs"],
       "eventIds": [],
       "pauseAfterMs": 300
@@ -69,6 +81,7 @@
       "id": "reveal",
       "narration": "The lifetime total is the meaningful comparison, but this is only an illustrative scenario. Actual numbers depend on your loan and home.",
       "visualIntent": "cost-payoff",
+      "visual": { "headline": "THE LIFETIME CASH OUTFLOW", "subhead": "Illustrative scenario, not a forecast or net wealth cost", "emphasis": "THE REAL COMPARISON" },
       "claimRefs": ["assumption-purchase-price", "assumption-carrying-costs"],
       "eventIds": ["lifetime-total-reveal"],
       "pauseAfterMs": 0

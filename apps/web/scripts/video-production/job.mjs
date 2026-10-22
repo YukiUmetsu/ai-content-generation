@@ -67,7 +67,7 @@ export function parseVideoProductionJob(input) {
     if (!integer(value.revision, 1)) add("invalid-revision", `${path}.revision`, "Revision must be a positive integer.");
   };
 
-  if (!fields(input, "$", ["schemaVersion", "kind", "id", "mode", "locale", "approval", "topic", "references", "destination", "voice", "policy", "claims", "beats", "events", "sounds"])) {
+  if (!fields(input, "$", ["schemaVersion", "kind", "id", "mode", "locale", "approval", "topic", "references", "destination", "voice", "policy", "claims", "beats", "events", "sounds", "scenario"])) {
     return { ok: false, findings };
   }
   if (input.schemaVersion !== 1 || input.kind !== "video-production-job") {
@@ -122,6 +122,21 @@ export function parseVideoProductionJob(input) {
     if (typeof p.commercialRightsVerified !== "boolean" || typeof p.reviewerApproved !== "boolean") add("invalid-policy", "policy", "Rights and approval must be explicit booleans.");
     if (typeof p.maxCostUsd !== "number" || !Number.isFinite(p.maxCostUsd) || p.maxCostUsd < 0) add("invalid-budget", "policy.maxCostUsd", "Budget must be a finite non-negative amount.");
   }
+  if (has(input, "scenario")) {
+    const path = "scenario";
+    const s = input.scenario;
+    const money = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1e10;
+    const allowed = ["kind", "purchasePrice", "downPayment", "annualInterestRatePct", "years", "annualPropertyTax", "annualInsurance", "annualMaintenance"];
+    if (fields(s, path, allowed)) {
+      if (s.kind !== "house-cost-v1" || !money(s.purchasePrice) || s.purchasePrice <= 0 ||
+        !money(s.downPayment) || s.downPayment > s.purchasePrice ||
+        !Number.isFinite(s.annualInterestRatePct) || s.annualInterestRatePct < 0 || s.annualInterestRatePct > 25 ||
+        !integer(s.years, 1) || s.years > 40 || !money(s.annualPropertyTax) ||
+        !money(s.annualInsurance) || !money(s.annualMaintenance)) {
+        add("invalid-scenario", path, "House cost scenario needs valid finite, non-negative economics and a bounded 1–40 year term.");
+      }
+    }
+  }
 
   const claims = objects(input.claims, "claims", ["id", "status", "text", "sourceRefs"]);
   for (const [index, claim] of claims.entries()) {
@@ -131,7 +146,7 @@ export function parseVideoProductionJob(input) {
     if (claim.status === "verified" && (!Array.isArray(claim.sourceRefs) || claim.sourceRefs.length === 0)) add("missing-source", `claims[${index}].sourceRefs`, "A verified claim needs a source reference.");
   }
   const claimIds = new Set(claims.map((item) => item.id));
-  const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs"]);
+  const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual"]);
   if (beats.length === 0) add("empty-narration", "beats", "At least one narrated beat is required.");
   for (const [index, beat] of beats.entries()) {
     text(beat.narration, `beats[${index}].narration`);
@@ -141,6 +156,14 @@ export function parseVideoProductionJob(input) {
     }
     idList(beat.eventIds, `beats[${index}].eventIds`);
     if (!integer(beat.pauseAfterMs, 0) || beat.pauseAfterMs > 60000) add("invalid-pause", `beats[${index}].pauseAfterMs`, "Pause must be 0–60,000 milliseconds.");
+    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, ["headline", "subhead", "emphasis"])) {
+      for (const [key, maxLength] of [["headline", 68], ["subhead", 115], ["emphasis", 28]]) {
+        const value = beat.visual[key];
+        if (!string(value) || value.length > maxLength || /[\r\n\u0000-\u001f]/.test(value)) {
+          add("visual-copy-overflow", `beats[${index}].visual.${key}`, `Scene ${key} must be one safe line of at most ${maxLength} characters.`);
+        }
+      }
+    }
   }
   const beatIds = new Set(beats.map((beat) => beat.id));
   const events = objects(input.events, "events", ["id", "beatId"]);

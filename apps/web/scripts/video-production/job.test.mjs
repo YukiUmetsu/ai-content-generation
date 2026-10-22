@@ -82,3 +82,19 @@ test("unverified voice license always blocks commercial approval", () => {
   });
   assert.equal(errorCodes(parseVideoProductionJob(unlicensed)).includes("commercial-approval-blocked"), true);
 });
+
+test("scenario economics and per-beat visual copy must be finite and fit authored scenes", () => {
+  const valid = modified((j) => {
+    j.scenario = { kind: "house-cost-v1", purchasePrice: 500000, downPayment: 100000, annualInterestRatePct: 6, years: 30, annualPropertyTax: 7000, annualInsurance: 3000, annualMaintenance: 5000 };
+    j.beats[0].visual = { headline: "PRICE IS NOT COST", subhead: "A hypothetical thirty-year calculation", emphasis: "$500,000" };
+    return j;
+  });
+  assert.equal(parseVideoProductionJob(valid).ok, true);
+  const invalid = modified((j) => {
+    j.scenario = { kind: "house-cost-v1", purchasePrice: 100, downPayment: 200, annualInterestRatePct: Infinity, years: 30, annualPropertyTax: -1, annualInsurance: 0, annualMaintenance: 0 };
+    j.beats[0].visual = { headline: "A".repeat(130), subhead: "Safe", emphasis: "Price" };
+    return j;
+  });
+  assert.ok(errorCodes(parseVideoProductionJob(invalid)).includes("invalid-scenario"));
+  assert.ok(errorCodes(parseVideoProductionJob(invalid)).includes("visual-copy-overflow"));
+});
