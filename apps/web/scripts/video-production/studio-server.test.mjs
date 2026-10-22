@@ -171,6 +171,48 @@ test("worker errors redact any provider key and never expose incomplete media", 
   assert.equal(state.artifacts, null);
 });
 
+test("studio reports bounded Fish request diagnostics without secrets or worker payloads", async (t) => {
+  const studio = await harness(t, { produce: async (_job, options) => {
+    for (let i = 0; i < 35; i++) options.onProgress({
+      kind: "fish-diagnostic", event: i === 34 ? "failure" : "response",
+      attempt: 1, maxAttempts: 3, beatId: "beat-1", model: "s2.1-pro-free",
+      requestedFormat: "pcm", sampleRate: 44100,
+      httpStatus: 200, contentType: "audio/pcm", receivedBytes: 4400 + i,
+      declaredBytes: 9000, elapsedMs: 18, audioSignature: "unrecognized-or-raw-PCM",
+      requestId: i === 34 ? "req-test-35" : fishConfig.apiKey,
+      text: "SHOULD-NOT-APPEAR", apiKey: fishConfig.apiKey,
+    });
+    throw new Error("Fish returned invalid PCM from the stream");
+  } });
+  await studio.send("/api/preflight", "POST", fishConfig);
+  await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true });
+  const state = await until(studio, (s) => s.status === "failed");
+  assert.equal(state.fishDiagnostics.length, 32);
+  assert.equal(state.fishDiagnostics.at(-1).event, "failure");
+  assert.equal(state.fishDiagnostics.at(-1).requestId, "req-test-35");
+  assert.equal(state.fishDiagnostics[0].requestId, undefined);
+  assert.equal(state.fishDiagnostics.at(-1).receivedBytes, 4434);
+  assert.equal(state.artifacts, null);
+  const report = JSON.stringify(state);
+  assert.equal(report.includes(fishConfig.apiKey), false);
+  assert.equal(report.includes("SHOULD-NOT-APPEAR"), false);
+  assert.equal(report.includes("apiKey"), false);
+});
+
+test("studio renders provider diagnostics using text content, not HTML", async (t) => {
+  const dom = await localStudioPage(t);
+  dom.window.__diagnosticFixture = { status: "failed", phase: "failed",
+    message: "Fish returned an invalid PCM response.",
+    fishDiagnostics: [{ event: "failure", requestId: "<img src=x onerror=alert(1)>",
+      contentType: "audio/pcm", receivedBytes: 512 }] };
+  dom.window.eval("showStatus(window.__diagnosticFixture)");
+  const details = dom.window.document.getElementById("fish-diagnostics");
+  assert.equal(details.hidden, false);
+  assert.equal(details.open, true);
+  assert.match(dom.window.document.getElementById("fish-diagnostics-text").textContent, /receivedBytes/);
+  assert.equal(dom.window.document.querySelector("#fish-diagnostics img"), null);
+});
+
 test("local voice setup requires loopback and explicit authorization", async (t) => {
   const studio = await harness(t);
   assert.equal((await studio.send("/api/preflight", "POST", { ...localConfig, endpoint: "https://remote.example" })).status, 400);
