@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
@@ -47,6 +47,23 @@ describe("ThumbnailComposer", () => {
     const stage = within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage");
     expect(stage).toHaveAttribute("aria-label", expect.stringContaining("The quote hides four costs"));
     expect(headline.value).toBe("The quote hides four costs");
+
+    const value = screen.getByLabelText(copy.valueLabel);
+    await user.clear(value);
+    await user.type(value, "$13,500");
+    expect(
+      within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage")
+    ).toHaveAttribute("aria-label", expect.stringContaining("$13,500"));
+  });
+
+  it("clears the shared preview when the editor unmounts", () => {
+    const onPreviewChange = vi.fn();
+    const { unmount } = render(
+      <ThumbnailComposer projectId="test-project" locale="en" onPreviewChange={onPreviewChange} />
+    );
+    expect(onPreviewChange).toHaveBeenCalled();
+    unmount();
+    expect(onPreviewChange).toHaveBeenLastCalledWith(null);
   });
 
   it("switches composition and keeps each concept's edits", async () => {
