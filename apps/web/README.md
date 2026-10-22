@@ -90,7 +90,7 @@ Each release is atomically exposed only after a finished MP4 has been probed for
 
 - **Fish Audio:** supply `FISH_AUDIO_API_KEY` at runtime, an authorized voice-reference ID, locale, and explicit model. The adapter uses `POST https://api.fish.audio/v1/tts`, a versioned request with `model: s2.1-pro-free` for evaluation, and checks WAV bytes. No API call occurs without `--allow-network` and voice/text-transmission consent. The standalone adapter accepts paid models with explicit approval, but the multi-beat production CLI blocks them until reliable budget metering exists. Availability and commercial licensing of any free model or voice must be independently verified before release; no real Fish request has been made during this foundation implementation.
 - **Local:** a **user-installed and running** TTS bridge can be configured with a bare loopback origin such as `http://127.0.0.1:8765`. The adapter POSTs to `/v1/speech` with JSON `{schema_version:1,text,locale,voice_id,model_id,direction,format:"wav"}`. The bridge must return 200, mono 16-bit PCM WAV with `Content-Type: audio/wav` and `X-TTS-Engine-Version: <actual engine version>`. No model is installed or started by ContentGen. Redirects and non-loopback endpoints are refused. The caller must confirm local voice authorization; engine/model identity is recorded for future cache isolation. No installed TTS bridge has been verified yet.
-- Both adapters expose per-beat generated WAV bytes and fail closed on invalid audio. The CLI consumes them automatically; CI runs the standalone `pnpm test:video:headless` suite with injected provider/browser dependencies, real FFmpeg sample encodes and loopback stage tests. **A real provider-to-browser end-to-end film has not yet been produced**.
+- Both adapters expose per-beat generated WAV bytes and fail closed on invalid audio. The CLI consumes them automatically. Web CI runs FFmpeg-free planning tests, frontend tests, lint, typecheck, Kumiki source verification and a production build, **without installing FFmpeg**. Run `pnpm test:video:headless` locally with FFmpeg/FFprobe installed to exercise real audio/encoding/mux tests and injected provider/browser integration tests before reviewing a media release. **A real provider-to-browser end-to-end film has not yet been produced**.
 
 ### Measured speech and audio-mastering modules
 
@@ -203,26 +203,27 @@ Selected items and their dependency closure:
 - **Infographics:** `infographic-economic-charts`, plus
   `infographic-system` and `infographic-view`.
 - **Motion:** `motion-director`, `camera-stage`, and
-  `visual-transformation`. The closure includes `motion-track`,
+  `visual-transformation`, `diagram-stage`, and `process-journey`. The closure includes `motion-track`,
   `motion-preset`, `scene-storyboard`, `motion-react`, and the required
   timeline/path/mask/morph/animated-text modules.
 - **Video delivery:** `video-export-stage` and `video-platform-presets`.
 - **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
   `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
-The configuration selects 17 top-level items; the pinned registry resolves
-32 items and vendors 82 unique files including the two stylesheets. All
+The configuration selects 19 top-level items; the pinned registry resolves
+34 items and vendors 85 unique files including the two stylesheets. All
 required npm dependencies already exist in `package.json`; this expansion
 adds no new runtime dependencies.
 
 ### Upstream adoption candidates (checked 2026-10-22)
 
-Kumiki main has advanced **22 commits** beyond this pin (140 registry items vs 110 at the pin). The general-topic renderer still uses its own simple SVG story layouts; the next **separately validated** registry upgrade should target:
+Kumiki main had advanced **22 commits** beyond this pin at the audit (140 registry items vs 110 at the pin). Generic `general-flow` beats with two to five stages now use the **existing pinned** `DiagramStage` + `ProcessJourney` components: fixed non-overlapping layouts, connected graph routes, one frame-addressable traveling subject, explicit stage handoffs, deterministic seeking, SVG text labels, and a still fallback for very short beats. Intro/comparison/breakdown/payoff views remain unchanged. Browser preflight rejects reported diagram node overlap; real-time 16:9 export and visual inspection are still required before production sign-off.
 
-1. `diagram-stage` + `process-journey` for authored node/edge identities, moving packets and semantic route explanations; require normal-speed 16:9 browser export and shuffled-frame seek parity before replacing the generic-flow renderer.
-2. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
-3. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
-4. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
+Further **separately validated** registry upgrades should target:
+
+1. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
+2. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
+3. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
 
 `evidence-stage` is useful later for authorized source visuals. Its dependency tree is broader, and recent Short/Video items still document pending human inspection. **Do not silently move the Kumiki commit pin or call uninstalled registry APIs.** Adopt an item through `kumiki:update`, hash verification, consumer typecheck/build and actual video playback checks in a dedicated change.
 
