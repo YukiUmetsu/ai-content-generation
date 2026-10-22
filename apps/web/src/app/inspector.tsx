@@ -51,11 +51,14 @@ export function InspectorPanel({ meta, locale, open, onOpenChange }: InspectorPr
             <Button
               variant="subtle"
               size="icon"
-              className="hidden lg:inline-flex"
+              className="inline-flex"
               aria-label={locale === "ja" ? "ガイドを閉じる" : "Close tool guide"}
               title={locale === "ja" ? "ガイドを閉じる" : "Close tool guide"}
               icon={<PanelRightClose aria-hidden="true" className="size-4" />}
-              onClick={() => onOpenChange(false)}
+              onClick={() => {
+                onOpenChange(false);
+                setExpanded(false);
+              }}
             />
           </div>
         </div>

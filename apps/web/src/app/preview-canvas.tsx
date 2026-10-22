@@ -1,6 +1,7 @@
 import { Eye, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { ReactNode } from "react";
 import { FEATURE_METADATA, type FeatureId, type Locale } from "@/features/registry";
+import { Button } from "@/components/ui/button";
 import { FeaturePreview } from "./feature-preview";
 
 interface PreviewCanvasProps {
