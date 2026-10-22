@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BrandAppearanceStudio } from "./BrandAppearanceStudio";
 import { createBrandState } from "./model/brands";
@@ -33,6 +33,50 @@ describe("BrandAppearanceStudio", () => {
 
     const stage = screen.getByTestId("video-opening");
     expect(stage.style.getPropertyValue("--ba-canvas")).toBe("#0A0A0C");
+  });
+
+  it("switches focused previews without losing palette and typography context", async () => {
+    const { user } = setup();
+    expect(screen.getByRole("button", { name: "Preview views: All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("preview-palette-accent")).toHaveAttribute("title", "Accent: #E8A95B");
+
+    await user.click(screen.getByRole("button", { name: "Preview views: Thumbnail" }));
+    expect(screen.getByTestId("thumbnail-preview")).toBeInTheDocument();
+    expect(screen.queryByTestId("video-opening")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("metric-reveal")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Cinematic Investigative/i }));
+    expect(screen.getByTestId("thumbnail-preview")).toHaveAttribute("data-preset", "cinematic-investigative");
+    expect(screen.getByTestId("preview-palette-accent")).toHaveAttribute("title", "Accent: #CC4B3F");
+
+    await user.click(screen.getByRole("button", { name: "Preview views: All" }));
+    expect(screen.getByTestId("video-opening")).toHaveAttribute("data-preset", "cinematic-investigative");
+    expect(screen.getByTestId("metric-reveal")).toHaveAttribute("data-preset", "cinematic-investigative");
+  });
+
+  it("preserves each brand's palette across preview modes and brand switching", async () => {
+    const { user } = setup();
+    await user.click(screen.getByRole("button", { name: "Preview views: Numbers" }));
+    expect(screen.getByTestId("metric-reveal")).toHaveAttribute("data-preset", "modern-analytical");
+
+    const canvasInput = screen.getAllByLabelText(/hex$/i)[0];
+    await user.clear(canvasInput);
+    await user.type(canvasInput, "#FF5733");
+    expect(screen.getByTestId("metric-reveal").style.getPropertyValue("--ba-canvas")).toBe("#FF5733");
+
+    await user.click(screen.getByRole("button", { name: /Tideline/i }));
+    expect(screen.getByTestId("metric-reveal").style.getPropertyValue("--ba-canvas")).toBe("#F3EEE5");
+    expect(screen.getByRole("button", { name: "Preview views: Numbers" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByRole("button", { name: /House Math/i }));
+    expect(screen.getByTestId("metric-reveal").style.getPropertyValue("--ba-canvas")).toBe("#FF5733");
+  });
+
+  it("reflects typography changes in the active visual preview", async () => {
+    const { user } = setup();
+    await user.selectOptions(screen.getByRole("combobox", { name: /Display Family/i }), "Geist");
+    expect(screen.getByTestId("video-opening").style.getPropertyValue("--ba-font-display")).toBe("var(--km-font-sans)");
+    expect(screen.getByLabelText("Active type styles")).toHaveTextContent("Display: Geist 600");
   });
 
   it("edits a single palette role without changing others", async () => {
@@ -162,6 +206,6 @@ describe("BrandAppearanceStudio", () => {
     expect(heading).not.toHaveClass("truncate");
     expect(screen.getByRole("region", { name: "ブランドの外観" })).toBeInTheDocument();
     expect(screen.getByText("カラーパレット")).toBeInTheDocument();
-    expect(screen.getByText("タイポグラフィ")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "ブランドの外観" })).getByText("タイポグラフィ")).toBeInTheDocument();
   });
 });
