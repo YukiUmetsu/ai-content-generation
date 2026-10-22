@@ -32,6 +32,13 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
     }
   }
   if (!isHouse) {
+    for (const diagram of stage.querySelectorAll<SVGSVGElement>("[data-km-diagram-stage]")) {
+      const overlapAttr = diagram.getAttribute("data-diagram-overlaps");
+      const count = Number(overlapAttr);
+      if (overlapAttr === null || !Number.isSafeInteger(count) || count !== 0) {
+        throw new Error(`Diagram nodes overlap at frame ${target}; correct the semantic layout before export`);
+      }
+    }
     for (const group of stage.querySelectorAll<SVGGElement>("[data-general-node]")) {
       const rect = group.querySelector<SVGRectElement>("rect");
       if (!rect) throw new Error("Diagram node is missing a visible frame");
