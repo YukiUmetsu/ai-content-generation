@@ -5,7 +5,7 @@
  * workspace. Keep the contract user-facing: every tool explains its outcome,
  * steps and outputs, and clearly distinguishes a live editor from a planned one.
  */
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 export const FEATURE_IDS = [
   "brand-appearance",
@@ -26,6 +26,9 @@ export interface FeatureSlotProps {
   /** Optional live preview content rendered in the shared preview pane. */
   onPreviewChange?: (preview: ReactNode | null) => void;
 }
+
+/** React component contract used by the shared feature-slot registry. */
+export type FeatureSlot = ComponentType<FeatureSlotProps>;
 
 export interface FeatureMetadata {
   id: FeatureId;
