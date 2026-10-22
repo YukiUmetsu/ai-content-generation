@@ -35,6 +35,14 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
     frameCursor += segment.frameCount;
   }
   if (frameCursor !== render.frameCount) fail("the concatenated frame range is incomplete");
+  const reviewStills = render.reviewStills;
+  if (!Array.isArray(reviewStills) || reviewStills.length < 2 || reviewStills.length > 5 ||
+    reviewStills[0].frame !== 0 || reviewStills.at(-1).frame !== render.frameCount - 1 ||
+    reviewStills.some((still, i) => !integer(still.frame) || still.frame >= render.frameCount ||
+      (i > 0 && still.frame <= reviewStills[i - 1].frame) || !hash(still.sha256) ||
+      still.file !== `stills/frame-${String(still.frame).padStart(6, "0")}.png`)) {
+    fail("first/end review still frames need verified, ordered hashes and safe filenames");
+  }
   if (!Object.values(artifacts ?? {}).length || !Object.values(artifacts).every(hash)) fail("all published artifact hashes must be valid SHA-256 values");
   if (!integer(render.peakScratchBytes, 0) || !toolVersions?.ffmpeg || !toolVersions?.ffprobe) fail("resource peak or media tool version is missing");
   if (!Array.isArray(audio.findings)) fail("audio rights/QA findings must be explicit");
@@ -48,7 +56,7 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
     rightsVerified, reviewStatus, durationSeconds, frameCount: mp4.frameCount,
     audioVideoDriftSeconds: Math.abs(durationSeconds - videoFromFrames), namedPayoffFrame,
     peakScratchBytes: render.peakScratchBytes, loudness: audio.loudness,
-    artifacts, segments: render.segmentHashes, tools: toolVersions,
+    artifacts, segments: render.segmentHashes, reviewStills, tools: toolVersions,
     findings: [...audio.findings, {
       severity: "warning", code: "human-review-required",
       message: "Watch and listen to the entire exported film at normal speed and verify commercial rights before publication.",

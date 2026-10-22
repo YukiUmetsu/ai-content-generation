@@ -34,12 +34,19 @@ async function context(t) {
       assert.equal(validatedPlan.kind, "house-math-visual-plan");
       return { url: "http://127.0.0.1:9876/video-export.html", close: async () => { closed = true; } };
     },
-    renderVideoSegments: async ({ manifest, outDir }) => {
+    renderVideoSegments: async ({ manifest, outDir, reviewFrames }) => {
       browserCalls++;
       await mkdir(outDir, { recursive: true });
       const videoOnlyPath = join(outDir, "video-only.mp4");
       await writeFile(videoOnlyPath, "h264-video");
-      return { videoOnlyPath, frameCount: manifest.durationFrames, segmentHashes: [{ sha256: hash("seg"), startFrame: 0, frameCount: manifest.durationFrames }], peakScratchBytes: 10000 };
+      await mkdir(join(outDir, "stills"), { recursive: true });
+      const reviewStills = await Promise.all(reviewFrames.map(async (frame) => {
+        const path = join(outDir, "stills", `frame-${String(frame).padStart(6, "0")}.png`);
+        const bytes = Buffer.from(`captured-frame-${frame}`);
+        await writeFile(path, bytes);
+        return { frame, path, sha256: hash(bytes) };
+      }));
+      return { videoOnlyPath, frameCount: manifest.durationFrames, segmentHashes: [{ sha256: hash("seg"), startFrame: 0, frameCount: manifest.durationFrames }], reviewStills, peakScratchBytes: 10000 };
     },
     mux: async (_video, _audio, output) => { await writeFile(output, "muxed-film"); },
     probeMp4: async (_path, { fps, totalFrames, totalSamples }) => ({ width: 1920, height: 1080, fps, frameCount: totalFrames, audioSampleRate: 48000, audioDurationSeconds: totalSamples / 48000, videoDurationSeconds: totalFrames * fps.den / fps.num }),
@@ -58,7 +65,12 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(result.qa.technicalPass, true);
   assert.equal(result.qa.commercialReady, false);
   assert.match(await readFile(join(result.releaseDir, "video.mp4"), "utf8"), /muxed-film/);
-  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "master.wav", "qa-report.json", "render-manifest.json", "video.mp4", "voice.wav"]);
+  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "master.wav", "qa-report.json", "render-manifest.json", "stills", "video.mp4", "voice.wav"]);
+  assert.equal(result.qa.reviewStills.length >= 2, true);
+  for (const still of result.qa.reviewStills) {
+    const bytes = await readFile(join(result.releaseDir, still.file));
+    assert.equal(hash(bytes), still.sha256);
+  }
 });
 
 test("stage/render failure closes the local server and never publishes an incomplete release", async (t) => {
@@ -99,4 +111,11 @@ test("direct pipeline call rejects budget exceeding job cap before generation", 
   const ctx = await context(t);
   await assert.rejects(produceVideo(ctx.job, { ...ctx.opts, budgetUsd: 1 }, ctx.injected), /budget|cost/i);
   assert.equal(ctx.status().providerCalls, 0);
+});
+
+test("missing review frames aborts publication rather than claiming a complete export", async (t) => {
+  const ctx = await context(t);
+  ctx.injected.renderVideoSegments = async () => ({ frameCount: 90, segmentHashes: [], reviewStills: [], peakScratchBytes: 0, videoOnlyPath: "missing" });
+  await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /review still|preview/i);
+  assert.equal((await readdir(ctx.opts.out)).includes("release"), false);
 });

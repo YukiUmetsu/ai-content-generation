@@ -31,7 +31,7 @@ pnpm video:produce -- \
 
 # Remove --dry-run only after reviewing the preflight findings and permissions.
 # Output: <out>/release/video.mp4, master.wav, voice.wav, captions.srt,
-# render-manifest.json and qa-report.json.
+# stills/frame-NNNNNN.png, render-manifest.json and qa-report.json.
 ```
 
 For long-form production start from `../../examples/video-production-house-math-long.json`: its 26 script beats target at least **480 measured seconds**, not a rough word-count duration. The QA gate refuses any shorter real narration. Short-form jobs and portrait rendering remain future work, with **no forced 30–60-second length** for shorts. The first renderer accepts YouTube landscape only.
@@ -40,7 +40,7 @@ For long-form production start from `../../examples/video-production-house-math-
 
 For user-installed **local TTS**, change the job voice to `provider: "local"`, an authorized voice and a local model/engine revision; supply `endpoint: "http://127.0.0.1:8765"`. Run with `--provider local --provider-revision <actual-engine-version> --local-voice-authorized` and omit Fish-only network flags. Use `--local-endpoint http://127.0.0.1:8765` only if you need to override the job endpoint. No model is downloaded, installed, or activated by this CLI.
 
-Each release is atomically exposed only after a finished MP4 has been probed for FPS, dimensions, frame count, duration drift, loudness and required story payoff. Failed captures leave a non-published staging area cleaned up and preserve per-beat caches and hashed render segments for safe resumption; a prior `release/` is never overwritten. Every successful run still reports `commercialReady: false` and requires normal-speed audio/video inspection plus explicit commercial-asset/voice licensing review before any publication.
+Each release is atomically exposed only after a finished MP4 has been probed for FPS, dimensions, frame count, duration drift, loudness and required story payoff. The release also contains up to four **raster-checked, SHA-verified review stills** (opening, middle, shortly after payoff, end); they are saved separately from bounded render batches and checked again when resuming. These stills help triage but are **not** a substitute for watching the film. Failed captures leave a non-published staging area cleaned up and preserve per-beat caches and hashed render segments for safe resumption; a prior `release/` is never overwritten. Every successful run still reports `commercialReady: false` and requires normal-speed audio/video inspection plus explicit commercial-asset/voice licensing review before any publication.
 
 ### Narration adapters (opt-in, currently offline-tested only)
 

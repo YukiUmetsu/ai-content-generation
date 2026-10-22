@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
-import { buildSampleTimeline } from "./timeline.mjs";
+import { buildSampleTimeline, toFrame } from "./timeline.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { startLocalStageServer } from "./stage-server.mjs";
@@ -107,6 +107,10 @@ export async function produceVideo(candidate, options, deps = {}) {
     });
     const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const plan = compileHouseMathVisuals(job, timeline);
+    const frames = plan.manifest.durationFrames;
+    const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
+    const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));
+    const reviewFrames = [...new Set([0, Math.floor(frames / 2), afterPayoff, frames - 1])].sort((a, b) => a - b);
     const sourcePlan = JSON.stringify(plan);
     const planHash = sha256(sourcePlan);
     const sfx = job.sounds.map((effect) => ({
@@ -123,9 +127,23 @@ export async function produceVideo(candidate, options, deps = {}) {
       render = await (deps.renderVideoSegments ?? renderVideoSegments)({
         stageUrl: stage.url, manifest: plan.manifest, planHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable,
-        maxBatchFrames: 150, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
+        maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
       });
     } finally { await stage.close(); stage = null; }
+
+    if (!Array.isArray(render.reviewStills) || render.reviewStills.length !== reviewFrames.length) fail("review stills are missing or incomplete");
+    const publishedStills = [];
+    await mkdir(join(working, "stills"));
+    for (let i = 0; i < reviewFrames.length; i++) {
+      const still = render.reviewStills[i], frame = reviewFrames[i];
+      const filename = `frame-${String(frame).padStart(6, "0")}.png`;
+      const source = join(out, ".render", "stills", filename);
+      if (still?.frame !== frame || resolve(still.path) !== source || !/^[a-f0-9]{64}$/i.test(still.sha256 ?? "")) fail("review still has an invalid frame, path or SHA-256 hash");
+      const bytes = await readFile(source);
+      if (sha256(bytes) !== still.sha256) fail("review still hash changed after browser capture");
+      await copyFile(source, join(working, "stills", filename));
+      publishedStills.push({ frame, file: `stills/${filename}`, sha256: still.sha256 });
+    }
 
     const video = join(working, "video.mp4");
     await (deps.mux ?? muxVideo)(render.videoOnlyPath, audio.wavPath, video, options);
@@ -141,10 +159,11 @@ export async function produceVideo(candidate, options, deps = {}) {
       video: sha256(await readFile(video)), master: sha256(await readFile(master)),
       captions: sha256(await readFile(captions)),
     };
+    for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
     const versions = deps.toolVersions ?? await toolVersions();
-    const qa = buildQaReport({ job, timeline, audio, render, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed" });
+    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed" });
     const manifestPath = join(working, "render-manifest.json");
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, planHash, plan, segmentHashes: render.segmentHashes, artifacts: artifactHashes }, null, 2), { flag: "wx" });
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, planHash, plan, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.

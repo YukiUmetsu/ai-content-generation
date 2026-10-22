@@ -41,7 +41,20 @@ function validateOptions(options) {
   }
   const limit = options.maxBatchFrames ?? 150;
   if (!integer(limit, 1) || limit > 150) fail("maximum capture batch size is 150 frames");
-  return { dir, limit };
+  const reviewFrames = options.reviewFrames ?? [];
+  if (!Array.isArray(reviewFrames) || reviewFrames.length > 5 ||
+    reviewFrames.some((frame) => !integer(frame, 0) || frame >= options.manifest.durationFrames) ||
+    new Set(reviewFrames).size !== reviewFrames.length ||
+    reviewFrames.some((frame, i) => i > 0 && frame <= reviewFrames[i - 1])) {
+    fail("review frames must be at most five unique ascending in-range integer frame indices");
+  }
+  return { dir, limit, reviewFrames };
+}
+
+function verifyScreenshot(bytes, manifest) {
+  if (bytes.byteLength < 24 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" ||
+    bytes.readUInt32BE(16) !== manifest.width || bytes.readUInt32BE(20) !== manifest.height ||
+    bytes.byteLength > 20 * 1024 * 1024) fail("review still must be a bounded PNG at the exact exported raster");
 }
 
 /** Per-segment FFprobe verification. Never trust file existence alone. */
@@ -109,11 +122,11 @@ async function defaultConcat(paths, outputPath, { ffmpeg, signal }) {
 }
 
 /**
- * @param {{stageUrl:string,manifest:object,planHash:string,outDir:string,maxBatchFrames?:number,browserExecutable?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
+ * @param {{stageUrl:string,manifest:object,planHash:string,outDir:string,maxBatchFrames?:number,reviewFrames?:number[],browserExecutable?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal}} options
  * @param {{openCapture?:Function,encodeBatch?:Function,probeSegment?:Function,concatSegments?:Function,probeFinal?:Function}} dependencies
  */
 export async function renderVideoSegments(options, dependencies = {}) {
-  const { dir, limit } = validateOptions(options);
+  const { dir, limit, reviewFrames } = validateOptions(options);
   const { manifest } = options;
   const fingerprint = sha256(JSON.stringify({ version: 1, planHash: options.planHash, manifest, h264Profile: "libx264-crf18-yuv420p" }));
   const segmentsDir = join(dir, "segments");
@@ -124,6 +137,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
   const probeFinal = dependencies.probeFinal ?? probe;
   const started = performance.now();
   const segments = [];
+  const reviewStills = [];
   let peakScratchBytes = 0;
   await mkdir(segmentsDir, { recursive: true });
   let capture;
@@ -184,6 +198,35 @@ export async function renderVideoSegments(options, dependencies = {}) {
       }
       segments.push({ path, sha256: segmentHash, startFrame, frameCount });
     }
+    if (reviewFrames.length) await mkdir(join(dir, "stills"), { recursive: true });
+    for (const frame of reviewFrames) {
+      if (options.signal?.aborted) fail("review still capture cancelled");
+      const path = join(dir, "stills", `frame-${String(frame).padStart(6, "0")}.png`);
+      const metadataPath = `${path}.json`;
+      const hasImage = await exists(path), hasMetadata = await exists(metadataPath);
+      let digest;
+      if (hasImage || hasMetadata) {
+        if (!hasImage || !hasMetadata) fail(`incomplete review still: frame ${frame}`);
+        let metadata;
+        try { metadata = JSON.parse(await readFile(metadataPath, "utf8")); }
+        catch { fail(`invalid review still metadata: frame ${frame}`); }
+        const bytes = await readFile(path);
+        verifyScreenshot(bytes, manifest);
+        digest = sha256(bytes);
+        if (metadata.fingerprint !== fingerprint || metadata.frame !== frame || metadata.sha256 !== digest) fail(`corrupt review still hash: frame ${frame}`);
+      } else {
+        const temporary = join(dir, "stills", `.frame-${randomUUID()}.png`);
+        try {
+          await capture.captureFrame(frame, temporary);
+          const bytes = await readFile(temporary);
+          verifyScreenshot(bytes, manifest);
+          digest = sha256(bytes);
+          await rename(temporary, path);
+          await writeFile(metadataPath, JSON.stringify({ fingerprint, frame, sha256: digest }, null, 2), { flag: "wx" });
+        } finally { await rm(temporary, { force: true }); }
+      }
+      reviewStills.push({ frame, path, sha256: digest });
+    }
   } finally { if (capture) await capture.close(); }
 
   const videoOnlyPath = join(dir, "video-only.mp4");
@@ -208,6 +251,6 @@ export async function renderVideoSegments(options, dependencies = {}) {
   return {
     videoOnlyPath, frameCount: manifest.durationFrames,
     segmentHashes: segments.map(({ sha256: digest, startFrame, frameCount }) => ({ sha256: digest, startFrame, frameCount })),
-    peakScratchBytes, renderSeconds: (performance.now() - started) / 1000,
+    reviewStills, peakScratchBytes, renderSeconds: (performance.now() - started) / 1000,
   };
 }

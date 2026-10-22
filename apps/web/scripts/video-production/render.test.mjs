@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { renderVideoSegments } from "./render.mjs";
@@ -155,4 +156,38 @@ test("real FFmpeg encodes two batches and probes a complete H.264 MP4", { skip: 
   assert.equal(result.segmentHashes.length, 2);
   assert.equal(result.peakScratchBytes > 0, true);
   assert.ok((await readFile(result.videoOnlyPath)).length > 1000);
+});
+
+test("captures bounded verified review stills, reuses them on resume and rejects tampering", async (t) => {
+  const { dir, dependencies, stats } = await harness(t);
+  const originalOpen = dependencies.openCapture;
+  dependencies.openCapture = async (...args) => {
+    const driver = await originalOpen(...args);
+    return { ...driver, captureFrame: (frame, path) => {
+      if (path.includes("/stills/")) return writeFile(path, pngFrame(frame % 255));
+      return driver.captureFrame(frame, path);
+    } };
+  };
+  const requested = { ...config(dir, 151), reviewFrames: [0, 75, 150] };
+  const first = await renderVideoSegments(requested, dependencies);
+  assert.deepEqual(first.reviewStills.map((item) => item.frame), [0, 75, 150]);
+  for (const item of first.reviewStills) {
+    const bytes = await readFile(item.path);
+    assert.equal(item.sha256, createHash("sha256").update(bytes).digest("hex"));
+    assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  }
+  const calls = stats().captured.length;
+  const second = await renderVideoSegments(requested, dependencies);
+  assert.equal(stats().captured.length, calls, "no segment or preview frame recapture on verified resume");
+  assert.deepEqual(second.reviewStills, first.reviewStills);
+  await writeFile(first.reviewStills[0].path, "tampered");
+  await assert.rejects(renderVideoSegments(requested, dependencies), /review still|hash|corrupt/i);
+});
+
+test("invalid review frame requests fail before allocating media resources", async (t) => {
+  const { dir, dependencies, stats } = await harness(t);
+  await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: [151] }, dependencies), /review frame/i);
+  await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: [0, 0] }, dependencies), /review frame/i);
+  await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: Array.from({ length: 6 }, (_, i) => i) }, dependencies), /review frame/i);
+  assert.equal(stats().opened, 0);
 });
