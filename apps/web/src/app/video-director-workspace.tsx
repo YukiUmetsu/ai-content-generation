@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import { ProductionPanel } from "./video-production-panel";
+import { NewVideoSetup } from "./new-video-setup";
 
 type Shot={id:string;visualChange:string;onScreenText:string;purpose:string};
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
@@ -60,6 +61,23 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
+  function acceptProject(d:Dossier,b:Bundle){
+    setDossier(d);setBundle(b);setRevisions([]);
+    const first=b.plan.shots[0]?.id??"";
+    setShotId(first);setDraft(shotDraft(b,first));
+    setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
+    setStatus("Storyboard ready. Review and edit individual shots, then preview the renderable scenes below.");
+  }
+  async function importProject(file:File|undefined){
+    if(!file)return;
+    try{
+      const input=await loadJson(file) as unknown as {dossier:Dossier;bundle:Bundle};
+      if(input.dossier?.kind!=="research-dossier"||input.bundle?.kind!=="preproduction-bundle"||
+        input.dossier.id!==input.bundle.researchId)
+        throw Error("Expected a matching ContentGen saved project.");
+      acceptProject(input.dossier,input.bundle);
+    }catch(error){setStatus(error instanceof Error?error.message:"Project import failed.");}
+  }
   async function importDossier(file:File|undefined){
     if(!file)return;
     try{const x=await loadJson(file) as unknown as Dossier;
@@ -131,7 +149,18 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
         <h1 className="font-serif text-xl font-semibold">Video Director · Segment Lab</h1>
         <p className="mt-1 text-sm text-muted-foreground">Edit just one scene, generate different hook and storytelling combinations, and create a precise audio/visual regeneration plan. The source bundle is never overwritten.</p>
       </div>
-      <Surface header={<h2 className="font-medium">1 · Load an editorial project</h2>}>
+      <NewVideoSetup onGenerated={(d,b)=>acceptProject(d as Dossier,b as Bundle)}/>
+      <Surface header={<h2 className="font-medium">Or continue an existing project</h2>}>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <label className={header}>Open saved project (.json)
+            <input type="file" className={field+" mt-2"} accept=".json" aria-label="Saved ContentGen project"
+              onChange={e=>{void importProject(e.target.files?.[0]);}}/>
+          </label>
+          {usable&&<Button variant="outline" icon={<Download className="size-4"/>}
+            onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>
+            Save project
+          </Button>}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={header}>Research dossier (.json)<input className={field+" mt-2"} type="file" accept=".json" aria-label="Research dossier JSON" onChange={e=>{void importDossier(e.target.files?.[0]);}}/></label>
           <label className={header}>Preproduction bundle (.json)<input className={field+" mt-2"} type="file" accept=".json" aria-label="Preproduction bundle JSON" onChange={e=>{void importBundle(e.target.files?.[0]);}}/></label>
