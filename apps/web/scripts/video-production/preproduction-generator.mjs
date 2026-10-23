@@ -52,7 +52,7 @@ export async function generatePreproductionPlan(dossier, options, {transport=fet
   const research=parseResearchDossier(dossier);
   if(!research.ok)throw Error("Research dossier invalid: "+research.findings.map(f=>f.code).join(", "));
   const endpoint=localChatEndpoint(options.endpoint);
-  if(typeof options.model!=="string"||!/^[\w.:-]{1,120}$/u.test(options.model))throw Error("An installed local model ID is required.");
+  if(typeof options.model!=="string"||!options.model.trim()||options.model.length>120||/[\u0000-\u001f]/u.test(options.model))throw Error("An installed local model ID is required.");
   const deadline=AbortSignal.timeout(180000);
   const requestSignal=signal?AbortSignal.any([signal,deadline]):deadline;
   const response=await transport(endpoint,{
