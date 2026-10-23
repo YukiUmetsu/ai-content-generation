@@ -99,6 +99,7 @@ test("approved first launch pulls official image and starts only its Compose pro
   const result = await manageLocalSearch(["up", "--allow-image-pull"], {
     command: async args => { const result = await fn(args); if (args.includes("up")) started = true; return result; },
     secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}),
+    portAvailable: async () => true,
     check: async () => started ? { ok: true } : { ok: false, reason: "ECONNREFUSED" },
     delay: async () => {}, log: () => {},
   });
@@ -126,7 +127,7 @@ test("existing image starts without pull; occupied port is refused", async () =>
   assert.equal(result.ok, true);
   assert.equal(received.some(args => args[0] === "pull"), false);
   await assert.rejects(manageLocalSearch(["up"], {
-    command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}), check: async () => ({ ok: false, reason: "Configured search port is occupied by a different HTTP server." }),
+    command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}), portAvailable: async () => true, check: async () => ({ ok: false, reason: "Configured search port is occupied by a different HTTP server." }),
     log: () => {},
   }), /occupied/);
 });
