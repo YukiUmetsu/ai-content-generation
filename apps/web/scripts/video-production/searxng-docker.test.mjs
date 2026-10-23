@@ -20,7 +20,7 @@ test("repository Compose configuration is localhost-only, JSON-capable and uses 
   const compose = await readFile(COMPOSE_FILE, "utf8");
   const settings = await readFile(new URL("../../../../tools/searxng/settings.yml", import.meta.url), "utf8");
   const ignore = await readFile(new URL("../../../../tools/searxng/.gitignore", import.meta.url), "utf8");
-  assert.match(compose, /127\.0\.0\.1:8080:8080/u);
+  assert.match(compose, /127\.0\.0\.1:\$\{SEARXNG_PORT[^}]*\}:8080/u);
   assert.doesNotMatch(compose, /0\.0\.0\.0:8080/u);
   assert.match(compose, /SEARXNG_SECRET/u);
   assert.match(compose, /settings\.yml:ro/u);
@@ -46,7 +46,7 @@ test("bootstrap creates private secret once, never overwrites existing or unusua
   const random = () => Buffer.alloc(32, 0x2b);
   assert.equal(await ensureLocalSecret({ file: path, random }), "created");
   const original = await readFile(path, "utf8");
-  assert.equal(original, "SEARXNG_SECRET=" + "2b".repeat(32) + "\n");
+  assert.match(original, new RegExp("^SEARXNG_SECRET=" + "2b".repeat(32) + "\\nSEARXNG_PORT=\\d{5}\\n$"));
   assert.equal((await stat(path)).mode & 0o077, 0);
   assert.equal(await ensureLocalSecret({ file: path, random: () => { throw Error("regenerated"); } }), "existing");
   assert.equal(await readFile(path, "utf8"), original);
@@ -55,13 +55,13 @@ test("bootstrap creates private secret once, never overwrites existing or unusua
 });
 
 test("local check distinguishes healthy SearXNG, wrong port listener, JSON disabled and correct API", async () => {
-  const ok = await checkLocalSearch({ transport: async () => new Response("<title>SearXNG</title>") });
+  const ok = await checkLocalSearch({ endpoint: SEARCH_URL + "/search", transport: async () => new Response("<title>SearXNG</title>") });
   assert.equal(ok.ok, true);
-  const foreign = await checkLocalSearch({ transport: async () => new Response("<title>my other app</title>") });
+  const foreign = await checkLocalSearch({ endpoint: SEARCH_URL + "/search", transport: async () => new Response("<title>my other app</title>") });
   assert.match(foreign.reason, /different HTTP server/);
-  const denied = await checkLocalSearch({ search: true, transport: async () => new Response("not allowed", { status: 403 }) });
+  const denied = await checkLocalSearch({ search: true, endpoint: SEARCH_URL + "/search", transport: async () => new Response("not allowed", { status: 403 }) });
   assert.match(denied.reason, /JSON disabled/);
-  const json = await checkLocalSearch({ search: true, transport: async url => {
+  const json = await checkLocalSearch({ search: true, endpoint: SEARCH_URL + "/search", transport: async url => {
     assert.equal(new URL(url).host, "127.0.0.1:8080");
     assert.equal(new URL(url).searchParams.get("format"), "json");
     return new Response(JSON.stringify({ results: [{ title: "x" }] }), { status: 200 });
@@ -98,12 +98,12 @@ test("approved first launch pulls official image and starts only its Compose pro
   let started = false;
   const result = await manageLocalSearch(["up", "--allow-image-pull"], {
     command: async args => { const result = await fn(args); if (args.includes("up")) started = true; return result; },
-    secret: async () => "created",
+    secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}),
     check: async () => started ? { ok: true } : { ok: false, reason: "ECONNREFUSED" },
     delay: async () => {}, log: () => {},
   });
   assert.equal(result.ok, true);
-  assert.equal(result.endpoint, SEARCH_URL + "/search");
+  assert.equal(result.endpoint, "http://127.0.0.1:55021/search");
   assert.deepEqual(received.find(args => args[0] === "pull"), ["pull", SEARCH_IMAGE]);
   const start = received.find(args => args.includes("up"));
   assert.ok(start.includes(COMPOSE_FILE));
@@ -119,14 +119,14 @@ test("existing image starts without pull; occupied port is refused", async () =>
     return "ok";
   };
   const result = await manageLocalSearch(["up"], {
-    command: cmd, secret: async () => "existing",
+    command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}),
     check: async () => started ? { ok: true } : { ok: false, reason: "ECONNREFUSED" },
     log: () => {},
   });
   assert.equal(result.ok, true);
   assert.equal(received.some(args => args[0] === "pull"), false);
   await assert.rejects(manageLocalSearch(["up"], {
-    command: cmd, check: async () => ({ ok: false, reason: "Port 8080 is occupied by a different HTTP server." }),
+    command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}), check: async () => ({ ok: false, reason: "Configured search port is occupied by a different HTTP server." }),
     log: () => {},
   }), /occupied/);
 });
