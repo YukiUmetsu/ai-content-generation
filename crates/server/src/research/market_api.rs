@@ -108,7 +108,7 @@ async fn status(State(state): State<AppState>) -> Result<Json<MarketStatus>, Api
         )
         .map_err(db_error)?;
     Ok(Json(MarketStatus {
-        api_key_configured: YoutubeClient::from_env().is_ok(),
+        api_key_configured: state.credentials().youtube_status().configured,
         collecting: running > 0,
         search_calls_last24h: market_store::used_search_calls(&db, epoch_now())
             .map_err(market_error)?,
@@ -203,8 +203,14 @@ async fn collect(
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<QueuedRun>), ApiError> {
     require_editor_header(&headers)?;
-    let client = YoutubeClient::from_env().map_err(|_| ApiError::Unavailable {
-        message: "Set CONTENTGEN_YOUTUBE_API_KEY in the local server environment".into(),
+    let key = state
+        .credentials()
+        .youtube_key()
+        .map_err(|_| ApiError::Unavailable {
+            message: "Configure a YouTube key in local Settings or the server environment".into(),
+        })?;
+    let client = YoutubeClient::from_key(key).map_err(|_| ApiError::Unavailable {
+        message: "A valid YouTube key is required for collection".into(),
     })?;
     let db = state.connect().map_err(db_error)?;
     let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
