@@ -4,7 +4,7 @@
  * This is a rough-cut preview, NOT final Kumiki media: timings are estimates
  * until actual Fish/local audio is synthesized and sample-aligned.
  */
-import { parsePreproductionPlan } from "./preproduction.mjs";
+import { createHash } from "node:crypto";
 import { compileTeachingStoryboard } from "./visual-pedagogy.mjs";
 
 const clamp = (x,a,b) => Math.max(a,Math.min(b,x));
@@ -17,6 +17,8 @@ export function compileAnimatic(bundle,{ fps=30, spokenWpm=145 }={}) {
       !Number.isInteger(fps) || fps<12 || fps>60 ||
       !Number.isFinite(spokenWpm) || spokenWpm<95 || spokenWpm>210)
     throw Error("Expected bounded preproduction-bundle/v1, FPS and narration pace.");
+  const planHash=createHash("sha256").update(JSON.stringify(bundle.plan)).digest("hex");
+  if(bundle.planSha256!==planHash)throw Error("Preproduction plan changed after bundle validation; recompile the reviewed bundle.");
   if (bundle.researchId!==bundle.plan.researchId || !Array.isArray(bundle.plan.teachingSequences) ||
       !bundle.plan.teachingSequences.length)
     throw Error("Animatic requires research-linked teaching sequences; regenerate or author the teaching plan.");
