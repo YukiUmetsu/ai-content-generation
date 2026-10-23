@@ -5,6 +5,7 @@ import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import { ProductionPanel } from "./video-production-panel";
 import { NewVideoSetup } from "./new-video-setup";
+import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Shot={id:string;visualChange:string;onScreenText:string;purpose:string};
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
@@ -122,6 +123,18 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
       setRevisions(prev=>[...prev,{shotId:shot.id,impacts:result.impacts}]);
       setStatus("Draft revised. Unchanged shots remain intact. Review before any regeneration or publishing.");
     }catch(e){setStatus(e instanceof Error?e.message:"Revision rejected.");}
+    finally{setBusy(false);}
+  }
+  async function applyShotMotion(id:string,motion:SceneMotion):Promise<Bundle>{
+    if(!bundle||!dossier)throw Error("Open a matching project before editing motion.");
+    setBusy(true);setStatus("");
+    try{
+      const result=await request("edit",{bundle,dossier,shotId:id,changes:{motion}}) as unknown as Revision;
+      setBundle(result.bundle);
+      setRevisions(prev=>[...prev,{shotId:id,impacts:result.impacts}]);
+      setStatus("Scene motion saved. Only its visual segment needs rebuilding; narration remains reusable.");
+      return result.bundle;
+    }catch(e){setStatus(e instanceof Error?e.message:"Motion revision rejected.");throw e;}
     finally{setBusy(false);}
   }
   async function generate(){
@@ -256,9 +269,9 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
             </>}
           </div>
         </Surface>
-        <ProductionPanel key={bundle.planSha256??JSON.stringify(bundle.plan.shots.map(s=>s.id))}
+        <ProductionPanel key={dossier.id}
           dossier={dossier} bundle={bundle} selectedShotId={shotId}
-          onSelectShot={id=>chooseShot(id,true)}/>
+          onSelectShot={id=>chooseShot(id,true)} onApplyMotion={applyShotMotion}/>
       </>}
       {status&&<p role="status" className="text-sm text-muted-foreground">{status}</p>}
       <p className="text-xs text-muted-foreground">{ja?"すべての変更は下書きです。":"Every edit remains an unapproved draft. Source research, claims, voice permissions, and final export QA are never bypassed."}</p>
