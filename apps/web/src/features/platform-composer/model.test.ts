@@ -22,8 +22,8 @@ describe("platform layout planner", () => {
   });
   it("blocks invalid input and never invents a virality prediction or rights clearance",()=>{
     expect(()=>createDeliveryLayout({...input,preset:"fake-channel" as never})).toThrow(/Unsupported/);
-    expect(()=>createDeliveryLayout({...input,headline:""})).toThrow(/Headline/);
-    expect(()=>createDeliveryLayout({...input,labels:["Just one"]})).toThrow(/2–4/);
+    expect(()=>createDeliveryLayout({...input,preset:"youtube",headline:""})).toThrow(/Headline/);
+    expect(()=>createDeliveryLayout({...input,preset:"youtube",labels:["Just one"]})).toThrow(/2–4/);
     const plan=createDeliveryLayout({...input,preset:"tiktok"});
     const json=JSON.stringify(plan);
     expect(json).not.toMatch(/viral|views|revenue|commercialrightsverified/i);
