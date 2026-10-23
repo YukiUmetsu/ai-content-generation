@@ -126,3 +126,39 @@ test("model authorization only configures the test-only free model; never raises
   assert.equal(fish.voice.modelId,"s2.1-pro-free");
   assert.equal(fish.policy.maxCostUsd,0);
 });
+
+
+test("topic-first path requires public-network opt in, uses installed model, and drafts reviewed sources without TTS",async()=>{
+  const calls=[];
+  const server=createDirectorProduction({
+    readModel:async()=>({model:"local-researcher",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
+    searchEndpoint:()=>"http://127.0.0.1:49273/search",
+    research:async(brief,options)=>{
+      calls.push(["research",brief,options]);
+      return {dossier:inputs().dossier,warnings:["Review every citation"]};
+    },
+    generateStory:async(dossier,options)=>{
+      calls.push(["story",dossier.id,options]);
+      return fixture("preproduction-plan-smoke.json");
+    },
+    build:async()=>{throw Error("never build while gathering research");},
+    produce:async()=>{throw Error("never produce while planning");}
+  });
+  const brief={title:"Cost of a home",viewerQuestion:"Why does it cost more?",audience:"Homeowners",locale:"en-US"};
+  assert.equal((await invoke(server,"POST","/research",{brief,allowNetwork:false})).status,422);
+  assert.equal(calls.length,0);
+  const found=await invoke(server,"POST","/research",{brief,allowNetwork:true});
+  assert.equal(found.status,200);
+  assert.equal(found.data.dossier.kind,"research-dossier");
+  assert.equal(calls[0][2].model,"local-researcher");
+  assert.equal(calls[0][2].searchEndpoint,"http://127.0.0.1:49273/search");
+  const story=await invoke(server,"POST","/story",{dossier:found.data.dossier});
+  assert.equal(story.status,200);
+  assert.equal(story.data.bundle.kind,"preproduction-bundle");
+  assert.equal(story.data.bundle.researchId,found.data.dossier.id);
+  assert.equal(story.data.bundle.status,"draft-needs-review");
+  assert.equal(calls[1][2].model,"local-researcher");
+  const bridged=await invoke(server,"POST","/plan",{dossier:found.data.dossier,bundle:story.data.bundle});
+  assert.equal(bridged.status,200);
+  assert.equal(bridged.data.job.beats.length,3);
+});
