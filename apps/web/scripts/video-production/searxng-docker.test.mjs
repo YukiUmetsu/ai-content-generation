@@ -33,6 +33,7 @@ test("repository Compose configuration is localhost-only, JSON-capable and uses 
 test("CLI only accepts known local lifecycle operations and explicit pull permission", () => {
   assert.deepEqual(parseSearchManagerArgs(["up"]), { operation: "up", allowImagePull: false });
   assert.deepEqual(parseSearchManagerArgs(["up", "--allow-image-pull"]), { operation: "up", allowImagePull: true });
+  assert.deepEqual(parseSearchManagerArgs(["up", "--", "--allow-image-pull"]), { operation: "up", allowImagePull: true });
   assert.throws(() => parseSearchManagerArgs(["down", "--allow-image-pull"]), /applies to up/);
   assert.throws(() => parseSearchManagerArgs(["oops"]), /up, down/);
   assert.equal(parseSearchManagerArgs(["--help"]).help, true);
