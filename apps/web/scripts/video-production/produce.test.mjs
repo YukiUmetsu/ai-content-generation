@@ -158,3 +158,47 @@ test("rebuilding scene between preflight and capture never publishes stale pixel
   await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /build|scene.*changed/i);
   assert.equal(ctx.status().browserCalls, 0);
 });
+
+
+test("revised production accepts only a verified previous release, forwards media reuse and never mutates original",async t=>{
+  const ctx=await context(t);
+  const old=await produceVideo(ctx.job,ctx.opts,ctx.injected);
+  const oldManifest=await readFile(join(old.releaseDir,"render-manifest.json"));
+  const oldVideo=await readFile(join(old.releaseDir,"video.mp4"));
+  const nextOut=join(ctx.root,"revised-render");
+  const revised=structuredClone(ctx.job);
+  revised.beats[1].narration+=" This is the updated sentence.";
+  let reuseSpeechRoot=null,renderReuse=null;
+  const injected={
+    ...ctx.injected,
+    synthesizeNarration:async (job,settings)=>{
+      reuseSpeechRoot=settings.reuseCacheRoot;
+      return ctx.injected.synthesizeNarration(job,settings);
+    },
+    renderVideoSegments:async options=>{
+      renderReuse=options.reuseFrom;
+      assert.equal(options.visualPlan.kind,"house-math-visual-plan");
+      return ctx.injected.renderVideoSegments(options);
+    }
+  };
+  const result=await produceVideo(revised,{...ctx.opts,out:nextOut,reuseFrom:ctx.opts.out},injected);
+  assert.equal(reuseSpeechRoot,join(ctx.opts.out,".cache"));
+  assert.equal(renderReuse.buildHash,"b".repeat(64));
+  assert.equal(renderReuse.segmentsDir,join(ctx.opts.out,".render","segments"));
+  assert.equal(renderReuse.sourcePlan.kind,"house-math-visual-plan");
+  assert.match(await readFile(join(result.releaseDir,"video.mp4"),"utf8"),/muxed-film/);
+  assert.deepEqual(await readFile(join(old.releaseDir,"render-manifest.json")),oldManifest);
+  assert.deepEqual(await readFile(join(old.releaseDir,"video.mp4")),oldVideo);
+  await assert.rejects(produceVideo(revised,{...ctx.opts,out:ctx.opts.out,reuseFrom:ctx.opts.out},ctx.injected),/release|same|different/i);
+});
+test("corrupt previous plan hash refuses release before any TTS",async t=>{
+  const ctx=await context(t);
+  const first=await produceVideo(ctx.job,ctx.opts,ctx.injected);
+  const path=join(first.releaseDir,"render-manifest.json");
+  const doc=JSON.parse(await readFile(path,"utf8"));
+  doc.planHash="0".repeat(64);
+  await writeFile(path,JSON.stringify(doc));
+  const oldCalls=ctx.status().providerCalls;
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,out:join(ctx.root,"new"),reuseFrom:ctx.opts.out},ctx.injected),/tampered|invalid/i);
+  assert.equal(ctx.status().providerCalls,oldCalls);
+});
