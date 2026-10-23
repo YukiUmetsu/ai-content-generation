@@ -16,6 +16,11 @@ import {
   updateBeat,
 } from "./model/edit";
 import { HVAC_EXAMPLE } from "./model/hvac-example";
+import {
+  clearProjectStoryboard,
+  loadProjectStoryboard,
+  saveProjectStoryboard,
+} from "./model/project-storage";
 import { parseStoryboard, type ImportIssue } from "./model/serialize";
 import { computeTimeline, formatRuntime } from "./model/timeline";
 import {
@@ -31,6 +36,8 @@ export interface StoryboardPlannerProps {
   locale: Locale;
   className?: string;
   onPreviewChange?: FeatureSlotProps["onPreviewChange"];
+  /** Browser-local project whose draft is restored and saved on edits. */
+  projectId?: string;
   /** Test / integration hook; defaults to the preloaded HVAC example. */
   initialBoard?: SemanticStoryboard;
 }
@@ -40,12 +47,21 @@ export function StoryboardPlanner({
   className,
   onPreviewChange,
   initialBoard,
+  projectId,
 }: StoryboardPlannerProps) {
   const t = copy(locale);
-  const [board, setBoard] = useState<SemanticStoryboard>(() =>
-    cloneStoryboard(initialBoard ?? HVAC_EXAMPLE)
+  const [restoredDraft] = useState(() =>
+    projectId ? loadProjectStoryboard(projectId) : { board: null, warning: null }
   );
-  const [selectedBeatId, setSelectedBeatId] = useState(() => (initialBoard ?? HVAC_EXAMPLE).beats[0]?.id ?? "");
+  const [board, setBoard] = useState<SemanticStoryboard>(() =>
+    cloneStoryboard(initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE)
+  );
+  const [selectedBeatId, setSelectedBeatId] = useState(() =>
+    (initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats[0]?.id ?? ""
+  );
+  const [unsavedChanges, setUnsavedChanges] = useState(false);
+  const [loadWarning, setLoadWarning] = useState(restoredDraft.warning);
+  const [storageError, setStorageError] = useState<string | null>(restoredDraft.warning);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<"export" | "import">("export");
   const [importErrors, setImportErrors] = useState<ImportIssue[]>([]);
@@ -76,6 +92,18 @@ export function StoryboardPlanner({
   }, [board, selectedBeat, selectedTiming, locale]);
 
   useEffect(() => {
+    if (!projectId || !unsavedChanges || loadWarning) return;
+    try {
+      saveProjectStoryboard(projectId, board);
+      setStorageError(null);
+      setUnsavedChanges(false);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Storage unavailable.";
+      setStorageError(`Storyboard could not be saved: ${detail} Export the JSON before leaving.`);
+    }
+  }, [projectId, board, unsavedChanges, loadWarning]);
+
+  useEffect(() => {
     if (!onPreviewChange) return;
     onPreviewChange(preview);
   }, [onPreviewChange, preview]);
@@ -88,11 +116,13 @@ export function StoryboardPlanner({
   function updateSelected(patch: Partial<StoryboardBeat>) {
     if (!selectedBeat) return;
     setBoard((current) => updateBeat(current, selectedBeat.id, patch));
+    setUnsavedChanges(true);
   }
 
   function handleAddBeat() {
     const beat = createBeat(board);
     setBoard(insertBeat(board, beat));
+    setUnsavedChanges(true);
     setSelectedBeatId(beat.id);
   }
 
@@ -102,11 +132,13 @@ export function StoryboardPlanner({
     const remaining = deleteBeat(board, beatId);
     const next = remaining.beats[Math.min(index, remaining.beats.length - 1)];
     setBoard(remaining);
+    setUnsavedChanges(true);
     setSelectedBeatId(next?.id ?? "");
   }
 
   function handleMoveBeat(beatId: string, direction: -1 | 1) {
     setBoard((current) => moveBeat(current, beatId, direction));
+    setUnsavedChanges(true);
   }
 
   function handleReset() {
@@ -114,10 +146,22 @@ export function StoryboardPlanner({
       setResetArmed(true);
       return;
     }
+    if (projectId) {
+      try {
+        clearProjectStoryboard(projectId);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Storage unavailable.";
+        setStorageError(`Local draft could not be reset: ${detail}`);
+        return;
+      }
+    }
     const fresh = cloneStoryboard(initialBoard ?? HVAC_EXAMPLE);
     setBoard(fresh);
     setSelectedBeatId(fresh.beats[0]?.id ?? "");
     setImportErrors([]);
+    setLoadWarning(null);
+    setStorageError(null);
+    setUnsavedChanges(false);
     setResetArmed(false);
   }
 
@@ -128,6 +172,7 @@ export function StoryboardPlanner({
       return;
     }
     setBoard(result.board);
+    setUnsavedChanges(true);
     setSelectedBeatId(result.board.beats[0]?.id ?? "");
     setImportErrors([]);
     setDialogOpen(false);
@@ -149,6 +194,12 @@ export function StoryboardPlanner({
             <span>{t.fps(String(board.fps.num / board.fps.den))}</span>
             <span className="sp-example-notice">{t.exampleNotice}</span>
           </p>
+          {storageError && (
+            <p className="sp-draft-warning" role="alert">
+              {storageError}
+              {loadWarning && " This draft will not be overwritten. Export any new edits as JSON or reset the local draft."}
+            </p>
+          )}
         </div>
         <div className="sp-header-actions">
           <Button
