@@ -80,6 +80,7 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
       ["problem","mechanism","payoff"].includes(phase.kind) &&
       shot.subjectIds.includes(sequence.technicalSubjectId)
       ? {phase:phase.kind as "problem"|"mechanism"|"payoff",subjectId:sequence.technicalSubjectId,
+          sequenceId:sequence.id,
           ...sequence.visualStates} : undefined;
     const isFirst=i===0,isLast=i===plan.shots.length-1;
     const spokenWords=voice.narration.trim().split(/\s+/u).length;

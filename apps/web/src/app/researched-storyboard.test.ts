@@ -37,7 +37,7 @@ describe("research to editable semantic storyboard",()=>{
     expect(board.assumptions.join(" ")).toContain("https://www.energy.gov/energysaver/insulation");
     expect(board.assumptions.join(" ")).toContain("research_home");
     expect(board.beats.map(x=>x.teachingState?.phase)).toEqual(["problem","mechanism","payoff"]);
-    expect(board.beats[1].teachingState).toEqual({phase:"mechanism",subjectId:"wall",
+    expect(board.beats[1].teachingState).toEqual({phase:"mechanism",subjectId:"wall",sequenceId:"teach_01",
       before:"Heat moves freely through the wall",action:"Add insulation that resists heat flow",
       after:"Less heat passes through the insulated wall"});
     expect(countBySeverity(validateStoryboard(board)).errors).toBe(0);

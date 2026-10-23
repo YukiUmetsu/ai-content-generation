@@ -9,6 +9,7 @@ import {
   STORYBOARD_SCHEMA_VERSION,
   type SemanticStoryboard,
   type StoryboardBeat,
+  type TeachingVisualState,
 } from "./types";
 
 function nextNumericSuffix(board: SemanticStoryboard): number {
@@ -133,6 +134,22 @@ export function updateBeat(
   return changed ? { ...board, beats } : board;
 }
 
+/** Keep all three phases of one authored teaching sequence semantically aligned.
+ * Each beat owns its phase/timing, but their before/action/after copy is shared.
+ */
+export function updateTeachingState(board:SemanticStoryboard,beatId:string,next:TeachingVisualState):SemanticStoryboard{
+  const selected=board.beats.find(beat=>beat.id===beatId);
+  if(!selected?.teachingState)return board;
+  const sequenceId=selected.teachingState.sequenceId;
+  if(!sequenceId||next.sequenceId!==sequenceId||next.subjectId!==selected.teachingState.subjectId)
+    return updateBeat(board,beatId,{teachingState:next});
+  return {...board,beats:board.beats.map(beat=>{
+    const previous=beat.teachingState;
+    if(!previous||previous.sequenceId!==sequenceId)return beat;
+    return {...beat,teachingState:{...previous,before:next.before,action:next.action,after:next.after}};
+  })};
+}
+
 /**
  * Accepts the raw value so an invalid (zero/negative/fractional) entry can be
  * represented in the editor and reported by validation instead of being
@@ -153,12 +170,15 @@ export function duplicateBeat(
   const index = board.beats.findIndex((beat) => beat.id === beatId);
   if (index < 0) return board;
   const source = board.beats[index];
+  const detached=source.teachingState?{...source.teachingState}:undefined;
+  if(detached)delete detached.sequenceId;
   const copy: StoryboardBeat = {
     ...source,
     id: nextBeatId(board),
     semanticObjects: [...source.semanticObjects],
     claimRefs: [...source.claimRefs],
     namedEvents: [...source.namedEvents],
+    ...(detached?{teachingState:detached}:{}),
   };
   return insertBeat(board, copy, index + 1);
 }

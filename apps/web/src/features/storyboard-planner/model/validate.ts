@@ -68,6 +68,7 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
     beats.map((beat) => beat.answersQuestion).filter((id): id is string => hasText(id))
   );
   const seenBeatIds = new Set<string>();
+  const teachingSequences = new Map<string,{subjectId:string;before:string;action:string;after:string}>();
 
   const addForBeat = (
     beat: StoryboardBeat,
@@ -146,6 +147,13 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
       if (!isTeachingVisualState(beat.teachingState) ||
         !beat.semanticObjects.includes(beat.teachingState.subjectId)) {
         addForBeat(beat, "storyboard-teaching-state-invalid", "error", `${path}.teachingState`);
+      } else if (beat.teachingState.sequenceId) {
+        const {sequenceId,subjectId,before,action,after}=beat.teachingState;
+        const expected=teachingSequences.get(sequenceId);
+        if(expected && (expected.subjectId!==subjectId || expected.before!==before ||
+          expected.action!==action || expected.after!==after))
+          addForBeat(beat, "storyboard-teaching-state-diverged", "error", `${path}.teachingState`);
+        else if(!expected)teachingSequences.set(sequenceId,{subjectId,before,action,after});
       }
     }
 

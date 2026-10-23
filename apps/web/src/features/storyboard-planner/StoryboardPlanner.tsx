@@ -14,6 +14,7 @@ import {
   insertBeat,
   moveBeat,
   updateBeat,
+  updateTeachingState,
 } from "./model/edit";
 import { HVAC_EXAMPLE } from "./model/hvac-example";
 import {
@@ -114,6 +115,10 @@ export function StoryboardPlanner({
 
   function updateSelected(patch: Partial<StoryboardBeat>) {
     if (!selectedBeat) return;
+    if (patch.teachingState && selectedBeat.teachingState) {
+      updateBoard(updateTeachingState(board,selectedBeat.id,patch.teachingState));
+      return;
+    }
     updateBoard(updateBeat(board, selectedBeat.id, patch));
   }
 

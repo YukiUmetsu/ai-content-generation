@@ -485,7 +485,7 @@ function SourceDerivedScene({board,beat,title,kicker}:{
         x="554" y={285+i*30} className="sp-svg-accent">{part}</text>)}</g>
       {showAction&&state&&<g data-source-derived-action="">
         <text x="84" y="407" className="sp-svg-small">ACTION</text>
-        <g role="group" aria-label={state.action}>{lines(state.action,46).map((part,i)=><text key={i}
+        <g role="group" aria-label={state.action}>{lines(clip(state.action,90),46).map((part,i)=><text key={i}
           x="200" y={404+i*27} className="sp-svg-accent">{part}</text>)}</g>
       </g>}
       {!state&&<text x="84" y="410" className="sp-svg-small">Planning sketch from the authored brief</text>}

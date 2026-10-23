@@ -33,12 +33,14 @@ function TextAreaField({
   onChange,
   hint,
   rows = 3,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   hint?: string;
   rows?: number;
+  maxLength?: number;
 }) {
   const generated = useId();
   const hintId = hint ? `${generated}-hint` : undefined;
@@ -51,6 +53,7 @@ function TextAreaField({
         id={generated}
         className="sp-textarea"
         rows={rows}
+        maxLength={maxLength}
         value={value}
         aria-describedby={hintId}
         onChange={(event) => onChange(event.target.value)}
@@ -262,6 +265,7 @@ export function SceneEditor({
             {(["before","action","after"] as const).map(key=><TextAreaField key={key}
               label={key==="before"?"Before (initial state)":key==="action"?"Action (visible operation)":"After (learned result)"}
               value={beat.teachingState![key]} rows={2}
+              maxLength={key==="action"?90:48}
               onChange={text=>onChange({teachingState:{...beat.teachingState!,[key]:text}})}/>) }
           </div>}
 

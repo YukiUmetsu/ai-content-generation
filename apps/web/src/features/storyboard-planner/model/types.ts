@@ -67,6 +67,8 @@ export interface StoryboardQuestion {
 export interface TeachingVisualState {
   phase: "problem" | "mechanism" | "payoff";
   subjectId: string;
+  /** Stable ID shared by the problem, mechanism and payoff beats. */
+  sequenceId?: string;
   before: string;
   action: string;
   after: string;
@@ -75,8 +77,10 @@ export interface TeachingVisualState {
 export function isTeachingVisualState(value: unknown): value is TeachingVisualState {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const state = value as Record<string, unknown>;
-  const fields = ["phase", "subjectId", "before", "action", "after"];
-  if (Object.keys(state).length !== fields.length || Object.keys(state).some(key => !fields.includes(key)) ||
+  const fields = ["phase", "subjectId", "sequenceId", "before", "action", "after"];
+  if (![5,6].includes(Object.keys(state).length) || Object.keys(state).some(key => !fields.includes(key)) ||
+    (state.sequenceId !== undefined &&
+      (typeof state.sequenceId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.sequenceId))) ||
     typeof state.phase !== "string" || !["problem", "mechanism", "payoff"].includes(state.phase) ||
     typeof state.subjectId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.subjectId)) return false;
   const copy = [state.before, state.action, state.after];

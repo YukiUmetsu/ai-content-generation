@@ -80,6 +80,18 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+/** Browser-local editing can briefly contain an empty state text field. */
+function isEditableTeachingState(value: unknown): value is NonNullable<StoryboardBeat["teachingState"]> {
+  if (!isRecord(value) || ![5,6].includes(Object.keys(value).length) ||
+    Object.keys(value).some(key => !["phase", "subjectId", "sequenceId", "before", "action", "after"].includes(key)) ||
+    (value.sequenceId !== undefined &&
+      (typeof value.sequenceId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(value.sequenceId)))) return false;
+  return typeof value.phase === "string" && ["problem", "mechanism", "payoff"].includes(value.phase) &&
+    typeof value.subjectId === "string" &&
+    [value.before,value.action,value.after].every((x,i) => typeof x === "string" &&
+      x.length <= (i === 1 ? 90 : 48));
+}
+
 function stringField(
   source: Record<string, unknown>,
   key: string,
@@ -156,7 +168,9 @@ function parseBeat(
   const opensQuestion = stringField(value, "opensQuestion", path, errors, { optional: true });
   const answersQuestion = stringField(value, "answersQuestion", path, errors, { optional: true });
   const teachingState = value.teachingState;
-  if (teachingState !== undefined && !isTeachingVisualState(teachingState))
+  const validState = isTeachingVisualState(teachingState);
+  const editableState = allowIncomplete && isEditableTeachingState(teachingState);
+  if (teachingState !== undefined && !validState && !editableState)
     errors.push({ code: "invalid-field", path: `${path}.teachingState` });
 
   if (!id) return null;
@@ -180,7 +194,7 @@ function parseBeat(
   if (cameraIntent !== undefined) beat.cameraIntent = cameraIntent;
   if (opensQuestion !== undefined) beat.opensQuestion = opensQuestion;
   if (answersQuestion !== undefined) beat.answersQuestion = answersQuestion;
-  if (isTeachingVisualState(teachingState)) beat.teachingState = { ...teachingState };
+  if (validState || editableState) beat.teachingState = { ...teachingState };
   return beat;
 }
 
