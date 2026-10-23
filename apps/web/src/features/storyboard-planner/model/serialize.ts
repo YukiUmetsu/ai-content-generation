@@ -105,7 +105,8 @@ function stringField(
 function parseBeat(
   value: unknown,
   index: number,
-  errors: ImportIssue[]
+  errors: ImportIssue[],
+  allowIncomplete: boolean
 ): StoryboardBeat | null {
   const path = `beats[${index}]`;
   if (!isRecord(value)) {
@@ -131,7 +132,12 @@ function parseBeat(
   const focusTarget = stringField(value, "focusTarget", path, errors) ?? "";
   const staticFallback = stringField(value, "staticFallback", path, errors) ?? "";
   const durationFrames = value.durationFrames;
-  if (!isPositiveInteger(durationFrames)) {
+  // A draft can include a temporarily invalid number while the author edits.
+  // Completed JSON imports still require a positive integer frame count.
+  const validDuration = allowIncomplete
+    ? typeof durationFrames === "number" && Number.isFinite(durationFrames)
+    : isPositiveInteger(durationFrames);
+  if (!validDuration) {
     errors.push({ code: "invalid-field", path: `${path}.durationFrames` });
   }
   if (!isStringArray(value.semanticObjects)) {
@@ -161,7 +167,7 @@ function parseBeat(
     visualObjective,
     semanticObjects: isStringArray(value.semanticObjects) ? [...value.semanticObjects] : [],
     focusTarget,
-    durationFrames: isPositiveInteger(durationFrames) ? durationFrames : 0,
+    durationFrames: validDuration ? (durationFrames as number) : 0,
     claimRefs: isStringArray(value.claimRefs) ? [...value.claimRefs] : [],
     namedEvents: isStringArray(value.namedEvents) ? [...value.namedEvents] : [],
     staticFallback,
@@ -238,7 +244,7 @@ function parseEvent(value: unknown, index: number, errors: ImportIssue[]): Seman
  * Parse and normalize a semantic storyboard document. Structural problems are
  * returned as data; no exception escapes and no partial board is applied.
  */
-export function parseStoryboard(text: string): ParseResult {
+function parseStoryboardDocument(text: string, allowIncomplete: boolean): ParseResult {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -270,7 +276,7 @@ export function parseStoryboard(text: string): ParseResult {
 
   if (!Array.isArray(raw.beats)) {
     errors.push({ code: "missing-field", path: "beats" });
-  } else if (raw.beats.length === 0) {
+  } else if (raw.beats.length === 0 && !allowIncomplete) {
     errors.push({ code: "beats-empty", path: "beats" });
   }
 
@@ -278,7 +284,7 @@ export function parseStoryboard(text: string): ParseResult {
   const beats: StoryboardBeat[] = [];
   const seenIds = new Set<string>();
   for (const [index, value] of beatValues.entries()) {
-    const beat = parseBeat(value, index, errors);
+    const beat = parseBeat(value, index, errors, allowIncomplete);
     if (!beat) continue;
     if (seenIds.has(beat.id)) {
       errors.push({ code: "duplicate-beat-id", path: `beats[${index}].id` });
@@ -357,4 +363,14 @@ export function parseStoryboard(text: string): ParseResult {
       illustrativeData: typeof raw.illustrativeData === "boolean" ? raw.illustrativeData : false,
     },
   };
+}
+
+/** Strict completed-document import. Rejects empty beats and invalid durations. */
+export function parseStoryboard(text: string): ParseResult {
+  return parseStoryboardDocument(text, false);
+}
+
+/** Validated browser draft recovery, including incomplete authoring states. */
+export function parseStoryboardDraft(text: string): ParseResult {
+  return parseStoryboardDocument(text, true);
 }
