@@ -609,3 +609,51 @@ expected shell integration.
   later milestones; the preview is a neutral artboard placeholder.
 - The production bundle currently exceeds Vite's 500 kB warning threshold
   (single chunk). Code-split feature slots when real editors land.
+
+## Research-first cinematic preproduction (opt-in)
+
+ContentGen now owns six pre-render stages; Kumiki UI remains the visual execution layer.
+
+| Stage | Output | Release check |
+|---|---|---|
+| Research | Captured evidence snapshots, passage locators, SHA-256s, reviewed claims, gaps | Requires captured evidence and linked claim IDs |
+| Story architect | Narrative pattern, premise, hook, question, acts, payoff | All acts explained, answer linked |
+| Explanation planner | Before-understanding, demonstration, after-understanding for each step | Learning steps grounded in claim IDs |
+| Shot & asset director | Family, subject, visual change, on-screen text, claim/asset refs | Every step visualized; assets resolve to explicit rights metadata |
+| Transition & continuity director | Technique and carried subject IDs at each shot boundary | No missing transition or broken persistent subject |
+| Performance & sound director | Narration, delivery, energy, pause and SFX intent per shot | Every shot has a performance plan |
+
+Run offline against human-authored JSON files:
+
+```bash
+pnpm video:plan --research /path/research.json --plan /path/plan.json --out /path/new-bundle.json
+pnpm video:plan --research /path/research.json --plan /path/plan.json --out /path/new-bundle.json --require-ready
+```
+
+Or opt in to an already-running local OpenAI-compatible planning model:
+
+```bash
+pnpm video:plan --research /path/research.json --model INSTALLED_MODEL_ID --out /path/new-bundle.json
+```
+
+The optional endpoint defaults to http://127.0.0.1:11434/v1/chat/completions and accepts only loopback HTTP.
+No remote web research, model download, TTS, expensive rendering or publication occurs.
+Output files are exclusive-create (never overwritten); the bundle contains research and plan SHA-256 fingerprints.
+
+Research file schema: research-dossier/v1 with keys schemaVersion, kind, id, topic, evidence, claims, assets, gaps, review.
+Each evidence record has id/title/sourceUri/retrievedAt/passageLocator/snapshotSha256.
+Each claim has id/text/status/sourceRefs, reusing existing video-job claim status vocabulary.
+The optional assets array contains id/kind/ref/licenseStatus; planned asset IDs must resolve.
+Topic contains title/viewerQuestion/audience/locale. Review is draft or human-reviewed, with reviewer required for the latter.
+See scripts/video-production/preproduction.test.mjs for a synthetic, non-publishable working contract fixture.
+
+Planner output schema: preproduction-plan/v1 contains researchId/styleId/story/explanation/shots/continuity/sound.
+See the tested fixture for supported enumerations. The CLI outputs a preproduction-bundle/v1 with
+either ready-for-animatic-review or draft-needs-review plus actionable findings.
+Research review is an editor's attestation, not automated verification that a passage supports a claim.
+Unverified or disputed used claims and test-only visual assets block readiness.
+
+**Not yet implemented:** automatic source acquisition, persistent Studio editing, timed animatics,
+shot compilation to Kumiki, or attaching the plan to the production job. Legacy topic/manual jobs
+and House Math remain unchanged until the new path is integrated with migration tests.
+Preproduction readiness is not approval to spend money, invoke Fish Audio, render commercially or publish.
