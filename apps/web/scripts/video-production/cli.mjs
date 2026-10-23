@@ -18,7 +18,7 @@ const readFlagValue = (argv, index) => {
 export function parseCliArgs(argv) {
   const options = {
     job: "", provider: "", out: "", dryRun: false, allowNetwork: false, budgetUsd: 0, localEndpoint: "",
-    voiceReferenceConsent: false, textTransmissionApproved: false, localVoiceAuthorized: false,
+    voiceReferenceConsent: false, textTransmissionApproved: false, localVoiceAuthorized: false, reuseFrom: "",
     paidUsageApproved: false, allowTestAssets: false, providerRevision: "", browserExecutable: "", distRoot: "",
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -31,9 +31,9 @@ export function parseCliArgs(argv) {
     if (flag === "--local-voice-authorized") { options.localVoiceAuthorized = true; continue; }
     if (flag === "--paid-usage-approved") { options.paidUsageApproved = true; continue; }
     if (flag === "--allow-test-assets") { options.allowTestAssets = true; continue; }
-    if (["--job", "--provider", "--out", "--budget-usd", "--local-endpoint", "--provider-revision", "--browser-executable", "--dist-root"].includes(flag)) {
+    if (["--job", "--provider", "--out", "--budget-usd", "--local-endpoint", "--provider-revision", "--browser-executable", "--dist-root", "--reuse-from"].includes(flag)) {
       const value = readFlagValue(argv, index);
-      const prop = ({ "--job": "job", "--provider": "provider", "--out": "out", "--budget-usd": "budgetUsd", "--local-endpoint": "localEndpoint", "--provider-revision": "providerRevision", "--browser-executable": "browserExecutable", "--dist-root": "distRoot" })[flag];
+      const prop = ({ "--job": "job", "--provider": "provider", "--out": "out", "--budget-usd": "budgetUsd", "--local-endpoint": "localEndpoint", "--provider-revision": "providerRevision", "--browser-executable": "browserExecutable", "--dist-root": "distRoot", "--reuse-from": "reuseFrom" })[flag];
       options[prop] = flag === "--budget-usd" ? Number(value) : value;
       index += 1;
       continue;
@@ -44,6 +44,8 @@ export function parseCliArgs(argv) {
   if (options.provider && !["fish", "local"].includes(options.provider)) throw new Error("--provider must be fish or local.");
   if (!Number.isFinite(options.budgetUsd) || options.budgetUsd < 0) throw new Error("--budget-usd must be finite and non-negative.");
   validateOutputTarget(options.out);
+  if(options.reuseFrom && (validateOutputTarget(options.reuseFrom)===validateOutputTarget(options.out)))
+    throw Error("--reuse-from must point to a different previous production output.");
   return options;
 }
 
