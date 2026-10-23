@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, Film, Play, RefreshCw, ShieldAlert, Square, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
+import { LiveRendererPreview, type LiveVisualPreviewData } from "./live-renderer-preview";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
 type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>}};
@@ -30,9 +31,10 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle}:{dossier:Dossier;bundle:Bundle}){
+export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void}){
   const [settings,setSettings]=useState<Settings>(defaults);
   const [preview,setPreview]=useState<Preview|null>(null);
+  const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
   const [animaticUrl,setAnimaticUrl]=useState("");
   const [ready,setReady]=useState(false);
   const [working,setWorking]=useState("");
@@ -45,6 +47,18 @@ export function ProductionPanel({dossier,bundle}:{dossier:Dossier;bundle:Bundle}
     try{setPreview(await request("plan",payload) as unknown as Preview);}
     catch(error){setPreview(null);setNotice(error instanceof Error?error.message:"Cannot compile renderable video.");}
     finally{setWorking("");}
+  }
+  async function showActual(){
+    setWorking("real-preview");setNotice("");setReady(false);
+    try{
+      const result=await request("live-preview",payload) as unknown as LiveVisualPreviewData;
+      if(result.kind!=="live-renderer-preview/v1"||result.sourcePlanSha256.length!==64)
+        throw Error("Actual visual preview returned an invalid contract.");
+      setActualPreview(result);
+    }catch(error){
+      setActualPreview(null);
+      setNotice(error instanceof Error?error.message:"Actual scene preview failed.");
+    }finally{setWorking("");}
   }
   async function animatic(){
     setWorking("animatic");setNotice("");
@@ -102,6 +116,10 @@ export function ProductionPanel({dossier,bundle}:{dossier:Dossier;bundle:Bundle}
     <div className="space-y-4 text-sm">
       <p className="text-muted-foreground">No JSON editing or terminal rendering required. Review the translated scenes, preview the rough cut, then use a voice you are authorized to synthesize. All outputs are unverified drafts.</p>
       <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={!!working||state.state==="rendering"}
+          onClick={()=>void showActual()}><Play className="mr-2 size-4"/>
+          {working==="real-preview"?"Preparing real scene…":"Preview actual rendered scenes"}
+        </Button>
         <Button size="sm" variant="outline" disabled={!!working||state.state==="rendering"} onClick={()=>void prepare()}>
           <WandSparkles className="mr-2 size-4"/> Review renderable scenes
         </Button>
@@ -113,6 +131,10 @@ export function ProductionPanel({dossier,bundle}:{dossier:Dossier;bundle:Bundle}
           Open rough cut
         </a>}
       </div>
+      {actualPreview&&<div className="space-y-2 rounded-control border border-border p-3">
+        <LiveRendererPreview key={actualPreview.renderPlanSha256+":"+selectedShotId}
+          preview={actualPreview} selectedShotId={selectedShotId} onSelectShot={onSelectShot}/>
+      </div>}
       {preview&&<>
         <div className="rounded-control border border-border bg-surface-subtle p-3">
           <p className="mb-3 text-xs font-semibold text-muted-foreground">Renderable storyboard · {preview.job.beats.length} scenes</p>
@@ -196,7 +218,7 @@ export function ProductionPanel({dossier,bundle}:{dossier:Dossier;bundle:Bundle}
         </div>}
       </>}
       {notice&&<p role="status" className="rounded-control border border-border px-3 py-2 text-xs text-muted-foreground">{notice}</p>}
-      <p className="text-xs text-muted-foreground">The current export uses general Kumiki diagrams, not every planned custom animation. It never publishes videos, installs models, or certifies sources/rights. The initial render may be slow; compatible subsequent edits reuse verified narration and video chunks.</p>
+      <p className="text-xs text-muted-foreground">The actual visual preview uses the same scene component as MP4 capture, but has no voice audio and estimates scene durations. The current export uses general Kumiki diagrams, not every planned custom animation. It never publishes videos, installs models, or certifies sources/rights. The initial render may be slow; compatible subsequent edits reuse verified narration and video chunks.</p>
     </div>
   </Surface>;
 }
