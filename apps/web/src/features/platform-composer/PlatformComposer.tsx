@@ -6,7 +6,7 @@ import type { FeatureSlotProps } from "@/features/registry";
 import { createDeliveryLayout, PLATFORMS, type DeliveryInput, type DeliveryLayout } from "./model";
 
 const field="w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-const labels:{[id:string]:string}={
+const PLATFORM_LABELS:{[id:string]:string}={
   youtube:"YouTube · 16:9", "youtube-shorts":"YouTube Shorts · 9:16",
   "instagram-reels":"Instagram Reels · 9:16", tiktok:"TikTok · 9:16",
   "instagram-feed":"Instagram Feed · 4:5","social-square":"Square · 1:1",
@@ -21,7 +21,7 @@ function PlatformFrame({layout,guides}:{layout:DeliveryLayout;guides:boolean}){
     style={{aspectRatio:layout.width+"/"+layout.height,containerType:"inline-size"}}>
     <div className="absolute inset-0 bg-[radial-gradient(circle_at_85%_25%,rgba(70,196,182,.20),transparent_58%)]"/>
     <div className="absolute left-[5%] top-[3%] font-mono text-[9px] tracking-wider text-white/60">
-      {labels[layout.preset]} · AUTHOR PREVIEW
+      {PLATFORM_LABELS[layout.preset]} · AUTHOR PREVIEW
     </div>
     <div style={rectStyle(layout.placements[0].rect)}
       className="flex items-center overflow-hidden font-bold leading-tight text-white"
@@ -89,7 +89,7 @@ export function PlatformComposer({locale,onPreviewChange}:FeatureSlotProps){
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">Platform
           <select className={field} value={preset} onChange={e=>setPreset(e.target.value as DeliveryInput["preset"])}>
-            {PLATFORMS.map(item=><option key={item} value={item}>{labels[item]}</option>)}
+            {PLATFORMS.map(item=><option key={item} value={item}>{PLATFORM_LABELS[item]}</option>)}
           </select>
         </label>
         <p className="text-xs text-muted-foreground">A new composition is measured for this canvas. Cropping an existing 16:9 frame is not used.</p>
