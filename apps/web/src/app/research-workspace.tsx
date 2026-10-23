@@ -35,6 +35,8 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   const ja = locale === "ja";
   const tr = (en: string, jp: string) => ja ? jp : en;
   const [topic, setTopic] = useState(projectTopic);
+  const [evidenceQuery, setEvidenceQuery] = useState("");
+  const [showInspiration, setShowInspiration] = useState(false);
   const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
   const [audience, setAudience] = useState("");
   const [viewerQuestion, setViewerQuestion] = useState("");
@@ -154,38 +156,63 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   return (
     <section
       id="workspace"
-      aria-label={translate(locale, "navEvidence")}
+      aria-label={tr("Research workspace", "リサーチワークスペース")}
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
       <Tabs
         defaultActiveIndex={0}
-        label={translate(locale, "navEvidence")}
+        label={tr("Research sections", "リサーチのセクション")}
         className="flex min-h-0 flex-1 flex-col px-4 pb-4"
       >
-        <Tabs.List className="mt-3 shrink-0" aria-label={translate(locale, "navLabel")}>
+        <Tabs.List className="mt-3 shrink-0" aria-label={tr("Research sections", "リサーチのセクション")}>
           <Tabs.Tab value={0} className="h-11">
-            {translate(locale, "navEvidence")}
+            {tr("Research", "リサーチ")}
           </Tabs.Tab>
           <Tabs.Tab value={1} className="h-11">
-            {translate(locale, "navPackaging")}
+            {tr("Evidence Library", "根拠ライブラリ")}
           </Tabs.Tab>
           <Tabs.Tab value={2} className="h-11">
+            {translate(locale, "navPackaging")}
+          </Tabs.Tab>
+          <Tabs.Tab value={3} className="h-11">
             {locale === "ja" ? "YouTube 市場" : "YouTube Intelligence"}
           </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value={0} keepMounted className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
-          <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 pb-6">
-            <EvidencePanel locale={locale} query={topic} onQueryChange={changeTopic} />
-            {!topic.trim() && <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-              {tr("No project topic yet. Try a research example:", "まだトピックがありません。例を試す:")}
-              <Button size="sm" variant="outline" onClick={()=>changeTopic("heat pump vs gas furnace costs")}>
-                {tr("Heat pump vs. gas furnace", "ヒートポンプ vs ガス炉")}
-              </Button>
-            </div>}
-            <RelatedYoutubePanel locale={locale} topic={topic} selectedUrls={selectedUrls} onSelectUrls={setSelectedUrls}/>
-            <Surface variant="solid" className="gap-3">
-              <h3 className="text-base font-semibold">{tr("Research & create an original explainer", "調査して解説動画を作成")}</h3>
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 pb-8">
+            <header className="rounded-surface border border-border bg-surface-subtle px-5 py-6 sm:px-8 sm:py-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {tr("STUDIO / RESEARCH", "スタジオ / リサーチ")}
+              </p>
+              <h2 className="mt-3 max-w-3xl font-serif text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                {tr("Start with a question worth answering.", "答える価値のある問いから始めましょう。")}
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                {tr("Capture public sources, review what they actually support, and turn the research into an editable visual story.",
+                  "公開情報を集め、出典が裏付ける内容を確認し、編集できる映像ストーリーにまとめます。")}
+              </p>
+              <label htmlFor="research-topic" className="mt-6 block text-sm font-semibold text-foreground">
+                {tr("Research topic", "リサーチするトピック")}
+              </label>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input id="research-topic" value={topic} maxLength={160} onChange={e=>changeTopic(e.target.value)}
+                  placeholder={tr("e.g. Why heat pumps cost more upfront", "例：ヒートポンプの初期費用が高い理由")}
+                  className="min-w-0 flex-1 rounded-control border border-input bg-surface px-4 py-3 text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring" />
+                {!topic.trim() && <Button size="md" variant="outline" onClick={()=>changeTopic("heat pump vs gas furnace costs")}>
+                  {tr("Try an example", "例を入力")}
+                </Button>}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {tr("Research drafts stay separate from the saved Evidence Library until an indexing workflow is added.",
+                  "調査の下書きは、索引機能が追加されるまで根拠ライブラリとは別に保存されます。")}
+              </p>
+            </header>
+            <Surface variant="solid" className="gap-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                {tr("01 / STORY BRIEF", "01 / 構成の概要")}
+              </p>
+              <h3 className="text-lg font-semibold">{tr("Shape the explanation", "解説の構成を整える")}</h3>
               <p className="text-sm text-muted-foreground">{tr(
                 "One click captures public sources, checks exact quotes and drafts explanatory shots with your local model. You review the evidence before saving a video project; YouTube links remain inspiration, not evidence.",
                 "公開情報を取得し、引用を照合してローカルモデルで解説ショット案を作ります。保存前に根拠を確認できます。YouTube リンクは参考用で、事実の証拠ではありません。"
@@ -271,14 +298,29 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
               <p className="text-xs text-muted-foreground">{tr("No video/audio is rendered yet. Independent factual research and approval are still required before publishing.",
                 "映像・音声の生成はまだ行いません。公開前に独立した事実確認と承認が必要です。")}</p>
             </Surface>
+            <details className="rounded-surface border border-border bg-surface" onToggle={event=>setShowInspiration(event.currentTarget.open)}>
+              <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-6">
+                {tr("YouTube inspiration (optional)", "YouTube の参考動画（任意）")}
+                <span className="ms-2 text-xs font-normal text-muted-foreground">{tr("Find related videos without treating them as verified facts", "関連動画を探す（事実の証拠には含めません）")}</span>
+              </summary>
+              <div className="border-t border-border px-4 py-4">
+                {showInspiration && <RelatedYoutubePanel locale={locale} topic={topic} selectedUrls={selectedUrls} onSelectUrls={setSelectedUrls}/>}
+              </div>
+            </details>
           </div>
         </Tabs.Panel>
 
         <Tabs.Panel value={1} keepMounted className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
+          <div className="mx-auto w-full max-w-5xl pb-8">
+            <EvidencePanel locale={locale} query={evidenceQuery} onQueryChange={setEvidenceQuery} />
+          </div>
+        </Tabs.Panel>
+
+        <Tabs.Panel value={2} keepMounted className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
           <PackagingPanel locale={locale} />
         </Tabs.Panel>
 
-        <Tabs.Panel value={2} className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
+        <Tabs.Panel value={3} className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
           <YoutubeIntelligencePanel locale={locale} onUseVideo={onUseVideo} onCreateStoryboard={onCreateStoryboard}/>
         </Tabs.Panel>
       </Tabs>
