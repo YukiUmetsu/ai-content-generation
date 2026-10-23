@@ -880,6 +880,9 @@ existing validated ContentGen production jobs, preserving unchanged media safely
 ### Video Director: edit, preview, and render in Studio
 
 From `apps/web`, launch `pnpm dev`, then open **Video Director** in the main Studio.
+Click **Try sample project** to inspect the editor and renderable storyboard without
+SearXNG, external network, or a local research model. The sample is synthetic;
+real media rendering still needs an authorized TTS provider and local Chrome/FFmpeg.
 Start by typing a topic, a viewer question and your target audience. Choose
 a language, explicitly approve public web research, then click **Research this topic**.
 ContentGen uses the local SearXNG service and your configured local LLM to
