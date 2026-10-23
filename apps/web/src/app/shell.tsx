@@ -12,6 +12,8 @@ import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
+import { createEditorialProject } from "./editorial-project";
+import type { EditorialDraft } from "./editorial-brief";
 
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -23,6 +25,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function Shell() {
   const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("create");
+  const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
   const [catalogError, setCatalogError] = useState<string | null>(initialCatalog.warning);
@@ -51,8 +54,20 @@ export function Shell() {
     if (saved) setActiveSection("content");
     return saved;
   }, [catalog, saveCatalog]);
+  const startEditorialStoryboard = useCallback((draft: EditorialDraft): boolean => {
+    try {
+      const next = createEditorialProject(catalog, draft, locale);
+      setCatalog(next);
+      setCatalogError(null);
+      setActiveFeatureId("storyboard-planner");
+      setActiveSection("create");
+      return true;
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : "Video project could not be saved.");
+      return false;
+    }
+  }, [catalog, locale]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [toolGuideOpen, setToolGuideOpen] = useState(true);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
@@ -139,7 +154,7 @@ export function Shell() {
           ) : activeSection === "video-director" ? (
             <VideoDirectorWorkspace locale={locale}/>
           ) : activeSection === "research" ? (
-            <ResearchWorkspace locale={locale} onUseVideo={saveVideoIdea} />
+            <ResearchWorkspace locale={locale} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}/>
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} />
           ) : (

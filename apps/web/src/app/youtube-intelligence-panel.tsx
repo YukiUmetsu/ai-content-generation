@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, Plus, RefreshCw, Trash2, Video } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Clapperboard, ExternalLink, Plus, RefreshCw, Sparkles, Trash2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
@@ -8,6 +8,10 @@ import {
   loadMarketVideos, loadMarketWatchlists, requestMarketCollection, updateMarketWatchlist,
   type MarketStatus, type MarketVideo, type MarketWatchlist,
 } from "@/lib/api/market";
+import {
+  loadEditorialDraft, persistEditorialDraft, starterApproaches, validateEditorialDraft,
+  type EditorialApproach, type EditorialDraft,
+} from "./editorial-brief";
 
 const input = "min-w-0 w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const label = "flex min-w-0 flex-col gap-1.5 text-xs font-semibold text-muted-foreground";
@@ -25,9 +29,10 @@ const formatViews = (count: number | null, locale: Locale) =>
 interface Props {
   locale: Locale;
   onUseVideo: (idea: {title: string; sourceUrl: string}) => boolean;
+  onCreateStoryboard?: (draft: EditorialDraft) => boolean;
 }
 
-export function YoutubeIntelligencePanel({locale, onUseVideo}: Props) {
+export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard}: Props) {
   const ja = locale === "ja";
   const tr = (english: string, japanese: string) => ja ? japanese : english;
   const [status, setStatus] = useState<MarketStatus | null>(null);
@@ -44,6 +49,9 @@ export function YoutubeIntelligencePanel({locale, onUseVideo}: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [creative, setCreative] = useState<{watchlistId:string; draft:EditorialDraft} | null>(null);
+  const [creativeError, setCreativeError] = useState("");
+  const [creativeBusy, setCreativeBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     const [nextStatus, nextWatchlists] = await Promise.all([loadMarketStatus(), loadMarketWatchlists()]);
@@ -70,6 +78,54 @@ export function YoutubeIntelligencePanel({locale, onUseVideo}: Props) {
   const editName = editDraft?.watchlistId === selectedId ? editDraft.name : selected?.name ?? "";
   const editQuery = editDraft?.watchlistId === selectedId ? editDraft.query : selected?.query ?? "";
   const videos = videoResult?.watchlistId === selectedId ? videoResult.rows : [];
+  const loadedDraft = useMemo(() => {
+    const watch = watchlists.find(x => x.id === selectedId);
+    return watch ? loadEditorialDraft(watch.id, watch.query) : null;
+  }, [selectedId, watchlists]);
+  const draft = creative?.watchlistId === selectedId ? creative.draft : loadedDraft?.draft ?? null;
+  const selectedApproach = draft?.approaches.find(x=>x.id===draft.selectedId);
+
+  function editCreativeDraft(update: (current: EditorialDraft) => EditorialDraft) {
+    if (!draft) return;
+    const next = update(draft);
+    setCreative({watchlistId:selectedId,draft:next});
+    try { persistEditorialDraft(selectedId, next); setCreativeError(""); }
+    catch (err) { setCreativeError(messageOf(err) + " Complete the form to save the draft."); }
+  }
+
+  function startPatterns() {
+    if (!draft) return;
+    try { editCreativeDraft(current=>({...current,approaches:starterApproaches(current.input),selectedId:"direct"})); }
+    catch (err) { setCreativeError(messageOf(err)); }
+  }
+
+  async function generateLocalPatterns() {
+    if (!draft) return;
+    setCreativeBusy(true);setCreativeError("");
+    try {
+      // Whitelist the author's own text. No MarketVideo title, views, channel or URL is sent.
+      const {topic,audience,viewerQuestion,payoff,reviewNotes} = draft.input;
+      const res = await fetch("/api/contentgen-director/brief-variants", {
+        method:"POST",headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
+        body:JSON.stringify({topic,audience,viewerQuestion,payoff,reviewNotes}),
+        signal:AbortSignal.timeout(200_000),
+      });
+      const body = await res.json() as {approaches?:EditorialApproach[];error?:string};
+      if (!res.ok) throw Error(body.error ?? "Local model could not create approaches.");
+      const next=validateEditorialDraft({...draft,approaches:body.approaches});
+      editCreativeDraft(()=>next);
+      setMessage(tr("Three local-model concepts are ready to edit. They are unverified ideas.","ローカルモデルが3案を作成しました。内容は未検証です。"));
+    } catch (err) { setCreativeError(messageOf(err)); }
+    finally { setCreativeBusy(false); }
+  }
+
+  function openStoryboard() {
+    if (!draft || !onCreateStoryboard) return;
+    try {
+      const valid = validateEditorialDraft(draft);
+      if (!onCreateStoryboard(valid)) setCreativeError(tr("Could not save the new local video project.", "動画プロジェクトを保存できませんでした。"));
+    } catch (err) { setCreativeError(messageOf(err)); }
+  }
 
   useEffect(() => {
     if (!selectedId) return;
@@ -226,6 +282,77 @@ export function YoutubeIntelligencePanel({locale, onUseVideo}: Props) {
           </div>
         </Surface>
 
+        {selected && draft && <Surface header={<div>
+          <h3 className="font-semibold">{tr("Turn this niche into an original video", "ニッチから独自の動画を作る")}</h3>
+          <p className={note+" mt-1"}>{tr("Your own topic and audience drive the story. Public YouTube observations remain read-only references, never performance predictions or verified evidence.",
+            "独自のテーマと視聴者を基に構成します。YouTubeの公開データは参考情報であり、予測や検証済みの証拠ではありません。")}</p>
+        </div>}>
+          <div className="grid gap-3 md:grid-cols-2">
+            {([[
+              "topic",tr("Original topic", "独自のテーマ"),160],
+              ["audience",tr("Who is this for?", "対象視聴者"),120],
+              ["viewerQuestion",tr("Question to answer", "解決する疑問"),200],
+              ["payoff",tr("What will viewers understand at the end?", "最後に理解すること"),320],
+            ] as const).map(([key,caption,max])=><label key={key} className={label}>{caption}
+              <input className={input} aria-label={caption} maxLength={max} value={draft.input[key]}
+                onChange={e=>editCreativeDraft(x=>({...x,input:{...x.input,[key]:e.target.value}}))}/>
+            </label>)}
+            <label className={label+" md:col-span-2"}>{tr("Factual notes to verify before publishing (optional)","公開前に検証する事実・メモ（任意）")}
+              <textarea className={input} rows={2} maxLength={1800} value={draft.input.reviewNotes}
+                onChange={e=>editCreativeDraft(x=>({...x,input:{...x.input,reviewNotes:e.target.value}}))}/>
+            </label>
+            <label className={label+" md:col-span-2"}>{tr("Selected YouTube inspiration (not factual evidence)", "参考動画（事実の証拠ではありません）")}
+              <input className={input} maxLength={300} placeholder="https://www.youtube.com/watch?v=..." value={draft.input.inspirationUrl}
+                onChange={e=>editCreativeDraft(x=>({...x,input:{...x.input,inspirationUrl:e.target.value}}))}/>
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button variant="outline" disabled={creativeBusy} onClick={startPatterns} icon={<Sparkles className="size-4"/>}>
+              {tr("Create 3 starter approaches", "3つの構成案を作成")}
+            </Button>
+            <Button variant="outline" disabled={creativeBusy} onClick={()=>void generateLocalPatterns()} icon={<Sparkles className="size-4"/>}>
+              {creativeBusy ? tr("Generating…","作成中…") : tr("Generate with local AI", "ローカルAIで生成")}
+            </Button>
+          </div>
+          <p className={note+" mt-2"}>{tr("Regenerating replaces the three edited approaches. Local AI needs a model configured under Studio Settings. Nothing is sent to a cloud model.",
+            "再生成すると編集済みの3案が置き換わります。ローカルAIの設定が必要です。クラウドモデルへ送信しません。")}</p>
+          {(creativeError || loadedDraft?.warning) && <p role="alert" className="mt-3 rounded-control bg-danger/10 p-3 text-sm text-danger">{creativeError || loadedDraft?.warning}</p>}
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {draft.approaches.map(approach=><label key={approach.id} className={`flex cursor-pointer flex-col gap-1 rounded-surface border p-3 ${draft.selectedId===approach.id ? "border-primary bg-primary/5":"border-border bg-surface-subtle"}`}>
+              <span className="flex items-center gap-2 text-xs font-semibold"><input type="radio" name="selected-editorial-approach" checked={draft.selectedId===approach.id}
+                onChange={()=>editCreativeDraft(x=>({...x,selectedId:approach.id}))}/>{approach.strategy}</span>
+              <span className="mt-1 text-sm font-semibold">{approach.title}</span>
+              <span className={note}>{approach.hook}</span>
+            </label>)}
+          </div>
+          {selectedApproach && <div className="mt-4 rounded-surface border border-border bg-surface-subtle p-4">
+            <p className="text-sm font-semibold">{tr("Edit the selected approach", "選択した構成案を編集")}</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {([[
+                "title",tr("Video title", "動画タイトル"),120],
+                ["hook",tr("Opening narration / hook", "冒頭ナレーション"),420],
+                ["firstVisual",tr("First-frame animation & partial reveal", "冒頭アニメーション"),560],
+                ["onScreenText",tr("Opening on-screen text", "冒頭テキスト"),64],
+                ["thumbnail",tr("Thumbnail concept", "サムネイル構想"),400],
+                ["sfxIntent",tr("Sound-effect intent (optional)", "効果音（任意）"),200],
+                ["payoffConnection",tr("Final answer / payoff narration", "結論・ナレーション"),320],
+              ] as const).map(([key,caption,max])=><label key={key} className={label+(["hook","firstVisual","thumbnail","payoffConnection"].includes(key)?" md:col-span-2":"")}>{caption}
+                {max>200 ? <textarea className={input} rows={2} maxLength={max} value={selectedApproach[key]}
+                  onChange={e=>editCreativeDraft(x=>({...x,approaches:x.approaches.map(a=>a.id===x.selectedId?{...a,[key]:e.target.value}:a)}))}/> :
+                <input className={input} maxLength={max} value={selectedApproach[key]}
+                  onChange={e=>editCreativeDraft(x=>({...x,approaches:x.approaches.map(a=>a.id===x.selectedId?{...a,[key]:e.target.value}:a)}))}/>}
+              </label>)}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button icon={<Clapperboard className="size-4"/>} disabled={!onCreateStoryboard||creativeBusy} onClick={openStoryboard}>
+                {tr("Create video project → Storyboard", "動画プロジェクト → ストーリーボード")}
+              </Button>
+              <p className={note}>{tr("Creates a NEW local project; existing storyboards are untouched. All facts require review. No audio or video is rendered yet.",
+                "新しいローカルプロジェクトを作成します。既存のボードは保持されます。事実は要検証。映像・音声生成はまだ行いません。")}</p>
+            </div>
+          </div>}
+        </Surface>}
+
         <Surface header={<h3 className="font-semibold">{tr("Observed public videos", "観測した公開動画")}</h3>}>
           {videos.length===0 ? <p className="text-sm text-muted-foreground">
             {tr("No fresh observations. Enable this niche and run collection with a configured key.",
@@ -249,6 +376,9 @@ export function YoutubeIntelligencePanel({locale, onUseVideo}: Props) {
                     setWorkingTitle(`What should viewers know about ${selected?.query ?? "this topic"}?`.slice(0,120));
                     setError("");}}>
                   {tr("Use for video", "動画のアイデアに使う")}
+                </Button>
+                <Button size="sm" variant="outline" onClick={()=>editCreativeDraft(x=>({...x,input:{...x.input,inspirationUrl:video.sourceUrl}}))}>
+                  {tr("Reference in brief", "構成案の参考にする")}
                 </Button>
               </div>
             </article>)}

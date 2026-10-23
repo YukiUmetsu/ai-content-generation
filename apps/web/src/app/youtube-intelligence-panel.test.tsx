@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { YoutubeIntelligencePanel } from "./youtube-intelligence-panel";
+import type { EditorialDraft } from "./editorial-brief";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -65,5 +66,36 @@ describe("YouTube Intelligence", () => {
       title:"Does a Heat Pump Save Money in Oklahoma?",
       sourceUrl:"https://www.youtube.com/watch?v=abcABC12345"
     });
+  });
+
+  it("turns a niche into an editable original brief and passes the selected pattern to Storyboard", async () => {
+    fakeApi(true);
+    const onCreateStoryboard = vi.fn((draft: EditorialDraft) => draft.version === 1);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)} onCreateStoryboard={onCreateStoryboard}/>);
+    const audience = await screen.findByRole("textbox",{name:"Who is this for?"});
+    await user.clear(audience);
+    await user.type(audience,"Homeowners comparing heating systems");
+    await user.click(screen.getByText("Decision comparison", {selector:"span"}));
+    const narration = screen.getByRole("textbox",{name:"Opening narration / hook"});
+    await user.clear(narration);
+    await user.type(narration,"Before replacing a furnace, what needs comparing?");
+    await user.click(screen.getByRole("button",{name:/Create video project.*Storyboard/i}));
+    expect(onCreateStoryboard).toHaveBeenCalledTimes(1);
+    const draft = onCreateStoryboard.mock.calls[0][0];
+    expect(draft.selectedId).toBe("comparison");
+    expect(draft.input.audience).toBe("Homeowners comparing heating systems");
+    expect(draft.approaches[2].hook).toBe("Before replacing a furnace, what needs comparing?");
+    expect(JSON.stringify(draft)).not.toContain("1200");
+  });
+
+  it("keeps observed video links as inspiration only rather than factual evidence", async () => {
+    fakeApi(true);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)}/>);
+    await user.click(await screen.findByRole("button",{name:/reference in brief/i}));
+    expect(screen.getByRole("textbox",{name:/selected youtube inspiration/i})).toHaveValue("https://www.youtube.com/watch?v=abcABC12345");
+    expect(screen.getByRole("textbox",{name:"Original topic"})).toHaveValue("heat pump cost");
+    expect(JSON.stringify(localStorage)).not.toContain("Heating systems compared");
   });
 });

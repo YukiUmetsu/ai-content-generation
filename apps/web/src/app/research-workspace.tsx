@@ -4,13 +4,15 @@ import { PackagingPanel } from "@/app/packaging-panel";
 import { YoutubeIntelligencePanel } from "@/app/youtube-intelligence-panel";
 import { translate } from "@/i18n/messages";
 import type { Locale } from "@/features/registry";
+import type { EditorialDraft } from "./editorial-brief";
 
 interface ResearchWorkspaceProps {
   locale: Locale;
   onUseVideo: (idea: {title: string; sourceUrl: string}) => boolean;
+  onCreateStoryboard?: (draft: EditorialDraft) => boolean;
 }
 
-export function ResearchWorkspace({ locale, onUseVideo }: ResearchWorkspaceProps) {
+export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard }: ResearchWorkspaceProps) {
   return (
     <section
       id="workspace"
@@ -43,7 +45,7 @@ export function ResearchWorkspace({ locale, onUseVideo }: ResearchWorkspaceProps
         </Tabs.Panel>
 
         <Tabs.Panel value={2} className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
-          <YoutubeIntelligencePanel locale={locale} onUseVideo={onUseVideo} />
+          <YoutubeIntelligencePanel locale={locale} onUseVideo={onUseVideo} onCreateStoryboard={onCreateStoryboard}/>
         </Tabs.Panel>
       </Tabs>
     </section>

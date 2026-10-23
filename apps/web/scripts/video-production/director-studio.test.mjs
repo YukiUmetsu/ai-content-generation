@@ -66,3 +66,25 @@ test("only explicit edited fields pass to the revision engine",async()=>{
   }});
   assert.equal(p.result().status,200);assert.equal(p.result().data.reviewRequired,true);
 });
+test("original brief alternatives require explicit local action and exclude YouTube API metadata",async()=>{
+  const authored={topic:"new windows",audience:"homeowners",viewerQuestion:"Will a replacement pay back?",
+    payoff:"Compare lifetime costs",reviewNotes:"Verify regional estimates"};
+  const p=request("POST","/brief-variants",authored);
+  let called=0;
+  await handleDirectorRequest(p.req,p.res,{
+    model:async()=>({model:"installed-local"}),
+    editorial:async(payload,{modelSettings})=>{
+      called++;
+      assert.deepEqual(payload,authored);
+      assert.equal(modelSettings.model,"installed-local");
+      return [{id:"direct"},{id:"process"},{id:"comparison"}];
+    }
+  });
+  assert.equal(p.result().status,200);
+  assert.equal(p.result().data.editorialStatus,"unverified-draft");
+  assert.equal(called,1);
+  const rejected=request("POST","/brief-variants",authored,{origin:"https://other.site"});
+  await handleDirectorRequest(rejected.req,rejected.res,{editorial:async()=>{called++;}});
+  assert.equal(rejected.result().status,403);
+  assert.equal(called,1);
+});
