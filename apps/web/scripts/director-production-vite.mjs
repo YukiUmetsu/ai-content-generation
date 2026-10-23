@@ -210,7 +210,7 @@ export function createDirectorProduction(deps={}){
       respond(res,404,{error:"Unknown production action."});
     }catch(error){
       if(route==="/check"){checked=null;status={...status,state:"failed",phase:"preflight",
-        message:"Readiness failed. Check Chrome, FFmpeg and pnpm.";busy=false;}}
+        message:"Readiness failed. Check Chrome, FFmpeg and pnpm."};busy=false;}
       respond(res,422,{error:String(error?.message||"Production request failed").slice(0,280)});
     }
   }
