@@ -25,7 +25,8 @@
     "research:up": "node scripts/video-production/searxng-docker.mjs up",
     "research:down": "node scripts/video-production/searxng-docker.mjs down",
     "research:status": "node scripts/video-production/searxng-docker.mjs status",
-    "research:check": "node scripts/video-production/searxng-docker.mjs check"
+    "research:check": "node scripts/video-production/searxng-docker.mjs check",
+    "video:animatic": "node scripts/video-production/animatic-cli.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
