@@ -90,3 +90,52 @@ describe("generic deterministic explainer scene", () => {
     expect(rendered).not.toContain('data-general-node=');
   });
 });
+
+
+describe("cinematic semantic visual treatments on the actual exported frame",()=>{
+  function asIntent(intent:"general-intro"|"general-flow"|"general-comparison"|"general-breakdown"|"general-payoff",
+    items:string[], frame:number){
+    const altered:GeneralVisualPlan={...plan,
+      chapters:plan.chapters.map((chapter,index)=>index===1?{
+        ...chapter,intent,visual:{...chapter.visual,items,headline:"SCENE VISUALIZATION"}
+      }:chapter)
+    };
+    return renderToStaticMarkup(<GeneralExportScene plan={altered} frame={frame}/>);
+  }
+  it("uses a dedicated moving curiosity lens rather than the same card stack as the breakdown",()=>{
+    const early=asIntent("general-intro",["House","Taxes","Insurance","Maintenance"],61);
+    const later=asIntent("general-intro",["House","Taxes","Insurance","Maintenance"],115);
+    expect(early).toContain('data-semantic-scene="question-lens"');
+    expect(early).toContain('data-semantic-node="0"');
+    expect(early).not.toContain("Maintenance");
+    expect(later).toContain("Maintenance");
+    expect(early).not.toEqual(later);
+  });
+  it("turns comparison into a progressing contrast with visible qualitative disclosure",()=>{
+    const first=asIntent("general-comparison",["Rent","Buy","Repair"],61);
+    const later=asIntent("general-comparison",["Rent","Buy","Repair"],110);
+    expect(first).toContain('data-semantic-layout="contrast"');
+    expect(first).toContain("QUALITATIVE COMPARISON");
+    expect(first).not.toContain("Repair");
+    expect(later).toContain("Repair");
+    expect(later).toContain('data-semantic-focus="true"');
+  });
+  it("reveals breakdown parts with no fabricated values or unequal quantitative bar geometry",()=>{
+    const late=asIntent("general-breakdown",["Labor","Equipment","Permits","Materials"],119);
+    expect(late).toContain('data-semantic-layout="decomposition"');
+    expect(late).toContain("QUALITATIVE · NOT TO SCALE");
+    expect(late.match(/data-semantic-node=/g)).toHaveLength(4);
+    expect(late.match(/width="680" height="94"/g)).toHaveLength(4);
+    expect(late).not.toContain("50%");
+  });
+  it("uses a locked payoff until its exact event and later assembles the final connection",()=>{
+    const exact=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={120}/>);
+    const late=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={165}/>);
+    expect(exact).toContain('data-payoff-locked="true"');
+    expect(exact).not.toContain("DELIVERED, NOT MAGIC");
+    expect(exact).not.toContain('data-semantic-conclusion=""');
+    expect(late).toContain('data-semantic-scene="synthesis"');
+    expect(late).toContain('data-semantic-conclusion=""');
+    expect(late).toContain("DELIVERED, NOT MAGIC");
+  });
+});
