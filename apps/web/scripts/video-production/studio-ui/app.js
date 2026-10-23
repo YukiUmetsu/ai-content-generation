@@ -195,7 +195,7 @@ function makeManualCard() {
   const article = document.createElement("article");
   article.className = "manual-scene";
   // This template contains no user-supplied HTML; all authored values use native form controls.
-  article.innerHTML = `<div class="manual-scene-header"><strong class="manual-scene-number"></strong><button type="button" class="manual-remove-button button button-secondary">Remove</button></div>
+  article.innerHTML = `<div class="manual-scene-header"><strong class="manual-scene-number"></strong><div class="manual-scene-tools"><button type="button" class="manual-up-button button button-secondary" aria-label="Move scene earlier">↑</button><button type="button" class="manual-down-button button button-secondary" aria-label="Move scene later">↓</button><button type="button" class="manual-duplicate-button button button-secondary">Duplicate</button><button type="button" class="manual-remove-button button button-secondary">Remove</button></div></div>
     <div class="field-group"><label>Headline <input class="manual-headline" maxlength="68" placeholder="A clear on-screen idea" required></label></div>
     <div class="field-group"><label>Narration <textarea class="manual-narration" rows="3" maxlength="1600" placeholder="What the narrator says in this scene (at least 20 characters)" required></textarea></label></div>
     <div class="field-group"><label>Supporting copy <input class="manual-subhead" maxlength="115" placeholder="Optional one-line explanation"></label></div>
@@ -208,7 +208,47 @@ function makeManualCard() {
     topicDirty = true;
     invalidate();
   });
+  for (const [selector, delta] of [[".manual-up-button", -1], [".manual-down-button", 1]]) {
+    article.querySelector(selector).addEventListener("click", () => {
+      const cards = [...manualScenes.children], index = cards.indexOf(article), target = index + delta;
+      if (index <= 0 || index >= cards.length - 1 || target <= 0 || target >= cards.length - 1) return;
+      if (delta < 0) manualScenes.insertBefore(article, cards[target]);
+      else manualScenes.insertBefore(cards[target], article);
+      refreshManualCardRoles(); markManualDirty();
+      article.querySelector(".manual-headline").focus();
+    });
+  }
+  article.querySelector(".manual-duplicate-button").addEventListener("click", () => {
+    const cards = [...manualScenes.children], index = cards.indexOf(article);
+    if (index <= 0 || index >= cards.length - 1 || cards.length >= 40) return;
+    const copy = makeManualCard();
+    assignManualCard(copy, readManualCard(article));
+    manualScenes.insertBefore(copy, article.nextSibling);
+    refreshManualCardRoles(); markManualDirty();
+    copy.querySelector(".manual-headline").focus();
+  });
   return article;
+}
+function markManualDirty() {
+  topicDirty = true;
+  preflightReady = false;
+  invalidate();
+}
+function readManualCard(card) {
+  return {
+    headline: card.querySelector(".manual-headline").value.trim(),
+    narration: card.querySelector(".manual-narration").value.trim(),
+    subhead: card.querySelector(".manual-subhead").value.trim(),
+    intent: card.querySelector(".manual-intent").value,
+    items: card.querySelector(".manual-items").value.split(/\r?\n/u).map(x => x.trim()).filter(Boolean),
+  };
+}
+function assignManualCard(card, scene) {
+  card.querySelector(".manual-headline").value = scene.headline;
+  card.querySelector(".manual-narration").value = scene.narration;
+  card.querySelector(".manual-subhead").value = scene.subhead || "";
+  card.querySelector(".manual-intent").value = scene.intent || "general-flow";
+  card.querySelector(".manual-items").value = scene.items.join("\n");
 }
 function refreshManualCardRoles() {
   const cards = [...manualScenes.children];
@@ -216,7 +256,12 @@ function refreshManualCardRoles() {
     const first = index === 0, last = index === cards.length - 1;
     card.querySelector(".manual-scene-number").textContent = `Scene ${index + 1} · ${first ? "Opening hook" : last ? "Final answer" : "Explanation"}`;
     card.querySelector(".manual-intent").disabled = first || last;
-    card.querySelector(".manual-remove-button").hidden = first || last;
+    for (const selector of [".manual-up-button",".manual-down-button",".manual-duplicate-button",".manual-remove-button"]) {
+      card.querySelector(selector).hidden = first || last;
+    }
+    card.querySelector(".manual-up-button").disabled = index <= 1;
+    card.querySelector(".manual-down-button").disabled = index >= cards.length - 2;
+    card.querySelector(".manual-duplicate-button").disabled = cards.length >= 40;
   }
 }
 function addManualScene() {
@@ -231,13 +276,7 @@ function addManualScene() {
 }
 function manualInput() {
   const cards = [...manualScenes.querySelectorAll(".manual-scene")];
-  const scenes = cards.map((card) => ({
-    headline: card.querySelector(".manual-headline").value.trim(),
-    narration: card.querySelector(".manual-narration").value.trim(),
-    subhead: card.querySelector(".manual-subhead").value.trim(),
-    intent: card.querySelector(".manual-intent").value,
-    items: card.querySelector(".manual-items").value.split(/\r?\n/u).map(x => x.trim()).filter(Boolean),
-  }));
+  const scenes = cards.map(readManualCard);
   return {
     title: $("manual-title").value.trim(), viewerQuestion: $("manual-question").value.trim(),
     audience: $("manual-audience").value.trim(), locale: $("manual-locale").value,
