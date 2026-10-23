@@ -3,6 +3,7 @@ import { PROMPT_DEFAULTS, readPromptOverrides, savePromptOverrides } from "./vid
 import { readResearchModelSettings } from "./video-production/research-model-settings.mjs";
 import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
+import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
 
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
@@ -44,6 +45,11 @@ export async function handleDirectorRequest(req,res,deps={}){
         dossier:request.dossier,bundle:request.bundle,shotId:request.shotId
       },{modelSettings:settings});
       send(res,200,result);
+    }else if(req.method==="POST"&&route==="/brief-variants"){
+      const request=await readBody(req);
+      const settings=await (deps.model??readResearchModelSettings)();
+      const approaches=await (deps.editorial??generateEditorialVariants)(request,{modelSettings:settings});
+      send(res,200,{approaches,editorialStatus:"unverified-draft"});
     }else if(req.method==="POST"&&route==="/edit"){
       const request=await readBody(req);
       const result=(deps.edit??editPreproductionShot)(request.dossier,request.bundle,
