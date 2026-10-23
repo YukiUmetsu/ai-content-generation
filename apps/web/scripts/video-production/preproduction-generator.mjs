@@ -1,6 +1,7 @@
 /** Optional, opt-in local model generates editorial plans from already captured research. */
 import { parseResearchDossier, parsePreproductionPlan } from "./preproduction.mjs";
 import { localChatEndpoint } from "./topic-generator.mjs";
+import { resolveStagePrompt } from "./prompt-profiles.mjs";
 
 const vocab = {
   storyPattern: "investigation, misconception, mechanism, cost-dissection, decision, failure, scale",
@@ -74,7 +75,7 @@ export async function generatePreproductionPlan(dossier, options, {transport=fet
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({model:options.model,temperature:0.4,stream:false,
       response_format:{type:"json_object"},
-      messages:[{role:"system",content:SYSTEM},{role:"user",content:JSON.stringify({dossier})}]})
+      messages:[{role:"system",content:resolveStagePrompt("story",SYSTEM)},{role:"user",content:JSON.stringify({dossier})}]})
   });
   let result;
   try{result=JSON.parse(JSON.parse(await readBounded(response)).choices[0].message.content);}
