@@ -8,6 +8,7 @@ export default function StoryboardPlannerSlot(props: FeatureSlotProps) {
   return (
     <StoryboardPlanner
       locale={props.locale}
+      projectId={props.projectId}
       className={props.className}
       onPreviewChange={props.onPreviewChange}
     />
