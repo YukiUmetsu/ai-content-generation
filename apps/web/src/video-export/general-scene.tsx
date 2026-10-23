@@ -21,16 +21,21 @@ const accent = "#D9AF7C";
 const turquoise = "#81C4BF";
 const palette = [turquoise, accent, "#A89CD5", "#B4D99B", "#D98D9C"];
 
-function Node({ x, y, width, height, label, index, highlight = false }: { x: number; y: number; width: number; height: number; label: string; index: number; highlight?: boolean }) {
+function Node({ x, y, width, height, label, note, index, highlight = false }: { x: number; y: number; width: number; height: number; label: string; note?: string; index: number; highlight?: boolean }) {
   const text = fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
+  const detail = note?fitSvgText(note,{maxWidthPx:width-54,preferredSize:height<115?17:21,minSize:14,maxLines:height<115?1:2}):null;
   return <g data-general-node={index}>
     <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
     <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
-    {text.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5} y={y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11} fontSize={text.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
+    {text.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5}
+      y={detail ? y+height*.39-(text.lines.length-1)*13+i*26 : y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11}
+      fontSize={detail?Math.min(text.fontSize,28):text.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
+    {detail?.lines.map((line,i)=><text data-teaching-detail="" key={i} x={x+width/2+5}
+      y={y+height*.68+i*22} fontSize={detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
   </g>;
 }
 
-function Journey({ items, fps, chapterFrames, frame, fallback, visibleCount }: { items: string[]; fps: RationalFps; chapterFrames: number; frame: number; fallback: ReactNode; visibleCount?: number }) {
+function Journey({ items, notes, fps, chapterFrames, frame, fallback, visibleCount }: { items: string[]; notes?: string[]; fps: RationalFps; chapterFrames: number; frame: number; fallback: ReactNode; visibleCount?: number }) {
   const plan = useMemo(() => createGeneralJourney(items, chapterFrames, fps), [items, chapterFrames, fps]);
   if (!plan) return fallback;
   const sample = evaluateProcessJourney(plan, frame);
@@ -61,7 +66,7 @@ function Journey({ items, fps, chapterFrames, frame, fallback, visibleCount }: {
       theme={{ node: "#203743", edge: "#72929F", accent, ink, fontSize: 28, strokeWidth: 3 }}
       renderNode={({ node, bounds, focused }) => <g opacity={focused ? 1 : .8}>
         <Node x={0} y={0} width={bounds.width} height={bounds.height} label={node.label}
-          index={Number(node.id.slice("step-".length))} highlight={focused} />
+          index={Number(node.id.slice("step-".length))} note={notes?.[Number(node.id.slice("step-".length))]} highlight={focused} />
       </g>}
     />
     </g>
@@ -77,7 +82,7 @@ function StaticVerticalDiagram({ state }: { state: GeneralFrame }) {
   const startY = Math.max(240, 540 - (all.length * height + (all.length - 1) * gap) / 2);
   return <g>
     {items.map((label, i) => <g key={`${label}-${i}`}>
-      <Node x={1150} y={startY + i * (height + gap)} width={555} height={height} label={label} index={i} highlight={state.intent === "general-payoff" && i === all.length - 1} />
+      <Node x={1150} y={startY + i * (height + gap)} width={555} height={height} label={label} index={i} note={state.visual.itemNotes?.[i]} highlight={state.intent === "general-payoff" && i === all.length - 1} />
       {i > 0 && <g><path d={`M1427 ${startY + i * (height + gap) - gap + 4} v${gap - 14}`} stroke={accent} strokeWidth="4" strokeLinecap="round"/><path d={`M1418 ${startY + i * (height + gap) - 14} l9 11 9 -11`} fill="none" stroke={accent} strokeWidth="4" strokeLinejoin="round"/></g>}
     </g>)}
   </g>;
@@ -86,7 +91,7 @@ function StaticVerticalDiagram({ state }: { state: GeneralFrame }) {
 function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: RationalFps; chapterFrames: number }) {
   const items = state.visual.items.slice(0, state.visibleItems);
   const all = state.visual.items;
-  if (state.intent === "general-flow") return <Journey items={all} fps={fps} chapterFrames={chapterFrames}
+  if (state.intent === "general-flow") return <Journey items={all} notes={state.visual.itemNotes} fps={fps} chapterFrames={chapterFrames}
     frame={state.localFrame} fallback={<StaticVerticalDiagram state={state} />}
     visibleCount={state.visual.motion?state.visibleItems:undefined} />;
   if (state.intent === "general-comparison" && all.length <= 3) {
@@ -94,7 +99,7 @@ function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: Rati
     const gap = all.length === 3 ? 25 : 40;
     return <g>
       {items.map((label, i) => <g key={`${label}-${i}`}>
-        <Node x={1060 + i * (width + gap)} y={470} width={width} height={165} label={label} index={i} />
+        <Node x={1060 + i * (width + gap)} y={470} width={width} height={165} label={label} note={state.visual.itemNotes?.[i]} index={i} />
         {i > 0 && <text x={1040 + i * (width + gap)} y={560} fill={accent} textAnchor="middle" fontSize="25" fontWeight="700">VS</text>}
       </g>)}
     </g>;
@@ -107,7 +112,7 @@ function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: Rati
     const startY = 540 - (all.length * height + (all.length - 1) * gap) / 2;
     return <g data-general-breakdown="qualitative">
       {items.map((label, i) => <Node key={`${label}-${i}`} x={1077} y={startY + i * (height + gap)}
-        width={680} height={height} label={label} index={i} />)}
+        width={680} height={height} label={label} note={state.visual.itemNotes?.[i]} index={i} />)}
       <text x="1417" y={startY + all.length * height + (all.length - 1) * gap + 44}
         fontSize="20" fill={muted} letterSpacing="2" textAnchor="middle">QUALITATIVE · NOT TO SCALE</text>
     </g>;
