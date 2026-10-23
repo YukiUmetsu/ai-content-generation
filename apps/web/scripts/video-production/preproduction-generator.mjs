@@ -20,7 +20,7 @@ const SYSTEM = [
   "story:{pattern,premise,hook,question,answerExplanationId,acts:[{id,question,purpose,payoff}]}",
   "explanation:[{id,actId,claimIds,before,demonstration,after}]",
   "shots:[{id,explanationId,family,purpose,subjectIds,visualChange,onScreenText,claimIds,assetRefs,visualElements}]",
-  "Each shot MUST include visualElements: 2-5 {label,detail} entries. label max 44 chars; detail max 64 chars; one line each.",
+  "Each shot MUST include visualElements: 2-5 {label,detail} entries. label max 44 chars; detail max 44 chars; one line each.",
   "Visual element labels are concrete audience-readable entities or states, never IDs or placeholders such as House, Categories, Main Idea, Step 1 or How It Changes.",
   "Every detail must say what that visible thing means or changes in this scene; tie it to one of the shot claim IDs, no unsourced numeric examples.",
   "These visualElements are ACTUALLY rendered in the general Kumiki diagram; visualAction prose alone is NOT yet executed by the renderer.",
