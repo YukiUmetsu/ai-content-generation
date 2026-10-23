@@ -42,7 +42,7 @@ function record(value: unknown, fields: readonly string[], location: string): Re
   return input;
 }
 function text(value: unknown, label: string, min: number, max: number): string {
-  if (typeof value !== "string" || value.trim().length < min || value.length > max || /[\u0000-\u0008\u000e-\u001f]/u.test(value)) {
+  if (typeof value !== "string" || value.trim().length < min || value.length > max || Array.from(value).some(char => { const cp = char.codePointAt(0)!; return cp <= 8 || (cp >= 14 && cp <= 31); })) {
     throw new Error(label + " must contain " + min + "–" + max + " characters without control codes.");
   }
   return value.trim();
