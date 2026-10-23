@@ -294,7 +294,7 @@ export function parseVideoProductionJob(input) {
               add("invalid-visual-subjects", path+".subjectIds", "Use 1-5 unique stable subject identifiers.");
             for (const [key, max] of [["visualAction", 650], ["learningChange", 650]]) {
               if (typeof dir[key] !== "string" || !dir[key].trim() || dir[key].length > max ||
-                /[\\u0000-\\u001f]/u.test(dir[key]))
+                /[\u0000-\u001f]/u.test(dir[key]))
                 add("invalid-visual-direction", path+"."+key, "Direction must be meaningful bounded editorial text.");
             }
           }
