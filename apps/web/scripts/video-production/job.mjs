@@ -285,7 +285,7 @@ export function parseVideoProductionJob(input) {
         }
         if(has(beat.visual,"itemNotes")&&(!Array.isArray(beat.visual.itemNotes)||
           beat.visual.itemNotes.length!==beat.visual.items?.length||
-          beat.visual.itemNotes.some(v=>typeof v!=="string"||!v.trim()||v.length>64||/[\r\n\u0000-\u001f<>]/u.test(v))))
+          beat.visual.itemNotes.some(v=>typeof v!=="string"||!v.trim()||v.length>44||/[\r\n\u0000-\u001f<>]/u.test(v))))
           add("invalid-item-notes",`beats[${index}].visual.itemNotes`,"Visible teaching details must match the exact number of scene items.");
         if(has(beat.visual,"sceneRecipe")&&beat.visual.sceneRecipe!=="home-cost-story-v1")
           add("unknown-scene-recipe",`beats[${index}].visual.sceneRecipe`,"Unsupported scene recipe.");
