@@ -105,6 +105,29 @@ export async function produceVideo(candidate, options, deps = {}) {
     return { buildHash };
   }))();
   if (!/^[a-f0-9]{64}$/i.test(preflight?.buildHash ?? "")) fail("built scene must have a SHA-256 export identity");
+  // A prior output is read-only. Validate its published scene fingerprint
+  // before any narration synthesis or new render work takes place.
+  let previous=null;
+  if(options.reuseFrom){
+    const priorDir=resolve(options.reuseFrom);
+    if(priorDir===out||[parse(priorDir).root,homedir(),process.cwd(),"/tmp","/workspace"].includes(priorDir))
+      fail("previous production must be a distinct, narrow job-owned directory");
+    let priorManifest;
+    try{priorManifest=JSON.parse(await readFile(join(priorDir,"release","render-manifest.json"),"utf8"));}
+    catch{fail("previous release lacks a readable render manifest");}
+    if(priorManifest.schemaVersion!==1 || !priorManifest.plan ||
+        priorManifest.planHash!==sha256(JSON.stringify(priorManifest.plan)) ||
+        !/^[a-f0-9]{64}$/i.test(priorManifest.buildHash??""))
+      fail("previous render manifest has invalid or tampered scene provenance");
+    if(priorManifest.buildHash!==preflight.buildHash)
+      fail("previous render uses a different Kumiki build; unsafe to reuse frames");
+    previous={
+      sourcePlan:priorManifest.plan,
+      buildHash:priorManifest.buildHash,
+      segmentsDir:join(priorDir,".render","segments"),
+      cacheRoot:join(priorDir,".cache")
+    };
+  }
   const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
@@ -113,6 +136,8 @@ export async function produceVideo(candidate, options, deps = {}) {
     options.onProgress?.({ phase: "narration", message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
+      reuseCacheRoot:previous?.cacheRoot,
+      onReuse:event=>options.onProgress?.({phase:"speech-reused",...event}),
       allowNetwork: options.allowNetwork, voiceReferenceConsent: options.voiceReferenceConsent,
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
@@ -151,6 +176,9 @@ export async function produceVideo(candidate, options, deps = {}) {
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable, onProgress: options.onProgress,
         maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
+        visualPlan:plan,reuseFrom:previous?{
+          sourcePlan:previous.sourcePlan,buildHash:previous.buildHash,segmentsDir:previous.segmentsDir
+        }:undefined,
       });
     } finally { await stage.close(); stage = null; }
 
