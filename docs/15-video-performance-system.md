@@ -19,6 +19,36 @@ Every downstream artifact pins: channel/brand, evidence IDs and observation date
 - Are brand, font, audio, music, illustrations and source rights resolved?
 - Has a representative full-length production been viewed by a human? Deterministic rules cannot certify aesthetics or predict virality.
 
+## 1a. Visual pedagogy: teach through changing states, not decorated narration
+
+**Shipped preproduction contract:** `preproduction-plan/v1` accepts an optional
+`teachingSequences` array validated by
+`apps/web/scripts/video-production/visual-pedagogy.mjs`. The local-model director
+**must** produce at least one sequence; legacy authored plans remain valid.
+Every sequence is a self-contained learning arc:
+
+`observable problem → [grounded familiar analogy] → visible technical mechanism → qualified payoff`.
+
+This pattern is inspired by effective technical explainers, not a mandatory video
+template. If a direct demonstration teaches more accurately, use `mode: direct`
+and skip the analogy. Never copy another creator's distinctive script or visuals.
+
+- **Problem:** begin with one actual question, obstacle or misconception—not a jargon dictionary or static title card.
+- **Analogy (optional):** map *two or more* familiar parts to specific technical parts; name where the analogy **breaks down**. Its illustrative mechanics cannot introduce unsupported technical claims.
+- **Mechanism:** keep the real subject visually identifiable; animate a causal state change in that subject, not an unrelated infographic behind narration.
+- **Payoff:** show the consequence, evidence boundary and what the viewer now understands. At least one teaching payoff must resolve the video’s central question.
+- **Microdiscoveries:** `learningChange` identifies a different new understanding after every phase, and each `visualAction` must describe a distinct visible transformation. Don't impose artificial cuts per N seconds.
+- **Source integrity:** sequence `claimIds` must come from the original research dossier and appear in its referenced shots; shot-specific claims remain constrained by explanation claims. Human review still decides whether a metaphor and numbers are factually fair.
+
+A teaching phase cites an existing `shotId` and `technicalSubjectId` or
+`analogySubjectId`; the existing Shot Director, Sound Director and Continuity
+Director provide the visual intent, matching narrated performance and transitions.
+The bundle includes `visual-teaching-storyboard/v1`-shaped **intent only**: phase,
+shot, research IDs, visualAction, narration/delivery, subject IDs and incoming
+transition. **Kumiki** remains responsible for compiling those intentions into
+motion, camera and rendered frames. This contract does not claim that the
+viewer learned, that the animation plays, or that a quantitative estimate is true.
+
 ## 2. Demand intelligence, not trend-copying
 
 \`MarketSignalSnapshot\`: \`sourceUrl, provider, topic, observedAt, windowStart/End, audienceMarket, format, sourceType, measured|estimated|unknown, rawValue, sampleDescription, confidence, rightsScope\`.
