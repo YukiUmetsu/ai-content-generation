@@ -20,7 +20,8 @@
     "video:topic": "node scripts/video-production/topic-cli.mjs",
     "video:studio": "node scripts/video-production/studio-server.mjs",
     "test:video:headless": "node --test scripts/video-production/*.test.mjs",
-    "video:plan": "node scripts/video-production/preproduction-cli.mjs"
+    "video:plan": "node scripts/video-production/preproduction-cli.mjs",
+    "video:research": "node scripts/video-production/research-cli.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",
