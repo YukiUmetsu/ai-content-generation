@@ -98,6 +98,45 @@ The independently testable worker modules (`scripts/video-production/{speech,tim
 
 `renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. The speech, mastering, segmented encoding and final MP4 mux each have FFmpeg-backed tests; the orchestration integration test uses an injected provider and browser, so **real visual playback remains unverified**.
 
+### General video authoring in Studio (manual, no text model)
+
+Select **Create your video** in the local Video Test Studio. Type a title, question
+and audience; add or remove narrated scenes (at least 3), select the visual
+treatment for each middle scene, and choose a Kumiki opening/typography recipe.
+The first scene is always an opening and the final scene answers the question.
+Scene headline, spoken narration, supporting copy and 2–5 specific diagram
+labels are authored by the user; ContentGen does **not** invent facts, citations,
+figures, dialogue, or new scene copy to fill gaps. Choose English or Japanese,
+then click **Create editable storyboard**. You can inspect/edit the resulting
+job JSON, run **Check readiness**, and render through the same tested Fish/local
+TTS → browser → FFmpeg → QA worker as other jobs. No local text model needed.
+The local-AI **Your own topic** flow remains available separately.
+
+Kumiki recipe integration pins the dependency-free pure compiler from upstream
+`YukiUmetsu/kumiki-ui` commit
+`f0c227a58227a87004000eb2bb324ea7e298ce8a`
+(`registry/motion/attention-editing-recipes.ts`; blob
+`c3b5aa1a143086629a0ce8892c30a6fbd2149f09`).
+It is copied unchanged to
+`src/video-export/vendor/kumiki-attention-editing-recipes.ts`, **not**
+installed through the full registry closure, which also depends on 3D and
+media-decode adapters the general renderer does not use. Our wrapper compiles
+`compileHookVariant` (action-first, unexpected reveal, transformation) and
+`compileImpactTypography` (snap, overshoot, wipe), and samples those plans at
+absolute frames for the existing 1920 × 1080 scene. These are selected native
+attention **plans and title/diagram treatments**, not all 13 recipe effects or a
+finished viral-video editor. Impact statistics and evidence-focused effects are
+intentionally disabled without source-backed evidence; word-synced captions
+are disabled without real word alignment. Unrelated generic/House Math jobs
+remain unchanged. No fake audio beat detection or virality scores.
+
+This first slice remains landscape (1920 × 1080) only. For real Shorts, the
+production manifest, ShortSafeFrame, portrait diagrams, captions, clip assets
+and browser-export geometry need a **separately composed 1080 × 1920 render**.
+A 9:16 output is not provided by cropping landscape. Review rendered video at
+normal speed before any commercial release. GitHub CI performs only no-FFmpeg
+compilation and test checks; no source/voice commercial rights are inferred.
+
 ## Run and verify
 
 Requirements: Node `>=22.12`, pnpm `11.22` (declared in `package.json`).
