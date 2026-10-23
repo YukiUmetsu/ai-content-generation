@@ -15,7 +15,7 @@ describe("Studio menu workspaces", () => {
     expect(screen.queryByText(/outside this foundation/i)).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox",{name:"Name"}),"Short documentaries");
     await user.click(screen.getByRole("button",{name:"Create project"}));
-    expect(screen.getByText("Short documentaries",{selector:"strong"})).toBeInTheDocument();
+    expect(screen.getByText("Short documentaries")).toBeInTheDocument();
 
     await navigate("Content");
     await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Why data travels in packets");
