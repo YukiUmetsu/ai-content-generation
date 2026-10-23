@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 use rusqlite::Connection;
 
@@ -10,12 +11,14 @@ use crate::db::{self, DbError};
 #[derive(Clone, Debug)]
 pub struct AppState {
     db_path: Arc<PathBuf>,
+    market_semaphore: Arc<Semaphore>,
 }
 
 impl AppState {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             db_path: Arc::new(path.into()),
+            market_semaphore: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -25,5 +28,9 @@ impl AppState {
 
     pub fn connect(&self) -> Result<Connection, DbError> {
         db::open(self.db_path())
+    }
+
+    pub fn market_semaphore(&self) -> Arc<Semaphore> {
+        self.market_semaphore.clone()
     }
 }

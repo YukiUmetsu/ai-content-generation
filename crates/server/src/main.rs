@@ -35,6 +35,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     println!("contentgen-server: listening on http://{bind}");
-    axum::serve(listener, build_router(AppState::new(db_path))).await?;
+    let state = AppState::new(db_path);
+    let collector = contentgen_server::research::market_worker::spawn(state.clone());
+    let result = axum::serve(listener, build_router(state)).await;
+    collector.abort();
+    result?;
     Ok(())
 }

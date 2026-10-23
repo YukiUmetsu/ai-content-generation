@@ -23,6 +23,11 @@ pub enum ApiError {
     NotImplemented { feature: &'static str },
     InvalidDocument { message: String },
     Internal { message: String },
+    NotFound { message: String },
+    Forbidden { message: String },
+    Conflict { message: String },
+    Unavailable { message: String },
+    RateLimited { message: String },
 }
 
 impl ApiError {
@@ -62,6 +67,46 @@ impl IntoResponse for ApiError {
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorBody {
                     code: "internal_error",
+                    message,
+                    feature: None,
+                },
+            ),
+            Self::NotFound { message } => (
+                StatusCode::NOT_FOUND,
+                ErrorBody {
+                    code: "not_found",
+                    message,
+                    feature: None,
+                },
+            ),
+            Self::Forbidden { message } => (
+                StatusCode::FORBIDDEN,
+                ErrorBody {
+                    code: "forbidden",
+                    message,
+                    feature: None,
+                },
+            ),
+            Self::Conflict { message } => (
+                StatusCode::CONFLICT,
+                ErrorBody {
+                    code: "conflict",
+                    message,
+                    feature: None,
+                },
+            ),
+            Self::Unavailable { message } => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorBody {
+                    code: "unavailable",
+                    message,
+                    feature: None,
+                },
+            ),
+            Self::RateLimited { message } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorBody {
+                    code: "rate_limited",
                     message,
                     feature: None,
                 },

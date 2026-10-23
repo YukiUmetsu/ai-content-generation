@@ -1,7 +1,7 @@
 # Local YouTube Niche Intelligence Collector — Design
 
 **Date:** 2026-10-23
-**Status:** Approved product direction; implementation pending plan review
+**Status:** Implemented in `feat/local-youtube-market-collector` (local fixtures verified; live provider smoke test pending user API key)
 **Scope:** One end-to-end, local-server-only ContentGen research slice
 **Related contracts:** [Research/SEO](../../04-research-seo.md), [Data](../../03-data.md), [Video Performance System](../../15-video-performance-system.md), [Runtime](../../02-runtime.md)
 
