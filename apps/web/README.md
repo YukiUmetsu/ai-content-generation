@@ -1121,13 +1121,13 @@ To edit them, open **Video Director**, select a shot, and fill in **What the
 viewer actually sees and learns** with one element per line:
 
 ```text
-Mortgage interest | Borrowing creates an interest expense over time
+Mortgage interest | Borrowing adds interest over time
 Property tax | Local ownership taxes typically recur
-Insurance | A premium protects the property against covered risks
+Insurance | Premiums cover some insured risks
 ```
 
 Click **Apply selected-shot edit**. The editor validates 2–5 unique labels,
-short meaningful descriptions, and no generic placeholder names. The saved
+short meaningful descriptions (up to 44 characters), and no generic placeholder names. The saved
 preproduction bundle and production job preserve these details. Existing
 visual preview refreshes after the edit; full MP4 export uses the same scene
 component and does **not** force regeneration of unchanged speech.
