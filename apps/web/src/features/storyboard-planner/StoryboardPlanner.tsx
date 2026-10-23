@@ -59,7 +59,6 @@ export function StoryboardPlanner({
   const [selectedBeatId, setSelectedBeatId] = useState(() =>
     (initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats[0]?.id ?? ""
   );
-  const [unsavedChanges, setUnsavedChanges] = useState(false);
   const [loadWarning, setLoadWarning] = useState(restoredDraft.warning);
   const [storageError, setStorageError] = useState<string | null>(restoredDraft.warning);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -92,18 +91,6 @@ export function StoryboardPlanner({
   }, [board, selectedBeat, selectedTiming, locale]);
 
   useEffect(() => {
-    if (!projectId || !unsavedChanges || loadWarning) return;
-    try {
-      saveProjectStoryboard(projectId, board);
-      setStorageError(null);
-      setUnsavedChanges(false);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "Storage unavailable.";
-      setStorageError(`Storyboard could not be saved: ${detail} Export the JSON before leaving.`);
-    }
-  }, [projectId, board, unsavedChanges, loadWarning]);
-
-  useEffect(() => {
     if (!onPreviewChange) return;
     onPreviewChange(preview);
   }, [onPreviewChange, preview]);
@@ -113,16 +100,26 @@ export function StoryboardPlanner({
     return () => onPreviewChange(null);
   }, [onPreviewChange]);
 
+  function updateBoard(next: SemanticStoryboard) {
+    setBoard(next);
+    if (!projectId || loadWarning) return;
+    try {
+      saveProjectStoryboard(projectId, next);
+      setStorageError(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Storage unavailable.";
+      setStorageError(`Storyboard could not be saved: ${detail} Export the JSON before leaving.`);
+    }
+  }
+
   function updateSelected(patch: Partial<StoryboardBeat>) {
     if (!selectedBeat) return;
-    setBoard((current) => updateBeat(current, selectedBeat.id, patch));
-    setUnsavedChanges(true);
+    updateBoard(updateBeat(board, selectedBeat.id, patch));
   }
 
   function handleAddBeat() {
     const beat = createBeat(board);
-    setBoard(insertBeat(board, beat));
-    setUnsavedChanges(true);
+    updateBoard(insertBeat(board, beat));
     setSelectedBeatId(beat.id);
   }
 
@@ -131,14 +128,12 @@ export function StoryboardPlanner({
     if (index < 0) return;
     const remaining = deleteBeat(board, beatId);
     const next = remaining.beats[Math.min(index, remaining.beats.length - 1)];
-    setBoard(remaining);
-    setUnsavedChanges(true);
+    updateBoard(remaining);
     setSelectedBeatId(next?.id ?? "");
   }
 
   function handleMoveBeat(beatId: string, direction: -1 | 1) {
-    setBoard((current) => moveBeat(current, beatId, direction));
-    setUnsavedChanges(true);
+    updateBoard(moveBeat(board, beatId, direction));
   }
 
   function handleReset() {
@@ -161,7 +156,6 @@ export function StoryboardPlanner({
     setImportErrors([]);
     setLoadWarning(null);
     setStorageError(null);
-    setUnsavedChanges(false);
     setResetArmed(false);
   }
 
@@ -171,8 +165,7 @@ export function StoryboardPlanner({
       setImportErrors(result.errors);
       return;
     }
-    setBoard(result.board);
-    setUnsavedChanges(true);
+    updateBoard(result.board);
     setSelectedBeatId(result.board.beats[0]?.id ?? "");
     setImportErrors([]);
     setDialogOpen(false);
