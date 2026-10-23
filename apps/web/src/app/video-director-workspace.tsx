@@ -3,12 +3,13 @@ import { Download, RefreshCw, WandSparkles, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
+import { ProductionPanel } from "./video-production-panel";
 
 type Shot={id:string;visualChange:string;onScreenText:string;purpose:string};
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
-type Bundle={kind:string;researchId:string;plan:Plan};
+type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string};
 type Dossier={kind:string;id:string;topic:{title:string;audience:string}};
 type Variant={id:string;strategy:string;audienceSignal:string;curiosityQuestion:string;
   narration:string;firstVisual:string;onScreenText:string;payoffConnection:string;sfxIntent:string|null};
@@ -221,6 +222,8 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
             </>}
           </div>
         </Surface>
+        <ProductionPanel key={bundle.planSha256??JSON.stringify(bundle.plan.shots.map(s=>s.id))}
+          dossier={dossier} bundle={bundle}/>
       </>}
       {status&&<p role="status" className="text-sm text-muted-foreground">{status}</p>}
       <p className="text-xs text-muted-foreground">{ja?"すべての変更は下書きです。":"Every edit remains an unapproved draft. Source research, claims, voice permissions, and final export QA are never bypassed."}</p>
