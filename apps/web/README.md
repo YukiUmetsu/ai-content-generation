@@ -880,8 +880,19 @@ existing validated ContentGen production jobs, preserving unchanged media safely
 ### Video Director: edit, preview, and render in Studio
 
 From `apps/web`, launch `pnpm dev`, then open **Video Director** in the main Studio.
-Import your corresponding `research-dossier/v1` and `preproduction-bundle/v1` files
-(a synthetic local demonstration pair is available in `examples/preproduction-*smoke.json`).
+Start by typing a topic, a viewer question and your target audience. Choose
+a language, explicitly approve public web research, then click **Research this topic**.
+ContentGen uses the local SearXNG service and your configured local LLM to
+extract a draft dossier with source links. Review the source list, then click
+**Generate editable storyboard**. This creates the source-linked preproduction
+bundle automatically without asking you to hand-author JSON.
+
+For first-time setup only, run `pnpm research:up` in apps/web (Docker Desktop
+must already be installed), then choose an installed research model in
+**Settings → Research AI model**. Never silently download a new model/image.
+You may alternatively open an older `contentgen-project.json` or import a
+corresponding `research-dossier/v1` plus `preproduction-bundle/v1` pair.
+The Studio supports **Save project** to export a single portable JSON file.
 Select a scene, edit narration/on-screen text/visual intent, or generate three
 local-LLM creative variations and mix the script/visual/sound candidates.
 
