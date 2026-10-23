@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { parseResearchDossier, parsePreproductionPlan } from "./preproduction.mjs";
 import { createManualVideoDraft } from "./manual-draft.mjs";
 import { parseVideoProductionJob } from "./job.mjs";
+import { normalizeVisualElements } from "./visual-elements.mjs";
 
 const hash=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 const safe=(v,n)=>{
@@ -63,7 +64,9 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const mappings=phase?.kind==="analogy" ? sequence?.analogy?.mappings??[] : [];
     const visualLabels=mappings.length?
       mappings.flatMap(m=>[safe(m.familiar,44),safe(m.technical,44)]) : subjects;
-    const unique=[...new Set(visualLabels)].slice(0,5);
+    const specific=shot.visualElements?normalizeVisualElements(shot.visualElements):null;
+    const unique=specific?specific.map(x=>x.label):[...new Set(visualLabels)].slice(0,5);
+    if(!specific&&!shot.sceneRecipe)warnings.push("Shot "+shot.id+": only generic subject IDs are visualized; add named visible elements with short explanations in the shot editor.");
     while(unique.length<2)unique.push(unique.length?"How it changes":"Main idea");
     const intent=mapFamily[shot.family]??"general-flow";
     if(!shot.sceneRecipe&&["mechanism","process","question"].includes(shot.family) &&
@@ -92,6 +95,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const phase=phases.get(shot.id);
     if(shot.motion)job.beats[i].visual.motion=structuredClone(shot.motion);
     if(shot.sceneRecipe)job.beats[i].visual.sceneRecipe=shot.sceneRecipe;
+    if(shot.visualElements)job.beats[i].visual.itemNotes=normalizeVisualElements(shot.visualElements).map(x=>x.detail);
     job.beats[i].visual.direction={
       phase:phase?.kind??"none",
       subjectIds:shot.subjectIds.slice(0,5),
