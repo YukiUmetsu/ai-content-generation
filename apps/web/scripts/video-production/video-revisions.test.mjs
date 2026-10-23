@@ -103,7 +103,7 @@ test("local model generates exactly three variants; no external endpoint or fabr
     called++;
     assert.equal(url,"http://127.0.0.1:11434/v1/chat/completions");
     const body=JSON.parse(request.body);
-    assert.match(body.messages[0].content,/audience relevance|audience/i);
+    assert.equal(body.messages[0].content,"Care about relevance, not fake numerical certainty.");
     assert.equal(body.messages[1].content.includes("claim_illustrative"),true);
     return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(candidates())}}]}),{status:200});
   };
@@ -118,4 +118,16 @@ test("local model generates exactly three variants; no external endpoint or fabr
     modelSettings:{version:1,model:"cloud",endpoint:"https://api.example.com/v1/chat/completions"},
     transport:()=>{throw Error("should not send");}}),/loopback/);
   assert.equal(called,1);
+});
+
+test("default hook prompt explicitly prioritizes audience relevance",async()=>{
+  const result=await generateHookVariants({dossier:source(),bundle:bundle()},{
+    modelSettings:{version:1,model:"qwen-local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"},
+    transport:async (_url,request)=>{
+      const body=JSON.parse(request.body);
+      assert.match(body.messages[0].content,/audience relevance/i);
+      return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(candidates())}}]}),{status:200});
+    }
+  });
+  assert.equal(result.variants.length,3);
 });
