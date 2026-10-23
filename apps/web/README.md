@@ -875,3 +875,52 @@ Director UI edits `preproduction-edit/v1` bundles, which aren't yet automaticall
 converted into renderer jobs. That connection is a subsequent milestone.
 This is not an arbitrary external MP4 editor: it generates new releases from
 existing validated ContentGen production jobs, preserving unchanged media safely.
+
+
+### Video Director: edit, preview, and render in Studio
+
+From `apps/web`, launch `pnpm dev`, then open **Video Director** in the main Studio.
+Import your corresponding `research-dossier/v1` and `preproduction-bundle/v1` files
+(a synthetic local demonstration pair is available in `examples/preproduction-*smoke.json`).
+Select a scene, edit narration/on-screen text/visual intent, or generate three
+local-LLM creative variations and mix the script/visual/sound candidates.
+
+**One-screen output workflow:**
+
+1. Click **Review renderable scenes**. This validates the research and planning
+   hashes, maps the shots to actual supported general-explainer scenes and shows
+   the exact narration/on-screen labels that the renderer will use.
+2. Review the **Visual fidelity & rights limitations**. Detailed custom 3D,
+   full cinematic visual intent, and per-shot sound cues are not automatically
+   produced by this bridge. The current general scenes are schematic Kumiki
+   diagrams, intentionally avoiding made-up assets or invented claims.
+3. Click **Preview animated rough cut**. Open the offline-style HTML animatic
+   without calling an AI model, TTS provider, FFmpeg, or Chromium.
+4. Select your already-installed **local TTS bridge**, or Fish Audio with
+   its current free-model ID. Enter an authorized voice ID, pinned provider
+   revision, and local TTS model/endpoint or Fish API key. Explicitly approve
+   the applicable voice and transmission permissions.
+5. Click **Check readiness**. Studio builds the current scene code, checks
+   Chromium, FFmpeg/FFprobe, renderer requirements, and voice permissions.
+   No narration synthesis starts during preflight.
+6. Click **Render unverified draft MP4**. The local server reports progress,
+   permits cancellation and streams the resulting video for normal-speed review.
+   Playback and download are available directly in the same UI.
+7. Edit a shot and repeat. The same running local server remembers the previous
+   owned output and reuses compatible hash-verified speech beats and H.264 chunks.
+   Earlier releases remain immutable under `~/Movies/ContentGen/Studio/`.
+
+The Studio does **not** download/install models, publish videos, run a paid
+Fish model, or mark material as fact-checked or commercially approved. Results
+remain test-only, requiring human rights/factual review. Video controls and
+media routes bind to localhost and have same-origin action requirements.
+Reusing prior outputs works within the current Studio server session; after
+restarting, earlier files persist but must be supplied to the CLI to reuse.
+The UI currently renders YouTube **landscape 1920×1080** using the established
+general scenes; Shorts/TikTok and free-form custom 3D animation still require
+separate scene compilation and output QA.
+
+Run `pnpm --dir apps/web run test:video:headless` and
+`pnpm --dir apps/web test` to validate the editing/render bridge and UI.
+Actual full-resolution video/audio playback requires a local Chromium and
+FFmpeg/FFprobe installation and an authorized voice provider.
