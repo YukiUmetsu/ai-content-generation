@@ -118,6 +118,40 @@ export async function synthesizeNarration(job, options) {
       }
     } catch { /* Missing, interrupted or corrupt cache: safely regenerate this beat only. */ }
 
+    // Reuse an unchanged, content-addressed 48 kHz speech beat from an earlier
+    // run. Never trust a filename alone, and never bypass the provider consent
+    // and commercial-rights gates checked before entering this loop.
+    if (!cached && options.reuseCacheRoot) {
+      const sourceDir = join(resolve(options.reuseCacheRoot), "narration", key.slice(0, 2), key);
+      const sourceWav = join(sourceDir, "speech.wav");
+      const sourceMeta = join(sourceDir, "metadata.json");
+      let earlier = null;
+      try {
+        const meta = JSON.parse(await readFile(sourceMeta, "utf8"));
+        const wavBytes = await readFile(sourceWav);
+        if (meta.key !== key || meta.sha256 !== sha256(wavBytes) ||
+            meta.providerRevision !== options.providerRevision ||
+            meta.provider !== options.provider ||
+            meta.modelId !== voice.modelId ||
+            meta.licenseStatus !== voice.licenseStatus ||
+            meta.commercialRightsVerified !== signature.commercialRightsVerified)
+          fail("previous narration cache identity or hash mismatch for beat " + beat.id);
+        const measured = await probe(sourceWav);
+        validateProbe(measured);
+        if (meta.samples !== measured.samples)
+          fail("previous narration cache samples mismatch for beat " + beat.id);
+        earlier = {meta, wavBytes};
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+      if (earlier) {
+        await mkdir(keyDir, { recursive:true });
+        await writeFile(wavPath, earlier.wavBytes, {flag:"wx"});
+        await writeFile(metaPath, JSON.stringify(earlier.meta, null, 2), {flag:"wx"});
+        cached = earlier.meta;
+        options.onReuse?.({beatId:beat.id,source:"previous-verified-cache"});
+      }
+    }
     if (!cached) {
       await mkdir(keyDir, { recursive: true });
       const staging = await mkdtemp(join(keyDir, ".staging-"));
