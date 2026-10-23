@@ -114,7 +114,7 @@ const en = {
     "Try a broader term. The search is a literal FTS5 lookup over stored passages, not a semantic guess.",
   evidenceIndexEmptyTitle: "The evidence index is empty",
   evidenceIndexEmptyBody:
-    "Ingest a source before searching. The panel will not fabricate results.",
+    "The local evidence index has no saved source passages yet. Research drafts are stored separately and are not automatically indexed here. No sample results are substituted.",
   evidenceDegradation: "Search degraded",
   evidenceDegradationIndexEmpty: "The derived index has no passages yet.",
   evidenceDegradationIndexStale: "The derived index is stale. Rebuild it to include every stored passage.",
@@ -377,7 +377,7 @@ const ja: Record<MessageKey, string> = {
     "より広い語句をお試しください。検索は保存済み抜粋に対するFTS5の逐語検索で、意味推測は行いません。",
   evidenceIndexEmptyTitle: "根拠インデックスが空です",
   evidenceIndexEmptyBody:
-    "検索の前に出典を取り込んでください。このパネルは結果を捏造しません。",
+    "ローカルの根拠インデックスに保存済みの出典抜粋がありません。調査の下書きは別の場所に保存され、この検索にはまだ自動追加されません。サンプル結果を代わりに表示することはありません。",
   evidenceDegradation: "検索の品質低下",
   evidenceDegradationIndexEmpty: "派生インデックスに抜粋がまだありません。",
   evidenceDegradationIndexStale: "派生インデックスが古い状態です。再構築してすべての抜粋を含めてください。",

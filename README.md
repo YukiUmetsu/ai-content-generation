@@ -31,10 +31,26 @@ Studio **Research → YouTube Intelligence** supports local niche watchlists and
 2. Start the Rust service with `cargo run -p contentgen-server` and in another terminal run `pnpm --dir apps/web dev`. On macOS, open Studio → **Settings → API connections & secure credentials**, paste the key, and select **Save to Keychain**. No restart is required. The key cannot be read back or included in browser/catalog backups.
    - Alternatively, pass `CONTENTGEN_YOUTUBE_API_KEY` in the server process environment (never check it into Git). The macOS Keychain value takes precedence if both are present; removing it restores the environment fallback.
    - On non-macOS platforms, native secure credential writes are not yet supported. Use the process environment as a temporary non-persistent fallback; ContentGen never silently saves to SQLite or browser storage.
-3. Open Studio → **Research → YouTube Intelligence**. Add a niche and search phrase, and explicitly enable collection. Existing Research evidence continues using its separate service; the market API goes to the Rust server on port 8787.
+3. Open Studio → **Research → YouTube Intelligence**. Add a niche and search phrase, and explicitly enable collection. Stored-evidence search and packaging reads now use the same Rust server as market observations, on port 8787.
 4. Wait for the next local collector tick (up to about a minute) or choose **Collect now**. Review the observed title, public view count, channel, publication date, source link, and observation timestamp. **Use for video** opens an editable *original* idea saved in the Content catalog; it does not copy the source script or its metrics.
 
 The API key remains server-side. The feature defaults to disabled watchlists, limits enabled niches to ten and API searches to twenty in a rolling 24 hours, and expires cached API observations after thirty days. Missing API key means no external calls; shutting down the server means no scheduled collection. YouTube search requests and metadata lookups still consume the quota assigned by Google. Saving a key does **not** call Google or consume quota. This is **not** a source of keyword search-volume, audience retention, CTR, advertiser RPM, or predicted video earnings. Public metadata belongs to its source, not to ContentGen; respect YouTube's current API policies.
+
+## Research evidence and packaging panels
+
+Launch both services from the repository root:
+
+```bash
+cargo run -p contentgen-server
+# separate terminal
+pnpm --dir apps/web dev
+```
+
+The server listens at `127.0.0.1:8787` by default. The development proxy directs `/api/research/search`, `/api/research/market/*`, `/api/creative/packaging`, `/api/jobs/*` and `/api/settings/*` to it. Stop and restart Vite after changing the proxy configuration; a stale Vite process may still point to old ports 8788 and 8789. If `CONTENTGEN_RESEARCH_ORIGIN` or `CONTENTGEN_CREATIVE_ORIGIN` was set for testing, unset the override to use the Rust server.
+
+- **Search stored evidence:** SQLite FTS5 searches actual persisted source passages with source/version/locator provenance and BM25 ranking. A new database correctly displays “no indexed passages” instead of a gateway error. Source-backed Research drafts generated through the separate director workflow are **not yet automatically ingested** into this SQLite index.
+- **Packaging:** reads the latest genuinely saved `packaging_hypothesis_sets.document_json`. A database without a saved hypothesis set returns HTTP 204 and the Studio shows an honest empty state. Automatic packaging authoring/approval is **not yet implemented**; the checked-in illustrative fixture is test-only and never appears in normal Studio.
+- **Settings:** separate tabs organize AI model/task assignments, provider credentials, appearance, prompt templates, and data backups. Credentials stay outside browser/local project backups.
 
 ## Non-negotiables
 

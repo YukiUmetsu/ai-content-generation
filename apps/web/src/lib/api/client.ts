@@ -152,6 +152,9 @@ async function requestJson(
     if (!response.ok) {
       throw errorFromEnvelope(payload, response.status);
     }
+    // A missing optional resource is represented as 204, distinct from a
+    // broken upstream, and is handled by consumers that permit empty data.
+    if (response.status === 204) return null;
     if (payload === null) {
       throw new ApiError(
         "invalid_payload",
@@ -690,17 +693,18 @@ function parsePackagingHypothesis(
 }
 
 /**
- * Read the one packaging hypothesis set. The backend registers this route but
- * currently answers 501; the caller must render that honestly.
+ * Read the newest persisted packaging set, or null if nothing has been authored.
+ * This never falls back to the illustrative QA fixture.
  */
 export async function fetchPackagingHypothesisSet(
   options: RequestOptions = {},
-): Promise<PackagingHypothesisSet> {
+): Promise<PackagingHypothesisSet | null> {
   const payload = await requestJson(
     "/api/creative/packaging",
     { method: "GET" },
     options,
   );
+  if (payload === null) return null;
   // Defence in depth: the real contract has no virality key at all.
   assertNoViralityClaims(payload);
 

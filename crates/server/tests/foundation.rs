@@ -33,7 +33,8 @@ fn table_names(connection: &Connection) -> BTreeSet<String> {
     let mut statement = connection
         .prepare(
             "SELECT name FROM sqlite_master
-             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+             WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+               AND name NOT LIKE 'evidence_passages_fts_%'",
         )
         .unwrap();
     statement
@@ -314,9 +315,9 @@ fn migrations_apply_in_order_to_fresh_database() {
 
     let report = db::migrate(&mut connection).unwrap();
     assert_eq!(report.from_version, 0);
-    assert_eq!(report.to_version, 2);
-    assert_eq!(report.applied, vec![1, 2]);
-    assert_eq!(db::user_version(&connection).unwrap(), 2);
+    assert_eq!(report.to_version, 3);
+    assert_eq!(report.applied, vec![1, 2, 3]);
+    assert_eq!(db::user_version(&connection).unwrap(), 3);
     assert_eq!(
         db::MIGRATION_VERSION,
         db::MIGRATIONS
@@ -338,6 +339,7 @@ fn migrations_apply_in_order_to_fresh_database() {
 
     let expected_tables: BTreeSet<String> = [
         "artifact_manifests",
+        "evidence_passages_fts",
         "job_attempts",
         "job_edges",
         "job_nodes",
@@ -389,6 +391,7 @@ fn migrations_apply_in_order_to_fresh_database() {
         "artifact_manifests_no_update",
         "source_versions_no_update",
         "source_passages_no_update",
+        "source_passages_fts_insert",
         "packaging_approved_no_update",
         "packaging_metric_no_update_when_approved",
         "job_edges_same_job_insert",
@@ -399,8 +402,8 @@ fn migrations_apply_in_order_to_fresh_database() {
     }
 
     let second = db::migrate(&mut connection).unwrap();
-    assert_eq!(second.from_version, 2);
-    assert_eq!(second.to_version, 2);
+    assert_eq!(second.from_version, 3);
+    assert_eq!(second.to_version, 3);
     assert!(second.applied.is_empty());
 
     let integrity: String = connection
