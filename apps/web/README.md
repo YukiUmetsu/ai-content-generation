@@ -938,3 +938,50 @@ Run `pnpm --dir apps/web run test:video:headless` and
 `pnpm --dir apps/web test` to validate the editing/render bridge and UI.
 Actual full-resolution video/audio playback requires a local Chromium and
 FFmpeg/FFprobe installation and an authorized voice provider.
+
+
+### Semantic visual direction in the exported MP4
+
+The YouTube-landscape general-explainer renderer now gives each teaching role
+a distinct, frame-deterministic composition instead of repeatedly switching
+between near-identical title cards:
+
+- **Question / hook:** focal subject inside a quiet orbiting curiosity lens;
+  related labels appear only when their chapter reveal permits them.
+- **Mechanism / process:** keep the pinned Kumiki process journey, with the same
+  semantic traveler moving between authored stages.
+- **Comparison:** reveal qualitative alternatives in a balanced contrast with
+  a progressing highlight; do not draw sourced-looking numeric bars.
+- **Breakdown:** branch equal-sized component cards from a common spine, in
+  deliberate sequence, with an explicit QUALITATIVE · NOT TO SCALE disclosure.
+- **Payoff:** withhold all payoff labels at the exact payoff event, then
+  assemble named subjects and connectors into a final visible relationship.
+
+All positions, camera shifts, focus, progressive reveals and light sweeps are
+pure functions of absolute frame/timeline state. There is no wall clock,
+randomness, model-based screenshot review, or expensive scene-generation call.
+Kumiki's existing measured chart provenance, safe text bounds and semantic
+process journey are preserved; frame-level QA still runs during export.
+
+The research-to-render bridge now carries validated `visual.direction`
+(`phase`, stable `subjectIds`, `visualAction`, `learningChange`) from editorial
+preproduction, preventing selected-shot direction edits from being dropped
+or incorrectly reusing an unchanged scene. The renderer chooses the supported
+semantic composition by the scene's intent and phase. It **does not**
+interpret arbitrary natural-language action descriptions into new custom
+2D/3D animation. Such instructions remain metadata until an appropriate
+approved Kumiki asset or custom scene implementation exists.
+
+To give visual changes an occasional tactile accent, an authored research
+video may include **one** quiet, synthetic transition tick at the first
+substantive breakdown/comparison/mechanism, alongside the existing payoff
+chime. Both are original procedural **test-only** cues, visibly subject to
+voice/SFX rights review; user-requested custom sound effects are not
+automatically substituted with unrelated assets.
+
+Recommended verification after merging: open Video Director, choose **Try
+sample project**, inspect the animatic, then perform an authorized local
+full-resolution MP4 render. Scrub/inspect normal-speed question, mechanism
+and payoff sections, and confirm multi-line labels fit the safe diagram area.
+Run `pnpm --dir apps/web test` and
+`pnpm --dir apps/web run test:video:headless` for deterministic regressions.
