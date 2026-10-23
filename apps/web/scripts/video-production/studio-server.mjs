@@ -12,6 +12,7 @@ import { isDeepStrictEqual } from "node:util";
 import { inspectProduction } from "./cli.mjs";
 import { parseVideoProductionJob } from "./job.mjs";
 import { generateTopicDraft, validateTopicBrief } from "./topic-generator.mjs";
+import { createManualVideoDraft } from "./manual-draft.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { produceVideo } from "./produce.mjs";
 import { findChromium } from "./try.mjs";
@@ -76,11 +77,11 @@ function textValue(value, label, max = 180) {
 
 function validateConfig(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new ClientError("Choose a valid video configuration.");
-  if (!["smoke", "long", "topic"].includes(input.mode)) throw new ClientError("Choose a smoke, long or custom-topic video.");
+  if (!["smoke", "long", "topic", "manual"].includes(input.mode)) throw new ClientError("Choose a smoke, long or custom-topic video.");
   if (!["fish", "local"].includes(input.provider)) throw new ClientError("Choose Fish Audio or local TTS.");
   const voiceId = textValue(input.voiceId, "Authorized voice ID");
   const providerRevision = textValue(input.providerRevision, "TTS engine revision");
-  const draftId = input.mode === "topic" ? textValue(input.draftId, "Generate a topic draft first", 120) : undefined;
+  const draftId = ["topic", "manual"].includes(input.mode) ? textValue(input.draftId, "Create a storyboard draft first", 120) : undefined;
   if (input.provider === "fish") {
     if (input.voiceConsent !== true || input.transmitText !== true) {
       throw new ClientError("Confirm permission to use the Fish voice and transmit the script text.");
@@ -102,10 +103,10 @@ function validateConfig(input) {
 /** Only the known fixture fields are reused; browser input cannot mutate policy or assets. */
 export function createStudioJob(input, generatedDraft = null) {
   const config = validateConfig(input);
-  if (config.mode === "topic" && (!generatedDraft?.job || generatedDraft.job.id !== config.draftId)) {
+  if (["topic", "manual"].includes(config.mode) && (!generatedDraft?.job || generatedDraft.job.id !== config.draftId)) {
     throw new ClientError("Generate a topic draft before checking readiness, or refresh your outdated draft.", 409);
   }
-  const job = structuredClone(config.mode === "topic" ? generatedDraft.job : fixtures[config.mode]);
+  const job = structuredClone(["topic", "manual"].includes(config.mode) ? generatedDraft.job : fixtures[config.mode]);
   job.voice = config.provider === "fish"
     ? { ...job.voice, provider: "fish", modelId: "s2.1-pro-free", voiceId: config.voiceId, licenseStatus: "unknown" }
     : { ...job.voice, provider: "local", modelId: config.modelId, voiceId: config.voiceId,
@@ -118,7 +119,7 @@ function signature(config, env, generatedDraft = null) {
   const credentialHash = config.provider === "fish"
     ? createHash("sha256").update(config.apiKey || env.FISH_AUDIO_API_KEY || "").digest("hex") : "not-applicable";
   return createHash("sha256").update(JSON.stringify({ ...nonSecret, credentialHash,
-    draft: config.mode === "topic" ? generatedDraft?.job : null })).digest("hex");
+    draft: ["topic", "manual"].includes(config.mode) ? generatedDraft?.job : null })).digest("hex");
 }
 
 function json(res, status, payload) {
@@ -146,7 +147,7 @@ function authorize(req, token, url) {
   if (origin && origin !== `http://${host}`) throw new ClientError("A different origin cannot control video production.", 403);
   if (req.headers["sec-fetch-site"] === "cross-site") throw new ClientError("Cross-site requests are not allowed.", 403);
   if (req.method === "POST" && req.headers["x-contentgen-studio-token"] !== token) throw new ClientError("Studio token required.", 403);
-  if (req.method === "POST" && !["/api/preflight", "/api/render", "/api/cancel", "/api/topic", "/api/draft"].includes(url.pathname)) {
+  if (req.method === "POST" && !["/api/preflight", "/api/render", "/api/cancel", "/api/topic", "/api/manual", "/api/draft"].includes(url.pathname)) {
     throw new ClientError("Unknown action.", 404);
   }
 }
@@ -196,7 +197,7 @@ async function listArtifacts(dir, token) {
 }
 
 /** Start one ephemeral, token-protected local test server; injectable for offline tests. */
-export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(), "Movies", "ContentGen"),
+export async function startVideoStudio({ port = Number(process.env.CONTENTGEN_STUDIO_PORT ?? "8790"), outputRoot = join(homedir(), "Movies", "ContentGen"),
   build = defaultBuild, inspect = inspectProduction, produce = produceVideo, findBrowser = findChromium,
   generateTopic = generateTopicDraft,
   env = process.env } = {}) {
@@ -234,6 +235,19 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
         message: cancelled ? "Draft generation cancelled." : "Local text generation failed; check the endpoint, installed model and returned JSON." });
       json(res, cancelled ? 409 : 422, { error: cancelled ? "Draft generation cancelled." : String(error.message || "Local model generation failed").slice(0, 260) });
     } finally { busy = false; abort = null; }
+  };
+  const handleManual = async (req, res) => {
+    if (busy) throw new ClientError("A production operation is already running.", 409);
+    const input = await bodyJson(req, 128 * 1024);
+    let candidate;
+    try { candidate = createManualVideoDraft(input); }
+    catch (error) { throw new ClientError(String(error?.message || "Invalid manual storyboard").slice(0, 250)); }
+    generatedDraft = candidate;
+    validatedSignature = "";
+    update({ status: "idle", phase: "draft",
+      message: "Manual storyboard ready. Review the script and visual scenes, then check readiness.",
+      findings: [], report: null, progress: null });
+    json(res, 200, { draft: generatedDraft });
   };
   const handleDraftEdit = async (req, res) => {
     if (busy) throw new ClientError("Wait until the current operation finishes.", 409);
@@ -353,6 +367,7 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
       if (req.method === "GET" && url.pathname === "/api/status") return json(res, 200, publicStatus());
       if (req.method === "GET" && url.pathname === "/api/draft") return json(res, 200, { draft: generatedDraft });
       if (req.method === "POST" && url.pathname === "/api/topic") return await handleTopic(req, res);
+      if (req.method === "POST" && url.pathname === "/api/manual") return await handleManual(req, res);
       if (req.method === "POST" && url.pathname === "/api/draft") return await handleDraftEdit(req, res);
       if (req.method === "GET" && url.pathname === "/api/fixtures") return json(res, 200,
         Object.fromEntries(Object.entries(fixtures).map(([mode, job]) => [mode, { title: job.topic.title,
@@ -387,6 +402,7 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
       else res.destroy();
     }
   });
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error("CONTENTGEN_STUDIO_PORT must be an integer between 0 and 65535");
   await new Promise((resolveStart, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => { server.off("error", reject); resolveStart(); });

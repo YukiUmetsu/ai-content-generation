@@ -9,6 +9,7 @@ import { createGeneralJourney, GENERAL_JOURNEY_VIEWPORT } from "./general-journe
 import type { RationalFps } from "@/components/motion/types";
 import { ChartStoryView } from "@/components/infographic/chart-story-react";
 import { buildQuantitativeChartStory } from "./quantitative-chart-story";
+import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -97,6 +98,12 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   const state = getGeneralFrame(plan, frame);
   const chapter = plan.chapters[state.chapterIndex];
   const chart = state.visual.chart;
+  const compiledAttention = useMemo(() => compileChapterAttention(chapter, plan), [chapter, plan]);
+  const attention = compiledAttention
+    ? sampleChapterAttention(compiledAttention, state.localFrame, chapter.endFrame - chapter.startFrame)
+    : null;
+  const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
+  const typographyScale = attention?.titleScale ?? 1;
   const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
     chart, beatId: chapter.id, title: state.visual.headline,
     durationFrames: chapter.endFrame - chapter.startFrame, fps: plan.manifest.fps,
@@ -111,10 +118,11 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     throw new Error(`Chart ${chapter.id} provenance copy needs shortening to fit its visual source area without clipping`);
   }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
-  <svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
+  <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
     <defs>
       <linearGradient id="general-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#101D2D"/><stop offset="1" stopColor="#1D3A48"/></linearGradient>
       <radialGradient id="general-glow"><stop offset="0" stopColor="#D9AF7C" stopOpacity=".16"/><stop offset="1" stopColor="#D9AF7C" stopOpacity="0"/></radialGradient>
+      {attention && state.visual.typographyStyle === "wipe" && <clipPath id="kumiki-title-wipe"><rect x="110" y="195" width={attention.wipeWidth} height="690" /></clipPath>}
     </defs>
     <rect width="1920" height="1080" fill="url(#general-bg)" />
     <circle cx="1545" cy="500" r="605" fill="url(#general-glow)" />
@@ -123,12 +131,14 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     <text x="156" y="107" fill={accent} fontSize="26" fontWeight="700" letterSpacing="5">CONTENTGEN · EXPLAINER</text>
     <text x="1800" y="107" fill={muted} fontSize="24" textAnchor="end">{String(state.chapterIndex + 1).padStart(2, "0")} / {String(state.chapterCount).padStart(2, "0")}</text>
     <line x1="988" y1="222" x2="988" y2="920" stroke="#425D6D" strokeWidth="2" />
-    {!isPayoffHidden && <g opacity={state.enterProgress} transform={`translate(${(1 - state.enterProgress) * -38} 0)`}>
+    {!isPayoffHidden && <g opacity={attention?.titleOpacity ?? state.enterProgress}
+      clipPath={attention && state.visual.typographyStyle === "wipe" ? "url(#kumiki-title-wipe)" : undefined}
+      transform={attention ? `translate(${125 * (1 - typographyScale)} ${320 * (1 - typographyScale)}) scale(${typographyScale})` : `translate(${(1 - state.enterProgress) * -38} 0)`}>
       <text x="125" y="243" fill={accent} fontSize="26" letterSpacing="3.8" fontWeight="700">{state.visual.emphasis.toUpperCase()}</text>
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    {!chartStory && <Diagram state={state} fps={plan.manifest.fps}
+    {!chartStory && <Diagram state={diagramState} fps={plan.manifest.fps}
       chapterFrames={chapter.endFrame - chapter.startFrame} />}
     {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
       {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
