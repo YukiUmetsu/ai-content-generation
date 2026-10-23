@@ -30,7 +30,9 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
       const response=await fetch("/api/contentgen-video/demo",{cache:"no-store",signal:AbortSignal.timeout(10000)});
       const data=await response.json() as Record<string,unknown>;
       if(!response.ok)throw Error(String(data.error||"Demo unavailable."));
-      if(data.dossier?.kind!=="research-dossier"||data.bundle?.kind!=="preproduction-bundle")
+      const dossier=data.dossier as Partial<Dossier>|undefined;
+      const bundle=data.bundle as Partial<Bundle>|undefined;
+      if(dossier?.kind!=="research-dossier"||bundle?.kind!=="preproduction-bundle")
         throw Error("The installed ContentGen sample is incomplete. Restart the Studio server after git pull.");
       onGenerated(data.dossier,data.bundle,"sample");
     }catch(e){setError(e instanceof Error?e.message:"Demo failed to load.");}
