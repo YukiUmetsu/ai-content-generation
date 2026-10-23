@@ -79,7 +79,7 @@ export const FEATURE_METADATA: Record<FeatureId, FeatureMetadata> = {
     titleJa: "サムネイル作成",
     outcome: "Create and compare YouTube thumbnail concepts that stay readable at full size and on mobile.",
     outcomeJa: "通常サイズでもスマートフォンでも読みやすい YouTube サムネイル案を作成・比較します。",
-    availability: "planned",
+    availability: "live",
     steps: {
       en: [
         "Add the video topic and one key takeaway.",
@@ -107,7 +107,7 @@ export const FEATURE_METADATA: Record<FeatureId, FeatureMetadata> = {
     titleJa: "ストーリーボード",
     outcome: "Plan the scenes, narration, and camera intent before rendering a video.",
     outcomeJa: "動画をレンダリングする前に、シーン・ナレーション・カメラの意図を組み立てます。",
-    availability: "planned",
+    availability: "live",
     steps: {
       en: [
         "Break the idea into scenes.",
@@ -159,11 +159,11 @@ export const FEATURE_METADATA: Record<FeatureId, FeatureMetadata> = {
   },
   "platform-composer": {
     id: "platform-composer",
-    title: "Platform delivery",
+    title: "Platform layouts",
     titleJa: "プラットフォーム配信",
-    outcome: "Adapt one approved concept for YouTube, Shorts, and other destinations without awkward cropping.",
-    outcomeJa: "承認したコンセプトを不自然に切り抜かず、YouTube や Shorts などの配信先に合わせて再構成します。",
-    availability: "planned",
+    outcome: "Plan per-platform layouts, check approximate reserved UI regions, and export a local JSON plan. No video is rendered or posted.",
+    outcomeJa: "配信先ごとのレイアウトとセーフエリアを計画し、JSON として保存します。動画生成や投稿は行いません。",
+    availability: "live",
     steps: {
       en: [
         "Choose the destination platform and format.",
@@ -179,8 +179,8 @@ export const FEATURE_METADATA: Record<FeatureId, FeatureMetadata> = {
       ],
     },
     outputs: {
-      en: ["Platform-specific layouts", "Safe-area and caption checks", "Delivery variants"],
-      ja: ["プラットフォーム別レイアウト", "セーフエリアと字幕の確認", "配信用バリエーション"],
+      en: ["Platform-specific plan", "Reserved-area checks", "Local JSON export"],
+      ja: ["プラットフォーム別レイアウト", "セーフエリアの確認", "ローカル JSON 出力"],
     },
     consumes: ["Approved concept", "Platform dimensions and safe areas", "Caption policy"],
     produces: ["Platform-specific layouts", "Safe-area report", "Delivery variants"],
