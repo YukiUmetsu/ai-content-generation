@@ -4,6 +4,7 @@ import { createDraft } from "./editorial-brief";
 import { createEditorialProject } from "./editorial-project";
 import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { HVAC_EXAMPLE } from "@/features/storyboard-planner/model/hvac-example";
+import { researchedFixture } from "./researched-storyboard.test";
 
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
 
@@ -45,5 +46,13 @@ describe("editorial handoff transaction", () => {
     const board = loadProjectStoryboard(next.activeProjectId).board!;
     expect(board.assumptions.join(" ")).toContain("defDEF12345");
     expect(board.claims.every(c => c.status === "unverified" && c.sourceRefs.length === 0)).toBe(true);
+  });
+  it("creates a separate project with researched shots and an audit link to the immutable snapshot",()=>{
+    const next=createEditorialProject(newCatalog(),createDraft("home insulation"),"en",researchedFixture);
+    const board=loadProjectStoryboard(next.activeProjectId).board!;
+    expect(board.beats).toHaveLength(3);
+    expect(board.beats[1].narration).toContain("Insulation resists");
+    expect(next.content[0].notes).toContain("research_home");
+    expect(board.claims[0].sourceRefs).toEqual(["source_01"]);
   });
 });
