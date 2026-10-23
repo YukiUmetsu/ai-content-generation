@@ -5,22 +5,22 @@
   "styleId": "cinematic-explainer-v1",
   "story": {
     "pattern": "cost-dissection",
-    "premise": "A hypothetical sticker price can hide additional categories.",
-    "hook": "IS THE STICKER PRICE THE WHOLE STORY?",
-    "question": "Is the purchase price the total cost?",
+    "premise": "The $500,000 asking price is only the beginning of a hypothetical home's spending story.",
+    "hook": "THAT $500K HOUSE ISN'T A $500K BILL",
+    "question": "What can make the cash cost of owning a $500,000 home exceed the list price?",
     "answerExplanationId": "explain_answer",
     "acts": [
       {
         "id": "act_open",
-        "question": "What does the sticker price leave out?",
-        "purpose": "Set up the misconception.",
-        "payoff": "Show ongoing categories."
+        "question": "What does the $500,000 asking price leave out?",
+        "purpose": "Immediately anchor the homeowner in a relatable sticker price and curiosity gap.",
+        "payoff": "Show interest, tax, insurance and repair costs around the same house."
       },
       {
         "id": "act_payoff",
-        "question": "How should a cost estimate be interpreted?",
-        "purpose": "Connect categories to an assumption-dependent outcome.",
-        "payoff": "Give a qualified answer."
+        "question": "How do the separate costs add up over time?",
+        "purpose": "Connect the fixed price to possible additional spending without inventing a forecast.",
+        "payoff": "Show the qualified relationship of purchase price, borrowing costs and ongoing expenses."
       }
     ]
   },
@@ -31,9 +31,9 @@
       "claimIds": [
         "claim_illustrative"
       ],
-      "before": "Assume the sticker price is everything.",
-      "demonstration": "Show a fictional ownership cost breakdown.",
-      "after": "Different categories may contribute."
+      "before": "The list price is the full cash cost of buying and owning a house.",
+      "demonstration": "A house listed for $500,000 stays on-screen while four concrete expense categories enter one at a time.",
+      "after": "Borrowing and recurring expenses can add separate costs beyond the list price."
     },
     {
       "id": "explain_answer",
@@ -41,9 +41,9 @@
       "claimIds": [
         "claim_illustrative"
       ],
-      "before": "Assume all owners have the same total.",
-      "demonstration": "Show why assumptions affect a hypothetical estimate.",
-      "after": "There is no universal final total."
+      "before": "A listed price already tells me the long-term spending total.",
+      "demonstration": "Combine purchase price, interest if financed, taxes, insurance and maintenance into an illustrative cost relationship.",
+      "after": "Total spending depends on the financing arrangement, local costs, years owned and repairs; later resale proceeds are not included."
     }
   ],
   "shots": [
@@ -53,14 +53,19 @@
       "family": "question",
       "purpose": "hook",
       "subjectIds": [
-        "house"
+        "house",
+        "mortgage_interest",
+        "property_tax",
+        "home_insurance",
+        "maintenance"
       ],
-      "visualChange": "Show one hypothetical house and conceal the unanswered categories.",
-      "onScreenText": "Is the price the whole story?",
+      "visualChange": "Start with a recognizable house and a $500,000 price tag, then reveal unanswered question marks outside the home.",
+      "onScreenText": "A $500K house isn't a $500K bill",
       "claimIds": [
         "claim_illustrative"
       ],
-      "assetRefs": []
+      "assetRefs": [],
+      "sceneRecipe": "home-cost-story-v1"
     },
     {
       "id": "shot_categories",
@@ -69,14 +74,18 @@
       "purpose": "explain",
       "subjectIds": [
         "house",
-        "categories"
+        "mortgage_interest",
+        "property_tax",
+        "home_insurance",
+        "maintenance"
       ],
-      "visualChange": "Separate the same illustrated house into labelled ongoing expense categories.",
-      "onScreenText": "More than the sticker price",
+      "visualChange": "Keep the original house visible. Reveal mortgage interest, property tax, insurance and maintenance as distinct illustrated cost categories.",
+      "onScreenText": "Four costs beyond the price",
       "claimIds": [
         "claim_illustrative"
       ],
-      "assetRefs": []
+      "assetRefs": [],
+      "sceneRecipe": "home-cost-story-v1"
     },
     {
       "id": "shot_answer",
@@ -84,15 +93,19 @@
       "family": "summary",
       "purpose": "answer",
       "subjectIds": [
-        "categories",
-        "house"
+        "house",
+        "mortgage_interest",
+        "property_tax",
+        "home_insurance",
+        "maintenance"
       ],
-      "visualChange": "Recombine the illustrative expense categories and label them hypothetical.",
-      "onScreenText": "Total depends on assumptions",
+      "visualChange": "Assemble price, mortgage interest, property taxes, insurance and maintenance into a conditional spending outcome; explicitly mention timing and resale exclusions.",
+      "onScreenText": "Price is only the beginning",
       "claimIds": [
         "claim_illustrative"
       ],
-      "assetRefs": []
+      "assetRefs": [],
+      "sceneRecipe": "home-cost-story-v1"
     }
   ],
   "continuity": [
@@ -110,7 +123,7 @@
       "toShotId": "shot_answer",
       "technique": "match-cut",
       "subjectIds": [
-        "categories"
+        "house"
       ],
       "reason": "Preserve cost categories as the conclusion forms."
     }
@@ -118,7 +131,7 @@
   "sound": [
     {
       "shotId": "shot_question",
-      "narration": "Is the sticker price really everything you will pay for a home?",
+      "narration": "Imagine a home listed for five hundred thousand dollars. That is the asking price, not necessarily everything you will spend owning it.",
       "delivery": "curious",
       "energy": "focused",
       "pauseAfterMs": 200,
@@ -126,15 +139,15 @@
     },
     {
       "shotId": "shot_categories",
-      "narration": "In this hypothetical example, we separate the cost into several categories that can occur over time.",
+      "narration": "If you borrow to buy it, mortgage interest adds to the purchase price. Property tax and insurance recur, and repairs and maintenance happen over time. These are different costs, not another price tag.",
       "delivery": "conversational",
       "energy": "calm",
       "pauseAfterMs": 150,
-      "sfxIntent": "gentle label reveal"
+      "sfxIntent": "one soft reveal accent as ownership cost categories appear"
     },
     {
       "shotId": "shot_answer",
-      "narration": "The point isn't a magic final number. Your assumptions shape what the total could be.",
+      "narration": "Your spending can include the house price, loan interest, property taxes, insurance and upkeep. How much depends on your financing, where you live, repairs and how long you own it. Selling later may offset some spending.",
       "delivery": "confident",
       "energy": "focused",
       "pauseAfterMs": 0,
@@ -145,7 +158,7 @@
     {
       "id": "teach_home_cost",
       "mode": "direct",
-      "question": "Why is the listed price not always the full cost?",
+      "question": "Why is a $500,000 listed home not always a $500,000 ownership expense?",
       "technicalSubjectId": "house",
       "analogy": null,
       "claimIds": [
@@ -155,20 +168,20 @@
         {
           "kind": "problem",
           "shotId": "shot_question",
-          "visualAction": "Hold on the house while the list price is highlighted and the rest of the expense categories remain hidden.",
-          "learningChange": "The purchase price might not be the full story."
+          "visualAction": "Hold on the same illustrated house with a hypothetical $500,000 tag; introduce question marks about missing spending categories.",
+          "learningChange": "The $500,000 list price tells only part of the potential spending story."
         },
         {
           "kind": "mechanism",
           "shotId": "shot_categories",
-          "visualAction": "Keep the same house fixed while distinct recurring expense categories unfold around it.",
-          "learningChange": "Additional cost categories can accumulate around one purchase."
+          "visualAction": "Keep the same house fixed while reveal cards animate in: mortgage interest, property tax, home insurance and maintenance.",
+          "learningChange": "A loan and ongoing ownership create distinct costs beyond the house price."
         },
         {
           "kind": "payoff",
           "shotId": "shot_answer",
-          "visualAction": "Recombine the same illustrated house and expense categories into an explicitly conditional total with visible assumptions.",
-          "learningChange": "An ownership total depends on assumptions, not a single universal number."
+          "visualAction": "Collect purchase price, interest, property tax, insurance and upkeep into a qualified spending picture with no fabricated total.",
+          "learningChange": "Spending changes with loan terms, location, maintenance and years owned; resale proceeds are excluded."
         }
       ]
     }
