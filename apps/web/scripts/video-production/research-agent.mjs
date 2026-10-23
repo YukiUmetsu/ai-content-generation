@@ -170,9 +170,19 @@ export async function searchCandidates(query, options, { transport = fetch, sign
     endpoint.searchParams.set("count", "10");
     headers = { "X-Subscription-Token": options.braveApiKey, "Accept": "application/json" };
   } else throw Error("Unknown search provider.");
-  const result = await readJsonBounded(await transport(endpoint.href, {
-    redirect: "error", headers, signal: signalFor(signal, 15000)
-  }));
+  let result;
+  try {
+    result = await readJsonBounded(await transport(endpoint.href, {
+      redirect: "error", headers, signal: signalFor(signal, 15000)
+    }));
+  } catch (error) {
+    if (provider === "searxng") {
+      throw Error("Local SearXNG is unavailable or JSON search is disabled. " +
+        "Run pnpm research:up, then pnpm research:check. " +
+        "Cause: " + String(error?.message ?? error).slice(0, 160));
+    }
+    throw error;
+  }
   const raw = provider === "brave" ? result.web?.results : result.results;
   if (!Array.isArray(raw)) throw Error("Search provider returned no usable result list.");
   const unique = new Set();
