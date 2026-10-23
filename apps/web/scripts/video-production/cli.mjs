@@ -165,7 +165,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
       browserExecutable: options.browserExecutable || env.CONTENTGEN_CHROMIUM_EXECUTABLE,
       signal,
     });
-    process.stdout.write(JSON.stringify({ videoPath: result.videoPath, releaseDir: result.releaseDir, releaseStatus: result.qa.releaseStatus, technicalPass: result.qa.technicalPass, commercialReady: result.qa.commercialReady }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ videoPath: result.videoPath, releaseDir: result.releaseDir, releaseStatus: result.qa.releaseStatus, technicalPass: result.qa.technicalPass, commercialReady: result.qa.commercialReady, regeneration: result.regeneration ?? null }, null, 2) + "\n");
     return terminationSignal === "SIGINT" ? 130 : terminationSignal === "SIGTERM" ? 143 : 0;
   } catch (error) {
     const reason = error instanceof SyntaxError ? "Invalid job JSON." : (error instanceof Error ? error.message : "Unknown CLI failure.");
