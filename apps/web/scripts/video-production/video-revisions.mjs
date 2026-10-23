@@ -5,9 +5,10 @@
 import { createHash } from "node:crypto";
 import { compilePreproductionBundle } from "./preproduction.mjs";
 import { isSceneMotion } from "./scene-motion.mjs";
+import { isVisualElements } from "./visual-elements.mjs";
 const sha=v=>createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const text=(v,max=2000)=>typeof v==="string"&&v.trim()&&v.length<=max&&!/[\u0000-\u0008\u000e-\u001f]/u.test(v);
-const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion"];
+const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements"];
 export function editPreproductionShot(dossier,original,edit){
   if(!original || original.kind!=="preproduction-bundle" || original.researchId!==dossier?.id ||
      original.researchSha256!==sha(dossier) || original.planSha256!==sha(original.plan))
@@ -18,8 +19,8 @@ export function editPreproductionShot(dossier,original,edit){
     throw Error("Select one shot and explicit editable fields.");
   const changes=Object.entries(edit.changes);
   if(!changes.length||changes.length>allowed.length||
-      changes.some(([k,v])=>!allowed.includes(k)||(k==="motion"? !isSceneMotion(v) : k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
-    throw Error("Editable fields are narration, onScreenText, visualChange, visualAction, sfxIntent and motion.");
+      changes.some(([k,v])=>!allowed.includes(k)||(k==="visualElements"? !isVisualElements(v) : k==="motion"? !isSceneMotion(v) : k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
+    throw Error("Editable fields are narration, onScreenText, visualChange, visualAction, sfxIntent, motion and visualElements.");
   const plan=structuredClone(original.plan);
   const shot=plan.shots.find(x=>x.id===edit.shotId);
   const voice=plan.sound.find(x=>x.shotId===edit.shotId);
