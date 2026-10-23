@@ -20,7 +20,10 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            let Ok(client) = YoutubeClient::from_env() else {
+            let Ok(key) = state.credentials().youtube_key() else {
+                continue;
+            };
+            let Ok(client) = YoutubeClient::from_key(key) else {
                 continue;
             };
             let Ok(db) = state.connect() else { continue };

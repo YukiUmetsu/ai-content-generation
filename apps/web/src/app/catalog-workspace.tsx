@@ -15,6 +15,7 @@ import {
 import { usePreferences } from "./use-preferences";
 import { ResearchModelSettings } from "./research-model-settings";
 import { PromptStudio } from "./prompt-studio";
+import { ProviderConnections } from "./provider-connections";
 
 interface Props {
   section: SectionId;
@@ -252,7 +253,9 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
     }catch(error){setStatus(error instanceof Error?error.message:"Import failed.");}
   }
   return <>
-    <SectionIntro section="settings" locale={locale} description="Studio appearance and local metadata management. The Fish API key and the video-renderer configuration are not stored in this catalog."/>
+    <SectionIntro section="settings" locale={locale} description={localMessage(locale,
+      "Configure local models, provider connections and your Studio workspace. API keys are not included in browser storage or catalog backups.",
+      "ローカルモデル、API 接続、Studio の設定を管理します。API キーはブラウザーやバックアップに保存されません。")}/>
     <div className="grid gap-4 lg:grid-cols-2">
       <Surface header={<h2 className="font-medium">Appearance & language</h2>}>
         <div className="flex flex-col gap-3">
@@ -262,6 +265,7 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
         </div>
       </Surface>
       <ResearchModelSettings locale={locale} />
+      <ProviderConnections locale={locale} />
       <PromptStudio locale={locale} />
       <Surface header={<h2 className="font-medium">Local backup</h2>}>
         <div className="flex flex-col gap-3 text-sm">

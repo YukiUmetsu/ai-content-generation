@@ -2,11 +2,13 @@
 //! registered-but-not-implemented lane routers.
 
 pub mod creative;
+pub mod credentials;
 pub mod db;
 pub mod error;
 pub mod jobs;
 pub mod research;
 pub mod router;
+pub mod settings;
 pub mod state;
 
 pub use router::build_router;
