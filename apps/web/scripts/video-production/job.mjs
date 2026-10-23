@@ -259,7 +259,7 @@ export function parseVideoProductionJob(input) {
     }
     idList(beat.eventIds, `beats[${index}].eventIds`);
     if (!integer(beat.pauseAfterMs, 0) || beat.pauseAfterMs > 60000) add("invalid-pause", `beats[${index}].pauseAfterMs`, "Pause must be 0–60,000 milliseconds.");
-    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart"] : ["headline", "subhead", "emphasis"])) {
+    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart", "hookStrategy", "typographyStyle"] : ["headline", "subhead", "emphasis"])) {
       for (const [key, maxLength] of [["headline", 68], ["subhead", 115], ["emphasis", 28]]) {
         const value = beat.visual[key];
         if (!string(value) || value.length > maxLength || /[\r\n\u0000-\u001f]/.test(value)) {
@@ -267,6 +267,13 @@ export function parseVideoProductionJob(input) {
         }
       }
       if (family === "general-explainer-v1") {
+        if (has(beat.visual, "hookStrategy") && (index !== 0 || beat.visualIntent !== "general-intro" ||
+          !["action-first", "unexpected-reveal", "transformation"].includes(beat.visual.hookStrategy))) {
+          add("invalid-hook-strategy", `beats[${index}].visual.hookStrategy`, "Kumiki hook strategies are allowed on the opening scene only.");
+        }
+        if (has(beat.visual, "typographyStyle") && !["snap", "overshoot", "wipe"].includes(beat.visual.typographyStyle)) {
+          add("invalid-typography-style", `beats[${index}].visual.typographyStyle`, "Choose a supported Kumiki impact typography treatment.");
+        }
         if (has(beat.visual, "chart")) validateChart(beat.visual.chart, `beats[${index}].visual.chart`, beat);
         if (!Array.isArray(beat.visual.items) || beat.visual.items.length < 2 || beat.visual.items.length > 5) {
           add("invalid-diagram-items", `beats[${index}].visual.items`, "A generic scene needs 2–5 specific, meaningful diagram labels.");

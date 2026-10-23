@@ -100,6 +100,44 @@ test("custom topic generation creates an unverified source job, then readiness a
   assert.equal(final.qa.commercialReady, false);
 });
 
+test("a human storyboard produces a general video draft and follows the existing consent pipeline", async (t) => {
+  const studio = await harness(t);
+  const scenes = [
+    { headline: "Heat is moving", narration: "A heat pump moves thermal energy between two places rather than producing all of it from electricity.", items: ["Outdoor air", "Indoor air"] },
+    { headline: "How refrigerant travels", narration: "The compressor and coils exchange thermal energy as the refrigerant moves through the closed loop.", intent: "general-flow", items: ["Evaporator", "Compressor", "Condenser"] },
+    { headline: "Follow the energy", narration: "Heat gets moved by refrigerant and electrical work, but actual efficiency depends on the surrounding conditions.", items: ["Electrical input", "Transported energy"] },
+  ];
+  const input = { title: "How heat pumps move energy", viewerQuestion: "Where does the heat come from?",
+    audience: "Homeowners", locale: "en-US", length: "smoke", hookStrategy: "action-first",
+    typographyStyle: "snap", scenes };
+  const draftResponse = await studio.send("/api/manual", "POST", input);
+  assert.equal(draftResponse.status, 200);
+  const { draft } = await draftResponse.json();
+  assert.equal(draft.generator.provider, "human");
+  assert.equal(draft.job.beats.length, 3);
+  assert.equal(draft.job.beats[0].visual.hookStrategy, "action-first");
+  assert.equal(draft.job.claims[0].status, "unverified");
+  assert.equal(studio.counts.produce, 0);
+  const config = { ...fishConfig, mode: "manual", draftId: draft.job.id };
+  assert.equal((await studio.send("/api/preflight", "POST", config)).status, 200);
+  assert.equal((await studio.send("/api/render", "POST", { ...config, confirmRender: true })).status, 202);
+  const done = await until(studio, state => state.status === "completed");
+  assert.equal(done.qa.commercialReady, false);
+  assert.equal(studio.calls.at(-1).job.topic.title, input.title);
+});
+
+test("invalid human scenes cannot replace an existing checked storyboard", async (t) => {
+  const studio = await harness(t);
+  const broken = await studio.send("/api/manual", "POST", {
+    title: "Empty film", scenes: [{ headline: "Only one scene", narration: "Not enough scenes", items: ["A", "B"] }],
+  });
+  assert.equal(broken.status, 400);
+  assert.equal((await studio.send("/api/draft")).status, 200);
+  const draft = await (await studio.send("/api/draft")).json();
+  assert.equal(draft.draft, null);
+  assert.equal(studio.counts.produce, 0);
+});
+
 test("topic edits reject forged approval and invalidate preflight before reuse", async (t) => {
   const studio = await harness(t, { generateTopic: async () => ({ kind: "topic-video-draft", editorialStatus: "unverified-draft", packaging: [], job: structuredClone(generic) }) });
   await studio.send("/api/topic", "POST", { topic: "Networks", audience: "students", mode: "smoke", locale: "en-US",

@@ -24,7 +24,7 @@ pnpm install --frozen-lockfile  # one time
 pnpm video:studio
 ```
 
-Open **http://127.0.0.1:8788**. The **local Video Test Studio** offers a complete browser test path:
+Open **http://127.0.0.1:8790** (change with `CONTENTGEN_STUDIO_PORT=8791 pnpm video:studio` if needed). The **local Video Test Studio** offers a complete browser test path:
 
 1. Choose **Quick smoke test** (3 beats, ~30–60 seconds), **Long-form YouTube** (26 beats, at least 8 measured minutes), or **Your own topic**. For a custom topic, enter its question, intended audience, optional notes, and an installed local text-model endpoint; click **Generate local draft**.
    The model proposes three alternate titles/hooks and writes an editable, scene-by-scene narrated story. Review its `job.json` in the editor and **Save draft edits** before testing. The model's statements are explicitly **unverified**, not invented citations or commercial-ready claims. For custom long-form, the model must produce a substantive script and the finished narration must still measure at least eight minutes.
@@ -97,6 +97,45 @@ Each release is atomically exposed only after a finished MP4 has been probed for
 The independently testable worker modules (`scripts/video-production/{speech,timeline,audio}.mjs`) now generate narration per beat, normalize it through FFmpeg to mono 48 kHz/16-bit PCM, probe the *actual* sample count with FFprobe, and cache by script, provider/engine revision, voice settings, and rights scope. Corrupt cache entries are regenerated; revoked voice authorization still blocks cache use. `buildSampleTimeline` uses half-open sample ranges and rounds to picture frames only at the boundary. Beat-level SRT captions exclude deliberate pauses and never masquerade as word alignment.
 
 `renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. The speech, mastering, segmented encoding and final MP4 mux each have FFmpeg-backed tests; the orchestration integration test uses an injected provider and browser, so **real visual playback remains unverified**.
+
+### General video authoring in Studio (manual, no text model)
+
+Select **Create your video** in the local Video Test Studio. Type a title, question
+and audience; add or remove narrated scenes (at least 3), select the visual
+treatment for each middle scene, and choose a Kumiki opening/typography recipe.
+The first scene is always an opening and the final scene answers the question.
+Scene headline, spoken narration, supporting copy and 2–5 specific diagram
+labels are authored by the user; ContentGen does **not** invent facts, citations,
+figures, dialogue, or new scene copy to fill gaps. Choose English or Japanese,
+then click **Create editable storyboard**. You can inspect/edit the resulting
+job JSON, run **Check readiness**, and render through the same tested Fish/local
+TTS → browser → FFmpeg → QA worker as other jobs. No local text model needed.
+The local-AI **Your own topic** flow remains available separately.
+
+Kumiki recipe integration pins the dependency-free pure compiler from upstream
+`YukiUmetsu/kumiki-ui` commit
+`f0c227a58227a87004000eb2bb324ea7e298ce8a`
+(`registry/motion/attention-editing-recipes.ts`; blob
+`c3b5aa1a143086629a0ce8892c30a6fbd2149f09`).
+It is copied unchanged to
+`src/video-export/vendor/kumiki-attention-editing-recipes.ts`, **not**
+installed through the full registry closure, which also depends on 3D and
+media-decode adapters the general renderer does not use. Our wrapper compiles
+`compileHookVariant` (action-first, unexpected reveal, transformation) and
+`compileImpactTypography` (snap, overshoot, wipe), and samples those plans at
+absolute frames for the existing 1920 × 1080 scene. These are selected native
+attention **plans and title/diagram treatments**, not all 13 recipe effects or a
+finished viral-video editor. Impact statistics and evidence-focused effects are
+intentionally disabled without source-backed evidence; word-synced captions
+are disabled without real word alignment. Unrelated generic/House Math jobs
+remain unchanged. No fake audio beat detection or virality scores.
+
+This first slice remains landscape (1920 × 1080) only. For real Shorts, the
+production manifest, ShortSafeFrame, portrait diagrams, captions, clip assets
+and browser-export geometry need a **separately composed 1080 × 1920 render**.
+A 9:16 output is not provided by cropping landscape. Review rendered video at
+normal speed before any commercial release. GitHub CI performs only no-FFmpeg
+compilation and test checks; no source/voice commercial rights are inferred.
 
 ## Run and verify
 
