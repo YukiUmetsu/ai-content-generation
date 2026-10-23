@@ -67,7 +67,7 @@ function showMode() {
   $("topic-review").hidden = !(topic && currentDraftSource === "local-openai-compatible" ||
     manual && currentDraftSource === "human") || !currentDraftId;
   $("fixture-caption").textContent = manual
-    ? "Human-authored general explainer · Kumiki attention-editing · 1920 × 1080 · 30 fps"
+    ? `Human-authored general explainer · Kumiki attention-editing · ${$("manual-platform").value === "youtube" ? "1920 × 1080" : "1080 × 1920"} · 30 fps`
     : topic ? "Local topic generator · general explainer · 1920 × 1080 · 30 fps"
     : "Illustrative House Math scenario · YouTube landscape · 30 fps";
 }
@@ -239,7 +239,7 @@ function manualInput() {
   return {
     title: $("manual-title").value.trim(), viewerQuestion: $("manual-question").value.trim(),
     audience: $("manual-audience").value.trim(), locale: $("manual-locale").value,
-    length: $("manual-length").value, hookStrategy: $("manual-hook").value,
+    length: $("manual-length").value, platform: $("manual-platform").value, hookStrategy: $("manual-hook").value,
     typographyStyle: $("manual-typography").value, scenes,
   };
 }
@@ -443,6 +443,12 @@ form.addEventListener("change", (event) => { if (event.target.name === "provider
 $("generate-button").addEventListener("click", generate);
 $("manual-add-button").addEventListener("click", addManualScene);
 $("manual-generate-button").addEventListener("click", generateManual);
+$("manual-platform").addEventListener("change", () => {
+  if ($("manual-platform").value !== "youtube") $("manual-length").value = "smoke";
+  $("manual-length").querySelector('option[value="youtube-long"]').disabled = $("manual-platform").value !== "youtube";
+  showMode();
+  topicDirty = true; invalidate();
+});
 for (let n = 0; n < 3; n++) manualScenes.append(makeManualCard());
 refreshManualCardRoles();
 $("save-draft-button").addEventListener("click", saveDraft);
