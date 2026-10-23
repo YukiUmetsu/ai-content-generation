@@ -282,7 +282,10 @@ export function parseVideoProductionJob(input) {
         if (has(beat.visual, "typographyStyle") && !["snap", "overshoot", "wipe"].includes(beat.visual.typographyStyle)) {
           add("invalid-typography-style", `beats[${index}].visual.typographyStyle`, "Choose a supported Kumiki impact typography treatment.");
         }
-        if (has(beat.visual, "chart")) validateChart(beat.visual.chart, `beats[${index}].visual.chart`, beat);
+        if (has(beat.visual, "chart")) {
+          if (portraitPresets.has(input.destination?.presetId)) add("portrait-chart-unavailable", `beats[${index}].visual.chart`, "ChartStory needs a portrait-specific source disclosure and measured layout; use a qualitative scene.");
+          else validateChart(beat.visual.chart, `beats[${index}].visual.chart`, beat);
+        }
         if (!Array.isArray(beat.visual.items) || beat.visual.items.length < 2 || beat.visual.items.length > 5) {
           add("invalid-diagram-items", `beats[${index}].visual.items`, "A generic scene needs 2–5 specific, meaningful diagram labels.");
         } else for (const [itemIndex, label] of beat.visual.items.entries()) {
