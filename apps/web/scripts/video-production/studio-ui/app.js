@@ -142,7 +142,7 @@ function showClaims(job) {
 function showDraft(draft) {
   if (!draft?.job) return;
   currentDraftId = draft.job.id;
-  currentDraftSource = draft.generator?.provider || "";
+  currentDraftSource = draft.generator?.provider || "local-openai-compatible";
   topicDirty = false;
   const narrationLength = draft.narrationLength || { count: draft.words ?? "Unmeasured", unit: "words" };
   $("draft-summary").textContent = `${draft.job.topic.title} · ${draft.job.beats.length} narrated beats · ${narrationLength.count} ${narrationLength.unit}. Every factual statement needs human verification.`;
