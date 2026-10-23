@@ -87,21 +87,3 @@ export function validateHookCandidates(payload,context){
   return {schemaVersion:1,kind:"hook-variants",variants,
     caution:"Audience relevance and curiosity are editorial hypotheses. Variants are not measured retention winners or verified facts."};
 }
-
-/** Applies only selected first shot; preserves claim refs and all other shots. */
-export function applyHookVariant(dossier,bundle,variant){
-  const context={audience:dossier?.topic?.audience??"viewers"};
-  const list=validateHookCandidates({variants:[variant,{...variant,strategy:variant.strategy+" alternative"}]},context);
-  const chosen=list.variants[0];
-  const first=bundle?.plan?.shots?.[0];
-  if(!first||first.purpose!=="hook")throw Error("Bundle has no editable opening hook shot.");
-  const result=editPreproductionShot(dossier,bundle,{shotId:first.id,changes:{
-    narration:chosen.narration,onScreenText:chosen.onScreenText,
-    visualChange:chosen.firstVisual,
-    visualAction:chosen.firstVisual,
-    sfxIntent:chosen.sfxIntent
-  }});
-  result.hookSelection={strategy:chosen.strategy,audienceSignal:chosen.audienceSignal,
-    curiosityQuestion:chosen.curiosityQuestion,payoffConnection:chosen.payoffConnection};
-  return result;
-}
