@@ -4,35 +4,75 @@ import userEvent from "@testing-library/user-event";
 import { NewVideoSetup } from "./new-video-setup";
 afterEach(()=>vi.restoreAllMocks());
 describe("topic-first production workflow",()=>{
-  it("requires explicit public-source permission, reviews evidence, then opens an editable storyboard",async()=>{
+  it("researches and creates a sourced draft in one action, but requires a separate editor handoff",async()=>{
     const dossier={kind:"research-dossier",id:"local-research",topic:{title:"What drives costs?",audience:"Homeowners"},
       evidence:[{id:"s1",title:"Example authoritative source",sourceUri:"https://example.org/source",
         passageLocator:"captured-text:[0,200)"}],
       claims:[{id:"c1",text:"The sourced claim still needs review.",status:"unverified",sourceRefs:["s1"]}],
       gaps:["Check applicable assumptions"]};
-    const bundle={kind:"preproduction-bundle",researchId:"local-research",plan:{shots:[{id:"one"}]}};
+    const quotePreviews=[{claimId:"c1",sourceId:"s1",quote:"The exact captured passage for review."}];
+    const bundle={kind:"preproduction-bundle",researchId:"local-research",status:"draft-needs-review",
+      plan:{shots:[{id:"one",onScreenText:"Separate the costs",visualChange:"The cost categories appear in sequence",
+        claimIds:["c1"]}],sound:[{shotId:"one",narration:"Here is why the cost changes."}]}};
     const calls:Array<{path:string;body:Record<string,unknown>}>=[];
     vi.spyOn(globalThis,"fetch").mockImplementation(async(path,options)=>{
       const body=JSON.parse(String(options?.body)) as Record<string,unknown>;
       calls.push({path:String(path),body});
-      if(String(path).endsWith("/research"))return new Response(JSON.stringify({dossier,warnings:[]}),{status:200});
+      if(String(path).endsWith("/research"))return new Response(JSON.stringify({dossier,quotePreviews,warnings:[]}),{status:200});
       if(String(path).endsWith("/story"))return new Response(JSON.stringify({bundle}),{status:200});
       throw Error("Unexpected call");
     });
     const created=vi.fn();
     const user=userEvent.setup();
     render(<NewVideoSetup onGenerated={created}/>);
-    const research=screen.getByRole("button",{name:"Research this topic"});
+    const research=screen.getByRole("button",{name:"Research & generate draft"});
     expect(research).toBeDisabled();
     await user.type(screen.getByRole("textbox",{name:"New video topic"}),"Why do roofs cost so much?");
     await user.click(screen.getByRole("checkbox",{name:"Allow public web research"}));
     await user.click(research);
     expect(await screen.findByText(/Example authoritative source/)).toBeInTheDocument();
-    expect(screen.getByText(/UNVERIFIED:/)).toBeInTheDocument();
+    expect(await screen.findByText(/Separate the costs/)).toBeInTheDocument();
+    expect(screen.getByText(/The exact captured passage for review/)).toBeInTheDocument();
+    expect(screen.getByText(/The cost categories appear in sequence/)).toBeInTheDocument();
+    expect(screen.getByText(/Check applicable assumptions/)).toBeInTheDocument();
+    expect(screen.getByText(/Draft — not approved/)).toBeInTheDocument();
+    expect(created).not.toHaveBeenCalled();
     expect(calls[0].body.allowNetwork).toBe(true);
-    await user.click(screen.getByRole("button",{name:"Generate editable storyboard"}));
+    expect(calls.map(c=>c.path)).toEqual(["/api/contentgen-video/research","/api/contentgen-video/story"]);
+    await user.click(screen.getByRole("button",{name:"Open editable storyboard"}));
     expect(created).toHaveBeenCalledWith(dossier,bundle,"topic");
-    expect(calls[1].path).toMatch(/\/story$/);
+    await user.clear(screen.getByRole("textbox",{name:"New video topic"}));
+    expect(screen.queryByText(/Separate the costs/)).not.toBeInTheDocument();
+  });
+  it("keeps captured evidence if story generation fails, then retries without recapturing",async()=>{
+    const dossier={kind:"research-dossier",id:"r1",topic:{title:"Cost",audience:"Homeowners"},
+      evidence:[{id:"s1",title:"Public reference",sourceUri:"https://example.org/a",passageLocator:"captured-text:[0,20)"}],
+      claims:[{id:"c1",text:"Candidate fact",status:"unverified",sourceRefs:["s1"]}],gaps:[]};
+    const bundle={kind:"preproduction-bundle",researchId:"r1",status:"draft-needs-review",
+      plan:{shots:[{id:"one",visualChange:"Shows a flow",onScreenText:"A useful flow",claimIds:["c1"]}],sound:[]}};
+    let researchCalls=0,storyCalls=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(path)=>{
+      if(String(path).endsWith("/research")){researchCalls++;return new Response(JSON.stringify({dossier}),{status:200});}
+      if(String(path).endsWith("/story")){
+        storyCalls++;
+        return storyCalls===1
+          ? new Response(JSON.stringify({error:"Local model unavailable"}),{status:422})
+          : new Response(JSON.stringify({bundle}),{status:200});
+      }
+      throw Error("Unexpected request");
+    });
+    const created=vi.fn(),user=userEvent.setup();
+    render(<NewVideoSetup onGenerated={created}/>);
+    await user.type(screen.getByRole("textbox",{name:"New video topic"}),"Roof costs");
+    await user.click(screen.getByRole("checkbox",{name:"Allow public web research"}));
+    await user.click(screen.getByRole("button",{name:"Research & generate draft"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Local model unavailable");
+    expect(screen.getByText(/Public reference/)).toBeInTheDocument();
+    expect(created).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button",{name:"Retry storyboard generation"}));
+    expect(await screen.findByText("A useful flow")).toBeInTheDocument();
+    expect(researchCalls).toBe(1);
+    expect(storyCalls).toBe(2);
   });
 });
 

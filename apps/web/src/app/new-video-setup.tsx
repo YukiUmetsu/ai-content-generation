@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { BookOpen, ExternalLink, Film, Play, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -7,7 +7,10 @@ type Dossier={kind:string;id:string;topic:{title:string;audience:string};
   evidence:Array<{id:string;title:string;sourceUri:string;passageLocator:string}>;
   claims:Array<{id:string;text:string;status:string;sourceRefs:string[]}>;
   gaps:string[]};
-type Bundle={kind:string;researchId:string;plan:{shots:Array<{id:string}>}};
+type QuotePreview={claimId:string;sourceId:string;quote:string};
+type Bundle={kind:string;researchId:string;status:string;plan:{
+  shots:Array<{id:string;onScreenText:string;visualChange:string;claimIds:string[]}>;
+  sound?:Array<{shotId:string;narration:string}>}};
 const field="mt-1.5 w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground";
 async function api(route:string,payload:unknown){
   const response=await fetch("/api/contentgen-video/"+route,{method:"POST",
@@ -21,9 +24,16 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
   const [brief,setBrief]=useState({title:"",viewerQuestion:"",audience:"Homeowners",locale:"en-US"});
   const [consent,setConsent]=useState(false);
   const [research,setResearch]=useState<Dossier|null>(null);
+  const [quotePreviews,setQuotePreviews]=useState<QuotePreview[]>([]);
+  const [bundle,setBundle]=useState<Bundle|null>(null);
   const [busy,setBusy]=useState("");
   const [error,setError]=useState("");
-  const edit=(changes:Partial<typeof brief>)=>{setBrief(x=>({...x,...changes}));setResearch(null);};
+  const revision=useRef(0);
+  const edit=(changes:Partial<typeof brief>)=>{
+    revision.current++;
+    setBrief(x=>({...x,...changes}));
+    setResearch(null);setQuotePreviews([]);setBundle(null);setError("");setBusy("");
+  };
   async function demo(){
     setBusy("demo");setError("");
     try{
@@ -38,23 +48,42 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
     }catch(e){setError(e instanceof Error?e.message:"Demo failed to load.");}
     finally{setBusy("");}
   }
-  async function capture(){
-    setBusy("research");setError("");
+  async function draftStoryboard(dossier:Dossier,run:number){
+    if(run!==revision.current)return;
+    setBusy("story");
+    try{
+      const result=await api("story",{dossier});
+      if(run!==revision.current)return;
+      const generated=result.bundle as Bundle|undefined;
+      if(generated?.kind!=="preproduction-bundle"||generated.researchId!==dossier.id||
+        generated.status!=="draft-needs-review"||!Array.isArray(generated.plan?.shots)||
+        !generated.plan.shots.length)
+        throw Error("The storyboard response does not match the captured research. Please retry.");
+      setBundle(generated);
+    }catch(e){
+      if(run===revision.current)setError(e instanceof Error?e.message:"The local model could not draft the story.");
+    }finally{if(run===revision.current)setBusy("");}
+  }
+  async function researchAndGenerate(){
+    const run=++revision.current;
+    setBusy("research");setError("");setResearch(null);setBundle(null);setQuotePreviews([]);
     try{
       const result=await api("research",{brief:{...brief,viewerQuestion:brief.viewerQuestion||brief.title},
         allowNetwork:consent});
-      setResearch(result.dossier as Dossier);
-    }catch(e){setError(e instanceof Error?e.message:"Research could not finish.");}
-    finally{setBusy("");}
-  }
-  async function storyboard(){
-    if(!research)return;
-    setBusy("story");setError("");
-    try{
-      const result=await api("story",{dossier:research});
-      onGenerated(research,result.bundle as Bundle,"topic");
-    }catch(e){setError(e instanceof Error?e.message:"The local model could not draft the story.");}
-    finally{setBusy("");}
+      if(run!==revision.current)return;
+      const dossier=result.dossier as Dossier|undefined;
+      if(dossier?.kind!=="research-dossier"||!Array.isArray(dossier.evidence)||
+        !Array.isArray(dossier.claims)||!Array.isArray(dossier.gaps))
+        throw Error("Research returned an incomplete dossier.");
+      setResearch(dossier);
+      setQuotePreviews(Array.isArray(result.quotePreviews)
+        ?result.quotePreviews.filter((q):q is QuotePreview=>
+          typeof q?.claimId==="string"&&typeof q?.sourceId==="string"&&typeof q?.quote==="string")
+        :[]);
+      await draftStoryboard(dossier,run);
+    }catch(e){
+      if(run===revision.current)setError(e instanceof Error?e.message:"Research could not finish.");
+    }finally{if(run===revision.current)setBusy("");}
   }
   return <Surface header={<h2 className="flex items-center gap-2 font-medium"><Sparkles className="size-4"/>Start a video from a topic</h2>}>
     <div className="space-y-4 text-sm">
@@ -94,29 +123,51 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
         Allow ContentGen to query my local SearXNG instance and fetch public web pages for this topic. The installed LLM analyzes these captured passages locally. Retrieved content is untrusted.
       </label>
       <Button disabled={!consent||!brief.title.trim()||!brief.audience.trim()||!!busy}
-        onClick={()=>void capture()} icon={<BookOpen className="size-4"/>}>
-        {busy==="research"?"Researching public sources…":"Research this topic"}
+        onClick={()=>void researchAndGenerate()} icon={<BookOpen className="size-4"/>}>
+        {busy==="research"?"Researching and checking source quotes…":
+          busy==="story"?"Generating a sourced storyboard…":"Research & generate draft"}
       </Button>
       {research&&<div className="space-y-3 rounded-control border border-border bg-surface-subtle p-3">
-        <div><p className="font-semibold">Research draft · {research.evidence.length} sources · {research.claims.length} claims</p>
-          <p className="mt-1 text-xs text-muted-foreground">No claims are independently verified. Review these links, especially if a factual mistake would affect viewers.</p>
+        <div><p className="font-semibold">Draft — not approved</p>
+          <p className="mt-1 text-xs text-muted-foreground">{research.evidence.length} captured sources · {research.claims.length} candidate claims. Quotes are exact matches against captured page text, not independent fact checks. Research and media rights still require your review.</p>
         </div>
         <div className="space-y-2">
           {research.evidence.map(source=><div key={source.id} className="rounded-control border border-border p-2">
             <a className="flex items-center gap-1 text-xs font-semibold underline" href={source.sourceUri}
               rel="noopener noreferrer" target="_blank">{source.title}<ExternalLink className="size-3"/></a>
-            <p className="mt-1 text-xs text-muted-foreground">{source.passageLocator}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{source.id} · {source.passageLocator}</p>
           </div>)}
         </div>
-        <div className="space-y-1">
-          {research.claims.map(c=><p key={c.id} className="text-xs leading-relaxed">
-            <strong>{c.status.toUpperCase()}:</strong> {c.text}</p>)}
+        <div className="space-y-2" aria-label="Candidate claims and source quotes">
+          {research.claims.map(c=><div key={c.id} className="space-y-1 rounded-control border border-border p-2 text-xs leading-relaxed">
+            <p><strong>{c.status.toUpperCase()} · {c.id}:</strong> {c.text}</p>
+            {quotePreviews.filter(q=>q.claimId===c.id).map((q,i)=><blockquote key={q.sourceId+":"+i}
+              className="border-l-2 border-primary/50 pl-3 text-muted-foreground">
+              <p>“{q.quote}”</p><p>Captured quote · {q.sourceId}</p>
+            </blockquote>)}
+            {!quotePreviews.some(q=>q.claimId===c.id)&&<p className="text-muted-foreground">
+              No exact quote preview is available here. Open the source links to verify the claim.
+            </p>}
+          </div>)}
         </div>
-        {research.gaps.length>0&&<p className="text-xs text-muted-foreground">
-          Research gaps: {research.gaps.join("; ")}</p>}
-        <Button disabled={!!busy} onClick={()=>void storyboard()} icon={<Sparkles className="size-4"/>}>
-          {busy==="story"?"Designing explanation…":"Generate editable storyboard"}
-        </Button>
+        {research.gaps.length>0&&<div className="space-y-1 rounded-control border border-border p-2 text-xs">
+          <p className="font-semibold">Research gaps to resolve</p>
+          <ul className="list-disc space-y-1 pl-5">{research.gaps.map((gap,i)=><li key={i}>{gap}</li>)}</ul>
+        </div>}
+        {bundle&&<div className="space-y-2" aria-label="Proposed storyboard shots">
+          <h3 className="text-sm font-semibold">Proposed shots · {bundle.plan.shots.length}</h3>
+          {bundle.plan.shots.map((shot,i)=><div key={shot.id} className="rounded-control border border-border p-3 text-xs">
+            <p className="font-semibold">{i+1}. {shot.onScreenText}</p>
+            <p className="mt-1 text-muted-foreground">{shot.visualChange}</p>
+            {bundle.plan.sound?.find(sound=>sound.shotId===shot.id)?.narration&&<p className="mt-1">
+              Voice: {bundle.plan.sound.find(sound=>sound.shotId===shot.id)?.narration}</p>}
+            <p className="mt-1 text-muted-foreground">Evidence: {shot.claimIds?.join(", ")||"None — review required"}</p>
+          </div>)}
+        </div>}
+        {bundle?<Button disabled={!!busy} onClick={()=>onGenerated(research,bundle,"topic")}
+          icon={<Sparkles className="size-4"/>}>Open editable storyboard</Button>:
+          !busy&&<Button onClick={()=>void draftStoryboard(research,revision.current)}
+            icon={<Sparkles className="size-4"/>}>Retry storyboard generation</Button>}
       </div>}
       {error&&<p className="rounded-control border border-border p-2 text-xs" role="alert">{error}</p>}
       <p className="text-xs text-muted-foreground">First-time setup: run <code>pnpm research:up</code> in apps/web (Docker Desktop needed) and choose an installed local research model in Settings. Source capture is opt-in; no automatic Docker image or LLM downloads. This is a draft, not a source-fact-checked video.</p>

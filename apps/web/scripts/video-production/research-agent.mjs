@@ -232,6 +232,9 @@ export function validateExtractedClaims(candidate, captures) {
   });
   if (candidate.gaps.some(g => !limitString(g, 400))) throw Error("Invalid research gap.");
   const allQuotes = candidate.claims.flatMap(c => c.support);
+  const quotePreviews = candidate.claims.flatMap((c, i) => c.support.map(s => ({
+    claimId: "claim_" + String(i + 1).padStart(2, "0"), sourceId: s.sourceId, quote: s.quote,
+  })));
   const evidence = captures.map(c => {
     const quote = allQuotes.find(s => s.sourceId === c.id)?.quote;
     const from = quote ? c.text.indexOf(quote) : 0;
@@ -240,7 +243,7 @@ export function validateExtractedClaims(candidate, captures) {
       retrievedAt: c.retrievedAt, passageLocator: "captured-text:[" + from + "," + end + ")",
       snapshotSha256: sha(c.text) };
   });
-  return { evidence, claims, gaps: candidate.gaps.map(x => x.trim()) };
+  return { evidence, claims, quotePreviews, gaps: candidate.gaps.map(x => x.trim()) };
 }
 
 export async function analyzeCapturedResearch(captures, brief, options, { transport = fetch, signal } = {}) {
@@ -314,7 +317,8 @@ export async function researchVideoTopic(brief, options = {}, deps = {}) {
   };
   const parsed = parseResearchDossier(dossier);
   if (!parsed.ok) throw Error("Generated dossier invalid: " + parsed.findings.map(x => x.code).join(", "));
-  return { dossier, captures, provider: options.provider ?? "searxng", model: options.model,
+  return { dossier, captures, quotePreviews: quoted.quotePreviews,
+    provider: options.provider ?? "searxng", model: options.model,
     warnings: ["All extracted claims are unverified until human source review.",
       "Captured passages may be incomplete or contain misleading source text."] };
 }

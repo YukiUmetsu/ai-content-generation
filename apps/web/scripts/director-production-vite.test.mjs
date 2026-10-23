@@ -135,7 +135,8 @@ test("topic-first path requires public-network opt in, uses installed model, and
     searchEndpoint:()=>"http://127.0.0.1:49273/search",
     research:async(brief,options)=>{
       calls.push(["research",brief,options]);
-      return {dossier:inputs().dossier,warnings:["Review every citation"]};
+      return {dossier:inputs().dossier,warnings:["Review every citation"],
+        quotePreviews:[{claimId:"claim_01",sourceId:"source_01",quote:"Verbatim source passage"}]};
     },
     generateStory:async(dossier,options)=>{
       calls.push(["story",dossier.id,options]);
@@ -150,6 +151,8 @@ test("topic-first path requires public-network opt in, uses installed model, and
   const found=await invoke(server,"POST","/research",{brief,allowNetwork:true});
   assert.equal(found.status,200);
   assert.equal(found.data.dossier.kind,"research-dossier");
+  assert.deepEqual(found.data.quotePreviews,
+    [{claimId:"claim_01",sourceId:"source_01",quote:"Verbatim source passage"}]);
   assert.equal(calls[0][2].model,"local-researcher");
   assert.equal(calls[0][2].searchEndpoint,"http://127.0.0.1:49273/search");
   const story=await invoke(server,"POST","/story",{dossier:found.data.dossier});

@@ -70,6 +70,8 @@ test("model output requires exact quotes and valid source IDs, never auto-verifi
   const extracted = validateExtractedClaims(candidate(), [capture()]);
   assert.equal(extracted.claims[0].status, "unverified");
   assert.deepEqual(extracted.claims[0].sourceRefs, ["source_01"]);
+  assert.deepEqual(extracted.quotePreviews, [{claimId:"claim_01",sourceId:"source_01",
+    quote:"material that resists the flow of heat"}]);
   assert.equal(extracted.evidence[0].snapshotSha256,
     createHash("sha256").update(content).digest("hex"));
   assert.match(extracted.evidence[0].passageLocator, /^captured-text:\[\d+,\d+\)$/);
@@ -114,6 +116,8 @@ test("research end to end produces captured, unreviewed dossier and real evidenc
   });
   assert.equal(result.dossier.review.status, "draft");
   assert.equal(result.dossier.claims[0].status, "unverified");
+  assert.deepEqual(result.quotePreviews, [{claimId:"claim_01",sourceId:"source_01",
+    quote:"material that resists the flow of heat"}]);
   assert.equal(result.captures.length, 1);
   assert.equal(result.dossier.gaps.length, 1);
   assert.equal(parseResearchDossier(result.dossier).ok, true);

@@ -157,7 +157,8 @@ export function createDirectorProduction(deps={}){
           const result=await research(brief,{provider:"searxng",searchEndpoint:endpoint,
             model:saved.model,endpoint:saved.endpoint,allowNetwork:true,maxSources:4});
           status={...status,state:"idle",phase:"research",message:"Research draft captured. Review sources; claims remain unverified."};
-          respond(res,200,{dossier:result.dossier,warnings:result.warnings});
+          respond(res,200,{dossier:result.dossier,quotePreviews:result.quotePreviews??[],
+            warnings:result.warnings});
         }finally{busy=false;}
         return;
       }
