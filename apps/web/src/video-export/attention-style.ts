@@ -16,7 +16,7 @@ export function compileChapterAttention(chapter: Chapter, plan: GeneralVisualPla
   const typography = chapter.visual.typographyStyle
     ? compileImpactTypography({ id: `${chapter.id}/type`, fps: plan.manifest.fps,
       durationFrames: frames, targetId: "headline", text: chapter.visual.headline,
-      style: chapter.visual.typographyStyle, safeZoneId: "landscape-heading" }) : null;
+      style: chapter.visual.typographyStyle, safeZoneId: plan.manifest.width < plan.manifest.height ? "portrait-heading" : "landscape-heading" }) : null;
   const hook = chapter.intent === "general-intro" && chapter.visual.hookStrategy
     ? compileHookVariant({ id: `${chapter.id}/hook`, fps: plan.manifest.fps,
       durationFrames: frames, strategy: chapter.visual.hookStrategy,
