@@ -11,6 +11,7 @@ import { ChartStoryView } from "@/components/infographic/chart-story-react";
 import { buildQuantitativeChartStory } from "./quantitative-chart-story";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
 import { sampleSemanticMotion } from "./semantic-scene-motion";
+import { entryFadeOpacity, motionRevealState } from "../../scripts/video-production/scene-motion.mjs";
 import { SemanticDiagram } from "./semantic-scene-diagrams";
 
 const ink = "#F5F2EB";
@@ -105,10 +106,17 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     ? sampleChapterAttention(compiledAttention, state.localFrame, chapter.endFrame - chapter.startFrame)
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
+  const chapterFrames=chapter.endFrame-chapter.startFrame;
+  const authoredReveal=state.visual.motion?motionRevealState({frame:state.localFrame,frames:chapterFrames,
+    itemCount:state.visual.items.length,intent:state.intent,motion:state.visual.motion}):null;
   const semanticMotion = sampleSemanticMotion({intent:state.intent,
     phase:state.visual.direction?.phase??"none",
-    localFrame:state.localFrame,durationFrames:chapter.endFrame-chapter.startFrame,
-    visibleItems:diagramState.visibleItems,itemCount:state.visual.items.length});
+    localFrame:state.localFrame,durationFrames:chapterFrames,
+    visibleItems:diagramState.visibleItems,itemCount:state.visual.items.length,
+    cameraMode:state.visual.motion?.camera??"subtle",
+    revealStartFrame:authoredReveal?.revealStartFrame,revealStepFrames:authoredReveal?.revealStepFrames});
+  const transitionOpacity=state.visual.motion
+    ?entryFadeOpacity(state.localFrame,chapterFrames,state.visual.motion):0;
 
   const typographyScale = attention?.titleScale ?? 1;
   const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
@@ -146,8 +154,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
     {!chartStory && (state.intent==="general-flow"
-      ? <Diagram state={diagramState} fps={plan.manifest.fps}
-          chapterFrames={chapter.endFrame - chapter.startFrame}/>
+      ? <g transform={state.visual.motion?.camera
+          ?`translate(${semanticMotion.cameraX} ${semanticMotion.cameraY}) translate(1420 565) scale(${semanticMotion.cameraScale}) translate(-1420 -565)`
+          :undefined}><Diagram state={diagramState} fps={plan.manifest.fps}
+          chapterFrames={chapter.endFrame - chapter.startFrame}/></g>
       : <SemanticDiagram state={diagramState} motion={semanticMotion} renderNode={Node}/>)}
     {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
       {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
@@ -159,6 +169,8 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     <rect x="120" y="978" width={1680 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="5" fill={accent} />
     <text x="120" y="1034" fill={muted} fontSize="22">{state.disclaimer}</text>
     <text x="1800" y="1034" textAnchor="end" fill={muted} fontSize="22">DRAFT · {frame}f</text>
+    {transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
+      fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
   {chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />
