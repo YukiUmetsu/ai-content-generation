@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compilePreproductionRenderJob } from "./video-production/preproduction-render-bridge.mjs";
+import { compileLiveVisualPreview } from "./video-production/live-visual-preview.mjs";
 import { compileAnimatic } from "./video-production/animatic.mjs";
 import { renderAnimaticHtml } from "./video-production/animatic-player.mjs";
 import { inspectProduction } from "./video-production/cli.mjs";
@@ -92,6 +93,7 @@ async function deliverVideo(req,res,releaseDir){
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
   const compile=deps.compile??compilePreproductionRenderJob;
+  const compileLive=deps.compileLive??compileLiveVisualPreview;
   const research=deps.research??researchVideoTopic;
   const generateStory=deps.generateStory??generatePreproductionPlan;
   const loadModel=deps.readModel??readResearchModelSettings;
@@ -172,6 +174,11 @@ export function createDirectorProduction(deps={}){
           respond(res,200,{bundle});
         }finally{busy=false;}
         return;
+      }
+      if(route==="/live-preview"){
+        const input=await readBody(req);
+        const compiled=compileLive(input.dossier,input.bundle,{spokenWpm:input.spokenWpm??145});
+        respond(res,200,compiled);return;
       }
       if(route==="/plan"){
         const input=await readBody(req);

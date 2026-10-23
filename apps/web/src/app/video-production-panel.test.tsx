@@ -3,6 +3,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProductionPanel } from "./video-production-panel";
 
+vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
+  <div data-testid="real-export-frame">Exporter frame {frame}</div>}));
+
 afterEach(()=>{vi.restoreAllMocks();});
 const dossier={id:"home-research",topic:{title:"Why a house costs more",audience:"Homeowners"}};
 const bundle={kind:"preproduction-bundle",researchId:"home-research",plan:{
@@ -71,5 +74,45 @@ describe("Studio user video production",()=>{
     await user.click(screen.getByRole("button",{name:"Render unverified draft MP4"}));
     await waitFor(()=>expect(paths.some(p=>p.endsWith("/start"))).toBe(true));
     expect(screen.getByText(/Leave Studio open/)).toBeInTheDocument();
+  });
+});
+
+describe("visual-first editing in normal Studio",()=>{
+  it("shows the real scene player without requesting voice readiness, audio or video rendering",async()=>{
+    const paths:string[]=[];
+    const exportPlan={
+      schemaVersion:1,kind:"general-explainer-visual-plan",title:"Example",
+      manifest:{schemaVersion:1,id:"test",width:1920,height:1080,durationFrames:180,
+        fps:{num:30,den:1},preset:"youtube"},
+      chapters:[
+        {id:"beat-01",intent:"general-intro",startFrame:0,endFrame:60,
+          visual:{headline:"House",subhead:"Look closer",items:["Price","Costs"]}},
+        {id:"beat-02",intent:"general-flow",startFrame:60,endFrame:120,
+          visual:{headline:"Costs",subhead:"Breakdown",items:["Property tax","Upkeep"]}},
+        {id:"beat-03",intent:"general-payoff",startFrame:120,endFrame:180,
+          visual:{headline:"Total",subhead:"A range",items:["Assumptions","Result"]}},
+      ]
+    };
+    vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+      paths.push(String(url));
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({
+        kind:"live-renderer-preview/v1",schemaVersion:1,plan:exportPlan,
+        shotMap:[
+          {shotId:"question",beatId:"beat-01",startFrame:0,endFrame:60,visualAction:"Show the question"},
+          {shotId:"process",beatId:"beat-02",startFrame:60,endFrame:120,visualAction:"Show components"},
+          {shotId:"payoff",beatId:"beat-03",startFrame:120,endFrame:180,visualAction:"Reveal the answer"}
+        ],sourcePlanSha256:"a".repeat(64),renderPlanSha256:"b".repeat(64),
+        timing:{basis:"estimated-text-only",spokenWpm:145,measuredNarration:false,
+          note:"Estimated timing, not actual speech"},visualLimits:[]
+      }),{status:200});
+      throw Error("Preview triggered unexpected external/media API: "+url);
+    });
+    const user=userEvent.setup();
+    render(<ProductionPanel dossier={dossier} bundle={bundle} selectedShotId="process"/>);
+    await user.click(screen.getByRole("button",{name:"Preview actual rendered scenes"}));
+    expect(await screen.findByTestId("real-export-frame")).toHaveTextContent("frame 60");
+    expect(screen.getByText(/Same scene component as MP4 export/)).toBeInTheDocument();
+    expect(paths).toEqual(["/api/contentgen-video/live-preview"]);
+    expect(screen.queryByRole("button",{name:"Render unverified draft MP4"})).not.toBeInTheDocument();
   });
 });

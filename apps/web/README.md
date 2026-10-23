@@ -985,3 +985,35 @@ full-resolution MP4 render. Scrub/inspect normal-speed question, mechanism
 and payoff sections, and confirm multi-line labels fit the safe diagram area.
 Run `pnpm --dir apps/web test` and
 `pnpm --dir apps/web run test:video:headless` for deterministic regressions.
+
+
+### Preview the real Kumiki scenes before paying for narration
+
+In **Video Director**, start with **Try sample project** or an existing research
+storyboard. Click **Preview actual rendered scenes** in **Preview and render a
+real video**. The 16:9 player draws the **same GeneralExportScene React
+component** that Chromium captures for the MP4—not the earlier simplified
+diagram animatic. No voice setup, Docker, TTS, FFmpeg, renderer build,
+cloud API or video file is needed for this visual-first preview.
+
+- Play/pause at the estimated timeline FPS and scrub exact absolute frames.
+- Select any authored shot, go to previous/next, restart, or inspect its final
+  frame to check reveal timing and correct concealment of the payoff.
+- Choose **Edit this shot in Video Director** to focus its script/visual editor.
+  Apply the change, then click **Preview actual rendered scenes** again to
+  see the updated scene. Other unchanged shots retain their source data.
+- Research claim references and supported visual direction use the same
+  validated dossier→renderer job→general visual plan as the MP4 exporter.
+
+**Timing is intentionally approximate**: the editor creates a temporary,
+frame-addressable 48 kHz *estimated* narration timeline from script length
+(145 WPM by default; Japanese uses an explicit character approximation).
+Final TTS samples, pauses and chapter durations may differ. This preview
+is silent and does not emulate measured speech, master audio, SFX or final
+mux playback. The old animated rough cut remains available separately, but
+the new player is the one to use for evaluating actual 2D/3D composition
+quality. Custom natural-language visual choreography is still not
+automatically converted into arbitrary animations.
+
+Source-integrity/preview tests: `pnpm --dir apps/web run test:video:headless`
+and React player tests: `pnpm --dir apps/web test`.
