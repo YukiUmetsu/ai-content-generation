@@ -312,7 +312,7 @@ function validateImportedStory(source) {
     if (!allowed.includes(key)) throw new Error("Unknown storyboard field: " + key);
   }
   const result = {
-    title: safeStoryText(source.title, "Title", 180, 1),
+    title: safeStoryText(source.title, "Title", 180),
     viewerQuestion: safeStoryText(source.viewerQuestion ?? "", "Viewer question", 240),
     audience: safeStoryText(source.audience ?? "", "Audience", 160),
   };
@@ -326,9 +326,7 @@ function validateImportedStory(source) {
   if (!Array.isArray(source.scenes) || source.scenes.length < 3 || source.scenes.length > 40) {
     throw new Error("A storyboard needs 3–40 scenes.");
   }
-  if (result.length === "youtube-long" && source.scenes.length < 10) {
-    throw new Error("Long-form production needs at least 10 authored scenes.");
-  }
+
   result.scenes = source.scenes.map((scene, i) => {
     if (!scene || typeof scene !== "object" || Array.isArray(scene)) {
       throw new Error("Invalid scene at index " + i);
@@ -341,15 +339,15 @@ function validateImportedStory(source) {
     if (!allowedStoryOptions.intent.includes(scene.intent)) {
       throw new Error("Invalid scene treatment at index " + i);
     }
-    if (!Array.isArray(scene.items) || scene.items.length < 2 || scene.items.length > 5) {
-      throw new Error("Scene " + (i + 1) + " needs 2–5 labels.");
+    if (!Array.isArray(scene.items) || scene.items.length > 5) {
+      throw new Error("Scene " + (i + 1) + " accepts up to five labels while drafting.");
     }
     return {
-      headline: safeStoryText(scene.headline, "Headline", 68, 1),
-      narration: safeStoryText(scene.narration, "Narration", 1600, 20),
+      headline: safeStoryText(scene.headline, "Headline", 68),
+      narration: safeStoryText(scene.narration, "Narration", 1600),
       subhead: safeStoryText(scene.subhead ?? "", "Supporting copy", 115),
       intent: scene.intent,
-      items: scene.items.map(item => safeStoryText(item, "Diagram label", 44, 1)),
+      items: scene.items.map(item => safeStoryText(item, "Diagram label", 44)),
     };
   });
   return result;
