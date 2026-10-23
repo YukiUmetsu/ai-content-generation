@@ -26,7 +26,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   await waitForChartStoryReadiness(stage);
   const isHouse = kind === "house-math-visual-plan";
   const copy = stage.querySelectorAll<SVGGraphicsElement>(isHouse ? "[data-house-copy]" : "[data-general-copy]");
-  if (!copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
+  if (!portrait && !copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
   if (portrait) {
     const portraitRoot = stage.querySelector<HTMLElement>("[data-portrait-general-scene]");
     if (!portraitRoot || portraitRoot.dataset.safeFrameStatus !== "ok") {
