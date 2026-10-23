@@ -40,6 +40,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   const [sampleAutoLoaded,setSampleAutoLoaded]=useState(false);
   const previewAnchor=useRef<HTMLDivElement>(null);
   const demoScrolled=useRef(false);
+  const lastBundle=useRef(bundle);
   const [animaticUrl,setAnimaticUrl]=useState("");
   const [ready,setReady]=useState(false);
   const [working,setWorking]=useState("");
@@ -47,6 +48,26 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
   const change=(patch:Partial<Settings>)=>{setSettings(x=>({...x,...patch}));setReady(false);};
   const payload={dossier,bundle};
+  useEffect(()=>{
+    if(lastBundle.current===bundle)return;
+    lastBundle.current=bundle;
+    if(!actualPreview)return;
+    let cancelled=false;
+    void request("live-preview",{dossier,bundle}).then(data=>{
+      if(cancelled)return;
+      const updated=data as unknown as LiveVisualPreviewData;
+      if(updated.kind!=="live-renderer-preview/v1")throw Error("Invalid scene preview.");
+      setActualPreview(updated);setReady(false);
+      setNotice("Storyboard changes are now visible in the actual renderer preview.");
+    }).catch(error=>{
+      if(!cancelled){
+        setActualPreview(null);
+        setNotice("Storyboard changed, but the visual preview could not refresh: "+
+          (error instanceof Error?error.message:"Unknown error"));
+      }
+    });
+    return ()=>{cancelled=true;};
+  },[bundle,dossier]);
   async function prepare(){
     setWorking("plan");setNotice("");setReady(false);setAnimaticUrl("");
     try{setPreview(await request("plan",payload) as unknown as Preview);}
