@@ -23,7 +23,7 @@ const palette = [turquoise, accent, "#A89CD5", "#B4D99B", "#D98D9C"];
 
 function Node({ x, y, width, height, label, note, index, highlight = false }: { x: number; y: number; width: number; height: number; label: string; note?: string; index: number; highlight?: boolean }) {
   const text = fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
-  const detail = note?fitSvgText(note,{maxWidthPx:width-54,preferredSize:height<115?17:21,minSize:14,maxLines:height<115?1:2}):null;
+  const detail = note?fitSvgText(note,{maxWidthPx:width-54,preferredSize:height<115?17:21,minSize:width<350?13:14,maxLines:width<350?4:height<115?3:2}):null;
   return <g data-general-node={index}>
     <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
     <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
@@ -31,7 +31,7 @@ function Node({ x, y, width, height, label, note, index, highlight = false }: { 
       y={detail ? y+height*.39-(text.lines.length-1)*13+i*26 : y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11}
       fontSize={detail?Math.min(text.fontSize,28):text.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
     {detail?.lines.map((line,i)=><text data-teaching-detail="" key={i} x={x+width/2+5}
-      y={y+height*.68+i*22} fontSize={detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
+      y={y+(width<350?height*.53:height*.60)+i*(width<350?17:height<115?15:22)} fontSize={detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
   </g>;
 }
 
