@@ -3,11 +3,11 @@ import type { ReactNode } from "react";
 import type { GeneralFrame } from "../../scripts/video-production/general-visual-plan.mjs";
 import type { SemanticFrame } from "./semantic-scene-motion";
 
-type NodeRenderer=(args:{x:number;y:number;width:number;height:number;label:string;index:number;highlight?:boolean})=>ReactNode;
+type NodeRenderer=(args:{x:number;y:number;width:number;height:number;label:string;note?:string;index:number;highlight?:boolean})=>ReactNode;
 export interface SceneDiagramsProps {state:GeneralFrame;motion:SemanticFrame;renderNode:NodeRenderer;}
 const gold="#EFC08B", sea="#8CDAD2", ghost="#8AA8B5", white="#F5F2EB";
-function AnimatedNode({label,index,x,y,width,height,motion,renderNode}:{
-  label:string;index:number;x:number;y:number;width:number;height:number;
+function AnimatedNode({label,note,index,x,y,width,height,motion,renderNode}:{
+  label:string;note?:string;index:number;x:number;y:number;width:number;height:number;
   motion:SemanticFrame;renderNode:NodeRenderer
 }){
   const item=motion.reveal[index];
@@ -15,7 +15,7 @@ function AnimatedNode({label,index,x,y,width,height,motion,renderNode}:{
   const tx=x+width/2,ty=y+height/2;
   return <g data-semantic-node={index} data-semantic-focus={item.focused?"true":"false"}
     opacity={item.opacity} transform={`translate(0 ${item.offset}) translate(${tx} ${ty}) scale(${item.scale}) translate(${-tx} ${-ty})`}>
-    {renderNode({x,y,width,height,label,index,highlight:item.focused})}
+    {renderNode({x,y,width,height,label,note,index,highlight:item.focused})}
   </g>;
 }
 function IntroLens({state,motion,renderNode}:SceneDiagramsProps){
@@ -29,14 +29,14 @@ function IntroLens({state,motion,renderNode}:SceneDiagramsProps){
       strokeDasharray="5 16" strokeWidth="2" transform={`rotate(${-spin/2} 1426 520)`}/>
     <path d="M1125 520 H1060 M1726 520 H1790" stroke={sea} strokeWidth="2" opacity=".45"/>
     <g transform={`translate(0 ${-motion.completion*20})`}>
-      <AnimatedNode label={all[0]} index={0} x={1110} y={447} width={640} height={146} motion={motion} renderNode={renderNode}/>
+      <AnimatedNode label={all[0]} note={state.visual.itemNotes?.[0]} index={0} x={1110} y={447} width={640} height={146} motion={motion} renderNode={renderNode}/>
     </g>
     {all.slice(1).map((label,i)=>{
       const others=all.length-1,twoColumns=others>=3,cols=twoColumns?2:1;
       const width=twoColumns?304:610;
       const rows=Math.ceil(others/cols),col=i%cols,row=Math.floor(i/cols);
       const y=rows>1?654+row*115:681,x=twoColumns?1085+col*370:1128;
-      return <AnimatedNode key={i} label={label} index={i+1} x={x} y={y}
+      return <AnimatedNode key={i} label={label} note={state.visual.itemNotes?.[i+1]} index={i+1} x={x} y={y}
         width={width} height={93} motion={motion} renderNode={renderNode}/>;
     })}
     <g opacity={1-motion.completion*.7}>
@@ -54,7 +54,7 @@ function Contrast({state,motion,renderNode}:SceneDiagramsProps){
     {all.map((label,index)=>{
       const x=compact?1052+(index%2)*387:1060+index*(width+gap);
       const y=compact?325+Math.floor(index/2)*170:470;
-      return <AnimatedNode key={index} label={label} index={index} x={x} y={y}
+      return <AnimatedNode key={index} label={label} note={state.visual.itemNotes?.[index]} index={index} x={x} y={y}
         width={compact?348:width} height={compact?132:165} motion={motion} renderNode={renderNode}/>;
     })}
     {!compact&&all.slice(1).map((_,i)=>{
@@ -81,7 +81,7 @@ function Decomposition({state,motion,renderNode}:SceneDiagramsProps){
           <path d={`M1055 ${pointY} H1077`} stroke={gold} strokeWidth="2"
             strokeDasharray="22" strokeDashoffset={22*(1-item.opacity)}/>
         </g>}
-        <AnimatedNode label={label} index={index} x={1077} y={y} width={680} height={height}
+        <AnimatedNode label={label} note={state.visual.itemNotes?.[index]} index={index} x={1077} y={y} width={680} height={height}
           motion={motion} renderNode={renderNode}/>
       </g>;
     })}
@@ -107,7 +107,7 @@ function Synthesis({state,motion,renderNode}:SceneDiagramsProps){
           fill="none" stroke={index===all.length-1?gold:sea} strokeWidth="2"
           strokeDasharray="7 12" strokeDashoffset={Math.round((1-motion.connectorProgress)*60)}
           strokeOpacity={item.opacity*.55}/>}
-        <AnimatedNode label={label} index={index} x={1102} y={y} width={625} height={height}
+        <AnimatedNode label={label} note={state.visual.itemNotes?.[index]} index={index} x={1102} y={y} width={625} height={height}
           motion={motion} renderNode={renderNode}/>
       </g>;
     })}
