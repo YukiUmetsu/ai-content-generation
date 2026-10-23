@@ -1,4 +1,5 @@
 
+import type { ReactNode } from "react";
 import type { GeneralFrame } from "../../scripts/video-production/general-visual-plan.mjs";
 import type { SemanticFrame } from "./semantic-scene-motion";
 import { fitSvgText } from "../../scripts/video-production/text-layout.mjs";
@@ -38,7 +39,7 @@ function Heading({state,x,y,maxWidth}:{state:GeneralFrame;x:number;y:number;maxW
      fontSize={fitted.fontSize} fontWeight="820" letterSpacing="-2">{line}</text>)}
  </g>;
 }
-function Background({children}:{children:React.ReactNode}){
+function Background({children}:{children:ReactNode}){
  return <g>
   <defs>
    <linearGradient id="home-bg" x1="0" y1="0" x2="1" y2="1">
@@ -119,7 +120,7 @@ function Payoff({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
  if(state.visibleItems===0)return <g data-story-scene="payoff" data-story-payoff-locked="true">
   <text x="132" y="508" fill={faint} fontSize="32" letterSpacing="3">PUT THE PIECES TOGETHER…</text>
  </g>;
- const labels=state.visual.items.slice(0,5);
+ const labels=["Purchase price",...state.visual.items.slice(1,5)];
  return <g data-story-scene="payoff">
   <text x="130" y="196" fill={amber} fontSize="25" fontWeight="750" letterSpacing="4">THE TAKEAWAY</text>
   <Heading state={state} x={128} y={290} maxWidth={1600}/>
@@ -140,7 +141,7 @@ function Payoff({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
   <path d="M808 702 H967" stroke={amber} strokeWidth="6" strokeDasharray="18 16"
     strokeDashoffset={Math.round(-motion.lightSweep*100)}/>
   <path d="M946 683 L975 702 L946 720" fill="none" stroke={amber} strokeWidth="6"/>
-  {state.visibleItems>=2&&<g data-story-takeaway="" opacity={ease((motion.completion-.14)/.28)}>
+  {state.visibleItems>=labels.length&&<g data-story-takeaway="" opacity={ease((motion.completion-.14)/.28)}>
     <rect x="1005" y="485" width="750" height="370" rx="33" fill="#2B514E" stroke={cyan} strokeWidth="3"/>
     <text x="1071" y="562" fill={cyan} fontSize="24" fontWeight="730" letterSpacing="3">WHAT YOU MAY SPEND</text>
     <text x="1071" y="653" fill={paper} fontSize="61" fontWeight="830">MORE THAN</text>
@@ -148,7 +149,7 @@ function Payoff({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
     <text x="1071" y="807" fill={paper} fontSize="23">When financed and ongoing costs are included</text>
   </g>}
   <text x="132" y="1024" fill={faint} fontSize="22">
-    Depends on loan terms, location, repairs and years owned. Sale proceeds are not included.
+    Actual costs depend on loan terms, location and years owned. Sale proceeds are excluded.
   </text>
  </g>;
 }
