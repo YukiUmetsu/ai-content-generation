@@ -36,6 +36,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   const [settings,setSettings]=useState<Settings>(defaults);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
+  const [previewFocus,setPreviewFocus]=useState<string|undefined>();
   const [animaticUrl,setAnimaticUrl]=useState("");
   const [ready,setReady]=useState(false);
   const [working,setWorking]=useState("");
@@ -55,7 +56,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
       const result=await request("live-preview",payload) as unknown as LiveVisualPreviewData;
       if(result.kind!=="live-renderer-preview/v1"||result.sourcePlanSha256.length!==64)
         throw Error("Actual visual preview returned an invalid contract.");
-      setActualPreview(result);
+      setActualPreview(result);setPreviewFocus(selectedShotId);
     }catch(error){
       setActualPreview(null);
       setNotice(error instanceof Error?error.message:"Actual scene preview failed.");
@@ -66,7 +67,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
     const updated=await onApplyMotion(id,motion);
     const result=await request("live-preview",{dossier,bundle:updated}) as unknown as LiveVisualPreviewData;
     if(result.kind!=="live-renderer-preview/v1")throw Error("Saved project preview could not be refreshed.");
-    setActualPreview(result);setReady(false);
+    setPreviewFocus(id);setActualPreview(result);setReady(false);
     setNotice("Saved per-shot motion and refreshed the real export scene. Audio was not regenerated.");
   }
   async function animatic(){
@@ -141,8 +142,9 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
         </a>}
       </div>
       {actualPreview&&<div className="space-y-2 rounded-control border border-border p-3">
-        <LiveRendererPreview key={actualPreview.renderPlanSha256+":"+selectedShotId}
-          preview={actualPreview} selectedShotId={selectedShotId} onSelectShot={onSelectShot}
+        <LiveRendererPreview key={actualPreview.renderPlanSha256+":"+(previewFocus??selectedShotId)}
+          preview={actualPreview} selectedShotId={previewFocus??selectedShotId}
+          onSelectShot={id=>{setPreviewFocus(id);onSelectShot?.(id);}}
           onSaveMotion={onApplyMotion?saveMotion:undefined}/>
       </div>}
       {preview&&<>
