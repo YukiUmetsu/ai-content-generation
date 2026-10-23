@@ -334,6 +334,69 @@ async function localStudioPage(t) {
   return dom;
 }
 
+test("Studio manual scene cards can be reordered and duplicated without changing bookend roles", async (t) => {
+  const dom = await localStudioPage(t);
+  const d = dom.window.document;
+  const make = (name, intent = "general-flow") => ({
+    headline: name, narration: "A narrated explanation of how one component connects to another during the process.",
+    subhead: "Each frame shows the next step.", intent, items: ["Start", "Finish"],
+  });
+  const story = {
+    kind: "contentgen-manual-storyboard", schemaVersion: 1,
+    title: "How a message travels", viewerQuestion: "Where does it go?", audience: "Learners",
+    length: "smoke", platform: "youtube-shorts", locale: "en-US",
+    hookStrategy: "unexpected-reveal", typographyStyle: "wipe",
+    scenes: [make("Opening"), make("Connection A"), make("Connection B"), make("Conclusion")],
+  };
+  dom.window.__storyForTest = story;
+  dom.window.eval("applyImportedStory(window.__storyForTest)");
+  const cards = () => [...d.querySelectorAll("#manual-scenes .manual-scene")];
+  const names = () => cards().map(el => el.querySelector(".manual-headline").value);
+  assert.deepEqual(names(), ["Opening", "Connection A", "Connection B", "Conclusion"]);
+  assert.equal(cards()[0].querySelector(".manual-up-button").hidden, true);
+  assert.equal(cards().at(-1).querySelector(".manual-duplicate-button").hidden, true);
+  cards()[2].querySelector(".manual-up-button").click();
+  assert.deepEqual(names(), ["Opening", "Connection B", "Connection A", "Conclusion"]);
+  cards()[1].querySelector(".manual-duplicate-button").click();
+  assert.deepEqual(names(), ["Opening", "Connection B", "Connection B", "Connection A", "Conclusion"]);
+  cards()[2].querySelector(".manual-remove-button").click();
+  assert.deepEqual(names(), ["Opening", "Connection B", "Connection A", "Conclusion"]);
+  assert.equal(d.getElementById("manual-platform").value, "youtube-shorts");
+  assert.equal(d.querySelector('input[name="mode"][value="manual"]').checked, true);
+  assert.equal(d.getElementById("render-button").disabled, true);
+});
+
+test("portable Studio storyboard JSON is content-only, supports incomplete drafts and imports atomically", async (t) => {
+  const dom = await localStudioPage(t);
+  const d = dom.window.document;
+  d.getElementById("fish-key").value = "DO-NOT-EXPORT-ME";
+  d.getElementById("voice-id").value = "PRIVATE-VOICE-ID";
+  d.getElementById("manual-title").value = "Work in progress";
+  const json = dom.window.eval('JSON.stringify({ kind: STORY_KIND, schemaVersion: 1, ...validateImportedStory({ kind: STORY_KIND, schemaVersion: 1, ...manualInput() }) })');
+  const story = JSON.parse(json);
+  assert.equal(story.scenes.length, 3);
+  assert.equal(story.scenes[0].narration, "");
+  assert.equal(json.includes("DO-NOT-EXPORT-ME"), false);
+  assert.equal(json.includes("PRIVATE-VOICE-ID"), false);
+  assert.equal(json.includes("apiKey"), false);
+  assert.equal(json.includes("voiceId"), false);
+  dom.window.__storyForTest = story;
+  dom.window.eval("applyImportedStory(window.__storyForTest)");
+  assert.equal(d.getElementById("manual-title").value, "Work in progress");
+  assert.equal(d.getElementById("fish-key").value, "DO-NOT-EXPORT-ME");
+  assert.equal(d.getElementById("voice-id").value, "PRIVATE-VOICE-ID");
+
+  dom.window.__storyForTest = { ...story, scenes: [...story.scenes] };
+  dom.window.__storyForTest.scenes[1] = { ...story.scenes[1], headline: "<img src=x onerror=alert(1)>" };
+  dom.window.eval("applyImportedStory(window.__storyForTest)");
+  assert.equal(d.querySelectorAll("#manual-scenes img").length, 0);
+  assert.equal(d.querySelectorAll("#manual-scenes .manual-headline")[1].value, "<img src=x onerror=alert(1)>");
+
+  dom.window.__storyForTest = { ...story, voiceId: "malicious-secret" };
+  assert.throws(() => dom.window.eval("applyImportedStory(window.__storyForTest)"), /Unknown storyboard field/);
+  assert.equal(d.getElementById("manual-title").value, "Work in progress");
+  assert.equal(d.querySelectorAll("#manual-scenes .manual-headline")[1].value, "<img src=x onerror=alert(1)>");
+});
 test("generated topic claims show declared statuses, source provenance and clear unsourced warnings safely", async (t) => {
   const dom = await localStudioPage(t);
   const draft = { job: { id: "topic-claim-review", topic: { title: "Heat pumps" }, beats: [{ id: "beat-01" }],
