@@ -6,34 +6,41 @@ import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { researchVideoTopic, localSearxngEndpoint } from "./research-agent.mjs";
 import { localChatEndpoint } from "./topic-generator.mjs";
+import { configuredSearchEndpoint } from "./local-search-config.mjs";
+import { readResearchModelSettingsSync } from "./research-model-settings.mjs";
 
 export function parseResearchArgs(argv, env = process.env) {
   const { values } = parseArgs({ args: argv, strict: true, allowPositionals: false, options: {
     help: { type: "boolean", default: false },
     topic: { type: "string" }, question: { type: "string" }, audience: { type: "string" },
     locale: { type: "string", default: "en-US" },
-    model: { type: "string" }, endpoint: { type: "string", default: "http://127.0.0.1:11434/v1/chat/completions" },
+    model: { type: "string" }, endpoint: { type: "string" },
     "search-provider": { type: "string", default: "searxng" },
-    "search-endpoint": { type: "string", default: "http://127.0.0.1:8080/search" },
+    "search-endpoint": { type: "string" },
     "max-sources": { type: "string", default: "4" },
     "allow-network": { type: "boolean", default: false },
     "approve-search-charges": { type: "boolean", default: false },
     "out-dir": { type: "string" },
   } });
   if (values.help) return { help: true };
-  for (const key of ["topic", "audience", "model", "out-dir"])
+  const selected = readResearchModelSettingsSync();
+  const model = values.model || selected?.model;
+  const endpoint = values.endpoint || selected?.endpoint || "http://127.0.0.1:11434/v1/chat/completions";
+  const searchEndpoint = values["search-endpoint"] || configuredSearchEndpoint() || "http://127.0.0.1:8080/search";
+  for (const key of ["topic", "audience", "out-dir"])
     if (!values[key]?.trim()) throw Error("Missing required --" + key + ".");
+  if (!model) throw Error("Choose an installed research model in Studio Settings or pass --model.");
   if (!["en-US", "ja-JP"].includes(values.locale)) throw Error("--locale must be en-US or ja-JP.");
   if (!values["allow-network"]) throw Error("Research requires explicit --allow-network for public web page retrieval.");
   const searchProvider = values["search-provider"];
   if (!["searxng", "brave"].includes(searchProvider)) throw Error("--search-provider must be searxng or brave.");
-  if (searchProvider === "searxng") localSearxngEndpoint(values["search-endpoint"]);
+  if (searchProvider === "searxng") localSearxngEndpoint(searchEndpoint);
   if (searchProvider === "brave" && !values["approve-search-charges"])
     throw Error("Brave may incur charges; explicitly opt in with --approve-search-charges or use local SearXNG.");
   if (searchProvider === "brave" && !env.BRAVE_SEARCH_API_KEY?.trim())
     throw Error("Set BRAVE_SEARCH_API_KEY for opt-in Brave discovery.");
-  localChatEndpoint(values.endpoint);
-  if (values.model.length > 120 || /[\u0000-\u001f]/u.test(values.model))
+  localChatEndpoint(endpoint);
+  if (model.length > 120 || /[\u0000-\u001f]/u.test(model))
     throw Error("Installed model identifier is invalid.");
   const maxSources = Number(values["max-sources"]);
   if (!Number.isInteger(maxSources) || maxSources < 1 || maxSources > 6)
@@ -45,17 +52,17 @@ export function parseResearchArgs(argv, env = process.env) {
   return {
     brief: { title: values.topic, viewerQuestion: values.question || values.topic,
       audience: values.audience, locale: values.locale },
-    options: { provider: searchProvider, searchEndpoint: values["search-endpoint"],
+    options: { provider: searchProvider, searchEndpoint,
       braveApiKey: searchProvider === "brave" ? env.BRAVE_SEARCH_API_KEY : undefined,
-      model: values.model, endpoint: values.endpoint, allowNetwork: true, maxSources },
+      model, endpoint, allowNetwork: true, maxSources },
     outDir,
   };
 }
 export async function runResearchCli(argv, { research = researchVideoTopic, log = console.log, env = process.env } = {}) {
   const args = parseResearchArgs(argv, env);
   if (args.help) {
-    log("Usage: pnpm video:research --topic TEXT --question TEXT --audience TEXT --model INSTALLED_MODEL --allow-network --out-dir NEW_DIR");
-    log("Defaults: --search-provider searxng --search-endpoint http://127.0.0.1:8080/search --endpoint http://127.0.0.1:11434/v1/chat/completions");
+    log("Usage: pnpm video:research --topic TEXT --question TEXT --audience TEXT --allow-network --out-dir NEW_DIR [--model MODEL]");
+    log("Research model defaults to Studio Settings; the local SearXNG port is loaded from tools/searxng/.env.");
     log("Optional Brave: --search-provider brave --approve-search-charges with BRAVE_SEARCH_API_KEY set.");
     log("Explicit network permission required; model stays on loopback. No media, provider voice, verification, or publishing.");
     return null;
