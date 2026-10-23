@@ -18,7 +18,7 @@ describe("local AI task profiles",()=>{
     });
     const user=userEvent.setup();
     const view=render(<ResearchModelSettings locale="en"/>);
-    await screen.findByDisplayValue("Research");
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Profile name"})).toHaveValue("Research"));
     await user.selectOptions(screen.getByRole("combobox",{name:"Provider"}),"custom");
     expect(screen.getByRole("combobox",{name:"Provider"})).toHaveValue("custom");
     await user.selectOptions(screen.getByRole("combobox",{name:"Story planning model"}),"two");
@@ -27,7 +27,7 @@ describe("local AI task profiles",()=>{
     expect(saved.assignments.story).toBe("two");
     view.unmount();
     render(<ResearchModelSettings locale="en"/>);
-    await screen.findByDisplayValue("Research");
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Profile name"})).toHaveValue("Research"));
     expect(screen.getByRole("combobox",{name:"Provider"})).toHaveValue("custom");
     expect(screen.getByRole("combobox",{name:"Story planning model"})).toHaveValue("two");
     expect(fetcher).toHaveBeenCalled();
@@ -43,7 +43,7 @@ describe("local AI task profiles",()=>{
       throw Error("Unexpected request");
     });
     const user=userEvent.setup();render(<ResearchModelSettings locale="en"/>);
-    await screen.findByDisplayValue("Research");
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Profile name"})).toHaveValue("Research"));
     await user.selectOptions(screen.getByRole("combobox",{name:"Provider"}),"magnitude");
     await user.click(screen.getByRole("button",{name:"Find installed models"}));
     await waitFor(()=>expect(checkedEndpoint).toBe("http://127.0.0.1:10100/inference/v1/chat/completions"));

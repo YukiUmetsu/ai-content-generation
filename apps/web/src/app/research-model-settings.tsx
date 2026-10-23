@@ -200,7 +200,7 @@ export function ResearchModelSettings({locale}:{locale:Locale}){
         <div className="flex min-w-0 items-start gap-2 text-xs leading-relaxed text-muted-foreground">
           <Search aria-hidden className="mt-0.5 size-4 shrink-0"/>
           <div><span className="font-medium text-foreground">{copy("Research search · ","調査用検索 · ")}</span>
-            {searchEndpoint?copy("Local SearXNG configured","ローカル SearXNG 設定済み"):copy("SearXNG not configured; use research:up to enable source discovery.","SearXNG 未設定。research:up で検索を有効にできます。")}
+            {searchEndpoint?copy(`SearXNG configured at ${searchEndpoint}`,`SearXNG 設定済み: ${searchEndpoint}`):copy("SearXNG not configured; use research:up to enable source discovery.","SearXNG 未設定。research:up で検索を有効にできます。")}
           </div>
         </div>
         <Button size="sm" onClick={()=>void save()} disabled={loading||saving} icon={saving?<RefreshCcw className="size-4"/>:<Save className="size-4"/>}>
