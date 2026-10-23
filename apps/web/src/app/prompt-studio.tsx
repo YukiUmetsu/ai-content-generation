@@ -31,9 +31,15 @@ export function PromptStudio({locale}:{locale:Locale}){
     let active=true;
     void request("GET").then(raw=>{
       if(!active)return;
-      const def=raw.defaults as Record<string,string>,settings=raw.settings as PromptData;
-      setDefaults(def);setOverrides(settings.overrides);
-      setEditor(settings.overrides.hooks??"");
+      const def=raw.defaults,settings=raw.settings;
+      if(!def||typeof def!=="object"||!settings||typeof settings!=="object"||
+        !("overrides" in settings)||typeof settings.overrides!=="object"||
+        settings.overrides===null)
+        throw Error("AI Prompt Studio settings endpoint returned an incomplete response.");
+      const safeDefaults=def as Record<string,string>;
+      const safeSettings=settings as PromptData;
+      setDefaults(safeDefaults);setOverrides(safeSettings.overrides);
+      setEditor(safeSettings.overrides.hooks??"");
     }).catch(error=>{if(active)setStatus(String(error.message));})
       .finally(()=>{if(active)setLoading(false);});
     return ()=>{active=false;};
