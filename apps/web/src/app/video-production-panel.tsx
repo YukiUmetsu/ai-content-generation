@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Film, Play, RefreshCw, ShieldAlert, Square, 
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import { LiveRendererPreview, type LiveVisualPreviewData } from "./live-renderer-preview";
+import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
 type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>}};
@@ -31,7 +32,7 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void}){
+export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>}){
   const [settings,setSettings]=useState<Settings>(defaults);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
@@ -59,6 +60,14 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot}:{do
       setActualPreview(null);
       setNotice(error instanceof Error?error.message:"Actual scene preview failed.");
     }finally{setWorking("");}
+  }
+  async function saveMotion(id:string,motion:SceneMotion){
+    if(!onApplyMotion)throw Error("Studio motion editing is not configured.");
+    const updated=await onApplyMotion(id,motion);
+    const result=await request("live-preview",{dossier,bundle:updated}) as unknown as LiveVisualPreviewData;
+    if(result.kind!=="live-renderer-preview/v1")throw Error("Saved project preview could not be refreshed.");
+    setActualPreview(result);setReady(false);
+    setNotice("Saved per-shot motion and refreshed the real export scene. Audio was not regenerated.");
   }
   async function animatic(){
     setWorking("animatic");setNotice("");
@@ -133,7 +142,8 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot}:{do
       </div>
       {actualPreview&&<div className="space-y-2 rounded-control border border-border p-3">
         <LiveRendererPreview key={actualPreview.renderPlanSha256+":"+selectedShotId}
-          preview={actualPreview} selectedShotId={selectedShotId} onSelectShot={onSelectShot}/>
+          preview={actualPreview} selectedShotId={selectedShotId} onSelectShot={onSelectShot}
+          onSaveMotion={onApplyMotion?saveMotion:undefined}/>
       </div>}
       {preview&&<>
         <div className="rounded-control border border-border bg-surface-subtle p-3">
