@@ -1,0 +1,204 @@
+/**
+ * One-command, explicit Docker lifecycle for ContentGen's loopback SearXNG.
+ * Never starts on application boot; never downloads an image without consent.
+ * Docker and configuration management stay outside the research data model.
+ */
+import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { createInterface } from "node:readline/promises";
+import { promisify } from "node:util";
+
+export const SEARCH_IMAGE = "ghcr.io/searxng/searxng:latest";
+export const SEARCH_URL = "http://127.0.0.1:8080";
+export const COMPOSE_FILE = fileURLToPath(new URL("../../../../tools/searxng/compose.yaml", import.meta.url));
+export const SECRET_FILE = resolve(dirname(COMPOSE_FILE), ".env");
+const exec = promisify(execFile);
+
+function cliError(error) {
+  return String(error?.stderr || error?.message || error).replace(/\s+/gu, " ").slice(0, 360);
+}
+/** Never use shells or string interpolation for Docker arguments. */
+export async function dockerCommand(args) {
+  try {
+    const { stdout } = await exec("docker", args, {
+      encoding: "utf8", timeout: args[0] === "pull" ? 300000 : 60000,
+      maxBuffer: 64 * 1024, windowsHide: true,
+    });
+    return stdout.trim();
+  } catch (error) {
+    throw Error("Docker command failed: " + cliError(error));
+  }
+}
+export function composeArgs(args, envFile = SECRET_FILE) {
+  return ["compose", "--project-directory", dirname(COMPOSE_FILE),
+    "--env-file", envFile, "-f", COMPOSE_FILE, ...args];
+}
+export function parseSearchManagerArgs(argv) {
+  const { values, positionals } = parseArgs({ args: argv, strict: true, allowPositionals: true,
+    options: {
+      help: { type: "boolean", default: false },
+      "allow-image-pull": { type: "boolean", default: false },
+    } });
+  if (values.help) return { help: true };
+  if (positionals.length !== 1 || !["up", "down", "status", "check"].includes(positionals[0]))
+    throw Error("Use up, down, status or check; run --help for setup.");
+  if (values["allow-image-pull"] && positionals[0] !== "up")
+    throw Error("--allow-image-pull applies to up only.");
+  return { operation: positionals[0], allowImagePull: values["allow-image-pull"] };
+}
+
+/** Only startup can create a secret; existing secrets are validated, never overwritten. */
+export async function ensureLocalSecret({ file = SECRET_FILE, random = randomBytes } = {}) {
+  try {
+    const existing = await readFile(file, "utf8");
+    if (!/^SEARXNG_SECRET=[a-f0-9]{64}\n$/u.test(existing))
+      throw Error("Existing SearXNG .env is unexpected; inspect it manually, don't overwrite.");
+    return "existing";
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const secret = random(32).toString("hex");
+  if (!/^[a-f0-9]{64}$/u.test(secret)) throw Error("Secret generator failed.");
+  try {
+    await writeFile(file, "SEARXNG_SECRET=" + secret + "\n", {
+      flag: "wx", mode: 0o600,
+    });
+    return "created";
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      // Another process created it; only accept a correctly formatted secret.
+      return await ensureLocalSecret({ file, random });
+    }
+    throw error;
+  }
+}
+export async function confirmImageDownload() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+  const reader = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await reader.question(
+      "First setup downloads the official SearXNG image (may exceed 250 MB). Continue? [y/N] ");
+    return /^y(?:es)?$/iu.test(answer.trim());
+  } finally {
+    reader.close();
+  }
+}
+
+/** Root route is local-only; JSON smoke-check is separate and calls search engines. */
+export async function checkLocalSearch({ transport = fetch, search = false } = {}) {
+  const url = search
+    ? SEARCH_URL + "/search?q=contentgen+local+search+check&format=json"
+    : SEARCH_URL + "/";
+  try {
+    const response = await transport(url, {
+      redirect: "error", signal: AbortSignal.timeout(search ? 15000 : 4000),
+    });
+    if (!response.ok) {
+      const suffix = response.status === 403 ? " (JSON disabled; check settings.yml search.formats)" : "";
+      return { ok: false, reason: "HTTP " + response.status + suffix };
+    }
+    if (search) {
+      const payload = await response.json();
+      if (!payload || !Array.isArray(payload.results))
+        return { ok: false, reason: "Search returned no SearXNG JSON results array." };
+      return { ok: true, results: payload.results.length };
+    }
+    const content = await response.text();
+    if (!/searxng/iu.test(content.slice(0, 100000)))
+      return { ok: false, reason: "Port 8080 is occupied by a different HTTP server." };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: cliError(error) };
+  }
+}
+const defaultDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+export async function manageLocalSearch(argv, {
+  command = dockerCommand, confirm = confirmImageDownload, check = checkLocalSearch,
+  secret = ensureLocalSecret, delay = defaultDelay, log = console.log,
+} = {}) {
+  const options = parseSearchManagerArgs(argv);
+  if (options.help) {
+    log("ContentGen local SearXNG search (Docker Desktop required; no external/paid search API).");
+    log("pnpm research:up     # starts local search; prompts before first image download");
+    log("pnpm research:down   # stops only this Compose project; keeps local cache and secret");
+    log("pnpm research:status # shows Compose status and local endpoint health");
+    log("pnpm research:check  # explicitly tests real JSON search through configured engines");
+    log("For headless first setup only: pnpm research:up -- --allow-image-pull");
+    return { help: true };
+  }
+  const { operation, allowImagePull } = options;
+  if (operation === "status") {
+    const health = await check();
+    try {
+      await command(["compose", "version"]);
+      // Don't invoke Compose without an initialized secret: missing secret is not failure.
+      const existing = await readFile(SECRET_FILE, "utf8").catch(() => "");
+      const state = existing ? await command(composeArgs(["ps"])) : "Not yet initialized.";
+      log(state);
+    } catch (error) {
+      log("Docker status unavailable: " + cliError(error));
+    }
+    log(health.ok ? "SearXNG responds on " + SEARCH_URL : "SearXNG not ready: " + health.reason);
+    return { ...health, operation };
+  }
+  if (operation === "check") {
+    const health = await check({ search: true });
+    log(health.ok
+      ? "SearXNG JSON search works at " + SEARCH_URL + "/search (results: " + health.results + ")"
+      : "SearXNG JSON check failed: " + health.reason);
+    return { ...health, operation };
+  }
+  try {
+    await command(["--version"]);
+    await command(["compose", "version"]);
+    await command(["info", "--format", "{{.ServerVersion}}"]);
+  } catch (error) {
+    throw Error("Docker Desktop and Docker Compose must be installed and running. " + cliError(error));
+  }
+  if (operation === "down") {
+    const existing = await readFile(SECRET_FILE, "utf8").catch(() => "");
+    if (!existing) {
+      log("No ContentGen SearXNG instance has been initialized.");
+      return { ok: true, operation, skipped: true };
+    }
+    await command(composeArgs(["down"]));
+    log("Stopped ContentGen SearXNG. Cache and generated secret were preserved.");
+    return { ok: true, operation };
+  }
+  // Protect the caller from starting on an occupied port; never manage another service.
+  const existing = await check();
+  if (!existing.ok && existing.reason?.includes("different HTTP server"))
+    throw Error(existing.reason + " Stop the other service on port 8080.");
+  let imagePresent = false;
+  try { await command(["image", "inspect", SEARCH_IMAGE]); imagePresent = true; }
+  catch { /* image is missing; Docker daemon was already checked above */ }
+  if (!imagePresent) {
+    if (!allowImagePull && !await confirm()) {
+      throw Error("Official image download was not approved. Run interactively or use pnpm research:up -- --allow-image-pull.");
+    }
+    await command(["pull", SEARCH_IMAGE]);
+  }
+  await secret();
+  await command(composeArgs(["up", "-d", "--pull", "never"]));
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const health = await check();
+    if (health.ok) {
+      log("ContentGen SearXNG is ready: " + SEARCH_URL);
+      log("Research CLI uses " + SEARCH_URL + "/search by default.");
+      return { ok: true, operation, endpoint: SEARCH_URL + "/search" };
+    }
+    if (health.reason?.includes("different HTTP server"))
+      throw Error(health.reason);
+    if (attempt < 19) await delay(800);
+  }
+  throw Error("SearXNG was started but is not yet responding. Try pnpm research:status and docker compose -f tools/searxng/compose.yaml logs.");
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]))
+  manageLocalSearch(process.argv.slice(2)).then(out => {
+    if (out.ok === false) process.exitCode = 2;
+  }).catch(error => { console.error(String(error.message || error)); process.exitCode = 2; });
