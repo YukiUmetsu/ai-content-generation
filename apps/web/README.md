@@ -659,11 +659,60 @@ and House Math remain unchanged until the new path is integrated with migration 
 Preproduction readiness is not approval to spend money, invoke Fish Audio, render commercially or publish.
 
 
+### One-command local SearXNG setup (recommended)
+
+ContentGen includes its own **Docker Compose** definition under `tools/searxng/`.
+You do **not** need to clone SearXNG, manually edit YAML, create an API key, or operate
+a public search server. Install [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac-install/) once and start it, then:
+
+```sh
+cd apps/web
+pnpm research:up       # first run asks permission to download the image
+pnpm research:status   # verify local service is running
+pnpm research:check    # optionally verify actual JSON search using upstream engines
+```
+
+The image may exceed **250 MB**. The first `research:up` asks permission before downloading;
+for explicitly approved noninteractive setup, use `pnpm research:up -- --allow-image-pull`.
+Later starts reuse the local image and do not silently pull upgrades. Only an existing
+Docker installation is used—no Docker Desktop install is attempted.
+
+SearXNG is available only on **http://127.0.0.1:8080**, and ContentGen's
+`pnpm video:research` uses `http://127.0.0.1:8080/search` by default.
+The included settings enable both human HTML and `format=json` (disabled by default
+upstream). A cryptographically random secret is created in ignored
+`tools/searxng/.env` (mode 0600), retained across restarts. The container runs
+without a proxy, exposed cache/database port, or other application services.
+
+To stop **only** ContentGen's local search service:
+
+```sh
+pnpm research:down
+```
+
+Stopping preserves the generated secret and the Docker cache volume. The app and
+`pnpm video:research` **never auto-start Docker or fetch images**. Any actual
+research still requires `--allow-network`, a separate running local LLM, and a
+research output directory. `research:check` sends a harmless test query to the
+configured search engines; `research:status` checks the local landing page.
+
+If the port is already occupied, stop the conflicting server; this small local
+profile deliberately uses the same default port as the research CLI. If Docker is
+not started, `research:up` reports the missing daemon. Search results can still
+vary by provider engine availability, rate limits, CAPTCHA, and geography.
+Manual source review remains required.
+
+**Docker verification:** the unit/CI tests exercise lifecycle logic with fake
+Docker commands, so they require neither Docker nor external requests. Since
+Docker isn't available in CI, running the real container and issuing a real
+search are manual integration checks, not a claimed CI success. SearXNG is
+third-party software; review updates/licensing/engine terms before broad use.
+
 ### Research-first preproduction (opt-in source discovery)
 
 Run `pnpm video:research` before `pnpm video:plan` to **search and capture actual sources**, then use an **already running local OpenAI-compatible model** to suggest candidate claims with exact supporting excerpts. The resulting `research-dossier/v1` passes the current preproduction parser and remains **draft / unverified**. The model is selected explicitly with `--model`; no cloud LLM is selected automatically.
 
-Use a locally running [SearXNG](https://docs.searxng.org/) instance whose JSON search output is enabled. ContentGen queries its loopback `/search` endpoint and captures only explicitly authorized public HTTPS page content; local SearXNG is a search provider, *not* the LLM.
+Use the bundled Docker-managed [SearXNG](https://docs.searxng.org/) instance above (or an independently configured local instance) with JSON search enabled. ContentGen queries its loopback `/search` endpoint and captures only explicitly authorized public HTTPS page content; local SearXNG is a search provider, *not* the LLM.
 
 ```sh
 cd apps/web
