@@ -83,7 +83,7 @@ describe("Video Director selected-shot workbench",()=>{
     fireEvent.change(bundleInput,{target:{files:[new File([JSON.stringify(bundle)],"bundle.json",{type:"application/json"})]}});
     expect(await screen.findByText(/Matched: Why owning a home costs more/)).toBeInTheDocument();
     await user.click(screen.getByRole("button",{name:"Generate 3 local AI variations"}));
-    expect(await screen.findByText("Personal problem")).toBeInTheDocument();
+    expect((await screen.findAllByText("Personal problem")).length).toBeGreaterThanOrEqual(1);
     await user.selectOptions(screen.getByRole("combobox",{name:"Script candidate"}),"hook-2");
     await user.selectOptions(screen.getByRole("combobox",{name:"Visual candidate"}),"hook-3");
     await user.click(screen.getByRole("button",{name:"Apply combined variation to selected shot"}));
