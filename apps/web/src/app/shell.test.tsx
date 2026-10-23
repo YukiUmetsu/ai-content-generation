@@ -59,15 +59,16 @@ describe("Studio shell", () => {
     });
   });
 
-  it("shows an illustrative preview and plain-language workflow for planned tools", async () => {
+  it("opens the now-live platform planner with per-platform preview and Kumiki safe-area checks", async () => {
+    const user = userEvent.setup();
     render(<App />);
-    await userEvent.setup().click(screen.getByRole("tab", { name: /platform delivery/i }));
-
-    expect(screen.getByText(/The editor isn't connected yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/Illustrative output/i)).toBeInTheDocument();
-    expect(screen.getByTestId("concept-preview-platform")).toBeInTheDocument();
-    const guide = screen.getByLabelText(/how to use this tool/i);
-    expect(within(guide).getByText("Planned")).toBeInTheDocument();
-    expect(within(guide).getByText(/Choose the destination platform and format/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: /platform layouts/i }));
+    expect(screen.queryByText(/The editor isn't connected yet/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/Export layout plan JSON/i})).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:/Platform/i})).toBeInTheDocument();
+    await waitFor(()=>expect(screen.getByTestId("platform-layout-frame")).toHaveAttribute("data-profile","youtube-shorts"));
+    await user.selectOptions(screen.getByRole("combobox",{name:/Platform/i}),"youtube");
+    await waitFor(()=>expect(screen.getByTestId("platform-layout-frame")).toHaveAttribute("data-profile","youtube"));
+    expect(within(screen.getByLabelText(/how to use this tool/i)).getByText("Live")).toBeInTheDocument();
   });
 });
