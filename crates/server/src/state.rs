@@ -4,7 +4,9 @@ use tokio::sync::Semaphore;
 
 use rusqlite::Connection;
 
+use crate::credentials::ProviderCredentials;
 use crate::db::{self, DbError};
+use crate::settings::SettingsSessions;
 
 /// Shared application state. Lanes receive this via `Router<AppState>` and must
 /// open database connections through `connect()` so safety pragmas always run.
@@ -12,13 +14,21 @@ use crate::db::{self, DbError};
 pub struct AppState {
     db_path: Arc<PathBuf>,
     market_semaphore: Arc<Semaphore>,
+    credentials: ProviderCredentials,
+    settings_sessions: Arc<SettingsSessions>,
 }
 
 impl AppState {
     pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self::with_credentials(path, ProviderCredentials::system())
+    }
+
+    pub fn with_credentials(path: impl Into<PathBuf>, credentials: ProviderCredentials) -> Self {
         Self {
             db_path: Arc::new(path.into()),
             market_semaphore: Arc::new(Semaphore::new(1)),
+            credentials,
+            settings_sessions: Arc::new(SettingsSessions::default()),
         }
     }
 
@@ -32,5 +42,13 @@ impl AppState {
 
     pub fn market_semaphore(&self) -> Arc<Semaphore> {
         self.market_semaphore.clone()
+    }
+
+    pub fn credentials(&self) -> &ProviderCredentials {
+        &self.credentials
+    }
+
+    pub fn settings_sessions(&self) -> &SettingsSessions {
+        &self.settings_sessions
     }
 }

@@ -255,8 +255,10 @@ The other six pages operate on an explicitly local browser metadata catalog:
   Stripe products or a storefront.
 - Insights: only actual counts of those author-entered records, never
   fabricated views, revenue or virality predictions.
-- Settings: the existing appearance, density and language controls, plus a
-  JSON catalog backup/import and confirmed reset.
+- Settings: appearance, density, language, Research model, a server-backed
+  macOS Keychain connection for YouTube Data API credentials, and a JSON
+  catalog backup/import and confirmed reset. Saved keys are write-only and
+  never appear in the browser catalog or its exports.
 
 The catalog is stored under the localStorage key
 contentgen:studio-catalog:v1, with a 512 KB limit, strict schema validation,

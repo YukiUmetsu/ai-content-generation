@@ -28,16 +28,13 @@ Owners: [12 — Brand Studio](docs/12-brand-studio.md), [13 — Audio production
 Studio **Research → YouTube Intelligence** supports local niche watchlists and public-video observations from the official YouTube Data API. The collector runs **only while `contentgen-server` is running**: there is no background cloud cron, and it stops when the server exits.
 
 1. Create your own YouTube Data API v3 key in Google Cloud. Enable that API for the key's project. Check Google's current quota and terms for your project.
-2. Start the Rust server with the key in its environment (never put it in a checked-in file):
-
-   ```sh
-   CONTENTGEN_YOUTUBE_API_KEY='your-key' cargo run -p contentgen-server
-   ```
-
-3. In another terminal run `pnpm --dir apps/web dev`, then open Studio → **Research → YouTube Intelligence**. Add a niche and search phrase, and explicitly enable collection. Existing Research evidence continues using its separate service; the market API goes to the Rust server on port 8787.
+2. Start the Rust service with `cargo run -p contentgen-server` and in another terminal run `pnpm --dir apps/web dev`. On macOS, open Studio → **Settings → API connections & secure credentials**, paste the key, and select **Save to Keychain**. No restart is required. The key cannot be read back or included in browser/catalog backups.
+   - Alternatively, pass `CONTENTGEN_YOUTUBE_API_KEY` in the server process environment (never check it into Git). The macOS Keychain value takes precedence if both are present; removing it restores the environment fallback.
+   - On non-macOS platforms, native secure credential writes are not yet supported. Use the process environment as a temporary non-persistent fallback; ContentGen never silently saves to SQLite or browser storage.
+3. Open Studio → **Research → YouTube Intelligence**. Add a niche and search phrase, and explicitly enable collection. Existing Research evidence continues using its separate service; the market API goes to the Rust server on port 8787.
 4. Wait for the next local collector tick (up to about a minute) or choose **Collect now**. Review the observed title, public view count, channel, publication date, source link, and observation timestamp. **Use for video** opens an editable *original* idea saved in the Content catalog; it does not copy the source script or its metrics.
 
-The API key remains server-side. The feature defaults to disabled watchlists, limits enabled niches to ten and API searches to twenty in a rolling 24 hours, and expires cached API observations after thirty days. Missing API key means no external calls; shutting down the server means no scheduled collection. YouTube search requests and metadata lookups still consume the quota assigned by Google. This is **not** a source of keyword search-volume, audience retention, CTR, advertiser RPM, or predicted video earnings. Public metadata belongs to its source, not to ContentGen; respect YouTube's current API policies.
+The API key remains server-side. The feature defaults to disabled watchlists, limits enabled niches to ten and API searches to twenty in a rolling 24 hours, and expires cached API observations after thirty days. Missing API key means no external calls; shutting down the server means no scheduled collection. YouTube search requests and metadata lookups still consume the quota assigned by Google. Saving a key does **not** call Google or consume quota. This is **not** a source of keyword search-volume, audience retention, CTR, advertiser RPM, or predicted video earnings. Public metadata belongs to its source, not to ContentGen; respect YouTube's current API policies.
 
 ## Non-negotiables
 
