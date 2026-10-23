@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Archive, Check, Download, FileUp, Plus, Trash2 } from "lucide-react";
+import { Archive, Check, Download, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
@@ -8,7 +8,7 @@ import type { SectionId } from "./navigation";
 import { sectionLabel } from "./navigation";
 import {
   catalogCounts, makeCatalogId, newCatalog, parseCatalog, withoutProject,
-  type CatalogCollection, type LocalAsset, type LocalContent, type LocalProduct,
+  type LocalAsset, type LocalContent, type LocalProduct,
   type StudioCatalog, type ContentKind, type ContentStage, type AssetKind,
   type Rights, type ProductKind, type ProductStage,
 } from "./catalog-model";
