@@ -1017,3 +1017,33 @@ automatically converted into arbitrary animations.
 
 Source-integrity/preview tests: `pnpm --dir apps/web run test:video:headless`
 and React player tests: `pnpm --dir apps/web test`.
+
+
+### Visual timeline controls: edit motion without regenerating audio
+
+Open **Video Director → Try sample project → Preview actual rendered scenes**.
+The segmented scene timeline is clickable; use Play, Pause and the frame scrubber
+to inspect the same Kumiki-backed scene component that the MP4 exporter uses.
+Select a scene and tune **Reveal start** (0–30% of that scene), **Reveal pace**
+(snappy/balanced/deliberate), **Camera motion** (locked/subtle/cinematic), or
+**Scene entry** (cut/fade in from dark). The local preview responds immediately;
+**Save motion to project** is required to persist. Discard resets unsaved changes,
+and Restore default motion restores the standard pacing controls.
+
+Motion editing preserves the source-linked research bundle: only the chosen
+shot's validated `motion` property is changed. All other shots, the script,
+audio references and claims are preserved. Studio recompiles the visual
+preview after saving, and **Save project** exports these choices to a portable
+JSON file. During full MP4 generation the same options use measured voice
+beat lengths, so reveal frames may shift relative to the silent preview.
+Editing only these controls marks the visual segment for regeneration; it
+does not force a new TTS call. Source and shot hashes prevent stale caches
+from being reused as if visually identical.
+
+**Safe boundaries:** A payoff remains concealed on its semantic event frame
+regardless of settings. Camera presets are finite/bounded; custom CSS or JS
+cannot enter the job. A fade is *from dark*, not a two-shot crossfade. Scene
+durations, speech, external footage, 3D rigs, voice mix and licensed SFX are
+not changed by the timeline editor. Old jobs with no authored motion retain
+their previous visual behavior. For visual QA check frame 0, every reveal
+point, the last frame and the first payoff event in the real player.
