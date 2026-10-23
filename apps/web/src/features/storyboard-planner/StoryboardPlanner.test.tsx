@@ -210,6 +210,7 @@ describe("StoryboardPlanner", () => {
     const key = "contentgen:project-storyboard:v1:project-empty";
     const first = render(<StoryboardPlanner locale="en" {...project} />);
     for (let index = 5; index >= 1; index -= 1) {
+      await user.click(screen.getByRole("button", { name: new RegExp(`^Select beat ${index}:`) }));
       await user.click(screen.getByRole("button", { name: `Delete beat ${index}` }));
     }
     expect(screen.queryAllByRole("button", { name: /^Select beat/ })).toHaveLength(0);
