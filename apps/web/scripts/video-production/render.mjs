@@ -171,6 +171,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
   const segments = [];
   const reviewStills = [];
   let peakScratchBytes = 0;
+  let reusedSegmentCount = 0, renderedSegmentCount = 0;
   await mkdir(segmentsDir, { recursive: true });
   let capture;
   try {
@@ -221,6 +222,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
           },null,2),{flag:"wx"});
           segmentHash=oldMeta.sha256;
           completed=true;
+          reusedSegmentCount++;
           options.onProgress?.({phase:"segment-reused",startFrame,frameCount,chapterIndex});
         }
       }
@@ -244,6 +246,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
           const bytes = await readFile(partialPath);
           peakScratchBytes = Math.max(peakScratchBytes, scratch + bytes.length);
           segmentHash = sha256(bytes);
+          renderedSegmentCount++;
           const meta = { fingerprint, name, startFrame, frameCount, sha256: segmentHash };
           // Video first, then metadata as the commit marker. Missing sidecar means incomplete.
           await rename(partialPath, path);
@@ -312,6 +315,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
   return {
     videoOnlyPath, frameCount: manifest.durationFrames,
     segmentHashes: segments.map(({ sha256: digest, startFrame, frameCount }) => ({ sha256: digest, startFrame, frameCount })),
-    reviewStills, peakScratchBytes, renderSeconds: (performance.now() - started) / 1000,
+    reviewStills, peakScratchBytes, renderedSegmentCount, reusedSegmentCount,
+    renderSeconds: (performance.now() - started) / 1000,
   };
 }
