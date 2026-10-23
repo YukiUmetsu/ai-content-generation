@@ -19,7 +19,7 @@ function analogy() {
       reason:"Translate the unexplained cost gap into familiar checkout behavior."},
     {fromShotId:"shot_analogy",toShotId:"shot_categories",technique:"match-cut",subjectIds:[],
       reason:"Match each checkout line to a distinct illustrative home expense category."},
-    {fromShotId:"shot_categories",toShotId:"shot_answer",technique:"shared-element",subjectIds:["categories"],
+    {fromShotId:"shot_categories",toShotId:"shot_answer",technique:"shared-element",subjectIds:["house"],
       reason:"Preserve the costs as they combine into the takeaway."}
   ];
   p.sound.splice(1,0,{shotId:"shot_analogy",
@@ -48,7 +48,7 @@ function analogy() {
 }
 test("new synthetic sequence compiles a chronological visual teaching handoff, not fake frames",()=>{
   const p=analogy(),d=dossier();
-  assert.equal(parsePreproductionPlan(p,d).ok,true);
+  assert.equal(parsePreproductionPlan(p,d).ok,true,JSON.stringify(parsePreproductionPlan(p,d).findings));
   const s=compileTeachingStoryboard(p,d);
   assert.equal(s.kind,"visual-teaching-storyboard");
   assert.equal(s.storyQuestion,p.story.question);
@@ -68,6 +68,41 @@ test("simple explanation legitimately uses direct teaching rather than a forced 
   const p=direct(),d=dossier();
   assert.equal(parsePreproductionPlan(p,d).ok,true);
   assert.deepEqual(compileTeachingStoryboard(p,d).beats.map(b=>b.phase),["problem","mechanism","payoff"]);
+});
+test("explicit visual states make a technical subject's transformation auditable without invalidating old plans",()=>{
+  const p=direct();
+  const states={before:"The purchase price stands alone",action:"Reveal financing and ongoing costs",
+    after:"Budget now includes added cost categories"};
+  p.teachingSequences[0].visualStates=states;
+  assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+  assert.deepEqual(compileTeachingStoryboard(p,dossier()).teachingSequences[0].visualStates,states);
+  delete p.teachingSequences[0].visualStates;
+  assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+});
+test("optional validated semantic mechanic survives intent-only storyboard; invalid roles and claims fail",()=>{
+  const p=direct(),d=dossier(),seq=p.teachingSequences[0];
+  seq.visualMechanic={version:1,operator:"compare",subjectId:"house",actors:[
+    {id:"house",label:"Home buying costs",role:"subject",claimIds:["claim_illustrative"]},
+    {id:"mortgage",label:"Borrowing cost",role:"part",claimIds:["claim_illustrative"]},
+    {id:"insurance",label:"Insurance cost",role:"part",claimIds:["claim_illustrative"]}],
+    operands:["mortgage","insurance"],outcomeId:"house"};
+  assert.equal(parsePreproductionPlan(p,d).ok,true);
+  assert.deepEqual(compileTeachingStoryboard(p,d).teachingSequences[0].visualMechanic,seq.visualMechanic);
+  seq.visualMechanic.operands=["house","insurance"];
+  assert.ok(codes(validateTeachingSequences(p,d)).includes("mechanic-roles"));
+  seq.visualMechanic.operands=["mortgage","insurance"];
+  seq.visualMechanic.actors[1].claimIds=["fabricated"];
+  assert.ok(codes(validateTeachingSequences(p,d)).includes("mechanic-claim"));
+});
+test("visible learning states reject repeating labels, placeholders and unsafe payloads",()=>{
+  const p=direct();
+  p.teachingSequences[0].visualStates={before:"The initial bill is fixed",action:"Step 1",after:"The initial bill is fixed"};
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-state-repeat"));
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-state-placeholder"));
+  p.teachingSequences[0].visualStates={before:"A house has a listed price",action:"Add the separate cost categories",after:"The budget now includes recurring costs",html:"<script>"};
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-unknown-field"));
+  p.teachingSequences[0].visualStates.after="Extra cost\nInjected label";
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-state-text"));
 });
 test("previously saved v1 plans without teachingSequences remain readable",()=>{
   const p=direct();delete p.teachingSequences;

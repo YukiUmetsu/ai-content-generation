@@ -62,6 +62,18 @@ describe("import / export round trip", () => {
     expect("extra" in result.board).toBe(false);
     expect("extra" in result.board.beats[0]).toBe(false);
   });
+  it("preserves source-grounded visual teaching states and rejects malformed imported states",()=>{
+    const raw=rawDocument();
+    raw.beats[0].teachingState={phase:"problem",subjectId:"hvac-system",sequenceId:"teach_hvac",
+      before:"Only the equipment quote is visible",action:"Reveal installation expenses",
+      after:"The total includes installed labor costs"};
+    const result=parseStoryboard(JSON.stringify(raw));
+    expect(result.ok).toBe(true);
+    if(result.ok)expect(result.board.beats[0].teachingState).toEqual(raw.beats[0].teachingState);
+    raw.beats[0].teachingState={phase:"payoff",subjectId:"unlisted",
+      before:"bad",action:"bad",after:"bad"};
+    expect(errorCodes(JSON.stringify(raw))).toContain("invalid-field");
+  });
 });
 
 describe("safe rejection", () => {
@@ -161,5 +173,21 @@ describe("incomplete draft recovery", () => {
     raw.beats[0].durationFrames = null;
     const result = parseStoryboardDraft(JSON.stringify(raw));
     expect(result.ok).toBe(false);
+  });
+  it("keeps a temporarily empty teaching label in local draft recovery but rejects strict import",()=>{
+    const raw=rawDocument();
+    raw.beats[0].teachingState={phase:"mechanism",subjectId:"hvac-system",
+      before:"The full installation quote is visible",action:"",after:"An itemized budget becomes visible"};
+    const json=JSON.stringify(raw);
+    expect(errorCodes(json)).toContain("invalid-field");
+    const draft=parseStoryboardDraft(json);
+    expect(draft.ok).toBe(true);
+    if(draft.ok)expect(draft.board.beats[0].teachingState?.action).toBe("");
+  });
+  it("rejects excessively long draft teaching copy without discarding ordinary incomplete edits",()=>{
+    const raw=rawDocument();
+    raw.beats[0].teachingState={phase:"mechanism",subjectId:"hvac-system",
+      before:"An initial cost category appears",action:"X".repeat(300),after:"A second category becomes visible"};
+    expect(parseStoryboardDraft(JSON.stringify(raw)).ok).toBe(false);
   });
 });

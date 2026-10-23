@@ -4,6 +4,7 @@
 import { DEFAULT_FPS, STORYBOARD_KIND, STORYBOARD_SCHEMA_VERSION, type Locale,
   type SemanticStoryboard, type StoryboardBeat, type NarrativeRole, type VisualIntent } from "@/features/storyboard-planner/model/types";
 import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
+import type {VisualMechanicV1} from "../../scripts/video-production/semantic-mechanic.mjs";
 
 interface ResearchSource { id:string; title:string; sourceUri:string; retrievedAt:string; passageLocator:string; snapshotSha256:string }
 interface ResearchClaim { id:string; text:string; status:"unverified"|"verified"|"disputed"|"illustrative"; sourceRefs:string[] }
@@ -11,6 +12,7 @@ interface PlanShot {id:string;explanationId:string;family:string;purpose:string;
 interface PlanVoice {shotId:string;narration:string;delivery:string;energy:string;pauseAfterMs:number;sfxIntent:string|null}
 interface PlanExplanation {id:string;actId:string;claimIds:string[];before:string;demonstration:string;after:string}
 interface TeachingPhase {kind:string;shotId:string;visualAction:string;learningChange:string}
+interface VisualStates {before:string;action:string;after:string}
 export interface ResearchDraftResult {
   snapshotId:string;
   artifactId?:string;
@@ -22,7 +24,7 @@ export interface ResearchDraftResult {
   plan:{schemaVersion:1;kind:"preproduction-plan";researchId:string;
     story:{pattern:string;premise:string;hook:string;question:string;answerExplanationId:string;acts:{id:string;question:string;purpose:string;payoff:string}[]};
     explanation:PlanExplanation[];shots:PlanShot[];sound:PlanVoice[];
-    teachingSequences:{id:string;mode:string;question:string;technicalSubjectId:string;claimIds:string[];phases:TeachingPhase[]}[]};
+    teachingSequences:{id:string;mode:string;question:string;technicalSubjectId:string;claimIds:string[];phases:TeachingPhase[];visualStates?:VisualStates;visualMechanic?:VisualMechanicV1}[]};
 }
 
 function readable(text:string,max=64):string{
@@ -59,7 +61,8 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
   const referenced=new Map(dossier.claims.map(x=>[x.id,x]));
   const byVoice=new Map(plan.sound.map(x=>[x.shotId,x]));
   const byExplanation=new Map(plan.explanation.map(x=>[x.id,x]));
-  const phaseByShot=new Map(plan.teachingSequences.flatMap(seq=>seq.phases.map(phase=>[phase.shotId,phase] as const)));
+  const phaseByShot=new Map(plan.teachingSequences.flatMap(seq=>seq.phases.map(phase=>
+    [phase.shotId,{phase,sequence:seq}] as const)));
   if(dossier.claims.some(x=>x.status!=="unverified"||!x.sourceRefs.length||x.sourceRefs.some(s=>!sourceIds.has(s)))||
     dossier.claims.some(x=>!quotes.some(q=>q.claimId===x.id&&x.sourceRefs.includes(q.sourceId)&&q.quote.length>=10)))
     throw Error("Draft includes an unsupported or already-approved research claim.");
@@ -72,7 +75,19 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
   const beats:StoryboardBeat[]=plan.shots.map((shot,i)=>{
     const voice=byVoice.get(shot.id)!;
     const learning=byExplanation.get(shot.explanationId)!;
-    const phase=phaseByShot.get(shot.id);
+    const linked=phaseByShot.get(shot.id);
+    const phase=linked?.phase,sequence=linked?.sequence;
+    const state=sequence?.visualStates && phase &&
+      ["problem","mechanism","payoff"].includes(phase.kind) &&
+      shot.subjectIds.includes(sequence.technicalSubjectId)
+      ? {phase:phase.kind as "problem"|"mechanism"|"payoff",subjectId:sequence.technicalSubjectId,
+          sequenceId:sequence.id,
+          ...sequence.visualStates} : undefined;
+    const mechanic=sequence?.visualMechanic && phase &&
+      ["problem","mechanism","payoff"].includes(phase.kind) &&
+      shot.subjectIds.includes(sequence.technicalSubjectId)
+      ?{sequenceId:sequence.id,phase:phase.kind as "problem"|"mechanism"|"payoff",
+          mechanic:structuredClone(sequence.visualMechanic)}:undefined;
     const isFirst=i===0,isLast=i===plan.shots.length-1;
     const spokenWords=voice.narration.trim().split(/\s+/u).length;
     const durationFrames=Math.min(900,Math.max(150,Math.ceil(spokenWords/2.2)*30+Math.ceil((voice.pauseAfterMs||0)*0.03)));
@@ -83,6 +98,8 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
       semanticObjects:[...shot.subjectIds],focusTarget:shot.subjectIds[0],durationFrames,
       claimRefs:[...shot.claimIds],namedEvents:isFirst?[semanticEvents[0].id]:isLast?[semanticEvents[1].id]:[],
       staticFallback:`${readable(shot.onScreenText)} — ${shot.visualChange}`,
+      ...(state?{teachingState:state}:{}),
+      ...(mechanic?{teachingMechanic:mechanic}:{}),
       ...(isFirst?{opensQuestion:"research-main-question"}:{}),
       ...(isLast?{answersQuestion:"research-main-question"}:{}),
     };

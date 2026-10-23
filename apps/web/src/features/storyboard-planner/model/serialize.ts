@@ -18,6 +18,8 @@ import {
   isNarrativeRole,
   isPositiveInteger,
   isVisualIntent,
+  isTeachingVisualState,
+  isTeachingMechanicPlan,
   type SemanticEvent,
   type SemanticObject,
   type SemanticStoryboard,
@@ -77,6 +79,18 @@ function isString(value: unknown): value is string {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+/** Browser-local editing can briefly contain an empty state text field. */
+function isEditableTeachingState(value: unknown): value is NonNullable<StoryboardBeat["teachingState"]> {
+  if (!isRecord(value) || ![5,6].includes(Object.keys(value).length) ||
+    Object.keys(value).some(key => !["phase", "subjectId", "sequenceId", "before", "action", "after"].includes(key)) ||
+    (value.sequenceId !== undefined &&
+      (typeof value.sequenceId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(value.sequenceId)))) return false;
+  return typeof value.phase === "string" && ["problem", "mechanism", "payoff"].includes(value.phase) &&
+    typeof value.subjectId === "string" &&
+    [value.before,value.action,value.after].every((x,i) => typeof x === "string" &&
+      x.length <= (i === 1 ? 90 : 48));
 }
 
 function stringField(
@@ -154,6 +168,25 @@ function parseBeat(
   const cameraIntent = stringField(value, "cameraIntent", path, errors, { optional: true });
   const opensQuestion = stringField(value, "opensQuestion", path, errors, { optional: true });
   const answersQuestion = stringField(value, "answersQuestion", path, errors, { optional: true });
+  const teachingState = value.teachingState;
+  const validState = isTeachingVisualState(teachingState);
+  const editableState = allowIncomplete && isEditableTeachingState(teachingState);
+  if (teachingState !== undefined && !validState && !editableState)
+    errors.push({ code: "invalid-field", path: `${path}.teachingState` });
+  const teachingMechanic=value.teachingMechanic;
+  const validMechanic=isTeachingMechanicPlan(teachingMechanic);
+  // While entering an actor label, keep the structurally safe local draft;
+  // editorial validation will flag the incomplete semantic operation.
+  const editableMechanic=allowIncomplete&&isRecord(teachingMechanic)&&
+    typeof teachingMechanic.phase==="string"&&
+    ["problem","mechanism","payoff"].includes(teachingMechanic.phase)&&
+    isRecord(teachingMechanic.mechanic)&&
+    isTeachingMechanicPlan({...teachingMechanic,mechanic:{...teachingMechanic.mechanic,
+      actors:Array.isArray(teachingMechanic.mechanic.actors)
+        ?teachingMechanic.mechanic.actors.map(a=>isRecord(a)&&!a.label?{...a,label:"Editing actor"}:a)
+        :[]}});
+  if(teachingMechanic!==undefined&&!validMechanic&&!editableMechanic)
+    errors.push({code:"invalid-field",path:`${path}.teachingMechanic`});
 
   if (!id) return null;
 
@@ -176,6 +209,8 @@ function parseBeat(
   if (cameraIntent !== undefined) beat.cameraIntent = cameraIntent;
   if (opensQuestion !== undefined) beat.opensQuestion = opensQuestion;
   if (answersQuestion !== undefined) beat.answersQuestion = answersQuestion;
+  if (validState || editableState) beat.teachingState = { ...teachingState };
+  if(validMechanic||editableMechanic)beat.teachingMechanic=structuredClone(teachingMechanic) as StoryboardBeat["teachingMechanic"];
   return beat;
 }
 

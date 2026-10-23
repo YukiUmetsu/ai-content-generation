@@ -46,6 +46,22 @@ const en = {
   visualSection: "Visual plan",
   visualIntentLabel: "Visual intent",
   visualObjectiveLabel: "Visual objective",
+  teachingStateLabel: "Visible teaching change",
+  teachingStateHint:
+    "Review each label against your captured sources. These are editorial directions, not verified facts.",
+  teachingStateBefore: "Before (initial state)",
+  teachingStateAction: "Action (visible operation)",
+  teachingStateAfter: "After (learned result)",
+  mechanicLabel: "Semantic animation (2D)",
+  mechanicHint: "A source-linked operation, not a final render. Edit actor nouns and roles; unsupported combinations block export. Operand order matters for transfer and reveal.",
+  mechanicOperator: "Visual operation",
+  mechanicActor: "Visible actor",
+  mechanicRole: "Actor role",
+  mechanicClaims: "Source claims for this actor",
+  mechanicOperands: "Participating actors (ordered by selection)",
+  mechanicOutcome: "Outcome actor",
+  diagMechanicInvalid: (index:number,code:string)=>`Beat ${index} semantic animation is not renderable (${code}). Verify subject, source claims, actor roles and operand order.`,
+  diagMechanicDiverged: (index:number)=>`Beat ${index} uses a different operation or actor set from another phase of the same teaching sequence.`,
   objectsLabel: "Semantic objects",
   objectsHint: "Stable IDs let a later scene preserve identity across cuts.",
   focusLabel: "Focus target",
@@ -155,6 +171,10 @@ const en = {
     `Beat ${index} narration is estimated at ${estimate}, longer than the ${allotted} allotted.`,
   diagIllustrativeUnlabeled:
     "Illustrative claims are present but the storyboard is not marked as illustrative data.",
+  diagTeachingStateInvalid: (index: number) =>
+    `Beat ${index} has an incomplete teaching change or references a subject missing from its semantic objects. Fill in Before, Action and After, and select the correct subject.`,
+  diagTeachingStateDiverged: (index: number) =>
+    `Beat ${index} disagrees with another beat in the same teaching sequence. Review and synchronize the Before, Action and After labels.`,
   importInvalidJson: "The text is not valid JSON.",
   importInvalidRoot: "The document root must be an object.",
   importSchemaVersion: "Unsupported schemaVersion; expected 1.",
@@ -203,6 +223,21 @@ const ja = {
   visualSection: "視覚プラン",
   visualIntentLabel: "視覚意図",
   visualObjectiveLabel: "視覚目標",
+  teachingStateLabel: "視覚的に説明する変化",
+  teachingStateHint: "各ラベルを収集した資料と照合してください。編集上の指示であり、検証済みの事実ではありません。",
+  teachingStateBefore: "変化前（初期状態）",
+  teachingStateAction: "変化（画面上の操作）",
+  teachingStateAfter: "変化後（学習した結果）",
+  mechanicLabel: "意味のある2Dアニメーション",
+  mechanicHint: "出典に関連づく編集用の演出指示です。完成映像ではありません。役割と対象を正しく指定してください。不整合があると書き出せません。移動と開示は選択順も重要です。",
+  mechanicOperator: "視覚的な操作",
+  mechanicActor: "表示オブジェクト",
+  mechanicRole: "オブジェクトの役割",
+  mechanicClaims: "オブジェクトの根拠となる主張",
+  mechanicOperands: "操作するオブジェクト（選択順）",
+  mechanicOutcome: "結果のオブジェクト",
+  diagMechanicInvalid: (index:number,code:string)=>`ビート${index} のアニメーションは無効です（${code}）。対象、出典、役割、対象の順序を確認してください。`,
+  diagMechanicDiverged: (index:number)=>`ビート${index} は同じ説明シーケンスの他の場面と操作やオブジェクトが一致しません。`,
   objectsLabel: "セマンティック・オブジェクト",
   objectsHint: "安定した ID により、後のシーンでもカットをまたいで同一性を保てます。",
   focusLabel: "フォーカス対象",
@@ -312,6 +347,10 @@ const ja = {
     `ビート ${index} のナレーションは約${estimate}と推定され、割当${allotted}を超えています。`,
   diagIllustrativeUnlabeled:
     "例示用のクレームがありますが、ストーリーボードが例示データとして明示されていません。",
+  diagTeachingStateInvalid: (index: number) =>
+    `ビート ${index} の説明する変化が不完全か、対象がセマンティック・オブジェクトに含まれていません。変化前・変化・変化後と対象を確認してください。`,
+  diagTeachingStateDiverged: (index: number) =>
+    `ビート ${index} の説明内容が同じシーケンス内の別のビートと一致しません。変化前・変化・変化後のラベルを揃えてください。`,
   importInvalidJson: "有効な JSON ではありません。",
   importInvalidRoot: "ドキュメントのルートはオブジェクトである必要があります。",
   importSchemaVersion: "未対応の schemaVersion です。1 を想定しています。",
@@ -389,8 +428,16 @@ export function describeDiagnostic(
       return t.diagNarrationOver(index, value("estimate"), value("allotted"));
     case "storyboard-illustrative-unlabeled":
       return t.diagIllustrativeUnlabeled;
+    case "storyboard-teaching-state-invalid":
+      return t.diagTeachingStateInvalid(index);
+    case "storyboard-teaching-state-diverged":
+      return t.diagTeachingStateDiverged(index);
+    case "storyboard-mechanic-diverged":
+      return t.diagMechanicDiverged(index);
     default:
-      return diagnostic.code;
+      return diagnostic.code.startsWith("storyboard-mechanic-")
+        ?t.diagMechanicInvalid(index,diagnostic.code.replace("storyboard-",""))
+        :diagnostic.code;
   }
 }
 
