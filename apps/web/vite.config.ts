@@ -28,7 +28,12 @@ export default defineConfig({
       "/api/research/market": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
       "/api/research": process.env.CONTENTGEN_RESEARCH_ORIGIN ?? process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
       "/api/jobs": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
-      "/api/settings": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
+      // Preserve the browser Host for the Rust credential Origin guard.
+      // Vite URL-string proxy shorthand otherwise rewrites Host to :8787.
+      "/api/settings": {
+        target: process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
+        changeOrigin: false,
+      },
       "/api/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
       "/v1/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
     },
