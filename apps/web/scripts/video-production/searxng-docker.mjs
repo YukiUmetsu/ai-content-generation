@@ -4,8 +4,8 @@
  * Docker and configuration management stay outside the research data model.
  */
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+
+import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -13,9 +13,9 @@ import { createInterface } from "node:readline/promises";
 import { promisify } from "node:util";
 
 export const SEARCH_IMAGE = "ghcr.io/searxng/searxng:latest";
-export const SEARCH_URL = "http://127.0.0.1:8080";
-export const COMPOSE_FILE = fileURLToPath(new URL("../../../../tools/searxng/compose.yaml", import.meta.url));
-export const SECRET_FILE = resolve(dirname(COMPOSE_FILE), ".env");
+import { COMPOSE_FILE, SECRET_FILE, ensureLocalSearchConfig, configuredSearchEndpoint, localSearchUrl, portIsAvailable } from "./local-search-config.mjs";
+export const SEARCH_URL = "http://127.0.0.1:8080"; // legacy constant retained for existing callers; runtime uses persisted port
+
 const exec = promisify(execFile);
 
 function cliError(error) {
@@ -53,30 +53,10 @@ export function parseSearchManagerArgs(argv) {
   return { operation: positionals[0], allowImagePull: values["allow-image-pull"] };
 }
 
-/** Only startup can create a secret; existing secrets are validated, never overwritten. */
-export async function ensureLocalSecret({ file = SECRET_FILE, random = randomBytes } = {}) {
-  try {
-    const existing = await readFile(file, "utf8");
-    if (!/^SEARXNG_SECRET=[a-f0-9]{64}\n$/u.test(existing))
-      throw Error("Existing SearXNG .env is unexpected; inspect it manually, don't overwrite.");
-    return "existing";
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  const secret = random(32).toString("hex");
-  if (!/^[a-f0-9]{64}$/u.test(secret)) throw Error("Secret generator failed.");
-  try {
-    await writeFile(file, "SEARXNG_SECRET=" + secret + "\n", {
-      flag: "wx", mode: 0o600,
-    });
-    return "created";
-  } catch (error) {
-    if (error.code === "EEXIST") {
-      // Another process created it; only accept a correctly formatted secret.
-      return await ensureLocalSecret({ file, random });
-    }
-    throw error;
-  }
+/** Legacy exported helper; now provisions the full secret + random port config. */
+export async function ensureLocalSecret(options = {}) {
+  const config = await ensureLocalSearchConfig(options);
+  return options.returnConfig ? config : config.created ? "created" : "existing";
 }
 export async function confirmImageDownload() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
@@ -91,10 +71,10 @@ export async function confirmImageDownload() {
 }
 
 /** Root route is local-only; JSON smoke-check is separate and calls search engines. */
-export async function checkLocalSearch({ transport = fetch, search = false } = {}) {
-  const url = search
-    ? SEARCH_URL + "/search?q=contentgen+local+search+check&format=json"
-    : SEARCH_URL + "/";
+export async function checkLocalSearch({ transport = fetch, search = false, endpoint = configuredSearchEndpoint() } = {}) {
+  if (!endpoint) return { ok: false, reason: "No local search configuration. Run pnpm research:up." };
+  const origin = new URL(endpoint).origin;
+  const url = search ? endpoint + "?q=contentgen+local+search+check&format=json" : origin + "/";
   try {
     const response = await transport(url, {
       redirect: "error", signal: AbortSignal.timeout(search ? 15000 : 4000),
@@ -111,7 +91,7 @@ export async function checkLocalSearch({ transport = fetch, search = false } = {
     }
     const content = await response.text();
     if (!/searxng/iu.test(content.slice(0, 100000)))
-      return { ok: false, reason: "Port 8080 is occupied by a different HTTP server." };
+      return { ok: false, reason: "Configured search port is occupied by a different HTTP server." };
     return { ok: true };
   } catch (error) {
     return { ok: false, reason: cliError(error) };
@@ -144,13 +124,13 @@ export async function manageLocalSearch(argv, {
     } catch (error) {
       log("Docker status unavailable: " + cliError(error));
     }
-    log(health.ok ? "SearXNG responds on " + SEARCH_URL : "SearXNG not ready: " + health.reason);
+    log(health.ok ? "SearXNG responds on " + (configuredSearchEndpoint() ?? "") : "SearXNG not ready: " + health.reason);
     return { ...health, operation };
   }
   if (operation === "check") {
     const health = await check({ search: true });
     log(health.ok
-      ? "SearXNG JSON search works at " + SEARCH_URL + "/search (results: " + health.results + ")"
+      ? "SearXNG JSON search works at " + configuredSearchEndpoint() + " (results: " + health.results + ")"
       : "SearXNG JSON check failed: " + health.reason);
     return { ...health, operation };
   }
@@ -171,10 +151,8 @@ export async function manageLocalSearch(argv, {
     log("Stopped ContentGen SearXNG. Cache and generated secret were preserved.");
     return { ok: true, operation };
   }
-  // Protect the caller from starting on an occupied port; never manage another service.
-  const existing = await check();
-  if (!existing.ok && existing.reason?.includes("different HTTP server"))
-    throw Error(existing.reason + " Stop the other service on port 8080.");
+  // Creating the config is non-network local work; it does not pull or start a container.
+  // Image permission is checked first to avoid filesystem changes on refusal.
   let imagePresent = false;
   try { await command(["image", "inspect", SEARCH_IMAGE]); imagePresent = true; }
   catch { /* image is missing; Docker daemon was already checked above */ }
@@ -184,14 +162,20 @@ export async function manageLocalSearch(argv, {
     }
     await command(["pull", SEARCH_IMAGE]);
   }
-  await secret();
+  const config = await secret({ returnConfig: true });
+  const portFree = await portIsAvailable(config.port);
+  // A previously running container may own its persisted port; do not move it.
+  if (!portFree) {
+    const health = await check({ endpoint: config.endpoint });
+    if (!health.ok) throw Error("Configured search port " + config.port + " is occupied. Stop the conflicting service, then rerun.");
+  }
   await command(composeArgs(["up", "-d", "--pull", "never"]));
   for (let attempt = 0; attempt < 20; attempt++) {
-    const health = await check();
+    const health = await check({ endpoint: config.endpoint });
     if (health.ok) {
-      log("ContentGen SearXNG is ready: " + SEARCH_URL);
-      log("Research CLI uses " + SEARCH_URL + "/search by default.");
-      return { ok: true, operation, endpoint: SEARCH_URL + "/search" };
+      log("ContentGen SearXNG is ready: " + localSearchUrl(config));
+      log("Research CLI uses " + config.endpoint + " automatically.");
+      return { ok: true, operation, endpoint: config.endpoint };
     }
     if (health.reason?.includes("different HTTP server"))
       throw Error(health.reason);
