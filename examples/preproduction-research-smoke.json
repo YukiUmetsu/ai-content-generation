@@ -15,7 +15,7 @@
       "sourceUri": "https://example.org/synthetic-only",
       "retrievedAt": "2026-10-23T10:00:00.000Z",
       "passageLocator": "Synthetic placeholder paragraph 1",
-      "snapshotSha256": "b83ee69f4f592d12ef7ebf33b3eb1ce5a446f4060c99a2a46ed5db59e81803e9"
+      "snapshotSha256": "30a53c14986cdbbadfe7dab029e54579bad1d78a135ae8ccafb04b7ddbf229dc"
     }
   ],
   "claims": [
