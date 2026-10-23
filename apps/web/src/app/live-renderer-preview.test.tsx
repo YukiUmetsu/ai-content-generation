@@ -62,3 +62,38 @@ describe("real export scene reviewer",()=>{
   expect(network).not.toHaveBeenCalled();
  });
 });
+
+
+describe("normal-user scene timeline editor",()=>{
+ it("changes only the live scene until explicit save, then saves the selected shot's motion",async()=>{
+   const user=userEvent.setup(),save=vi.fn(async()=>{});
+   render(<LiveRendererPreview preview={preview} selectedShotId="shot-costs" onSaveMotion={save}/>);
+   expect(await screen.findByTestId("exported-scene-frame")).toHaveTextContent("frame 60");
+   expect(screen.getByRole("button",{name:"Save motion to project"})).toBeDisabled();
+   fireEvent.change(screen.getByRole("slider",{name:"Reveal start percent"}),{target:{value:"20"}});
+   await user.selectOptions(screen.getByRole("combobox",{name:"Reveal pacing"}),"deliberate");
+   await user.selectOptions(screen.getByRole("combobox",{name:"Camera movement"}),"locked");
+   await user.selectOptions(screen.getByRole("combobox",{name:"Scene transition"}),"fade");
+   expect(screen.getByText(/Unsaved/)).toBeInTheDocument();
+   expect(save).not.toHaveBeenCalled();
+   await user.click(screen.getByRole("button",{name:"Save motion to project"}));
+   expect(save).toHaveBeenCalledTimes(1);
+   expect(save).toHaveBeenCalledWith("shot-costs",{
+      revealDelayPercent:20,revealPace:"deliberate",camera:"locked",transition:"fade"
+   });
+   expect(await screen.findByText(/Scene motion saved/)).toBeInTheDocument();
+ });
+ it("visually navigates timeline segments without inadvertently saving or sending API calls",async()=>{
+   const user=userEvent.setup(),save=vi.fn(async()=>{});
+   const network=vi.spyOn(globalThis,"fetch");
+   render(<LiveRendererPreview preview={preview} onSaveMotion={save}/>);
+   expect(await screen.findByTestId("exported-scene-frame")).toBeInTheDocument();
+   await user.click(screen.getByRole("button",{name:/Timeline shot 3/}));
+   expect(await screen.findByTestId("exported-scene-frame")).toHaveTextContent("frame 120");
+   await user.selectOptions(screen.getByRole("combobox",{name:"Camera movement"}),"cinematic");
+   await user.click(screen.getByRole("button",{name:"Discard unsaved changes"}));
+   expect(screen.getByRole("combobox",{name:"Camera movement"})).toHaveValue("subtle");
+   expect(save).not.toHaveBeenCalled();
+   expect(network).not.toHaveBeenCalled();
+ });
+});
