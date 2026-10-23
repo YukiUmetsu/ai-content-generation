@@ -57,7 +57,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const unique=[...new Set(visualLabels)].slice(0,5);
     while(unique.length<2)unique.push(unique.length?"How it changes":"Main idea");
     const intent=mapFamily[shot.family]??"general-flow";
-    if(["mechanism","process","question"].includes(shot.family) &&
+    if(!shot.sceneRecipe&&["mechanism","process","question"].includes(shot.family) &&
       (phase?.visualAction||"").trim())
       warnings.push("Shot "+shot.id+": detailed motion intent is represented by a schematic flow, not a custom 2D/3D scene.");
     if(voice.sfxIntent)warnings.push("Shot "+shot.id+": requested SFX '"+safe(voice.sfxIntent,60)+
@@ -82,6 +82,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const shot=plan.shots[i];
     const phase=phases.get(shot.id);
     if(shot.motion)job.beats[i].visual.motion=structuredClone(shot.motion);
+    if(shot.sceneRecipe)job.beats[i].visual.sceneRecipe=shot.sceneRecipe;
     job.beats[i].visual.direction={
       phase:phase?.kind??"none",
       subjectIds:shot.subjectIds.slice(0,5),
@@ -116,7 +117,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(dossier.review.status!=="human-reviewed")
     warnings.unshift("Research has not been human-reviewed. Export is strictly an unverified test draft.");
   if(dossier.gaps.length)warnings.push("Research dossier has "+dossier.gaps.length+" unresolved gap(s).");
-  warnings.unshift("This bridge exports schematic labels and Kumiki general diagrams; custom visualAction/3D assets and per-shot SFX are not yet compiled.");
+  warnings.unshift("The default renderer uses schematic Kumiki scenes; supported authored recipes use dedicated illustrations, but arbitrary visualAction/3D assets and per-shot SFX are not compiled.");
   return {
     schemaVersion:1,kind:"research-to-render-job/v1",job,
     sourceResearchSha256:bundle.researchSha256,sourcePlanSha256:bundle.planSha256,
