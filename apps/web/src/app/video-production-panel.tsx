@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Film, Play, RefreshCw, ShieldAlert, Square, WandSparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -32,11 +32,14 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>}){
+export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean}){
   const [settings,setSettings]=useState<Settings>(defaults);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
   const [previewFocus,setPreviewFocus]=useState<string|undefined>();
+  const [sampleAutoLoaded,setSampleAutoLoaded]=useState(false);
+  const previewAnchor=useRef<HTMLDivElement>(null);
+  const demoScrolled=useRef(false);
   const [animaticUrl,setAnimaticUrl]=useState("");
   const [ready,setReady]=useState(false);
   const [working,setWorking]=useState("");
@@ -108,6 +111,29 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
     catch(error){setNotice(error instanceof Error?error.message:"Could not cancel.");}
   }
   useEffect(()=>{
+    if(!autoOpenSample||sampleAutoLoaded)return;
+    let active=true;
+    async function loadSampleVisuals(){
+      try{
+        const result=await request("live-preview",{dossier,bundle}) as unknown as LiveVisualPreviewData;
+        if(result.kind!=="live-renderer-preview/v1"||result.sourcePlanSha256?.length!==64)
+          throw Error("The sample visual preview is unavailable. Check the Studio server.");
+        if(!active)return;
+        setActualPreview(result);setPreviewFocus(bundle.plan.shots[0]?.id);setSampleAutoLoaded(true);
+        if(!demoScrolled.current){
+          demoScrolled.current=true;
+          requestAnimationFrame(()=>previewAnchor.current?.scrollIntoView?.({behavior:"smooth",block:"start"}));
+        }
+      }catch(error){
+        if(active)setNotice("Sample loaded, but the live preview could not open: "+
+          (error instanceof Error?error.message:"Unknown error")+
+          ". Use Preview actual rendered scenes to retry.");
+      }
+    }
+    void loadSampleVisuals();
+    return ()=>{active=false;};
+  },[autoOpenSample,sampleAutoLoaded,dossier,bundle]);
+  useEffect(()=>{
     if(state.state!=="rendering"&&state.state!=="checking")return;
     let mounted=true;
     const poll=async()=>{
@@ -122,9 +148,11 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   const progress=state.progress;
   const pct=progress?.totalFrames&&progress?.completedFrames!==undefined
     ?Math.min(100,Math.round(100*progress.completedFrames/progress.totalFrames)):null;
-  return <Surface header={<h2 className="flex items-center gap-2 font-medium"><Film className="size-4"/>5 · Preview and render a real video</h2>}>
+  return <div ref={previewAnchor} id="contentgen-interactive-preview" className="scroll-mt-4">
+    <Surface header={<h2 className="flex items-center gap-2 font-medium"><Film className="size-4"/>Preview and edit animations</h2>}>
     <div className="space-y-4 text-sm">
-      <p className="text-muted-foreground">No JSON editing or terminal rendering required. Review the translated scenes, preview the rough cut, then use a voice you are authorized to synthesize. All outputs are unverified drafts.</p>
+      <p className="text-muted-foreground">Play, scrub, and tune the real Kumiki-backed scenes without creating audio or an MP4. For a finished test video, voice setup and rendering are optional later steps.</p>
+      {autoOpenSample&&!actualPreview&&<p role="status" className="rounded-control border border-border p-3 text-sm text-muted-foreground">Opening the built-in sample animation preview…</p>}
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={!!working||state.state==="rendering"}
           onClick={()=>void showActual()}><Play className="mr-2 size-4"/>
@@ -232,5 +260,6 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
       {notice&&<p role="status" className="rounded-control border border-border px-3 py-2 text-xs text-muted-foreground">{notice}</p>}
       <p className="text-xs text-muted-foreground">The actual visual preview uses the same scene component as MP4 capture, but has no voice audio and estimates scene durations. The current export uses general Kumiki diagrams, not every planned custom animation. It never publishes videos, installs models, or certifies sources/rights. The initial render may be slow; compatible subsequent edits reuse verified narration and video chunks.</p>
     </div>
-  </Surface>;
+    </Surface>
+  </div>;
 }
