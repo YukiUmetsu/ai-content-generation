@@ -6,6 +6,7 @@
  * The contract is additive to preproduction-plan/v1, so previously saved
  * plans remain readable. New LLM-produced plans must include a sequence.
  */
+import {validateVisualMechanic} from "./semantic-mechanic.mjs";
 const isObject = v => v !== null && typeof v === "object" && !Array.isArray(v);
 const nonempty = (v, n = 500) => typeof v === "string" && !!v.trim() &&
   v.length <= n && !/[\u0000-\u001f]/u.test(v);
@@ -40,7 +41,7 @@ export function validateTeachingSequences(plan, dossier) {
   let resolvesCentralQuestion = false;
   for (let n=0; n<plan.teachingSequences.length; n++) {
     const seq=plan.teachingSequences[n], p="teachingSequences["+n+"]";
-    if (!extra(seq,["id","mode","question","technicalSubjectId","analogy","claimIds","phases","visualStates"],p)) continue;
+    if (!extra(seq,["id","mode","question","technicalSubjectId","analogy","claimIds","phases","visualStates","visualMechanic"],p)) continue;
     if (!id(seq.id)||seenSequences.has(seq.id)) error("teaching-id",p+".id","Stable unique sequence ID required.");
     seenSequences.add(seq.id);
     if (!["direct","analogy"].includes(seq.mode)) error("teaching-mode",p+".mode","Choose direct or analogy.");
@@ -58,6 +59,15 @@ export function validateTeachingSequences(plan, dossier) {
       });
       if (labels.every(Boolean) && new Set(labels).size!==labels.length)
         error("teaching-state-repeat",p+".visualStates","Before, action and after must show distinct visible information.");
+    }
+    if(seq.visualMechanic!==undefined){
+      const result=validateVisualMechanic(seq.visualMechanic,{
+        technicalSubjectId:seq.technicalSubjectId,
+        knownClaimIds:new Set(Array.isArray(seq.claimIds)?seq.claimIds:[]),
+        // Only pre-reviewed local vector primitives are currently available.
+        knownAssetKeys:new Set()
+      });
+      findings.push(...result.findings.map(f=>({...f,path:p+"."+f.path})));
     }
     if (!Array.isArray(seq.claimIds) || !seq.claimIds.length || seq.claimIds.length>20 ||
       new Set(seq.claimIds).size!==seq.claimIds.length || seq.claimIds.some(x=>!id(x)||!knownClaims.has(x)))
@@ -158,7 +168,8 @@ export function compileTeachingStoryboard(plan,dossier){
     storyQuestion:plan.story.question,teachingSequences:(plan.teachingSequences??[]).map(seq=>({
       id:seq.id,mode:seq.mode,question:seq.question,technicalSubjectId:seq.technicalSubjectId,
       claimIds:[...seq.claimIds],analogy:seq.analogy,
-      ...(seq.visualStates?{visualStates:{...seq.visualStates}}:{})
+      ...(seq.visualStates?{visualStates:{...seq.visualStates}}:{}),
+      ...(seq.visualMechanic?{visualMechanic:structuredClone(seq.visualMechanic)}:{})
     })),
     beats,
     advisory:"Intent and source IDs only. Requires editorial fact/analogy review, licensed assets and Kumiki scene compilation before media exists."

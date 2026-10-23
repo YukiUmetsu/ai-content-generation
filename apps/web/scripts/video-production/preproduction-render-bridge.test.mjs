@@ -9,6 +9,74 @@ const f=name=>JSON.parse(readFileSync(new URL("../../../../examples/"+name,impor
 const dossier=()=>f("preproduction-research-smoke.json");
 const plan=()=>f("preproduction-plan-smoke.json");
 const bundle=()=>compilePreproductionBundle(dossier(),plan());
+const mechanic=()=>({version:1,operator:"accumulate",subjectId:"house",actors:[
+  {id:"house",label:"Home budget",role:"subject",claimIds:["claim_illustrative"]},
+  {id:"tax",label:"Property tax",role:"part",claimIds:["claim_illustrative"]},
+  {id:"insurance",label:"Insurance",role:"part",claimIds:["claim_illustrative"]},
+  {id:"total",label:"Total cost",role:"result",claimIds:["claim_illustrative"]}],
+  operands:["tax","insurance"],outcomeId:"total"});
+
+test("semantic research mechanic projects unchanged into the three technical phases",()=>{
+  const d=dossier(),p=plan();p.shots.forEach(s=>delete s.sceneRecipe);
+  p.teachingSequences[0].visualMechanic=mechanic();
+  const rendered=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  assert.deepEqual(rendered.job.beats.map(b=>b.visual.direction.visualMechanic),Array(3).fill(p.teachingSequences[0].visualMechanic));
+  assert.equal(parseVideoProductionJob(rendered.job).ok,true);
+  const wrong=structuredClone(p);wrong.teachingSequences[0].visualMechanic.subjectId="elsewhere";
+  assert.throws(()=>compilePreproductionBundle(d,wrong),/mechanic-subject/);
+});
+test("bespoke recipe and legacy research plan do not silently acquire semantic animation",()=>{
+  const d=dossier(),p=plan();p.teachingSequences[0].visualMechanic=mechanic();
+  const custom=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  assert.equal(custom.job.beats.every(b=>b.visual.direction.visualMechanic===undefined),true);
+  const legacy=plan();legacy.shots.forEach(s=>delete s.sceneRecipe);
+  const existing=compilePreproductionRenderJob(d,compilePreproductionBundle(d,legacy));
+  assert.equal(existing.job.beats.every(b=>b.visual.direction.visualMechanic===undefined),true);
+});
+
+test("qualitative House Math split, ownership accumulation, and network transfer all cross research-to-job trust boundary",()=>{
+  const scenarios=[
+    {domain:"HVAC",operator:"split",operands:["equipment","labor","ductwork","permits"],outcome:"quote",subject:"quote",
+      names:["Installed quote","Equipment","Installation labor","Ductwork","Permit fees","Finished quote"],
+      roles:["subject","part","part","part","part","result"]},
+    {domain:"Homeownership",operator:"accumulate",operands:["tax","insurance","maintenance","finance"],outcome:"all_costs",subject:"house",
+      names:["Ownership budget","Property tax","Insurance","Maintenance","Financing","Ownership costs"],
+      roles:["subject","part","part","part","part","result"]},
+    {domain:"Network",operator:"transfer",operands:["sender","receiver"],outcome:"packet",subject:"packet",
+      names:["Data packet","Sending router","Receiving router"],roles:["subject","source","destination"]}
+  ];
+  for(const entry of scenarios){
+    const d=dossier(),p=plan(),claim="claim_illustrative";
+    d.topic.title=`Synthetic ${entry.domain} mechanism`;
+    d.topic.viewerQuestion=`How does the ${entry.domain} demonstration work?`;
+    d.claims[0].text=`An illustrative, qualitative ${entry.domain} mechanism; no numeric values are asserted.`;
+    p.story.premise=`Demonstrate a qualitative ${entry.domain} operation on a persistent subject.`;
+    p.story.hook=`See a familiar ${entry.domain} system change on screen.`;
+    p.story.question=d.topic.viewerQuestion;
+    p.explanation.forEach(e=>{e.before="A visible system starts intact";e.demonstration=`Show the ${entry.domain} operation`;
+      e.after="The audience can see the mechanism's resulting relationship";});
+    p.shots.forEach(s=>{
+      delete s.sceneRecipe;
+      s.subjectIds=[entry.subject];
+      s.onScreenText=`${entry.domain} illustrated mechanism`;
+      s.visualChange=`Show a sourced illustrative ${entry.domain} visual progression`;
+    });
+    p.continuity.forEach(c=>{c.subjectIds=[entry.subject];});
+    p.sound.forEach(s=>{s.narration=`This is a qualitative ${entry.domain} example. Observe the same subject through its changing parts and connections.`;});
+    p.teachingSequences[0].technicalSubjectId=entry.subject;
+    const ids=[entry.subject,...entry.operands,...(entry.outcome===entry.subject?[]:[entry.outcome])];
+    p.teachingSequences[0].visualMechanic={version:1,operator:entry.operator,
+      subjectId:entry.subject,actors:ids.map((id,index)=>({id,label:entry.names[index],
+        role:entry.roles[index],claimIds:[claim]})),
+      operands:entry.operands,outcomeId:entry.outcome};
+    const bridge=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+    assert.equal(parseVideoProductionJob(bridge.job).ok,true,entry.domain);
+    assert.deepEqual(bridge.job.beats.map(x=>x.visual.direction.visualMechanic?.operator),
+      Array(3).fill(entry.operator),entry.domain);
+    assert.equal(bridge.job.beats[0].visual.direction.visualMechanic?.subjectId,entry.subject);
+    assert.equal(bridge.job.approval,"test-only");
+  }
+});
 
 test("researched teaching states become real renderer direction on the same technical subject",()=>{
   const d=dossier(),p=plan();

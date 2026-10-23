@@ -43,6 +43,22 @@ test("generic scene transformations accept bounded state copy and reject injecte
   job.beats[0].visual.direction.transformation.after="Danger\nInjected";
   assert.ok(errorCodes(parseVideoProductionJob(job)).includes("invalid-teaching-transformation"));
 });
+test("semantic animation mechanic validates within the job trust boundary",()=>{
+  const j=structuredClone(general),claim=j.beats[0].claimRefs[0];
+  j.beats[0].visual.direction={phase:"problem",subjectIds:["packet"],visualAction:"Move a packet between nodes",
+    learningChange:"Packets cross links between known endpoints",visualMechanic:{version:1,operator:"transfer",subjectId:"packet",actors:[
+      {id:"packet",label:"Data packet",role:"subject",claimIds:[claim]},
+      {id:"source",label:"Sending router",role:"source",claimIds:[claim]},
+      {id:"destination",label:"Receiving router",role:"destination",claimIds:[claim]}],
+      operands:["source","destination"],outcomeId:"packet"}};
+  assert.equal(parseVideoProductionJob(j).ok,true,JSON.stringify(parseVideoProductionJob(j).findings));
+  const wrong=structuredClone(j);wrong.beats[0].visual.direction.visualMechanic.subjectId="other";
+  assert.ok(errorCodes(parseVideoProductionJob(wrong)).includes("mechanic-subject"));
+  const unknown=structuredClone(j);unknown.beats[0].visual.direction.visualMechanic.actors[0].claimIds=["invented"];
+  assert.ok(errorCodes(parseVideoProductionJob(unknown)).includes("mechanic-claim"));
+  const injection=structuredClone(j);injection.beats[0].visual.direction.visualMechanic.actors[0].svg="<script/>";
+  assert.ok(errorCodes(parseVideoProductionJob(injection)).includes("mechanic-unknown-field"));
+});
 
 test("does not allow a duplicate beat or event identifier", () => {
   const job = modified((value) => { value.beats.push(value.beats[0]); return value; });

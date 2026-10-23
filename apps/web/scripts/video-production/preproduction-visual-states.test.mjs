@@ -11,6 +11,14 @@ test("new local-model plans require visual states so actions have something conc
   await assert.rejects(generatePreproductionPlan(dossier,options,{transport:model(plan)}),/visualStates/);
   plan.teachingSequences[0].visualStates={before:"Only the asking price is visible",
     action:"Reveal financing and ongoing costs",after:"The budget includes more than the price"};
+  await assert.rejects(generatePreproductionPlan(dossier,options,{transport:model(plan)}),/visualMechanic/);
+  plan.teachingSequences[0].visualMechanic={version:1,operator:"accumulate",subjectId:"house",
+    actors:[{id:"house",label:"Home ownership",role:"subject",claimIds:["claim_illustrative"]},
+      {id:"tax",label:"Property tax",role:"part",claimIds:["claim_illustrative"]},
+      {id:"insurance",label:"Home insurance",role:"part",claimIds:["claim_illustrative"]},
+      {id:"total",label:"Ownership cost",role:"result",claimIds:["claim_illustrative"]}],
+    operands:["tax","insurance"],outcomeId:"total"};
   const result=await generatePreproductionPlan(dossier,options,{transport:model(plan)});
   assert.deepEqual(result.teachingSequences[0].visualStates,plan.teachingSequences[0].visualStates);
+  assert.deepEqual(result.teachingSequences[0].visualMechanic,plan.teachingSequences[0].visualMechanic);
 });

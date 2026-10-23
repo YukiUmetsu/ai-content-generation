@@ -24,6 +24,22 @@ export const researchedFixture: ResearchDraftResult = {
 };
 
 describe("research to editable semantic storyboard",()=>{
+  it("carries real researched mechanic through editable beats and shows a non-HVAC planning still",()=>{
+    const fixture=structuredClone(researchedFixture);
+    fixture.plan.teachingSequences[0].visualMechanic={version:1,operator:"split",subjectId:"wall",
+      actors:[{id:"wall",label:"Wall structure",role:"subject",claimIds:["claim_01"]},
+        {id:"insulation",label:"Insulation layer",role:"part",claimIds:["claim_01"]},
+        {id:"surface",label:"Wall surface",role:"part",claimIds:["claim_01"]}],
+      operands:["insulation","surface"],outcomeId:"wall"};
+    const board=researchToStoryboard(fixture,"project-operator","en");
+    expect(board.beats.map(x=>x.teachingMechanic?.phase)).toEqual(["problem","mechanism","payoff"]);
+    expect(board.beats[1].teachingMechanic?.mechanic.operator).toBe("split");
+    expect(countBySeverity(validateStoryboard(board)).errors).toBe(0);
+    const preview=renderToStaticMarkup(createElement(ScenePreview,{board,beat:board.beats[1],locale:"en"}));
+    expect(preview).toContain('data-source-derived-mechanic="split"');
+    expect(preview).toContain("Insulation layer");
+    expect(preview).not.toContain("$12,400");
+  });
   it("uses actual sourced claim IDs, meaningful shot narration and semantic teaching changes",()=>{
     const board=researchToStoryboard(researchedFixture,"project-research","en");
     expect(board.claims).toEqual([{id:"claim_01",status:"unverified",note:expect.stringContaining("Insulation resists"),sourceRefs:["source_01"]}]);

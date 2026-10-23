@@ -4,6 +4,7 @@
 import { DEFAULT_FPS, STORYBOARD_KIND, STORYBOARD_SCHEMA_VERSION, type Locale,
   type SemanticStoryboard, type StoryboardBeat, type NarrativeRole, type VisualIntent } from "@/features/storyboard-planner/model/types";
 import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
+import type {VisualMechanicV1} from "../../scripts/video-production/semantic-mechanic.mjs";
 
 interface ResearchSource { id:string; title:string; sourceUri:string; retrievedAt:string; passageLocator:string; snapshotSha256:string }
 interface ResearchClaim { id:string; text:string; status:"unverified"|"verified"|"disputed"|"illustrative"; sourceRefs:string[] }
@@ -23,7 +24,7 @@ export interface ResearchDraftResult {
   plan:{schemaVersion:1;kind:"preproduction-plan";researchId:string;
     story:{pattern:string;premise:string;hook:string;question:string;answerExplanationId:string;acts:{id:string;question:string;purpose:string;payoff:string}[]};
     explanation:PlanExplanation[];shots:PlanShot[];sound:PlanVoice[];
-    teachingSequences:{id:string;mode:string;question:string;technicalSubjectId:string;claimIds:string[];phases:TeachingPhase[];visualStates?:VisualStates}[]};
+    teachingSequences:{id:string;mode:string;question:string;technicalSubjectId:string;claimIds:string[];phases:TeachingPhase[];visualStates?:VisualStates;visualMechanic?:VisualMechanicV1}[]};
 }
 
 function readable(text:string,max=64):string{
@@ -82,6 +83,11 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
       ? {phase:phase.kind as "problem"|"mechanism"|"payoff",subjectId:sequence.technicalSubjectId,
           sequenceId:sequence.id,
           ...sequence.visualStates} : undefined;
+    const mechanic=sequence?.visualMechanic && phase &&
+      ["problem","mechanism","payoff"].includes(phase.kind) &&
+      shot.subjectIds.includes(sequence.technicalSubjectId)
+      ?{sequenceId:sequence.id,phase:phase.kind as "problem"|"mechanism"|"payoff",
+          mechanic:structuredClone(sequence.visualMechanic)}:undefined;
     const isFirst=i===0,isLast=i===plan.shots.length-1;
     const spokenWords=voice.narration.trim().split(/\s+/u).length;
     const durationFrames=Math.min(900,Math.max(150,Math.ceil(spokenWords/2.2)*30+Math.ceil((voice.pauseAfterMs||0)*0.03)));
@@ -93,6 +99,7 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
       claimRefs:[...shot.claimIds],namedEvents:isFirst?[semanticEvents[0].id]:isLast?[semanticEvents[1].id]:[],
       staticFallback:`${readable(shot.onScreenText)} — ${shot.visualChange}`,
       ...(state?{teachingState:state}:{}),
+      ...(mechanic?{teachingMechanic:mechanic}:{}),
       ...(isFirst?{opensQuestion:"research-main-question"}:{}),
       ...(isLast?{answersQuestion:"research-main-question"}:{}),
     };

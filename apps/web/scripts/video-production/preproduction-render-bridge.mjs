@@ -107,6 +107,10 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
         subjectId:sequence.technicalSubjectId,
         ...sequence.visualStates
       };
+    if(!shot.sceneRecipe && sequence?.visualMechanic && phase &&
+      ["problem","mechanism","payoff"].includes(phase.kind) &&
+      shot.subjectIds.includes(sequence.technicalSubjectId))
+      job.beats[i].visual.direction.visualMechanic=structuredClone(sequence.visualMechanic);
     const refs=plan.shots[i].claimIds.filter(id=>known.has(id));
     if(!refs.length)throw Error("Shot "+plan.shots[i].id+" must reference at least one research claim.");
     job.beats[i].claimRefs=refs;
@@ -135,7 +139,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(dossier.review.status!=="human-reviewed")
     warnings.unshift("Research has not been human-reviewed. Export is strictly an unverified test draft.");
   if(dossier.gaps.length)warnings.push("Research dossier has "+dossier.gaps.length+" unresolved gap(s).");
-  warnings.unshift("Structured before/action/after teaching states render as subject-preserving transformations when present. Other generic shots remain schematic; arbitrary 3D assets and per-shot SFX are not compiled.");
+  warnings.unshift("Validated semantic mechanics, when present, animate in Kumiki's 2D stage. Legacy visible teaching states remain a text-based fallback; other generic shots remain schematic. Arbitrary 3D assets and per-shot SFX are not compiled.");
   return {
     schemaVersion:1,kind:"research-to-render-job/v1",job,
     sourceResearchSha256:bundle.researchSha256,sourcePlanSha256:bundle.planSha256,

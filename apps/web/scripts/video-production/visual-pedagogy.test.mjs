@@ -19,7 +19,7 @@ function analogy() {
       reason:"Translate the unexplained cost gap into familiar checkout behavior."},
     {fromShotId:"shot_analogy",toShotId:"shot_categories",technique:"match-cut",subjectIds:[],
       reason:"Match each checkout line to a distinct illustrative home expense category."},
-    {fromShotId:"shot_categories",toShotId:"shot_answer",technique:"shared-element",subjectIds:["categories"],
+    {fromShotId:"shot_categories",toShotId:"shot_answer",technique:"shared-element",subjectIds:["house"],
       reason:"Preserve the costs as they combine into the takeaway."}
   ];
   p.sound.splice(1,0,{shotId:"shot_analogy",
@@ -48,7 +48,7 @@ function analogy() {
 }
 test("new synthetic sequence compiles a chronological visual teaching handoff, not fake frames",()=>{
   const p=analogy(),d=dossier();
-  assert.equal(parsePreproductionPlan(p,d).ok,true);
+  assert.equal(parsePreproductionPlan(p,d).ok,true,JSON.stringify(parsePreproductionPlan(p,d).findings));
   const s=compileTeachingStoryboard(p,d);
   assert.equal(s.kind,"visual-teaching-storyboard");
   assert.equal(s.storyQuestion,p.story.question);
@@ -78,6 +78,21 @@ test("explicit visual states make a technical subject's transformation auditable
   assert.deepEqual(compileTeachingStoryboard(p,dossier()).teachingSequences[0].visualStates,states);
   delete p.teachingSequences[0].visualStates;
   assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+});
+test("optional validated semantic mechanic survives intent-only storyboard; invalid roles and claims fail",()=>{
+  const p=direct(),d=dossier(),seq=p.teachingSequences[0];
+  seq.visualMechanic={version:1,operator:"compare",subjectId:"house",actors:[
+    {id:"house",label:"Home buying costs",role:"subject",claimIds:["claim_illustrative"]},
+    {id:"mortgage",label:"Borrowing cost",role:"part",claimIds:["claim_illustrative"]},
+    {id:"insurance",label:"Insurance cost",role:"part",claimIds:["claim_illustrative"]}],
+    operands:["mortgage","insurance"],outcomeId:"house"};
+  assert.equal(parsePreproductionPlan(p,d).ok,true);
+  assert.deepEqual(compileTeachingStoryboard(p,d).teachingSequences[0].visualMechanic,seq.visualMechanic);
+  seq.visualMechanic.operands=["house","insurance"];
+  assert.ok(codes(validateTeachingSequences(p,d)).includes("mechanic-roles"));
+  seq.visualMechanic.operands=["mortgage","insurance"];
+  seq.visualMechanic.actors[1].claimIds=["fabricated"];
+  assert.ok(codes(validateTeachingSequences(p,d)).includes("mechanic-claim"));
 });
 test("visible learning states reject repeating labels, placeholders and unsafe payloads",()=>{
   const p=direct();

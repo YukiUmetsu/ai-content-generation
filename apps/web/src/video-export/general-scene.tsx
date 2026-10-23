@@ -15,6 +15,7 @@ import { entryFadeOpacity, motionRevealState } from "../../scripts/video-product
 import { SemanticDiagram } from "./semantic-scene-diagrams";
 import { HomeCostStoryScene } from "./home-cost-story-scene";
 import { TeachingStateScene } from "./teaching-state-scene";
+import { SemanticMechanicScene } from "./semantic-mechanic-scene";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -174,7 +175,11 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    {!chartStory && state.visual.direction?.transformation &&
+    {!chartStory && state.visual.direction?.visualMechanic &&
+      ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
+      ? <SemanticMechanicScene mechanic={state.visual.direction.visualMechanic}
+          phase={state.visual.direction.phase as "problem"|"mechanism"|"payoff"} motion={semanticMotion}/>
+      : !chartStory && state.visual.direction?.transformation &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ?<TeachingStateScene state={diagramState} motion={semanticMotion}/>
       :!chartStory && (state.intent==="general-flow"

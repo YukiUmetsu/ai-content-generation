@@ -7,6 +7,7 @@
  */
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { isSceneMotion } from "./scene-motion.mjs";
+import {validateVisualMechanic} from "./semantic-mechanic.mjs";
 
 const has = (o, k) => Object.hasOwn(o, k);
 const object = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -291,7 +292,7 @@ export function parseVideoProductionJob(input) {
         if (has(beat.visual, "direction")) {
           const path = `beats[${index}].visual.direction`;
           const dir = beat.visual.direction;
-          if (fields(dir, path, ["phase", "subjectIds", "visualAction", "learningChange", "transformation"])) {
+          if (fields(dir, path, ["phase", "subjectIds", "visualAction", "learningChange", "transformation", "visualMechanic"])) {
             if (!["problem", "analogy", "mechanism", "payoff", "none"].includes(dir.phase))
               add("invalid-visual-phase", path+".phase", "Use an identified teaching phase.");
             if (!Array.isArray(dir.subjectIds) || dir.subjectIds.length < 1 || dir.subjectIds.length > 5 ||
@@ -317,6 +318,20 @@ export function parseVideoProductionJob(input) {
                 new Set(stateTexts.filter(value=>typeof value==="string").map(value=>value.trim().toLowerCase())).size!==3)
                 add("invalid-teaching-transformation",path+".transformation",
                   "Use distinct, bounded before/action/after states for one visible technical subject.");
+            }
+            if(has(dir,"visualMechanic")){
+              if(!["problem","mechanism","payoff"].includes(dir.phase))
+                add("mechanic-phase",path+".phase","Semantic mechanics only render in technical teaching phases.");
+              const validated=validateVisualMechanic(dir.visualMechanic,{
+                technicalSubjectId:dir.visualMechanic?.subjectId,
+                knownClaimIds:claimIds,knownAssetKeys:new Set()
+              });
+              for(const issue of validated.findings)add(issue.code,path+"."+issue.path,issue.message);
+              if(!Array.isArray(dir.subjectIds)||!dir.subjectIds.includes(dir.visualMechanic?.subjectId))
+                add("mechanic-subject",path+".visualMechanic.subjectId","Semantic subject must be visible in this scene.");
+              const actors=dir.visualMechanic?.actors;
+              if(Array.isArray(actors)&&!actors.some(a=>Array.isArray(a?.claimIds)&&a.claimIds.some(id=>beat.claimRefs?.includes(id))))
+                add("mechanic-claim",path+".visualMechanic.actors","Mechanic must visibly relate to a claim sourced by its shot.");
             }
           }
         }

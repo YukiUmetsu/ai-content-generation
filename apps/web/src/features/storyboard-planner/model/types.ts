@@ -6,6 +6,8 @@
  * implemented `Storyboard` / `StoryboardShot` contract. Time is integer frames
  * at a rational FPS and every range is end-exclusive.
  */
+import {validateVisualMechanic} from "../../../../scripts/video-production/semantic-mechanic.mjs";
+import type {VisualMechanicV1} from "../../../../scripts/video-production/semantic-mechanic.mjs";
 
 export type Locale = "en" | "ja";
 
@@ -74,6 +76,24 @@ export interface TeachingVisualState {
   after: string;
 }
 
+/** Research mechanic is copied into each phase with an immutable sequence ID. */
+export interface TeachingMechanicPlan {
+  sequenceId?:string;
+  phase:"problem"|"mechanism"|"payoff";
+  mechanic:VisualMechanicV1;
+}
+
+export function isTeachingMechanicPlan(value:unknown):value is TeachingMechanicPlan {
+  if(value===null||typeof value!=="object"||Array.isArray(value))return false;
+  const obj=value as Record<string,unknown>;
+  if(Object.keys(obj).some(x=>!["phase","sequenceId","mechanic"].includes(x))||
+    !["problem","mechanism","payoff"].includes(String(obj.phase))||
+    obj.sequenceId!==undefined&&(typeof obj.sequenceId!=="string"||!/^[a-z][a-z0-9_-]{0,80}$/iu.test(obj.sequenceId)))return false;
+  const mechanic=obj.mechanic as VisualMechanicV1;
+  return validateVisualMechanic(mechanic,{technicalSubjectId:mechanic?.subjectId,
+    knownClaimIds:new Set(mechanic?.actors?.flatMap(a=>a?.claimIds)??[]),knownAssetKeys:new Set()}).ok;
+}
+
 export function isTeachingVisualState(value: unknown): value is TeachingVisualState {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const state = value as Record<string, unknown>;
@@ -116,6 +136,8 @@ export interface StoryboardBeat {
   staticFallback: string;
   /** Optional source-linked before/change/after authored with this technical subject. */
   teachingState?: TeachingVisualState;
+  /** Bounded, source-linked 2D operation; a planning instruction, not a video renderer. */
+  teachingMechanic?:TeachingMechanicPlan;
   /** Question opened by this beat (must be declared in `questions`). */
   opensQuestion?: string;
   /** Question answered by this beat. */

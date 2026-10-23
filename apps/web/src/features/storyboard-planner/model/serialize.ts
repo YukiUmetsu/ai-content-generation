@@ -19,6 +19,7 @@ import {
   isPositiveInteger,
   isVisualIntent,
   isTeachingVisualState,
+  isTeachingMechanicPlan,
   type SemanticEvent,
   type SemanticObject,
   type SemanticStoryboard,
@@ -172,6 +173,20 @@ function parseBeat(
   const editableState = allowIncomplete && isEditableTeachingState(teachingState);
   if (teachingState !== undefined && !validState && !editableState)
     errors.push({ code: "invalid-field", path: `${path}.teachingState` });
+  const teachingMechanic=value.teachingMechanic;
+  const validMechanic=isTeachingMechanicPlan(teachingMechanic);
+  // While entering an actor label, keep the structurally safe local draft;
+  // editorial validation will flag the incomplete semantic operation.
+  const editableMechanic=allowIncomplete&&isRecord(teachingMechanic)&&
+    typeof teachingMechanic.phase==="string"&&
+    ["problem","mechanism","payoff"].includes(teachingMechanic.phase)&&
+    isRecord(teachingMechanic.mechanic)&&
+    isTeachingMechanicPlan({...teachingMechanic,mechanic:{...teachingMechanic.mechanic,
+      actors:Array.isArray(teachingMechanic.mechanic.actors)
+        ?teachingMechanic.mechanic.actors.map(a=>isRecord(a)&&!a.label?{...a,label:"Editing actor"}:a)
+        :[]}});
+  if(teachingMechanic!==undefined&&!validMechanic&&!editableMechanic)
+    errors.push({code:"invalid-field",path:`${path}.teachingMechanic`});
 
   if (!id) return null;
 
@@ -195,6 +210,7 @@ function parseBeat(
   if (opensQuestion !== undefined) beat.opensQuestion = opensQuestion;
   if (answersQuestion !== undefined) beat.answersQuestion = answersQuestion;
   if (validState || editableState) beat.teachingState = { ...teachingState };
+  if(validMechanic||editableMechanic)beat.teachingMechanic=structuredClone(teachingMechanic) as StoryboardBeat["teachingMechanic"];
   return beat;
 }
 

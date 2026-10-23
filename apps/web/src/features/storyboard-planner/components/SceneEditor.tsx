@@ -17,6 +17,8 @@ import {
   type StoryboardBeat,
 } from "../model/types";
 import { diagnosticsForBeat, type StoryboardDiagnostic } from "../model/validate";
+import {VISUAL_OPERATORS} from "../../../../scripts/video-production/semantic-mechanic.mjs";
+import type {VisualMechanicV1} from "../../../../scripts/video-production/semantic-mechanic.mjs";
 
 interface SceneEditorProps {
   board: SemanticStoryboard;
@@ -267,6 +269,36 @@ export function SceneEditor({
               value={beat.teachingState![key]} rows={2}
               maxLength={key==="action"?90:48}
               onChange={text=>onChange({teachingState:{...beat.teachingState!,[key]:text}})}/>) }
+          </div>}
+
+          {beat.teachingMechanic && <div data-semantic-mechanic-editor="" className="sp-field">
+            <p className="sp-label">{t.mechanicLabel} · {beat.teachingMechanic.mechanic.subjectId}</p>
+            <p className="sp-hint">{t.mechanicHint}</p>
+            <SelectField label={t.mechanicOperator} value={beat.teachingMechanic.mechanic.operator}
+              options={VISUAL_OPERATORS.map(x=>({value:x,label:x}))}
+              onChange={value=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                ...beat.teachingMechanic!.mechanic,operator:value as VisualMechanicV1["operator"]}}})}/>
+            {beat.teachingMechanic.mechanic.actors.map((actor,index)=><div key={actor.id} data-semantic-actor-editor={actor.id} className="sp-field">
+              <TextAreaField label={`${t.mechanicActor}: ${actor.id}`} value={actor.label} rows={1} maxLength={42}
+                onChange={label=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                  ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{...a,label}:a)}}})}/>
+              <SelectField label={t.mechanicRole} value={actor.role}
+                options={["subject","part","source","destination","result"].map(value=>({value,label:value}))}
+                onChange={role=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                  ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{
+                    ...a,role:role as typeof a.role}:a)}}})}/>
+            </div>)}
+            <CheckGroup legend={t.mechanicOperands}
+              options={beat.teachingMechanic.mechanic.actors.map(x=>({id:x.id,label:x.label||x.id}))}
+              selected={beat.teachingMechanic.mechanic.operands}
+              onToggle={(id,checked)=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                ...beat.teachingMechanic!.mechanic,operands:checked
+                  ?[...beat.teachingMechanic!.mechanic.operands,id]
+                  :beat.teachingMechanic!.mechanic.operands.filter(x=>x!==id)}}})}/>
+            <SelectField label={t.mechanicOutcome} value={beat.teachingMechanic.mechanic.outcomeId}
+              options={beat.teachingMechanic.mechanic.actors.map(x=>({value:x.id,label:x.label||x.id}))}
+              onChange={outcomeId=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                ...beat.teachingMechanic!.mechanic,outcomeId}}})}/>
           </div>}
 
           <CheckGroup
