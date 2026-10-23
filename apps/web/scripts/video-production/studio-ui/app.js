@@ -8,6 +8,7 @@ let currentReview = null;
 let clientError = "";
 let currentDraftId = "";
 let currentDraftSource = "";
+let currentDraftIsPortrait = false;
 let topicDirty = true;
 
 function config() {
@@ -142,6 +143,7 @@ function showClaims(job) {
 function showDraft(draft) {
   if (!draft?.job) return;
   currentDraftId = draft.job.id;
+  currentDraftIsPortrait = draft.job.destination?.height > draft.job.destination?.width;
   currentDraftSource = draft.generator?.provider || "local-openai-compatible";
   topicDirty = false;
   const narrationLength = draft.narrationLength || { count: draft.words ?? "Unmeasured", unit: "words" };
@@ -312,6 +314,8 @@ function showReview(state) {
   currentReview = state.artifacts.video;
   $("empty-preview").hidden = true;
   $("review-content").hidden = false;
+  $("film-preview").parentElement.dataset.aspect = currentDraftIsPortrait ? "portrait" : "landscape";
+  $("stills").dataset.aspect = currentDraftIsPortrait ? "portrait" : "landscape";
   $("film-preview").src = state.artifacts.video;
   $("voice-audio").src = state.artifacts.voice;
   $("master-audio").src = state.artifacts.master;
