@@ -155,3 +155,8 @@ test("checked-in synthetic fixtures run completely offline but remain unreviewed
   assert.equal(parsePreproductionPlan(p,d).ok,true);
   assert.equal(compilePreproductionBundle(d,p).status,"draft-needs-review");
 });
+
+test("narrative cannot bypass research with ungrounded explanation steps",()=>{
+  const p=plan();p.explanation[0].claimIds=[];
+  assert.ok(codes(parsePreproductionPlan(p,dossier()).findings).includes("ungrounded-explanation"));
+});
