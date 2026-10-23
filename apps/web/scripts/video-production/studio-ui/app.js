@@ -284,6 +284,119 @@ function manualInput() {
     typographyStyle: $("manual-typography").value, scenes,
   };
 }
+/** Portable human-authored content only; NEVER export credentials, voices or render artifacts. */
+const STORY_KIND = "contentgen-manual-storyboard";
+const allowedStoryOptions = {
+  length: ["smoke", "youtube-long"],
+  platform: ["youtube", "youtube-shorts", "instagram-reels", "tiktok"],
+  locale: ["en-US", "ja-JP"],
+  hookStrategy: ["action-first", "unexpected-reveal", "transformation"],
+  typographyStyle: ["snap", "overshoot", "wipe"],
+  intent: ["general-flow", "general-comparison", "general-breakdown"],
+};
+function safeStoryText(value, field, max, min = 0) {
+  if (typeof value !== "string" || value.length > max || value.trim().length < min ||
+    /[\u0000-\u0008\u000e-\u001f]/u.test(value)) {
+    throw new Error(field + " must be " + min + "–" + max + " characters without control codes.");
+  }
+  return value.trim();
+}
+function validateImportedStory(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source) ||
+      source.kind !== STORY_KIND || source.schemaVersion !== 1) {
+    throw new Error("File is not a ContentGen manual storyboard v1.");
+  }
+  const allowed = ["kind","schemaVersion","title","viewerQuestion","audience",
+    "length","platform","locale","hookStrategy","typographyStyle","scenes"];
+  for (const key of Object.keys(source)) {
+    if (!allowed.includes(key)) throw new Error("Unknown storyboard field: " + key);
+  }
+  const result = {
+    title: safeStoryText(source.title, "Title", 180, 1),
+    viewerQuestion: safeStoryText(source.viewerQuestion ?? "", "Viewer question", 240),
+    audience: safeStoryText(source.audience ?? "", "Audience", 160),
+  };
+  for (const key of ["length","platform","locale","hookStrategy","typographyStyle"]) {
+    if (!allowedStoryOptions[key].includes(source[key])) throw new Error("Unsupported storyboard " + key + ".");
+    result[key] = source[key];
+  }
+  if (result.platform !== "youtube" && result.length !== "smoke") {
+    throw new Error("Long-form production requires landscape YouTube.");
+  }
+  if (!Array.isArray(source.scenes) || source.scenes.length < 3 || source.scenes.length > 40) {
+    throw new Error("A storyboard needs 3–40 scenes.");
+  }
+  if (result.length === "youtube-long" && source.scenes.length < 10) {
+    throw new Error("Long-form production needs at least 10 authored scenes.");
+  }
+  result.scenes = source.scenes.map((scene, i) => {
+    if (!scene || typeof scene !== "object" || Array.isArray(scene)) {
+      throw new Error("Invalid scene at index " + i);
+    }
+    for (const key of Object.keys(scene)) {
+      if (!["headline","narration","subhead","intent","items"].includes(key)) {
+        throw new Error("Unknown scene field " + key);
+      }
+    }
+    if (!allowedStoryOptions.intent.includes(scene.intent)) {
+      throw new Error("Invalid scene treatment at index " + i);
+    }
+    if (!Array.isArray(scene.items) || scene.items.length < 2 || scene.items.length > 5) {
+      throw new Error("Scene " + (i + 1) + " needs 2–5 labels.");
+    }
+    return {
+      headline: safeStoryText(scene.headline, "Headline", 68, 1),
+      narration: safeStoryText(scene.narration, "Narration", 1600, 20),
+      subhead: safeStoryText(scene.subhead ?? "", "Supporting copy", 115),
+      intent: scene.intent,
+      items: scene.items.map(item => safeStoryText(item, "Diagram label", 44, 1)),
+    };
+  });
+  return result;
+}
+function applyImportedStory(source) {
+  const story = validateImportedStory(source); // fail atomically: no partial form edits
+  for (const [id,key] of [["manual-title","title"],["manual-question","viewerQuestion"],
+    ["manual-audience","audience"],["manual-length","length"],["manual-platform","platform"],
+    ["manual-locale","locale"],["manual-hook","hookStrategy"],
+    ["manual-typography","typographyStyle"]]) $(id).value = story[key];
+  manualScenes.replaceChildren();
+  for (const scene of story.scenes) {
+    const card = makeManualCard();
+    assignManualCard(card, scene);
+    manualScenes.append(card);
+  }
+  $("manual-length").querySelector('option[value="youtube-long"]').disabled = story.platform !== "youtube";
+  refreshManualCardRoles();
+  form.elements.mode.value = "manual";
+  markManualDirty();
+  showMode();
+}
+function exportManualStory() {
+  try {
+    const story = validateImportedStory({ kind: STORY_KIND, schemaVersion: 1, ...manualInput() });
+    const blob = new Blob([JSON.stringify({ kind: STORY_KIND, schemaVersion: 1, ...story }, null, 2) + "\n"],
+      { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "contentgen-storyboard.json";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $("activity-message").textContent = "Story exported locally without Fish credentials.";
+  } catch (error) { $("activity-message").textContent = error.message; }
+}
+async function importManualStory() {
+  const file = $("manual-import-file").files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 128 * 1024) throw new Error("Storyboard exceeds 128 KB.");
+    applyImportedStory(JSON.parse(await file.text()));
+    $("activity-message").textContent = "Story imported. Create the editable storyboard before preflight.";
+  } catch (error) {
+    $("activity-message").textContent = "Import refused: " + error.message;
+  } finally { $("manual-import-file").value = ""; }
+}
+
 async function generateManual() {
   if (runningRequest) return;
   runningRequest = true;
@@ -486,6 +599,9 @@ form.addEventListener("change", (event) => { if (event.target.name === "provider
 $("generate-button").addEventListener("click", generate);
 $("manual-add-button").addEventListener("click", addManualScene);
 $("manual-generate-button").addEventListener("click", generateManual);
+$("manual-export-button").addEventListener("click", exportManualStory);
+$("manual-import-button").addEventListener("click", () => $("manual-import-file").click());
+$("manual-import-file").addEventListener("change", importManualStory);
 $("manual-platform").addEventListener("change", () => {
   if ($("manual-platform").value !== "youtube") $("manual-length").value = "smoke";
   $("manual-length").querySelector('option[value="youtube-long"]').disabled = $("manual-platform").value !== "youtube";
