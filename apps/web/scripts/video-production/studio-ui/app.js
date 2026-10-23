@@ -7,6 +7,7 @@ let runningRequest = false;
 let currentReview = null;
 let clientError = "";
 let currentDraftId = "";
+let currentDraftSource = "";
 let topicDirty = true;
 
 function config() {
@@ -16,7 +17,7 @@ function config() {
     mode: data.get("mode"), provider, voiceId: String(data.get("voiceId") || "").trim(),
     providerRevision: String(data.get("providerRevision") || "").trim(),
   };
-  if (common.mode === "topic") common.draftId = topicDirty ? "" : currentDraftId;
+  if (["topic", "manual"].includes(common.mode)) common.draftId = topicDirty ? "" : currentDraftId;
   if (provider === "fish") return {
     ...common, apiKey: $("fish-key").value, voiceConsent: $("voice-consent").checked,
     transmitText: $("transmit-text").checked,
@@ -58,11 +59,16 @@ function showProvider() {
 }
 
 function showMode() {
-  const topic = form.elements.mode.value === "topic";
+  const mode = form.elements.mode.value;
+  const topic = mode === "topic";
+  const manual = mode === "manual";
   $("topic-fields").hidden = !topic;
-  $("topic-review").hidden = !topic || !currentDraftId;
-  $("fixture-caption").textContent = topic
-    ? "Local topic generator · original diagrams · 1920 × 1080 · 30 fps"
+  $("manual-fields").hidden = !manual;
+  $("topic-review").hidden = !(topic && currentDraftSource === "local-openai-compatible" ||
+    manual && currentDraftSource === "human") || !currentDraftId;
+  $("fixture-caption").textContent = manual
+    ? "Human-authored general explainer · Kumiki attention-editing · 1920 × 1080 · 30 fps"
+    : topic ? "Local topic generator · general explainer · 1920 × 1080 · 30 fps"
     : "Illustrative House Math scenario · YouTube landscape · 30 fps";
 }
 
@@ -136,6 +142,7 @@ function showClaims(job) {
 function showDraft(draft) {
   if (!draft?.job) return;
   currentDraftId = draft.job.id;
+  currentDraftSource = draft.generator?.provider || "";
   topicDirty = false;
   const narrationLength = draft.narrationLength || { count: draft.words ?? "Unmeasured", unit: "words" };
   $("draft-summary").textContent = `${draft.job.topic.title} · ${draft.job.beats.length} narrated beats · ${narrationLength.count} ${narrationLength.unit}. Every factual statement needs human verification.`;
@@ -179,6 +186,76 @@ async function generate() {
     $("activity-message").textContent = "Draft generated. Inspect or edit the script, then check readiness.";
   } catch (error) { clientError = error.message; }
   finally { runningRequest = false; $("generate-button").disabled = false; await refresh(); }
+}
+
+const manualScenes = $("manual-scenes");
+function makeManualCard() {
+  const article = document.createElement("article");
+  article.className = "manual-scene";
+  // This template contains no user-supplied HTML; all authored values use native form controls.
+  article.innerHTML = `<div class="manual-scene-header"><strong class="manual-scene-number"></strong><button type="button" class="manual-remove-button button button-secondary">Remove</button></div>
+    <div class="field-group"><label>Headline <input class="manual-headline" maxlength="68" placeholder="A clear on-screen idea" required></label></div>
+    <div class="field-group"><label>Narration <textarea class="manual-narration" rows="3" maxlength="1600" placeholder="What the narrator says in this scene (at least 20 characters)" required></textarea></label></div>
+    <div class="field-group"><label>Supporting copy <input class="manual-subhead" maxlength="115" placeholder="Optional one-line explanation"></label></div>
+    <div class="field-group"><label>Diagram labels — one per line <textarea class="manual-items" rows="2" placeholder="First concept&#10;Second concept" required></textarea></label></div>
+    <div class="field-group"><label>Scene treatment <select class="manual-intent"><option value="general-flow">Connected process</option><option value="general-comparison">Side-by-side comparison</option><option value="general-breakdown">Qualitative breakdown</option></select></label></div>`;
+  article.querySelector(".manual-remove-button").addEventListener("click", () => {
+    if (manualScenes.children.length <= 3) return;
+    article.remove();
+    refreshManualCardRoles();
+    topicDirty = true;
+    invalidate();
+  });
+  return article;
+}
+function refreshManualCardRoles() {
+  const cards = [...manualScenes.children];
+  for (const [index, card] of cards.entries()) {
+    const first = index === 0, last = index === cards.length - 1;
+    card.querySelector(".manual-scene-number").textContent = `Scene ${index + 1} · ${first ? "Opening hook" : last ? "Final answer" : "Explanation"}`;
+    card.querySelector(".manual-intent").disabled = first || last;
+    card.querySelector(".manual-remove-button").hidden = first || last;
+  }
+}
+function addManualScene() {
+  if (manualScenes.children.length >= 40) return;
+  const card = makeManualCard();
+  const last = manualScenes.lastElementChild;
+  if (last) manualScenes.insertBefore(card, last);
+  else manualScenes.append(card);
+  refreshManualCardRoles();
+  topicDirty = true;
+  invalidate();
+}
+function manualInput() {
+  const cards = [...manualScenes.querySelectorAll(".manual-scene")];
+  const scenes = cards.map((card) => ({
+    headline: card.querySelector(".manual-headline").value.trim(),
+    narration: card.querySelector(".manual-narration").value.trim(),
+    subhead: card.querySelector(".manual-subhead").value.trim(),
+    intent: card.querySelector(".manual-intent").value,
+    items: card.querySelector(".manual-items").value.split(/\r?\n/u).map(x => x.trim()).filter(Boolean),
+  }));
+  return {
+    title: $("manual-title").value.trim(), viewerQuestion: $("manual-question").value.trim(),
+    audience: $("manual-audience").value.trim(), locale: $("manual-locale").value,
+    length: $("manual-length").value, hookStrategy: $("manual-hook").value,
+    typographyStyle: $("manual-typography").value, scenes,
+  };
+}
+async function generateManual() {
+  if (runningRequest) return;
+  runningRequest = true;
+  clientError = "";
+  preflightReady = false;
+  $("render-button").disabled = true;
+  $("manual-generate-button").disabled = true;
+  try {
+    const result = await api("/api/manual", "POST", manualInput());
+    showDraft(result.draft);
+    $("activity-message").textContent = "Manual storyboard ready. Review scenes, then check readiness.";
+  } catch (error) { clientError = error.message; }
+  finally { runningRequest = false; $("manual-generate-button").disabled = false; await refresh(); }
 }
 
 async function saveDraft() {
@@ -283,8 +360,10 @@ function showStatus(state) {
   }
   applySteps(state);
   const isWorking = state.status === "rendering" || state.status === "checking" || state.status === "generating";
+  $("manual-generate-button").disabled = isWorking || runningRequest;
+  $("manual-add-button").disabled = isWorking || runningRequest || manualScenes.children.length >= 40;
   $("preflight-button").disabled = isWorking || runningRequest;
-  $("render-button").disabled = isWorking || runningRequest || !preflightReady || (form.elements.mode.value === "topic" && topicDirty);
+  $("render-button").disabled = isWorking || runningRequest || !preflightReady || (["topic", "manual"].includes(form.elements.mode.value) && topicDirty);
   $("generate-button").disabled = isWorking || runningRequest;
   $("save-draft-button").disabled = isWorking || runningRequest;
   $("cancel-button").hidden = !["rendering", "generating"].includes(state.status);
@@ -327,7 +406,7 @@ async function preflight() {
   $("activity-message").textContent = "Building the scene and checking prerequisites…";
   $("preflight-button").disabled = true;
   try {
-    if (form.elements.mode.value === "topic" && topicDirty) throw new Error("Generate or regenerate your topic draft before checking readiness.");
+    if (["topic", "manual"].includes(form.elements.mode.value) && topicDirty) throw new Error("Create or save your edited storyboard before checking readiness.");
     const result = await api("/api/preflight", "POST", config());
     preflightReady = result.ready;
     showFindings(result.report?.findings);
@@ -359,9 +438,13 @@ async function cancel() {
   await refresh();
 }
 
-form.addEventListener("input", (event) => { if (event.target.closest?.("#topic-fields")) topicDirty = true; invalidate(); });
-form.addEventListener("change", (event) => { if (event.target.name === "provider") showProvider(); if (event.target.name === "mode") showMode(); invalidate(); });
+form.addEventListener("input", (event) => { if (event.target.closest?.("#topic-fields") || event.target.closest?.("#manual-fields")) topicDirty = true; invalidate(); });
+form.addEventListener("change", (event) => { if (event.target.name === "provider") showProvider(); if (event.target.name === "mode") { topicDirty = true; showMode(); } if (event.target.closest?.("#manual-fields")) topicDirty = true; invalidate(); });
 $("generate-button").addEventListener("click", generate);
+$("manual-add-button").addEventListener("click", addManualScene);
+$("manual-generate-button").addEventListener("click", generateManual);
+for (let n = 0; n < 3; n++) manualScenes.append(makeManualCard());
+refreshManualCardRoles();
 $("save-draft-button").addEventListener("click", saveDraft);
 $("preflight-button").addEventListener("click", preflight);
 $("render-button").addEventListener("click", render);
