@@ -657,3 +657,30 @@ Unverified or disputed used claims and test-only visual assets block readiness.
 shot compilation to Kumiki, or attaching the plan to the production job. Legacy topic/manual jobs
 and House Math remain unchanged until the new path is integrated with migration tests.
 Preproduction readiness is not approval to spend money, invoke Fish Audio, render commercially or publish.
+
+
+### Research-first preproduction (opt-in source discovery)
+
+Run \`pnpm video:research\` before \`pnpm video:plan\` to **search and capture actual sources**, then use an **already running local OpenAI-compatible model** to suggest candidate claims with exact supporting excerpts. The resulting \`research-dossier/v1\` passes the current preproduction parser and remains **draft / unverified**. The model is selected explicitly with \`--model\`; no cloud LLM is selected automatically.
+
+Use a locally running [SearXNG](https://docs.searxng.org/) instance whose JSON search output is enabled. ContentGen queries its loopback \`/search\` endpoint and captures only explicitly authorized public HTTPS page content; local SearXNG is a search provider, *not* the LLM.
+
+\`\`\`sh
+cd apps/web
+pnpm video:research -- \
+  --topic "Why does replacing an HVAC system cost so much?" \
+  --question "What drives the final replacement quote?" \
+  --audience "Homeowners" --model YOUR_INSTALLED_LOCAL_MODEL \
+  --search-provider searxng --search-endpoint http://127.0.0.1:8080/search \
+  --allow-network --out-dir ../../outputs/hvac-research-01
+
+pnpm video:plan -- \
+  --research ../../outputs/hvac-research-01/research-dossier.json \
+  --model YOUR_INSTALLED_LOCAL_MODEL --out ../../outputs/hvac-plan-01.json
+\`\`\`
+
+The alternative \`--search-provider brave\` requires a **separately configured** \`BRAVE_SEARCH_API_KEY\` and **\`--approve-search-charges\`**; Brave may incur provider charges, so review the pricing and budget yourself before opting in. \`--allow-network\` is still required. Neither search path runs unless the operator explicitly authorizes remote page retrieval. No new models/dependencies are installed by this command.
+
+The newly created, non-overwritten directory contains \`research-dossier.json\`, SHA-256-identifiable \`captures/source_NN.txt\` and \`run-manifest.json\`. Sources are leads until successfully fetched; the worker rejects redirects, non-HTTPS URLs, local/private IPs, unbounded responses, and missing textual content. The extracted \`quote\` from each model claim must exist *verbatim* in a saved source capture. Dossier claims deliberately have \`status: unverified\` and \`review.status: draft\`; this does **not** fact-check quote interpretation, resolve contradictions, determine publication permission, or mark a video commercially ready. Web pages are untrusted data and should be assessed against primary sources and rights restrictions by a human. Page extraction is text/HTML only (no JS-required pages, PDFs, login, or robots-policy bypass). Sources failing capture are recorded as research gaps; no fabricated substitute citations are created. The model and local SearXNG endpoints must remain loopback-only.
+
+To run the new suite: \`node --test scripts/video-production/research-agent.test.mjs\`. The existing headless test command includes it automatically. This is CLI-only; connecting research to the main Studio UI is a separate milestone.
