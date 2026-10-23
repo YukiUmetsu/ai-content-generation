@@ -10,6 +10,7 @@ import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { parseResearchDossier } from "./preproduction.mjs";
 import { localChatEndpoint } from "./topic-generator.mjs";
+import { configuredSearchEndpoint } from "./local-search-config.mjs";
 
 const MAX_RESPONSE = 512 * 1024;
 const MAX_MODEL_RESPONSE = 256 * 1024;
@@ -158,7 +159,7 @@ export async function searchCandidates(query, options, { transport = fetch, sign
   const provider = options.provider ?? "searxng";
   let endpoint, headers = {};
   if (provider === "searxng") {
-    endpoint = new URL(localSearxngEndpoint(options.searchEndpoint ?? "http://127.0.0.1:8080/search"));
+    endpoint = new URL(localSearxngEndpoint(options.searchEndpoint ?? configuredSearchEndpoint()));
     endpoint.searchParams.set("q", query);
     endpoint.searchParams.set("format", "json");
     endpoint.searchParams.set("language", options.locale === "ja-JP" ? "ja-JP" : "en-US");
