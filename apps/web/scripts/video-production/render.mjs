@@ -2,7 +2,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { access, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { listRenderChunks, reusableChapter } from "./media-reuse.mjs";
 import { constants } from "node:fs";
 import { join, parse, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -157,6 +158,16 @@ export async function renderVideoSegments(options, dependencies = {}) {
   const concat = dependencies.concatSegments ?? ((paths, path) => defaultConcat(paths, path, { ffmpeg: options.ffmpeg ?? "ffmpeg", signal: options.signal }));
   const probeFinal = dependencies.probeFinal ?? probe;
   const started = performance.now();
+  const chunks = listRenderChunks(manifest,limit,options.visualPlan);
+  const prior = options.reuseFrom;
+  if(prior && (!prior.sourcePlan || !prior.segmentsDir ||
+      prior.buildHash!==options.buildHash || !options.visualPlan))
+    fail("segment reuse requires a same-build validated previous scene and dedicated segments directory");
+  const priorFingerprint = prior ? sha256(JSON.stringify({
+    version:2, planHash:sha256(JSON.stringify(prior.sourcePlan)),
+    buildHash:prior.buildHash, manifest:prior.sourcePlan.manifest,
+    h264Profile:"libx264-crf18-yuv420p"
+  })) : null;
   const segments = [];
   const reviewStills = [];
   let peakScratchBytes = 0;
@@ -167,9 +178,8 @@ export async function renderVideoSegments(options, dependencies = {}) {
     capture = await openCapture(options.stageUrl, manifest);
     if (!isDeepStrictEqual(capture?.manifest, manifest)) fail("live Kumiki export manifest differs from the validated render plan");
     if (capture?.buildHash !== options.buildHash) fail("live browser export handshake has a mismatched built-scene fingerprint");
-    for (let startFrame = 0, index = 0; startFrame < manifest.durationFrames; startFrame += limit, index++) {
+    for (const { index,startFrame,frameCount,chapterIndex } of chunks) {
       if (options.signal?.aborted) fail("video capture cancelled");
-      const frameCount = Math.min(limit, manifest.durationFrames - startFrame);
       const name = `segment-${String(index).padStart(5, "0")}.mp4`;
       const path = join(segmentsDir, name), metadataPath = join(segmentsDir, `${name}.json`);
       let completed = false, segmentHash;
@@ -186,6 +196,33 @@ export async function renderVideoSegments(options, dependencies = {}) {
         if (!matchProbe(measured, manifest, frameCount)) fail(`corrupt segment probe during resume: ${name}`);
         completed = true;
         segmentHash = meta.sha256;
+      }
+      // Reuse unchanged, identical-timeline chapters from the previous render
+      // only after checking the old sidecar, H.264 SHA and measured frame count.
+      // Every changed scene is rendered normally, never silently treated as equal.
+      if(!completed && prior && chapterIndex !== null &&
+          reusableChapter(prior.sourcePlan,options.visualPlan,chapterIndex,options.buildHash)){
+        const oldFile = join(prior.segmentsDir,name);
+        const oldMetaFile = oldFile + ".json";
+        let oldMeta;
+        try { oldMeta=JSON.parse(await readFile(oldMetaFile,"utf8")); }
+        catch(error){ if(error.code!=="ENOENT")fail("invalid previous segment metadata "+name); }
+        if(oldMeta && oldMeta.startFrame===startFrame && oldMeta.frameCount===frameCount){
+          if(oldMeta.fingerprint!==priorFingerprint)
+            fail("previous segment fingerprint mismatch for "+name);
+          const bytes=await readFile(oldFile);
+          if(sha256(bytes)!==oldMeta.sha256)
+            fail("previous segment hash mismatch for "+name);
+          if(!matchProbe(await probe(oldFile),manifest,frameCount))
+            fail("previous segment measured video mismatch for "+name);
+          await copyFile(oldFile,path,0);
+          await writeFile(metadataPath,JSON.stringify({
+            fingerprint,name,startFrame,frameCount,sha256:oldMeta.sha256
+          },null,2),{flag:"wx"});
+          segmentHash=oldMeta.sha256;
+          completed=true;
+          options.onProgress?.({phase:"segment-reused",startFrame,frameCount,chapterIndex});
+        }
       }
       if (!completed) {
         const batchDir = await mkdtemp(join(dir, ".capture-"));
