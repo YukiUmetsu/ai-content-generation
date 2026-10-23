@@ -28,10 +28,10 @@ function Node({ x, y, width, height, label, note, index, highlight = false }: { 
     <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
     <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
     {text.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5}
-      y={detail ? y+height*.39-(text.lines.length-1)*13+i*26 : y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11}
+      y={detail ? y+height*.25+i*(height<115?22:26) : y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11}
       fontSize={detail?Math.min(text.fontSize,28):text.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
     {detail?.lines.map((line,i)=><text data-teaching-detail="" key={i} x={x+width/2+5}
-      y={y+(width<350?height*.53:height*.60)+i*(width<350?17:height<115?15:22)} fontSize={detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
+      y={y+(height<115?height*.63:height*.58)+i*(height<115?14:width<350?17:22)} fontSize={detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
   </g>;
 }
 
