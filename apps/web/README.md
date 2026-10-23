@@ -188,6 +188,23 @@ licensed real footage and richer 3D treatments remain future milestones.
 Review a real rendered portrait MP4 at normal speed before commercial release. GitHub CI performs only no-FFmpeg
 compilation and test checks; no source/voice commercial rights are inferred.
 
+### Create → Platform layouts
+
+This formerly planned tool now compiles actual layouts for YouTube 16:9,
+Shorts/Reels/TikTok 9:16, Instagram 4:5, and square output. It uses Kumiki's
+platform presets and ShortSafeFrame geometry for independent element positions,
+not a blind landscape crop. Edit the headline, subhead and 2–4 graphic labels;
+inspect the live shared preview, optional reserved-UI guides and deterministic
+safe-frame diagnostics. Export a local JSON layout plan containing the exact
+preset, raster, positions, reserved regions and findings.
+
+This tool does NOT render an MP4, upload a video, synchronize captions to words,
+or publish to any platform. UI overlays are approximate, and long copy
+requires normal-size visual review. For actual MP4 generation use the separate
+Video Test Studio (port 8790) and its preflight/export pipeline. Thumbnail
+Composer and Storyboard Planner availability metadata now correctly says
+Live instead of Planned; Motion & media remains a demonstration lab.
+
 ## Studio main navigation
 
 The React Studio now has live destinations for all nine sidebar items.
