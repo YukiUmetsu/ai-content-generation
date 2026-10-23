@@ -97,3 +97,46 @@ test("FFmpeg normalizes 16 kHz generated WAV to measured 48 kHz PCM", { skip: sp
   assert.equal(result[0].samples, 4800);
   assert.equal((await probeNormalizedWav(result[0].wavPath)).sampleRate, 48000);
 });
+
+
+test("previous production cache lets one changed sentence synthesize without repeating unaffected TTS",async t=>{
+  const sourceRoot=await testContext(t);
+  const revisedRoot=await testContext(t);
+  let providerCalls=0;
+  const synthesize=async()=>{
+    providerCalls++;
+    return {audio:pcmWave(4800),provider:"local",modelId:job.voice.modelId,
+      voiceId:job.voice.voiceId,engineVersion:"engine-0.1",encoding:"wav"};
+  };
+  const options={provider:"local",providerRevision:"engine-0.1",
+    localVoiceAuthorized:true,synthesize,...fakeMedia};
+  const old=await synthesizeNarration(job,{...options,cacheRoot:sourceRoot});
+  assert.equal(providerCalls,2);
+  const revised={...job,beats:[{...job.beats[0],narration:"A newly edited local sentence."},job.beats[1]]};
+  const reused=[];
+  const next=await synthesizeNarration(revised,{...options,cacheRoot:revisedRoot,reuseCacheRoot:sourceRoot,
+    onReuse:event=>reused.push(event.beatId)});
+  assert.equal(providerCalls,3);
+  assert.deepEqual(reused,["b"]);
+  assert.notEqual(next[0].sha256,null);
+  assert.equal(next[1].sha256,old[1].sha256);
+  assert.notEqual(next[1].wavPath,old[1].wavPath);
+  assert.deepEqual(await readFile(next[1].wavPath),await readFile(old[1].wavPath));
+  assert.equal((await synthesizeNarration(revised,{...options,cacheRoot:revisedRoot})).length,2);
+  assert.equal(providerCalls,3);
+});
+test("prior narration with corrupted hash refuses reuse; missing prior beat may be generated",async t=>{
+  const sourceRoot=await testContext(t),targetRoot=await testContext(t);
+  let calls=0;
+  const synthesize=async()=>{calls++;return {audio:pcmWave(4800),provider:"local",
+    modelId:job.voice.modelId,voiceId:job.voice.voiceId,engineVersion:"engine-0.1",encoding:"wav"};};
+  const options={provider:"local",providerRevision:"engine-0.1",cacheRoot:sourceRoot,
+    localVoiceAuthorized:true,synthesize,...fakeMedia};
+  const source=await synthesizeNarration(job,options);
+  await writeFile(source[0].wavPath,"tampered");
+  await assert.rejects(synthesizeNarration(job,{...options,cacheRoot:targetRoot,
+    reuseCacheRoot:sourceRoot}),/hash mismatch/);
+  assert.equal(calls,2);
+  await assert.rejects(synthesizeNarration(job,{...options,cacheRoot:targetRoot,
+    reuseCacheRoot:sourceRoot,localVoiceAuthorized:false}),/authoriz/);
+});
