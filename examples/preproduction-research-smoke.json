@@ -3,9 +3,9 @@
   "kind": "research-dossier",
   "id": "research_synthetic_home",
   "topic": {
-    "title": "What is hidden in the cost of a home?",
-    "viewerQuestion": "Is the purchase price the total cost?",
-    "audience": "Curious homeowners",
+    "title": "Why a $500,000 home can cost more than $500,000",
+    "viewerQuestion": "Why doesn't the listing price capture what ownership may cost?",
+    "audience": "First-time homebuyers comparing the listing price with ownership costs",
     "locale": "en-US"
   },
   "evidence": [
@@ -21,14 +21,14 @@
   "claims": [
     {
       "id": "claim_illustrative",
-      "text": "A fictional home ownership example can include several cost categories.",
+      "text": "This hypothetical $500,000 home is an illustrative purchase, not a market quote. Total cash spent over time may include the purchase price, financing interest when borrowed, property taxes, insurance, and maintenance, with amounts dependent on the loan, location, time owned and upkeep; later resale proceeds are excluded.",
       "status": "illustrative",
       "sourceRefs": []
     }
   ],
   "assets": [],
   "gaps": [
-    "Replace this synthetic example with actually captured evidence before real production."
+    "This is an illustrative example with no measured cost assumptions. Replace fictional numbers and research placeholders with independently checked evidence before publication."
   ],
   "review": {
     "status": "draft"
