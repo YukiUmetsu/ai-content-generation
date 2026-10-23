@@ -207,7 +207,7 @@ describe("StoryboardPlanner", () => {
   it("surfaces a corrupt local draft and preserves it instead of overwriting on mount", () => {
     const key = "contentgen:project-storyboard:v1:project-corrupt";
     localStorage.setItem(key, '{"kind":"not-a-storyboard","apiKey":"keep-original"}');
-    render(<StoryboardPlanner locale="en" projectId="project-corrupt" />);
+    render(<StoryboardPlanner locale="en" {...{ projectId: "project-corrupt" }} />);
     expect(screen.getByRole("alert")).toHaveTextContent(/stored storyboard.*could not be loaded/i);
     expect(localStorage.getItem(key)).toContain("keep-original");
   });
