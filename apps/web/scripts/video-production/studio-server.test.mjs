@@ -372,7 +372,7 @@ test("portable Studio storyboard JSON is content-only, supports incomplete draft
   d.getElementById("fish-key").value = "DO-NOT-EXPORT-ME";
   d.getElementById("voice-id").value = "PRIVATE-VOICE-ID";
   d.getElementById("manual-title").value = "Work in progress";
-  const json = dom.window.eval('JSON.stringify({ kind: STORY_KIND, schemaVersion: 1, ...validateImportedStory({ kind: STORY_KIND, schemaVersion: 1, ...manualInput() }) })');
+  const json = dom.window.eval('JSON.stringify({ kind: "contentgen-manual-storyboard", schemaVersion: 1, ...validateImportedStory({ kind: "contentgen-manual-storyboard", schemaVersion: 1, ...manualInput() }) })');
   const story = JSON.parse(json);
   assert.equal(story.scenes.length, 3);
   assert.equal(story.scenes[0].narration, "");
