@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { generatePreproductionPlan } from "./preproduction-generator.mjs";
 import { compilePreproductionBundle, parseResearchDossier } from "./preproduction.mjs";
+import { readResearchModelSettingsSync } from "./research-model-settings.mjs";
 
 export function parsePreproductionArgs(argv) {
   const {values}=parseArgs({args:argv,strict:true,allowPositionals:false,options:{
@@ -14,9 +15,12 @@ export function parsePreproductionArgs(argv) {
   }});
   if(values.help)return {help:true};
   if(!values.research||!values.out||!values.out.endsWith(".json"))throw Error("Specify --research and a new --out *.json path.");
-  if(Boolean(values.plan)===Boolean(values.model))throw Error("Specify exactly one of --plan existing-plan.json or --model installed-local-model.");
-  return {research:resolve(values.research),plan:values.plan?resolve(values.plan):null,model:values.model,
-    endpoint:values.endpoint,out:resolve(values.out),requireReady:values["require-ready"]};
+  const saved = readResearchModelSettingsSync();
+  const model = values.model || saved?.model;
+  if(Boolean(values.plan)===Boolean(model))throw Error("Specify --plan existing-plan.json or choose a local model in Studio Settings / --model.");
+  return {research:resolve(values.research),plan:values.plan?resolve(values.plan):null,model:values.plan?null:model,
+    endpoint:values.endpoint === "http://127.0.0.1:11434/v1/chat/completions" ? (saved?.endpoint ?? values.endpoint) : values.endpoint,
+    out:resolve(values.out),requireReady:values["require-ready"]};
 }
 export async function runPreproductionCli(argv,{generate=generatePreproductionPlan,log=console.log}={}){
   const a=parsePreproductionArgs(argv);
