@@ -248,7 +248,8 @@ export async function analyzeCapturedResearch(captures, brief, options, { transp
   let candidate;
   try { candidate = JSON.parse(response.choices[0].message.content); }
   catch { throw Error("Local model did not return valid JSON claims."); }
-  return validateExtractedClaims(candidate, captures);
+  validateExtractedClaims(candidate, captures);
+  return candidate;
 }
 
 /**
@@ -290,12 +291,7 @@ export async function researchVideoTopic(brief, options = {}, deps = {}) {
   if (!captures.length) throw Error("No public source pages could be captured; no research dossier was created.");
   const extracted = await analyze(captures, { ...brief, locale }, options, { signal: deps.signal });
   // Enforce quote verification even for injected or substituted analyzers.
-  const quoted = validateExtractedClaims(
-    extracted.rawCandidate ?? { claims: extracted.claims?.map(c => ({
-      text: c.text, support: c.support
-    })), gaps: extracted.gaps },
-    captures
-  );
+  const quoted = validateExtractedClaims(extracted, captures);
   const id = "research_" + sha(JSON.stringify({ brief, urls: captures.map(c => c.url), hashes: captures.map(c => sha(c.text)) })).slice(0, 16);
   const dossier = {
     schemaVersion: 1, kind: "research-dossier", id,
