@@ -81,7 +81,7 @@ export function isTeachingVisualState(value: unknown): value is TeachingVisualSt
     typeof state.subjectId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.subjectId)) return false;
   const copy = [state.before, state.action, state.after];
   if (copy.some((text, i) => typeof text !== "string" || text.trim().length < 8 ||
-    text.length > (i === 1 ? 90 : 48) || /[\u0000-\u001f]/u.test(text))) return false;
+    text.length > (i === 1 ? 90 : 48) || Array.from(text).some(char => char.charCodeAt(0) < 32))) return false;
   return new Set(copy.map(text => (text as string).trim().toLowerCase())).size === 3;
 }
 
