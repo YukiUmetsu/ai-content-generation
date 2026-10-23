@@ -17,9 +17,9 @@ export function parsePreproductionArgs(argv) {
   if(!values.research||!values.out||!values.out.endsWith(".json"))throw Error("Specify --research and a new --out *.json path.");
   const saved = readResearchModelSettingsSync();
   if (values.plan && values.model) throw Error("Choose only one of --plan or --model.");
-  const model = values.plan ? null : (values.model || saved?.model);
+  const model = values.plan ? undefined : (values.model || saved?.model);
   if(Boolean(values.plan)===Boolean(model))throw Error("Specify --plan existing-plan.json or choose a local model in Studio Settings / --model.");
-  return {research:resolve(values.research),plan:values.plan?resolve(values.plan):null,model:values.plan?null:model,
+  return {research:resolve(values.research),plan:values.plan?resolve(values.plan):null,model,
     endpoint:values.endpoint === "http://127.0.0.1:11434/v1/chat/completions" ? (saved?.endpoint ?? values.endpoint) : values.endpoint,
     out:resolve(values.out),requireReady:values["require-ready"]};
 }
