@@ -53,7 +53,6 @@ export function LiveRendererPreview({
   const seekShot=(i:number)=>{
     const index=Math.max(0,Math.min(plan.chapters.length-1,i));
     setPlaying(false);seek(plan.chapters[index].startFrame);
-    onSelectShot?.(shotMap[index].shotId);
   };
   return <section aria-label="Actual renderer preview" className="space-y-3" data-contentgen-visual-preview="">
     <div className="flex flex-wrap items-center justify-between gap-2">
