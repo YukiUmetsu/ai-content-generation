@@ -70,7 +70,7 @@ describe("YouTube Intelligence", () => {
 
   it("turns a niche into an editable original brief and passes the selected pattern to Storyboard", async () => {
     fakeApi(true);
-    const onCreateStoryboard = vi.fn((_draft: EditorialDraft) => true);
+    const onCreateStoryboard = vi.fn((draft: EditorialDraft) => draft.version === 1);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)} onCreateStoryboard={onCreateStoryboard}/>);
     const audience = await screen.findByRole("textbox",{name:"Who is this for?"});
