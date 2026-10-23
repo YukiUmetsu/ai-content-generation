@@ -14,6 +14,11 @@ import { inspectProduction } from "./video-production/cli.mjs";
 import { produceVideo } from "./video-production/produce.mjs";
 import { findChromium } from "./video-production/try.mjs";
 import { localSpeechEndpoint } from "./video-production/local.mjs";
+import { researchVideoTopic } from "./video-production/research-agent.mjs";
+import { generatePreproductionPlan } from "./video-production/preproduction-generator.mjs";
+import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
+import { readResearchModelSettings } from "./video-production/research-model-settings.mjs";
+import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -87,6 +92,10 @@ async function deliverVideo(req,res,releaseDir){
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
   const compile=deps.compile??compilePreproductionRenderJob;
+  const research=deps.research??researchVideoTopic;
+  const generateStory=deps.generateStory??generatePreproductionPlan;
+  const loadModel=deps.readModel??readResearchModelSettings;
+  const searchEndpoint=deps.searchEndpoint??configuredSearchEndpoint;
   const build=deps.build??(()=>run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024}));
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
@@ -122,6 +131,42 @@ export function createDirectorProduction(deps={}){
         respond(res,202,{cancelRequested:true});return;
       }
       if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
+      if(route==="/research"){
+        const input=await readBody(req);
+        if(input.allowNetwork!==true)throw Error("Approve public web research explicitly before searching.");
+        const brief=input.brief;
+        for(const name of ["title","viewerQuestion","audience"]){
+          if(typeof brief?.[name]!=="string"||!brief[name].trim()||brief[name].length>240)
+            throw Error("Research requires a topic, question and audience.");
+        }
+        const saved=await loadModel();
+        if(!saved?.model)throw Error("Configure an installed local research model in Settings first.");
+        const endpoint=searchEndpoint();
+        if(!endpoint)throw Error("Local SearXNG is not set up. Run pnpm research:up once in apps/web.");
+        busy=true;
+        status={...status,state:"researching",phase:"research",message:"Searching and extracting candidate evidence locally."};
+        try{
+          const result=await research(brief,{provider:"searxng",searchEndpoint:endpoint,
+            model:saved.model,endpoint:saved.endpoint,allowNetwork:true,maxSources:4});
+          status={...status,state:"idle",phase:"research",message:"Research draft captured. Review sources; claims remain unverified."};
+          respond(res,200,{dossier:result.dossier,warnings:result.warnings});
+        }finally{busy=false;}
+        return;
+      }
+      if(route==="/story"){
+        const input=await readBody(req);
+        const saved=await loadModel();
+        if(!saved?.model)throw Error("Configure an installed local research model in Settings first.");
+        busy=true;
+        status={...status,state:"planning",phase:"story",message:"Drafting a research-linked visual teaching storyboard."};
+        try{
+          const plan=await generateStory(input.dossier,{model:saved.model,endpoint:saved.endpoint});
+          const bundle=compilePreproductionBundle(input.dossier,plan);
+          status={...status,state:"idle",phase:"story",message:"Storyboard draft ready for human editing and review."};
+          respond(res,200,{bundle});
+        }finally{busy=false;}
+        return;
+      }
       if(route==="/plan"){
         const input=await readBody(req);
         respond(res,200,compile(input.dossier,input.bundle,{platform:"youtube"}));return;
