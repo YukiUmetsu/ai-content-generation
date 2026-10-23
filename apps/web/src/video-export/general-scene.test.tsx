@@ -21,7 +21,9 @@ describe("generic deterministic explainer scene", () => {
     expect(svg).toContain('viewBox="0 0 1920 1080"');
     expect(svg).toContain("A PACKET MOVES");
     expect(svg).toContain("Router");
-    expect(svg).toContain("UNVERIFIED EDITORIAL DRAFT");
+    expect(svg).not.toContain("UNVERIFIED EDITORIAL DRAFT");
+    expect(svg).not.toContain("DRAFT ·");
+    expect(svg).not.toContain("02 / 03");
   });
 
   it("uses Kumiki's process journey to move exactly one semantic subject through flow stages", () => {
@@ -184,5 +186,18 @@ describe("authored timeline motion in the actual MP4 export React scene",()=>{
     expect(start).toContain('height="0"');
     expect(finish).toContain('data-km-diagram-stage');
     expect(finish).not.toContain('height="0"');
+  });
+});
+
+describe("visual export safety for all generic projects",()=>{
+  it("contains the Kumiki journey within the 770×640 safe area even for 5 stages",()=>{
+    const five:GeneralVisualPlan={...plan,chapters:plan.chapters.map((c,index)=>index===1?{
+      ...c,visual:{...c.visual,items:["Opening","Processing","Transport","Arrival","Result"]}
+    }:c)};
+    const svg=renderToStaticMarkup(<GeneralExportScene plan={five} frame={115}/>);
+    expect(svg).toContain('id="contentgen-flow-safe-bounds"');
+    expect(svg).toContain('width="770" height="640"');
+    expect(svg).toContain('clip-path="url(#contentgen-flow-safe-bounds)"');
+    expect(svg).not.toContain("DRAFT ·");
   });
 });
