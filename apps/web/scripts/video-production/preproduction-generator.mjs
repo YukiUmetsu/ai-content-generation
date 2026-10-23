@@ -19,7 +19,11 @@ const SYSTEM = [
   "kind=preproduction-plan, schemaVersion=1, researchId=dossier.id, styleId=cinematic-explainer-v1.",
   "story:{pattern,premise,hook,question,answerExplanationId,acts:[{id,question,purpose,payoff}]}",
   "explanation:[{id,actId,claimIds,before,demonstration,after}]",
-  "shots:[{id,explanationId,family,purpose,subjectIds,visualChange,onScreenText,claimIds,assetRefs}]",
+  "shots:[{id,explanationId,family,purpose,subjectIds,visualChange,onScreenText,claimIds,assetRefs,visualElements}]",
+  "Each shot MUST include visualElements: 2-5 {label,detail} entries. label max 44 chars; detail max 94 chars; one line each.",
+  "Visual element labels are concrete audience-readable entities or states, never IDs or placeholders such as House, Categories, Main Idea, Step 1 or How It Changes.",
+  "Every detail must say what that visible thing means or changes in this scene; tie it to one of the shot claim IDs, no unsourced numeric examples.",
+  "These visualElements are ACTUALLY rendered in the general Kumiki diagram; visualAction prose alone is NOT yet executed by the renderer.",
   "continuity:[{fromShotId,toShotId,technique,subjectIds,reason}] for each pair of adjacent shots.",
   "sound:[{shotId,narration,delivery,energy,pauseAfterMs,sfxIntent}] exactly one per shot.",
   "REQUIRED teachingSequences: nonempty array of {id,mode,question,technicalSubjectId,analogy,claimIds,phases}.",
@@ -82,6 +86,8 @@ export async function generatePreproductionPlan(dossier, options, {transport=fet
   catch{throw Error("Local model did not return a structured preproduction plan.");}
   const parsed=parsePreproductionPlan(result,dossier);
   if(!parsed.ok)throw Error("Planning output rejected: "+parsed.findings.filter(f=>f.severity==="error").map(f=>f.code).join(", "));
+  if(!result.shots?.every(shot=>Array.isArray(shot.visualElements)))
+    throw Error("Planning output rejected: every shot requires visible teaching elements. Regenerate the storyboard; generic subject-ID boxes are not accepted.");
   if(!Array.isArray(result.teachingSequences)||!result.teachingSequences.length)
     throw Error("Planning output rejected: missing research-grounded teachingSequences. Regenerate or edit the draft; no automatic retry.");
   return result;
