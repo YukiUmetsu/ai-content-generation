@@ -100,7 +100,7 @@ export async function checkLocalSearch({ transport = fetch, search = false, endp
 const defaultDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export async function manageLocalSearch(argv, {
   command = dockerCommand, confirm = confirmImageDownload, check = checkLocalSearch,
-  secret = ensureLocalSecret, delay = defaultDelay, log = console.log,
+  secret = ensureLocalSecret, portAvailable = portIsAvailable, delay = defaultDelay, log = console.log,
 } = {}) {
   const options = parseSearchManagerArgs(argv);
   if (options.help) {
@@ -163,7 +163,7 @@ export async function manageLocalSearch(argv, {
     await command(["pull", SEARCH_IMAGE]);
   }
   const config = await secret({ returnConfig: true });
-  const portFree = await portIsAvailable(config.port);
+  const portFree = await portAvailable(config.port);
   // A previously running container may own its persisted port; do not move it.
   if (!portFree) {
     const health = await check({ endpoint: config.endpoint });
