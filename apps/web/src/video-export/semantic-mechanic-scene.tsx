@@ -4,6 +4,7 @@ import {fitSvgText} from "../../scripts/video-production/text-layout.mjs";
 import {compileSemanticMechanic} from "./semantic-mechanic-compiler";
 import type {SemanticActorPose,SemanticScenePose} from "./semantic-mechanic-compiler";
 import type {SemanticFrame} from "./semantic-scene-motion";
+import type {RationalFps} from "@/components/motion/types";
 
 const palette={subject:"#8DDDD0",part:"#F0C48B",source:"#93C6E7",destination:"#B6D5A6",result:"#DFC3F3"};
 const titles={split:"ONE SYSTEM · DISTINCT PARTS",assemble:"PARTS FORM A SYSTEM",
@@ -16,7 +17,7 @@ function Actor({actor}:{actor:SemanticActorPose}){
   const centerX=x+width/2,centerY=y+height/2;
   const text=fitSvgText(actor.label,{maxWidthPx:width-24,preferredSize:24,minSize:13,maxLines:2});
   return <g data-semantic-actor={actor.id} data-semantic-role={actor.role} data-semantic-rect={`${x},${y},${width},${height}`}
-    opacity={opacity}>
+    role="group" aria-label={opacity>.015?actor.label:undefined} opacity={opacity}>
     {actor.role==="source"||actor.role==="destination"
       ? <>
         <circle cx={centerX} cy={centerY} r={Math.min(width,height)*.42} fill="#213947" stroke={color} strokeWidth={actor.emphasis?5:3}/>
@@ -77,15 +78,17 @@ function Paths({pose}:{pose:SemanticScenePose}){
   return null;
 }
 
-export function SemanticMechanicScene({mechanic,phase,motion,reducedMotion=false}:{
+export function SemanticMechanicScene({mechanic,phase,motion,reducedMotion=false,localFrame,durationFrames,fps}:{
   mechanic:VisualMechanicV1;phase:"problem"|"mechanism"|"payoff";
-  motion:SemanticFrame;reducedMotion?:boolean;
+  motion:SemanticFrame;reducedMotion?:boolean;localFrame?:number;durationFrames?:number;fps?:RationalFps;
 }){
   const pose=compileSemanticMechanic(mechanic,{
-    phase,progress:motion.completion,payoffLocked:motion.isPayoffPending,reducedMotion
+    phase,progress:motion.completion,payoffLocked:motion.isPayoffPending,reducedMotion,
+    localFrame,durationFrames,fps
   });
   return <g data-semantic-operator={pose.operator} data-semantic-phase={phase}
-    data-semantic-safe-bounds="1040,230,1820,920" data-semantic-payoff-locked={motion.isPayoffPending?"true":"false"}>
+    data-semantic-safe-bounds="1040,230,1820,920" data-kumiki-vt1={pose.kumikiBacked?"true":"false"}
+    data-semantic-payoff-locked={motion.isPayoffPending?"true":"false"}>
     <defs><clipPath id="contentgen-semantic-safe"><rect x="1040" y="230" width="780" height="690"/></clipPath></defs>
     <g clipPath="url(#contentgen-semantic-safe)">
       <rect x="1053" y="250" width="754" height="638" rx="32" fill="#132C39" fillOpacity=".48" stroke="#3D6570" strokeWidth="2"/>

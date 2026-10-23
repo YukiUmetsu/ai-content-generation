@@ -278,7 +278,8 @@ export function SceneEditor({
               options={VISUAL_OPERATORS.map(x=>({value:x,label:x}))}
               onChange={value=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
                 ...beat.teachingMechanic!.mechanic,operator:value as VisualMechanicV1["operator"]}}})}/>
-            {beat.teachingMechanic.mechanic.actors.map((actor,index)=><div key={actor.id} data-semantic-actor-editor={actor.id} className="sp-field">
+            {beat.teachingMechanic.mechanic.actors.map((actor,index)=><details key={actor.id} data-semantic-actor-editor={actor.id} className="sp-field">
+              <summary className="sp-label">{actor.label||actor.id} · {actor.id}</summary>
               <TextAreaField label={`${t.mechanicActor}: ${actor.id}`} value={actor.label} rows={1} maxLength={42}
                 onChange={label=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
                   ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{...a,label}:a)}}})}/>
@@ -287,7 +288,13 @@ export function SceneEditor({
                 onChange={role=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
                   ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{
                     ...a,role:role as typeof a.role}:a)}}})}/>
-            </div>)}
+              <CheckGroup legend={t.mechanicClaims}
+                options={board.claims.map(claim=>({id:claim.id,label:`${claim.id}: ${claim.note.slice(0,45)}`}))}
+                selected={actor.claimIds}
+                onToggle={(id,checked)=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                  ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{
+                    ...a,claimIds:checked?[...a.claimIds,id]:a.claimIds.filter(c=>c!==id)}:a)}}})}/>
+            </details>)}
             <CheckGroup legend={t.mechanicOperands}
               options={beat.teachingMechanic.mechanic.actors.map(x=>({id:x.id,label:x.label||x.id}))}
               selected={beat.teachingMechanic.mechanic.operands}

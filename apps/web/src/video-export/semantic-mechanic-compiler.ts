@@ -5,6 +5,8 @@
  */
 import {validateVisualMechanic} from "../../scripts/video-production/semantic-mechanic.mjs";
 import type {VisualMechanicV1,VisualOperator,VisualActorRole} from "../../scripts/video-production/semantic-mechanic.mjs";
+import {sampleKumikiMechanicLayouts} from "./semantic-mechanic-kumiki";
+import type {RationalFps} from "@/components/motion/types";
 
 export const SEMANTIC_SAFE_BOUNDS={left:1040,top:230,right:1820,bottom:920} as const;
 export interface SemanticActorPose {
@@ -16,9 +18,11 @@ export interface SemanticScenePose {
   operator:VisualOperator;phase:"problem"|"mechanism"|"payoff";
   actors:SemanticActorPose[];progress:number;showOutcome:boolean;
   operands:string[];outcomeId:string;subjectId:string;
+  kumikiBacked:boolean;
 }
 type Phase=SemanticScenePose["phase"];
-type Options={phase:Phase;progress:number;payoffLocked?:boolean;reducedMotion?:boolean};
+type Options={phase:Phase;progress:number;payoffLocked?:boolean;reducedMotion?:boolean;
+  localFrame?:number;durationFrames?:number;fps?:RationalFps};
 const smooth=(n:number)=>{const v=Math.max(0,Math.min(1,n));return v*v*(3-2*v);};
 const lerp=(a:number,b:number,t:number)=>Math.round((a+(b-a)*t)*1000)/1000;
 const clamp=(v:number)=>Math.max(0,Math.min(1,v));
@@ -26,7 +30,7 @@ const size={width:148,height:88};
 const center={x:1332,y:440,width:204,height:136};
 type Rect={x:number;y:number;width:number;height:number};
 const positions=(ids:string[],kind:"spread"|"stack"|"compare")=>new Map<string,Rect>(ids.map((id,i):[string,Rect]=>{
-  if(kind==="stack")return [id,{x:1486,y:325+i*94,width:205,height:76}];
+  if(kind==="stack")return [id,{x:1490,y:351+i*64,width:196,height:54}];
   if(kind==="compare")return [id,{x:1098+(i%3)*225,y:400+Math.floor(i/3)*190,width:190,height:120}];
   return [id,{x:1100+(i%3)*225,y:343+Math.floor(i/3)*172,...size}];
 }));
@@ -38,7 +42,7 @@ function move(a:SemanticActorPose,to:Partial<SemanticActorPose>,t:number){
 }
 /** Re-validates untrusted plan fragments at the final render boundary. */
 export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):SemanticScenePose {
-  const claims=new Set(spec?.actors?.flatMap(actor=>actor.claimIds)??[]);
+  const claims=new Set(Array.isArray(spec?.actors)?spec.actors.flatMap(actor=>Array.isArray(actor?.claimIds)?actor.claimIds:[]):[]);
   const verdict=validateVisualMechanic(spec,{technicalSubjectId:spec?.subjectId,
     knownClaimIds:claims,knownAssetKeys:new Set()});
   if(!verdict.ok)throw Error("Semantic visual rejected: "+verdict.findings.map(f=>f.code).join(", "));
@@ -52,7 +56,7 @@ export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):S
   const spread=positions(spec.operands,"spread");
   const stack=positions(spec.operands,"stack");
   const compare=positions(spec.operands,"compare");
-  const actors=spec.actors.map(actor=>{
+  let actors=spec.actors.map(actor=>{
     const base:SemanticActorPose={id:actor.id,label:actor.label,role:actor.role,
       ...center,opacity:0,emphasis:false};
     const index=spec.operands.indexOf(actor.id);
@@ -75,10 +79,10 @@ export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):S
       if(isSubject)return {...base,x:lerp(1300,1535,t),y:473,width:98,height:92,opacity:1,emphasis:t>.5};
     }
     if(spec.operator==="accumulate"){
-      if(index>=0)return move({...base,x:1085,y:310+index*100,width:195,height:83,opacity:1},
+      if(index>=0)return move({...base,x:1085,y:317+index*70,width:195,height:57,opacity:1},
         {...stack.get(actor.id),opacity:1},t);
-      if(isSubject)return {...base,x:1320,y:760,width:242,height:108,opacity:1};
-      if(isOutcome)return {...base,x:1500,y:745,width:244,height:108,opacity:reveal,emphasis:true};
+      if(isSubject)return {...base,x:1070,y:782,width:242,height:88,opacity:1};
+      if(isOutcome)return {...base,x:1500,y:782,width:244,height:88,opacity:reveal,emphasis:true};
     }
     if(spec.operator==="compare"){
       if(index>=0)return move({...base,x:1110+(index%3)*225,y:335+Math.floor(index/3)*190,width:190,height:120,opacity:1},
@@ -93,6 +97,20 @@ export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):S
     }
     return base;
   });
+  let kumikiBacked=false;
+  if(options.phase==="mechanism"&&options.localFrame!==undefined&&options.durationFrames!==undefined&&options.fps){
+    if(!Number.isSafeInteger(options.localFrame)||!Number.isSafeInteger(options.durationFrames)||
+      options.durationFrames<4||options.localFrame<0||options.localFrame>=options.durationFrames)
+      throw Error("Kumiki semantic animation needs a valid Video Director frame and duration.");
+    const from=compileSemanticMechanic(spec,{phase:"problem",progress:0}).actors;
+    const to=compileSemanticMechanic(spec,{phase:"mechanism",progress:1}).actors;
+    const positions=sampleKumikiMechanicLayouts({operator:spec.operator,operands:spec.operands,
+      from,to,localFrame:options.localFrame,durationFrames:options.durationFrames,fps:options.fps});
+    if(actors.some(actor=>!positions.has(actor.id)))
+      throw Error("Kumiki semantic transition lost an actor identity; inspect the authored operation.");
+    actors=actors.map(actor=>({...actor,...positions.get(actor.id)}));
+    kumikiBacked=true;
+  }
   for(const actor of actors){
     if(actor.x<SEMANTIC_SAFE_BOUNDS.left||actor.y<SEMANTIC_SAFE_BOUNDS.top||
       actor.x+actor.width>SEMANTIC_SAFE_BOUNDS.right||
@@ -100,5 +118,5 @@ export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):S
       throw Error(`Semantic actor ${actor.id} exceeded safe stage; shorten its actor list or choose a different visual operation.`);
   }
   return {operator:spec.operator,phase:options.phase,actors,progress:t,
-    showOutcome,operands:[...spec.operands],outcomeId:spec.outcomeId,subjectId:spec.subjectId};
+    showOutcome,operands:[...spec.operands],outcomeId:spec.outcomeId,subjectId:spec.subjectId,kumikiBacked};
 }

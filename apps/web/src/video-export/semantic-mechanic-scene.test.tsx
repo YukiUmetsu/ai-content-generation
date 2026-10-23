@@ -70,6 +70,15 @@ describe("semantic animation engine",()=>{
       }
     }
   });
+  it("evaluates existing Kumiki VT1/MG1 at the Video Director local frame without another clock",()=>{
+    const spec=mechanic("split"),fps={num:30,den:1};
+    const at=(frame:number)=>compileSemanticMechanic(spec,{phase:"mechanism",progress:frame/119,
+      localFrame:frame,durationFrames:120,fps});
+    expect(at(60).kumikiBacked).toBe(true);
+    expect(at(60)).toEqual(at(60));
+    expect(at(60).actors.find(x=>x.id==="part_a")?.x).not.toBe(at(0).actors.find(x=>x.id==="part_a")?.x);
+    expect(at(119).actors.find(x=>x.id==="part_a")?.x).toBe(poses("split","mechanism",1).actors.find(x=>x.id==="part_a")?.x);
+  });
   it("offers a final reduced-motion still, but protects an exact payoff event",()=>{
     const locked=compileSemanticMechanic(mechanic("reveal"),{phase:"payoff",progress:0,payoffLocked:true,reducedMotion:true});
     const revealed=compileSemanticMechanic(mechanic("reveal"),{phase:"payoff",progress:.5,payoffLocked:false,reducedMotion:true});
@@ -93,6 +102,7 @@ describe("semantic animation engine",()=>{
       events:{answer:120},payoffEventId:"answer",disclaimer:"Draft",commercialReady:false};
     const mechanism=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={95}/>);
     expect(mechanism).toContain('data-semantic-operator="transfer"');
+    expect(mechanism).toContain('data-kumiki-vt1="true"');
     expect(mechanism).toContain('data-semantic-actor="packet"');
     expect(mechanism).not.toContain("data-teaching-state-stage");
     expect(renderToStaticMarkup(<GeneralExportScene plan={plan} frame={120}/>)).toContain('data-semantic-payoff-locked="true"');

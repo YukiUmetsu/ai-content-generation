@@ -90,8 +90,9 @@ export function isTeachingMechanicPlan(value:unknown):value is TeachingMechanicP
     !["problem","mechanism","payoff"].includes(String(obj.phase))||
     obj.sequenceId!==undefined&&(typeof obj.sequenceId!=="string"||!/^[a-z][a-z0-9_-]{0,80}$/iu.test(obj.sequenceId)))return false;
   const mechanic=obj.mechanic as VisualMechanicV1;
+  const claimRefs=Array.isArray(mechanic?.actors)?mechanic.actors.flatMap(a=>Array.isArray(a?.claimIds)?a.claimIds:[]):[];
   return validateVisualMechanic(mechanic,{technicalSubjectId:mechanic?.subjectId,
-    knownClaimIds:new Set(mechanic?.actors?.flatMap(a=>a?.claimIds)??[]),knownAssetKeys:new Set()}).ok;
+    knownClaimIds:new Set(claimRefs),knownAssetKeys:new Set()}).ok;
 }
 
 export function isTeachingVisualState(value: unknown): value is TeachingVisualState {

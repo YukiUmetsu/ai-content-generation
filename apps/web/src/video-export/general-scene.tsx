@@ -178,7 +178,8 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     {!chartStory && state.visual.direction?.visualMechanic &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ? <SemanticMechanicScene mechanic={state.visual.direction.visualMechanic}
-          phase={state.visual.direction.phase as "problem"|"mechanism"|"payoff"} motion={semanticMotion}/>
+          phase={state.visual.direction.phase as "problem"|"mechanism"|"payoff"} motion={semanticMotion}
+          localFrame={state.localFrame} durationFrames={chapterFrames} fps={plan.manifest.fps}/>
       : !chartStory && state.visual.direction?.transformation &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ?<TeachingStateScene state={diagramState} motion={semanticMotion}/>
