@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, ExternalLink, Sparkles } from "lucide-react";
+import { BookOpen, ExternalLink, Film, Play, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 
@@ -17,7 +17,7 @@ async function api(route:string,payload:unknown){
   if(!response.ok)throw Error(String(data.error||"Local research service unavailable."));
   return data;
 }
-export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle:unknown)=>void}){
+export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle:unknown,source:"sample"|"topic")=>void}){
   const [brief,setBrief]=useState({title:"",viewerQuestion:"",audience:"Homeowners",locale:"en-US"});
   const [consent,setConsent]=useState(false);
   const [research,setResearch]=useState<Dossier|null>(null);
@@ -30,7 +30,9 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
       const response=await fetch("/api/contentgen-video/demo",{cache:"no-store",signal:AbortSignal.timeout(10000)});
       const data=await response.json() as Record<string,unknown>;
       if(!response.ok)throw Error(String(data.error||"Demo unavailable."));
-      onGenerated(data.dossier,data.bundle);
+      if(data.dossier?.kind!=="research-dossier"||data.bundle?.kind!=="preproduction-bundle")
+        throw Error("The installed ContentGen sample is incomplete. Restart the Studio server after git pull.");
+      onGenerated(data.dossier,data.bundle,"sample");
     }catch(e){setError(e instanceof Error?e.message:"Demo failed to load.");}
     finally{setBusy("");}
   }
@@ -48,13 +50,27 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
     setBusy("story");setError("");
     try{
       const result=await api("story",{dossier:research});
-      onGenerated(research,result.bundle as Bundle);
+      onGenerated(research,result.bundle as Bundle,"topic");
     }catch(e){setError(e instanceof Error?e.message:"The local model could not draft the story.");}
     finally{setBusy("");}
   }
   return <Surface header={<h2 className="flex items-center gap-2 font-medium"><Sparkles className="size-4"/>Start a video from a topic</h2>}>
-    <div className="space-y-3 text-sm">
-      <p className="text-muted-foreground">Write the question viewers care about. ContentGen uses your configured local research model and SearXNG to gather sources, then drafts a visual explanation you can edit before rendering.</p>
+    <div className="space-y-4 text-sm">
+      <div className="rounded-surface border border-primary/30 bg-surface-subtle p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <div className="rounded-control bg-primary/10 p-2"><Film className="size-5 text-primary"/></div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <h3 className="text-base font-semibold">First time here? Open the interactive demo.</h3>
+            <p className="text-sm text-muted-foreground">A complete example is included with ContentGen. One click loads three sample scenes and opens the real animation preview and timeline editor. No files to upload, models to download, or audio setup.</p>
+            <Button disabled={!!busy} onClick={()=>void demo()} icon={<Play className="size-4"/>}>
+              {busy==="demo"?"Opening the sample studio…":"Open interactive sample"}
+            </Button>
+            <p className="text-xs text-muted-foreground">Synthetic test content only. Safe to explore, edit, and discard.</p>
+          </div>
+        </div>
+      </div>
+      <p className="font-medium">Or create a video from your own topic</p>
+      <p className="text-muted-foreground">Enter a topic for the local research workflow. This is optional for trying the editor.</p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-xs font-medium">Video topic<input className={field} aria-label="New video topic"
           value={brief.title} maxLength={220} onChange={e=>edit({title:e.target.value})}
@@ -75,12 +91,6 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
           onChange={e=>setConsent(e.target.checked)}/>
         Allow ContentGen to query my local SearXNG instance and fetch public web pages for this topic. The installed LLM analyzes these captured passages locally. Retrieved content is untrusted.
       </label>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" disabled={!!busy} onClick={()=>void demo()}>
-          Try sample project (no research/model setup)
-        </Button>
-        <p className="text-xs text-muted-foreground">Synthetic figures and claims; for interface testing only.</p>
-      </div>
       <Button disabled={!consent||!brief.title.trim()||!brief.audience.trim()||!!busy}
         onClick={()=>void capture()} icon={<BookOpen className="size-4"/>}>
         {busy==="research"?"Researching public sources…":"Research this topic"}
