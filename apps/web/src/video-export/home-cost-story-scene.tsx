@@ -81,13 +81,25 @@ function Question({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
   </g>
  </g>;
 }
+function CostIcon({index,x,y,color}:{index:number;x:number;y:number;color:string}){
+ return <g data-story-cost-icon={index} transform={"translate("+x+" "+y+")"}
+   stroke={color} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" fill="none">
+   {index===0&&<g><circle r="23"/><text y="10" fill={color} stroke="none"
+     textAnchor="middle" fontSize="27" fontWeight="800">%</text></g>}
+   {index===1&&<path d="M-24 -9 L0 -25 L24 -9 Z M-24 22 H24 M-25 -8 H25 M-19 -3 V17 M0 -3 V17 M19 -3 V17"/>}
+   {index===2&&<g><path d="M0 -26 L23 -17 V-1 Q21 16 0 27 Q-21 16 -23 -1 V-17Z"/>
+     <path d="M-11 0 L-3 8 L13 -9"/></g>}
+   {index===3&&<g><path d="M-17 20 L4 -1 M1 -7 L-1 -18 L12 -28 Q28 -19 23 -3 L9 3"/>
+     <circle cx="-20" cy="23" r="6"/></g>}
+ </g>;
+}
 function CostCard({x,y,item,index,opacity}:{x:number;y:number;item:typeof defaults[number];index:number;opacity:number}){
  if(opacity<=0)return null;
  const color=index%2?amber:cyan;
  return <g data-story-cost={index} opacity={opacity} transform={`translate(0 ${(1-opacity)*28})`}>
   <rect x={x} y={y} width="445" height="178" rx="24" fill="#203C47" stroke="#507580" strokeWidth="2"/>
   <rect x={x+22} y={y+26} width="78" height="78" rx="18" fill="#31565C"/>
-  <text x={x+61} y={y+80} fill={color} fontSize="42" textAnchor="middle" fontWeight="800">{item.symbol}</text>
+  <CostIcon index={index} x={x+61} y={y+65} color={color}/>
   <text x={x+121} y={y+59} fill={paper} fontSize="28" fontWeight="735">{item.name}</text>
   <text x={x+121} y={y+95} fill={faint} fontSize="20">{item.description}</text>
   <rect x={x+121} y={y+117} rx="16" width={Math.min(178,item.tag.length*14+25)} height="33" fill="#31535A"/>
@@ -110,6 +122,16 @@ function Mechanism({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
     <path d="M674 680 H757" stroke={cyan} strokeWidth="4" strokeDasharray="9 12"
       strokeDashoffset={Math.round(-motion.lightSweep*120)} opacity=".82"/>
   </g>
+  {defaults.map((_,i)=>{
+    const show=i+1<state.visibleItems,opacity=show?(motion.reveal[i+1]?.opacity??1):0;
+    if(opacity<=0)return null;
+    const x=812+(i%2)*474,y=291+Math.floor(i/2)*222+90;
+    return <path key={i} data-story-cost-connection={i}
+      d={"M684 681 Q745 681 "+(x-20)+" "+y+" L"+x+" "+y}
+      fill="none" stroke={i%2?amber:cyan} strokeOpacity={opacity*.52}
+      strokeWidth="2.5" strokeDasharray="5 12"
+      strokeDashoffset={Math.round(-motion.lightSweep*98)}/>;
+  })}
   {defaults.map((item,i)=><CostCard key={i} x={812+(i%2)*474} y={291+Math.floor(i/2)*222}
     item={{...item,name:labels[i]??item.name}} index={i}
     opacity={i+1<state.visibleItems?(motion.reveal[i+1]?.opacity??1):0}/>)}
