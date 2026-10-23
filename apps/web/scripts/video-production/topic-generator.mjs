@@ -1,5 +1,6 @@
 /** Opt-in, local-only topic → editable general explainer job. No research or external provider fallback. */
 import { createHash } from "node:crypto";
+import { resolveStagePrompt } from "./prompt-profiles.mjs";
 import { parseVideoProductionJob } from "./job.mjs";
 
 const fail = (reason) => { throw new Error(`Topic generation blocked: ${reason}`); };
@@ -124,7 +125,7 @@ export async function generateTopicDraft(input, { transport = fetch, signal } = 
     const response = await transport(brief.endpoint, {
       method: "POST", redirect: "error", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: brief.model, temperature: 0.6, stream: false, response_format: { type: "json_object" },
-        messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content }] }),
+        messages: [{ role: "system", content: resolveStagePrompt("script",SYSTEM_PROMPT) }, { role: "user", content }] }),
       signal: requestSignal,
     });
     wire = JSON.parse(await boundedResponse(response));

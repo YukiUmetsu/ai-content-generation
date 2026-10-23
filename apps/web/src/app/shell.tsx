@@ -10,6 +10,7 @@ import { CatalogWorkspace } from "./catalog-workspace";
 import { loadCatalog, persistCatalog, type StudioCatalog } from "./catalog-model";
 import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
+import { VideoDirectorWorkspace } from "./video-director-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 
 
@@ -121,6 +122,8 @@ export function Shell() {
               toolGuideOpen={toolGuideOpen}
               onToolGuideOpenChange={setToolGuideOpen}
             />
+          ) : activeSection === "video-director" ? (
+            <VideoDirectorWorkspace locale={locale}/>
           ) : activeSection === "research" ? (
             <ResearchWorkspace locale={locale} />
           ) : activeSection === "jobs-qa" ? (

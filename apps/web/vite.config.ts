@@ -3,9 +3,10 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 import { researchModelSettingsPlugin } from "./scripts/research-model-vite.mjs";
+import { directorStudioPlugin } from "./scripts/director-studio-vite.mjs";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), researchModelSettingsPlugin()],
+  plugins: [react(), tailwindcss(), researchModelSettingsPlugin(), directorStudioPlugin()],
   input: {
     studio: fileURLToPath(new URL("./index.html", import.meta.url)),
     headlessVideo: fileURLToPath(new URL("./video-export.html", import.meta.url)),
@@ -26,6 +27,7 @@ export default defineConfig({
       "/v1/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
     },
   },
+  preview: { host: "127.0.0.1" },
   build: {
     target: "es2022",
     sourcemap: true,

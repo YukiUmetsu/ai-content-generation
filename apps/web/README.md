@@ -781,3 +781,54 @@ opening the file. `--spoken-wpm` (95–210) and `--fps` (12–60) tune the rough
 preview only. The CLI refuses to overwrite an existing HTML file. To run its
 offline tests, use `node --test scripts/video-production/animatic.test.mjs`.
 
+
+
+### AI Prompt Studio + selective Video Director revisions
+
+**Settings → AI Prompt Studio** lets an editor select and customize per-stage
+creative instructions for **Research, Story, Hooks, Script, Visuals, Audio
+Direction, Thumbnails, Captions and Quality Review**. Each includes a bundled
+default, a custom instruction box, and a reset-to-default action. Custom prompts
+persist in the ignored local `data/contentgen-prompts.json`; they are loaded
+by the current research, topic-script, preproduction-story and selected-shot
+variation LLM calls, and other stages can consume the same registry as their
+LLM adapters ship. The **mandatory** safety, schema, factual evidence,
+permissions, and local-model endpoint requirements still follow the editor's
+optional instructions and remain validated in code. A TTS engine is not an LLM;
+Fish Audio or other TTS does not receive a system prompt simply because the
+audio-direction prompt exists.
+
+**Video Director** is a dedicated left navigation workspace. It can:
+1. Import a matching `research-dossier.json` and `preproduction-bundle.json`
+   to select an existing shot without changing the original files.
+2. Edit only that shot's script, visual description/action, on-screen copy
+   or optional sound-effect intent; save a new draft bundle through the same-origin
+   local API, with all other shots unchanged.
+3. Request **exactly 3** distinct, local-LLM-generated treatments for **the
+   selected part**. For the opening, the prompt explicitly requires instant
+   relevance to the target audience **and** an unanswered question that the
+   story genuinely pays off. The model returns alternative opening narration,
+   first visual, on-screen copy and optional sound cues. Later shots use
+   equivalent narrative/visual alternatives to advance their learning goal.
+4. Mix-and-match the **narration from one candidate, visuals from another,
+   and sound treatment from a third**, then apply them to the same shot.
+5. Download an **updated, unapproved preproduction bundle** and a
+   `selective-regeneration-plan/v1` describing exactly which shot's speech,
+   video, SFX, downstream timing and final mux would be invalidated.
+
+No hidden model call runs when opening Studio or switching shot. Generating
+variants is opt-in and uses only the configured **loopback local model** from
+Settings. The UI never loads public sources into a cloud API. Variants are
+hypotheses, not measured hook winners or asserted audience-retention scores.
+Only authored fields may change; evidence references, IDs and rights are
+pinned to the verified dossier. A revised shot loses editorial approval.
+
+**Important limitation:** this iteration **does not yet splice actual WAV or
+MP4 segments**, nor does it regenerate frames. ContentGen's existing speech
+cache already hashes each narration beat, so unchanged speech segments can be
+reused by a subsequent approved TTS run. The regeneration plan identifies the
+affected media and downstream synchronization work instead of claiming to
+perform it. Final media rendering and human visual/audio review remain separate.
+
+Use `pnpm --dir apps/web run test:video:headless` for the prompt, evidence and
+revision contract tests; `pnpm --dir apps/web test` covers Studio interactions.
