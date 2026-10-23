@@ -175,4 +175,72 @@ describe("StoryboardPlanner", () => {
     unmount();
     expect(spy).toHaveBeenLastCalledWith(null);
   });
+
+  it("keeps edited storyboards in their own local project without saving untouched examples", async () => {
+    const user = userEvent.setup();
+    const alpha = { projectId: "project-alpha" };
+    const beta = { projectId: "project-beta" };
+    const storageKey = "contentgen:project-storyboard:v1:project-alpha";
+
+    const first = render(<StoryboardPlanner locale="en" {...alpha} />);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+    const narration = screen.getByLabelText("Narration");
+    await user.clear(narration);
+    await user.type(narration, "A custom opening for the Alpha project.");
+    await waitFor(() => expect(localStorage.getItem(storageKey)).toContain("A custom opening for the Alpha project."));
+    first.unmount();
+
+    const second = render(<StoryboardPlanner locale="en" {...beta} />);
+    expect(screen.getByLabelText("Narration")).not.toHaveValue("A custom opening for the Alpha project.");
+    second.unmount();
+
+    const restored = render(<StoryboardPlanner locale="en" {...alpha} />);
+    expect(screen.getByLabelText("Narration")).toHaveValue("A custom opening for the Alpha project.");
+    await user.click(screen.getByRole("button", { name: "Reset example" }));
+    await user.click(screen.getByRole("button", { name: "Confirm reset" }));
+    await waitFor(() => expect(localStorage.getItem(storageKey)).toBeNull());
+    restored.unmount();
+    render(<StoryboardPlanner locale="en" {...alpha} />);
+    expect(screen.getByLabelText("Narration")).not.toHaveValue("A custom opening for the Alpha project.");
+  });
+
+  it("recovers a deliberately empty beat list after deleting the last scene", async () => {
+    const user = userEvent.setup();
+    const project = { projectId: "project-empty" };
+    const key = "contentgen:project-storyboard:v1:project-empty";
+    const first = render(<StoryboardPlanner locale="en" {...project} />);
+    for (let index = 5; index >= 1; index -= 1) {
+      await user.click(screen.getByRole("button", { name: new RegExp(`^Select beat ${index}:`) }));
+      await user.click(screen.getByRole("button", { name: `Delete beat ${index}` }));
+    }
+    expect(screen.queryAllByRole("button", { name: /^Select beat/ })).toHaveLength(0);
+    expect(JSON.parse(localStorage.getItem(key) ?? "null")).toHaveProperty("beats", []);
+    first.unmount();
+    render(<StoryboardPlanner locale="en" {...project} />);
+    expect(screen.queryAllByRole("button", { name: /^Select beat/ })).toHaveLength(0);
+  });
+
+  it("restores an incomplete duration edit rather than an older storyboard", async () => {
+    const user = userEvent.setup();
+    const project = { projectId: "project-duration" };
+    const key = "contentgen:project-storyboard:v1:project-duration";
+    const first = render(<StoryboardPlanner locale="en" {...project} />);
+    await user.clear(screen.getByRole("spinbutton", { name: "Duration (frames)" }));
+    expect(JSON.parse(localStorage.getItem(key) ?? "null").beats[0].durationFrames).toBe(0);
+    first.unmount();
+    render(<StoryboardPlanner locale="en" {...project} />);
+    expect(screen.getByRole("spinbutton", { name: "Duration (frames)" })).toHaveValue(0);
+  });
+
+  it("surfaces a corrupt local draft and preserves it even if the editor is changed", async () => {
+    const user = userEvent.setup();
+    const key = "contentgen:project-storyboard:v1:project-corrupt";
+    const original = '{"kind":"not-a-storyboard","apiKey":"keep-original"}';
+    localStorage.setItem(key, original);
+    render(<StoryboardPlanner locale="en" {...{ projectId: "project-corrupt" }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/stored storyboard.*could not be loaded/i);
+    await user.clear(screen.getByLabelText("Narration"));
+    await user.type(screen.getByLabelText("Narration"), "Unsaved because the stored draft is damaged.");
+    expect(localStorage.getItem(key)).toBe(original);
+  });
 });

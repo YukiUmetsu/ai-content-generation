@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HVAC_EXAMPLE } from "./hvac-example";
-import { canonicalJson, parseStoryboard, serializeStoryboard } from "./serialize";
+import { canonicalJson, parseStoryboard, parseStoryboardDraft, serializeStoryboard } from "./serialize";
 
 interface RawDocument {
   beats: Array<Record<string, unknown>>;
@@ -130,5 +130,36 @@ describe("safe rejection", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.errors[0]).toEqual({ code: "invalid-field", path: "locale" });
+  });
+});
+
+describe("incomplete draft recovery", () => {
+  it("accepts an empty beat list as a recoverable draft but not a completed import", () => {
+    const raw = rawDocument();
+    raw.beats = [];
+    const json = JSON.stringify(raw);
+    const draft = parseStoryboardDraft(json);
+    expect(draft.ok).toBe(true);
+    if (draft.ok) expect(draft.board.beats).toEqual([]);
+    expect(errorCodes(json)).toEqual(["beats-empty"]);
+  });
+
+  it("preserves finite zero, negative and fractional frame edits without weakening import", () => {
+    for (const duration of [0, -12, 1.5]) {
+      const raw = rawDocument();
+      raw.beats[0].durationFrames = duration;
+      const json = JSON.stringify(raw);
+      const draft = parseStoryboardDraft(json);
+      expect(draft.ok).toBe(true);
+      if (draft.ok) expect(draft.board.beats[0].durationFrames).toBe(duration);
+      expect(errorCodes(json)).toEqual(["invalid-field"]);
+    }
+  });
+
+  it("still rejects nonnumeric duration fields in drafts", () => {
+    const raw = rawDocument();
+    raw.beats[0].durationFrames = null;
+    const result = parseStoryboardDraft(JSON.stringify(raw));
+    expect(result.ok).toBe(false);
   });
 });

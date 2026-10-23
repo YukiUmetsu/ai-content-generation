@@ -16,6 +16,11 @@ import {
   updateBeat,
 } from "./model/edit";
 import { HVAC_EXAMPLE } from "./model/hvac-example";
+import {
+  clearProjectStoryboard,
+  loadProjectStoryboard,
+  saveProjectStoryboard,
+} from "./model/project-storage";
 import { parseStoryboard, type ImportIssue } from "./model/serialize";
 import { computeTimeline, formatRuntime } from "./model/timeline";
 import {
@@ -31,6 +36,8 @@ export interface StoryboardPlannerProps {
   locale: Locale;
   className?: string;
   onPreviewChange?: FeatureSlotProps["onPreviewChange"];
+  /** Browser-local project whose draft is restored and saved on edits. */
+  projectId?: string;
   /** Test / integration hook; defaults to the preloaded HVAC example. */
   initialBoard?: SemanticStoryboard;
 }
@@ -40,12 +47,20 @@ export function StoryboardPlanner({
   className,
   onPreviewChange,
   initialBoard,
+  projectId,
 }: StoryboardPlannerProps) {
   const t = copy(locale);
-  const [board, setBoard] = useState<SemanticStoryboard>(() =>
-    cloneStoryboard(initialBoard ?? HVAC_EXAMPLE)
+  const [restoredDraft] = useState(() =>
+    projectId ? loadProjectStoryboard(projectId) : { board: null, warning: null }
   );
-  const [selectedBeatId, setSelectedBeatId] = useState(() => (initialBoard ?? HVAC_EXAMPLE).beats[0]?.id ?? "");
+  const [board, setBoard] = useState<SemanticStoryboard>(() =>
+    cloneStoryboard(initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE)
+  );
+  const [selectedBeatId, setSelectedBeatId] = useState(() =>
+    (initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats[0]?.id ?? ""
+  );
+  const [loadWarning, setLoadWarning] = useState(restoredDraft.warning);
+  const [storageError, setStorageError] = useState<string | null>(restoredDraft.warning);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<"export" | "import">("export");
   const [importErrors, setImportErrors] = useState<ImportIssue[]>([]);
@@ -85,14 +100,26 @@ export function StoryboardPlanner({
     return () => onPreviewChange(null);
   }, [onPreviewChange]);
 
+  function updateBoard(next: SemanticStoryboard) {
+    setBoard(next);
+    if (!projectId || loadWarning) return;
+    try {
+      saveProjectStoryboard(projectId, next);
+      setStorageError(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Storage unavailable.";
+      setStorageError(`Storyboard could not be saved: ${detail} Export the JSON before leaving.`);
+    }
+  }
+
   function updateSelected(patch: Partial<StoryboardBeat>) {
     if (!selectedBeat) return;
-    setBoard((current) => updateBeat(current, selectedBeat.id, patch));
+    updateBoard(updateBeat(board, selectedBeat.id, patch));
   }
 
   function handleAddBeat() {
     const beat = createBeat(board);
-    setBoard(insertBeat(board, beat));
+    updateBoard(insertBeat(board, beat));
     setSelectedBeatId(beat.id);
   }
 
@@ -101,12 +128,12 @@ export function StoryboardPlanner({
     if (index < 0) return;
     const remaining = deleteBeat(board, beatId);
     const next = remaining.beats[Math.min(index, remaining.beats.length - 1)];
-    setBoard(remaining);
+    updateBoard(remaining);
     setSelectedBeatId(next?.id ?? "");
   }
 
   function handleMoveBeat(beatId: string, direction: -1 | 1) {
-    setBoard((current) => moveBeat(current, beatId, direction));
+    updateBoard(moveBeat(board, beatId, direction));
   }
 
   function handleReset() {
@@ -114,10 +141,21 @@ export function StoryboardPlanner({
       setResetArmed(true);
       return;
     }
+    if (projectId) {
+      try {
+        clearProjectStoryboard(projectId);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Storage unavailable.";
+        setStorageError(`Local draft could not be reset: ${detail}`);
+        return;
+      }
+    }
     const fresh = cloneStoryboard(initialBoard ?? HVAC_EXAMPLE);
     setBoard(fresh);
     setSelectedBeatId(fresh.beats[0]?.id ?? "");
     setImportErrors([]);
+    setLoadWarning(null);
+    setStorageError(null);
     setResetArmed(false);
   }
 
@@ -127,7 +165,7 @@ export function StoryboardPlanner({
       setImportErrors(result.errors);
       return;
     }
-    setBoard(result.board);
+    updateBoard(result.board);
     setSelectedBeatId(result.board.beats[0]?.id ?? "");
     setImportErrors([]);
     setDialogOpen(false);
@@ -148,7 +186,18 @@ export function StoryboardPlanner({
             <span aria-hidden="true">·</span>
             <span>{t.fps(String(board.fps.num / board.fps.den))}</span>
             <span className="sp-example-notice">{t.exampleNotice}</span>
+            {projectId && !storageError && (
+              <span className="sp-example-notice">
+                {locale === "ja" ? "編集内容はこのプロジェクトのローカル下書きに保存されます" : "Project edits save as a local browser draft"}
+              </span>
+            )}
           </p>
+          {storageError && (
+            <p className="sp-draft-warning" role="alert">
+              {storageError}
+              {loadWarning && " This draft will not be overwritten. Export any new edits as JSON or reset the local draft."}
+            </p>
+          )}
         </div>
         <div className="sp-header-actions">
           <Button
