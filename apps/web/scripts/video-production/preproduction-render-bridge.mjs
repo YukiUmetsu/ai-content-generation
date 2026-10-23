@@ -79,9 +79,32 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   job.claims=structuredClone(dossier.claims);
   const known=new Set(dossier.claims.map(x=>x.id));
   for(let i=0;i<job.beats.length;i++){
+    const shot=plan.shots[i];
+    const phase=phases.get(shot.id);
+    job.beats[i].visual.direction={
+      phase:phase?.kind??"none",
+      subjectIds:shot.subjectIds.slice(0,5),
+      visualAction:(phase?.visualAction??shot.visualChange).slice(0,650),
+      learningChange:(phase?.learningChange??shot.visualChange).slice(0,650)
+    };
     const refs=plan.shots[i].claimIds.filter(id=>known.has(id));
     if(!refs.length)throw Error("Shot "+plan.shots[i].id+" must reference at least one research claim.");
     job.beats[i].claimRefs=refs;
+  }
+  // One sparse, original transition accent for the first substantial visual
+  // change. Its cue is sample-domain anchored at the beginning of that beat,
+  // while the existing answer chime remains owned by the payoff event.
+  // This does NOT claim to fulfill arbitrary editor-requested SFX.
+  let accentIndex=job.beats.findIndex((beat,i)=>i>0 && i<job.beats.length-1 &&
+    ["general-comparison","general-breakdown"].includes(beat.visualIntent));
+  if(accentIndex<0)accentIndex=plan.shots.findIndex((shot,i)=>i>0 &&
+    i<plan.shots.length-1 && phases.get(shot.id)?.kind==="mechanism");
+  if(accentIndex>0){
+    const eventId="contentgen-first-visual-reveal";
+    job.events.push({id:eventId,beatId:job.beats[accentIndex].id});
+    job.beats[accentIndex].eventIds.push(eventId);
+    job.sounds.push({id:"contentgen-soft-tick",eventId,category:"visual.reveal",
+      assetRef:"self-authored-test-soft-tick",licenseStatus:"test-only"});
   }
   // Output is ALWAYS editorial/test-only, never rights-cleared or fact-checked.
   job.approval="test-only";

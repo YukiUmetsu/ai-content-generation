@@ -10,6 +10,8 @@ import type { RationalFps } from "@/components/motion/types";
 import { ChartStoryView } from "@/components/infographic/chart-story-react";
 import { buildQuantitativeChartStory } from "./quantitative-chart-story";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
+import { sampleSemanticMotion } from "./semantic-scene-motion";
+import { SemanticDiagram } from "./semantic-scene-diagrams";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -103,6 +105,11 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     ? sampleChapterAttention(compiledAttention, state.localFrame, chapter.endFrame - chapter.startFrame)
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
+  const semanticMotion = sampleSemanticMotion({intent:state.intent,
+    phase:state.visual.direction?.phase??"none",
+    localFrame:state.localFrame,durationFrames:chapter.endFrame-chapter.startFrame,
+    visibleItems:diagramState.visibleItems,itemCount:state.visual.items.length});
+
   const typographyScale = attention?.titleScale ?? 1;
   const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
     chart, beatId: chapter.id, title: state.visual.headline,
@@ -138,8 +145,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    {!chartStory && <Diagram state={diagramState} fps={plan.manifest.fps}
-      chapterFrames={chapter.endFrame - chapter.startFrame} />}
+    {!chartStory && (state.intent==="general-flow"
+      ? <Diagram state={diagramState} fps={plan.manifest.fps}
+          chapterFrames={chapter.endFrame - chapter.startFrame}/>
+      : <SemanticDiagram state={diagramState} motion={semanticMotion} renderNode={Node}/>)}
     {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
       {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
         fontSize={disclosure.fontSize} fill={accent}>{line}</text>)}

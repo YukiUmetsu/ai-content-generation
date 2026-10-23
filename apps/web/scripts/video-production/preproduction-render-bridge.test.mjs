@@ -65,3 +65,19 @@ test("visual storyboard limitation is visible and never silently invents 3D or l
   assert.equal(result.job.voice.modelId,"s2.1-pro-free");
   assert.ok(result.shotMap[1].visualAction.includes("house"));
 });
+
+
+test("one sparse local transition cue accompanies the first mechanism without external audio rights",()=>{
+  const bridge=compilePreproductionRenderJob(dossier(),bundle());
+  const effect=bridge.job.sounds.find(x=>x.assetRef==="self-authored-test-soft-tick");
+  assert.ok(effect);
+  assert.equal(effect.licenseStatus,"test-only");
+  assert.equal(effect.category,"visual.reveal");
+  const event=bridge.job.events.find(e=>e.id===effect.eventId);
+  assert.ok(event);
+  assert.equal(event.beatId,bridge.job.beats[1].id);
+  assert.equal(bridge.job.beats[1].eventIds.includes(event.id),true);
+  assert.equal(bridge.job.beats[0].eventIds.includes(event.id),false);
+  assert.equal(bridge.job.sounds.filter(x=>x.assetRef==="self-authored-test-soft-tick").length,1);
+  assert.equal(parseVideoProductionJob(bridge.job).ok,true);
+});

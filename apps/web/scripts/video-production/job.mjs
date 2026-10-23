@@ -267,7 +267,7 @@ export function parseVideoProductionJob(input) {
     }
     idList(beat.eventIds, `beats[${index}].eventIds`);
     if (!integer(beat.pauseAfterMs, 0) || beat.pauseAfterMs > 60000) add("invalid-pause", `beats[${index}].pauseAfterMs`, "Pause must be 0–60,000 milliseconds.");
-    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart", "hookStrategy", "typographyStyle"] : ["headline", "subhead", "emphasis"])) {
+    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart", "hookStrategy", "typographyStyle", "direction"] : ["headline", "subhead", "emphasis"])) {
       for (const [key, maxLength] of [["headline", 68], ["subhead", 115], ["emphasis", 28]]) {
         const value = beat.visual[key];
         if (!string(value) || value.length > maxLength || /[\r\n\u0000-\u001f]/.test(value)) {
@@ -281,6 +281,23 @@ export function parseVideoProductionJob(input) {
         }
         if (has(beat.visual, "typographyStyle") && !["snap", "overshoot", "wipe"].includes(beat.visual.typographyStyle)) {
           add("invalid-typography-style", `beats[${index}].visual.typographyStyle`, "Choose a supported Kumiki impact typography treatment.");
+        }
+        if (has(beat.visual, "direction")) {
+          const path = `beats[${index}].visual.direction`;
+          const dir = beat.visual.direction;
+          if (fields(dir, path, ["phase", "subjectIds", "visualAction", "learningChange"])) {
+            if (!["problem", "analogy", "mechanism", "payoff", "none"].includes(dir.phase))
+              add("invalid-visual-phase", path+".phase", "Use an identified teaching phase.");
+            if (!Array.isArray(dir.subjectIds) || dir.subjectIds.length < 1 || dir.subjectIds.length > 5 ||
+              dir.subjectIds.some(x => typeof x !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(x)) ||
+              new Set(dir.subjectIds).size !== dir.subjectIds.length)
+              add("invalid-visual-subjects", path+".subjectIds", "Use 1-5 unique stable subject identifiers.");
+            for (const [key, max] of [["visualAction", 650], ["learningChange", 650]]) {
+              if (typeof dir[key] !== "string" || !dir[key].trim() || dir[key].length > max ||
+                /[\u0000-\u001f]/u.test(dir[key]))
+                add("invalid-visual-direction", path+"."+key, "Direction must be meaningful bounded editorial text.");
+            }
+          }
         }
         if (has(beat.visual, "chart")) {
           if (portraitPresets.has(input.destination?.presetId)) add("portrait-chart-unavailable", `beats[${index}].visual.chart`, "ChartStory needs a portrait-specific source disclosure and measured layout; use a qualitative scene.");
