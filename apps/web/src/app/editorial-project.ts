@@ -13,7 +13,7 @@ export function createEditorialProject(catalog: StudioCatalog, candidate: Editor
   const notes = ["Unverified editorial draft — fact-check before publishing.",
     `Audience: ${draft.input.audience}`, `Question: ${draft.input.viewerQuestion}`,
     `Intended payoff: ${draft.input.payoff}`,
-    ...(draft.input.inspirationUrl ? [`Inspiration only, NOT evidence: ${draft.input.inspirationUrl}`] : []),
+    ...[...new Set([draft.input.inspirationUrl,...draft.input.inspirationUrls].filter(Boolean))].map(url=>`Inspiration only, NOT evidence: ${url}`),
   ].join("\n").slice(0, 2000);
   const content: LocalContent = {id:makeCatalogId("item"),projectId,name:approach.title,
     notes,kind:"video",stage:"draft",createdAt:now};

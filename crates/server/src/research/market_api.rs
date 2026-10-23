@@ -3,11 +3,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::market_store::{self, MarketError, MarketWatchlistDraft};
 use super::{market_worker, youtube_api::YoutubeClient};
@@ -56,6 +56,7 @@ fn require_editor_header(headers: &HeaderMap) -> Result<(), ApiError> {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/status", get(status))
+        .route("/related", get(related))
         .route("/watchlists", get(watchlists).post(create))
         .route(
             "/watchlists/{id}",
@@ -64,6 +65,28 @@ pub fn router() -> Router<AppState> {
         .route("/watchlists/{id}/videos", get(videos))
         .route("/watchlists/{id}/collect", post(collect))
         .layer(DefaultBodyLimit::max(2048))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelatedQuery {
+    topic: String,
+}
+
+#[derive(Serialize)]
+struct RelatedList {
+    videos: Vec<market_store::RelatedMarketVideo>,
+}
+
+async fn related(
+    Query(query): Query<RelatedQuery>,
+    State(state): State<AppState>,
+) -> Result<Json<RelatedList>, ApiError> {
+    let db = state.connect().map_err(db_error)?;
+    Ok(Json(RelatedList {
+        videos: market_store::find_related_observations(&db, &query.topic, epoch_now())
+            .map_err(market_error)?,
+    }))
 }
 
 #[derive(Serialize)]

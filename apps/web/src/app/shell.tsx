@@ -154,7 +154,10 @@ export function Shell() {
           ) : activeSection === "video-director" ? (
             <VideoDirectorWorkspace locale={locale}/>
           ) : activeSection === "research" ? (
-            <ResearchWorkspace locale={locale} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}/>
+            <ResearchWorkspace key={catalog.activeProjectId} locale={locale} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}
+              projectTopic={catalog.content.filter(item=>item.projectId===catalog.activeProjectId && item.kind==="video").at(-1)?.name ??
+                (catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name === "My project" ? "" :
+                  catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "")}/>
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} />
           ) : (

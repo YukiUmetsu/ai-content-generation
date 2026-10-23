@@ -57,4 +57,22 @@ describe("editorial niche to storyboard", () => {
     expect(() => validateEditorialDraft({...draft, approaches: []})).toThrow();
     expect(() => validateEditorialDraft({...draft, approaches: [{...draft.approaches[0], hook: ""},...draft.approaches.slice(1)]})).toThrow();
   });
+
+  it("keeps multiple deduplicated inspiration URLs out of factual claims and backwards compatible with old drafts", () => {
+    const old = createDraft("furnace replacement");
+    const oldInput = {...old.input};
+    delete (oldInput as Partial<typeof oldInput>).inspirationUrls;
+    oldInput.inspirationUrl = "https://www.youtube.com/watch?v=abcABC12345";
+    const migrated = validateEditorialDraft({...old,input:oldInput});
+    expect(migrated.input.inspirationUrls).toEqual([]);
+    const second = "https://www.youtube.com/watch?v=defDEF12345";
+    const multi = validateEditorialDraft({...old,input:{...oldInput,inspirationUrls:[second,second]}});
+    expect(multi.input.inspirationUrls).toEqual([second]);
+    const board = draftToStoryboard(multi,"project-multi-12","en");
+    expect(board.assumptions.join(" ")).toContain(second);
+    expect(board.assumptions.join(" ")).toContain(oldInput.inspirationUrl);
+    expect(board.claims.every(claim => claim.sourceRefs.length === 0 && claim.status === "unverified")).toBe(true);
+    expect(() => validateEditorialDraft({...old,input:{...oldInput,inspirationUrls:Array(6).fill(second)}})).toThrow(/five|5|maximum/i);
+    expect(() => validateEditorialDraft({...old,input:{...oldInput,inspirationUrls:["http://other.example/"]}})).toThrow();
+  });
 });

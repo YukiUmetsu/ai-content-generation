@@ -45,6 +45,11 @@ export interface MarketVideo {
   expiresAt: number;
 }
 
+export interface RelatedMarketVideo extends MarketVideo {
+  watchlistName: string;
+  matchedTerms: string[];
+}
+
 function obj(raw: unknown, name: string): Record<string, unknown> {
   if (!raw || Array.isArray(raw) || typeof raw !== "object") throw Error(`Invalid ${name} response from local server.`);
   return raw as Record<string, unknown>;
@@ -121,7 +126,7 @@ export function parseVideos(raw: unknown): MarketVideo[] {
   });
 }
 
-async function send(path: string, method = "GET", payload?: unknown): Promise<unknown> {
+async function send(path: string, method = "GET", payload?: unknown, options?: {signal?: AbortSignal}): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${PREFIX}${path}`, {
@@ -132,9 +137,10 @@ async function send(path: string, method = "GET", payload?: unknown): Promise<un
         ...(payload === undefined ? {} : {"Content-Type": "application/json"}),
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
-      signal: AbortSignal.timeout(15_000),
+      signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     });
-  } catch {
+  } catch (error) {
+    if (options?.signal?.aborted) throw error;
     throw Error("Cannot reach the local ContentGen server. Start it and retry.");
   }
   if (response.status === 204) return null;
@@ -173,4 +179,27 @@ export async function requestMarketCollection(id: string): Promise<string> {
 }
 export async function loadMarketVideos(id: string): Promise<MarketVideo[]> {
   return parseVideos(await send(`/watchlists/${encodeURIComponent(id)}/videos`));
+}
+
+export function parseRelatedMarketVideos(raw: unknown): RelatedMarketVideo[] {
+  const result = obj(raw, "related market videos");
+  const items = result.videos;
+  if (!Array.isArray(items) || items.length > 12) throw Error("Invalid related video list from local server.");
+  const standard = parseVideos(raw);
+  return standard.map((video, i) => {
+    const x = obj(items[i], `related video ${i}`);
+    if (!Array.isArray(x.matchedTerms) || x.matchedTerms.length > 20 ||
+        !x.matchedTerms.every(term => typeof term === "string" && term.length > 0 && term.length <= 160)) {
+      throw Error("Invalid matching terms from local server.");
+    }
+    const watchlistName = str(x.watchlistName, "watchlistName");
+    if (watchlistName.length > 80) throw Error("Invalid watchlist label from local server.");
+    return {...video,watchlistName,matchedTerms:x.matchedTerms as string[]};
+  });
+}
+
+export async function loadRelatedMarketVideos(topic: string, options?: {signal?: AbortSignal}): Promise<RelatedMarketVideo[]> {
+  const value = topic.trim();
+  if (value.length < 3 || value.length > 160) throw Error("Research topic must be 3–160 characters.");
+  return parseRelatedMarketVideos(await send(`/related?topic=${encodeURIComponent(value)}`, "GET", undefined, options));
 }
