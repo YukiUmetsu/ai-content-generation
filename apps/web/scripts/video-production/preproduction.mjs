@@ -108,7 +108,7 @@ export function parsePreproductionPlan(plan,dossier){
     if(!v.fields(a,p,["id","question","purpose","payoff"]))return;
     v.requireId(a.id,p+".id");v.requireText(a.question,p+".question",300);
     v.requireText(a.purpose,p+".purpose",400);v.requireText(a.payoff,p+".payoff",400);
-  });
+  }).filter(obj);
   v.unique(acts,"story.acts");
   if(acts.length<2)v.add("story-incomplete","story.acts","A story needs setup and resolution.");
   const actIds=new Set(acts.filter(obj).map(x=>x.id));
@@ -117,7 +117,7 @@ export function parsePreproductionPlan(plan,dossier){
     v.requireId(e.id,p+".id");if(!actIds.has(e.actId))v.add("missing-act",p+".actId","Unknown act.");
     v.refs(e.claimIds,p+".claimIds",claimIds);
     for(const key of ["before","demonstration","after"])v.requireText(e[key],p+"."+key,700);
-  });
+  }).filter(obj);
   v.unique(explanation,"explanation");
   if(explanation.length<2)v.add("explanation-incomplete","explanation","At least two learning changes required.");
   const explanationIds=new Set(explanation.filter(obj).map(x=>x.id));
@@ -140,10 +140,17 @@ export function parsePreproductionPlan(plan,dossier){
         v.add("asset-rights-unresolved",at,"Asset rights require review before preproduction can be ready.");
     });
     if(s.family==="mechanism"&&!s.assetRefs?.length)v.add("missing-asset",p+".assetRefs","A mechanism requires an actual approved asset, not an invented object.");
-  });
+  }).filter(obj);
   v.unique(shots,"shots");
   if(!shots.length)v.add("no-shots","shots","A production needs planned shots.");
   for(const e of explanation)if(!shots.some(s=>s.explanationId===e.id))v.add("unvisualized-explanation","shots","No visual treatment for "+e.id);
+  if(shots.length){
+    if(shots[0].family!=="question"||shots[0].purpose!=="hook")
+      v.add("hook-not-visible","shots[0]","Open with an on-screen question shot, not a generic title slide.");
+    const last=shots.at(-1);
+    if(last.explanationId!==plan.story?.answerExplanationId||last.purpose!=="answer")
+      v.add("payoff-not-visible","shots","The ending must visually answer the central question.");
+  }
   const shotIds=new Set(shots.filter(obj).map(x=>x.id));
   const boundaries=new Set(shots.slice(1).map((s,i)=>shots[i].id+">"+s.id)), seen=new Set();
   v.items(plan.continuity,"continuity",160,(c,p)=>{
