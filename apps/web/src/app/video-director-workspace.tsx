@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Download, RefreshCw, WandSparkles, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -35,6 +35,14 @@ function downloadJson(name:string,data:unknown){
   document.body.append(anchor);anchor.click();anchor.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
+function shotDraft(bundle:Bundle,id:string){
+  const shot=bundle.plan.shots.find(x=>x.id===id);
+  const audio=bundle.plan.sound.find(x=>x.shotId===id);
+  const phase=bundle.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===id);
+  return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",
+    visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
+    sfxIntent:audio?.sfxIntent??""};
+}
 export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
@@ -51,13 +59,6 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  useEffect(()=>{
-    if(!shot||!audio)return;
-    setDraft({narration:audio.narration,onScreenText:shot.onScreenText,
-      visualChange:shot.visualChange,visualAction:phase?.visualAction??shot.visualChange,
-      sfxIntent:audio.sfxIntent??""});
-    setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
-  },[shotId,bundle,shot?.id,shot?.visualChange,shot?.onScreenText,audio?.narration,audio?.sfxIntent,phase?.visualAction]);
   async function importDossier(file:File|undefined){
     if(!file)return;
     try{const x=await loadJson(file) as unknown as Dossier;
@@ -71,6 +72,8 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
       if(x.kind!=="preproduction-bundle"||!x.plan?.shots?.length)
         throw Error("Expected a preproduction-bundle/v1 JSON file.");
       setBundle(x);setRevisions([]);setShotId(x.plan.shots[0].id);
+      setDraft(shotDraft(x,x.plan.shots[0].id));
+      setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
       setStatus("Preproduction bundle loaded. Select a shot to revise.");
     }catch(e){setStatus(e instanceof Error?e.message:"Bundle import failed.");}
   }
@@ -90,6 +93,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     try{
       const result=await request("edit",{bundle,dossier,shotId:shot.id,changes:changed}) as unknown as Revision;
       setBundle(result.bundle);
+      setDraft(shotDraft(result.bundle,shot.id));
       setRevisions(prev=>[...prev,{shotId:shot.id,impacts:result.impacts}]);
       setStatus("Draft revised. Unchanged shots remain intact. Review before any regeneration or publishing.");
     }catch(e){setStatus(e instanceof Error?e.message:"Revision rejected.");}
@@ -140,7 +144,8 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
               <select aria-label="Selected video shot" className={field+" mt-2"} value={shotId}
-                onChange={e=>{setShotId(e.target.value);setStatus("");}}>
+                onChange={e=>{setShotId(e.target.value);setDraft(shotDraft(bundle,e.target.value));
+                  setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");}}>
                 {bundle.plan.shots.map((s,i)=><option key={s.id} value={s.id}>{String(i+1).padStart(2,"0")} · {s.id} · {s.purpose}</option>)}
               </select>
             </label>
