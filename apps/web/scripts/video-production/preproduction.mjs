@@ -191,6 +191,18 @@ export function parsePreproductionPlan(plan,dossier){
     if(s.sfxIntent!==null&&s.sfxIntent!==undefined)v.requireText(s.sfxIntent,p+".sfxIntent",250);
   });
   for(const shot of shots)if(!sounded.has(shot.id))v.add("silent-shot","sound","Missing narration for "+shot.id);
+  for(let i=2;i<shots.length;i++){
+    const current=shots[i].onScreenText?.trim().toLowerCase();
+    if(current && current===shots[i-1].onScreenText?.trim().toLowerCase() &&
+      current===shots[i-2].onScreenText?.trim().toLowerCase())
+      v.add("repeated-copy","shots["+i+"]","Three consecutive shots display identical copy; review new information.","warning");
+  }
+  const performance=Array.isArray(plan.sound)?plan.sound.filter(obj):[];
+  for(let i=3;i<performance.length;i++){
+    const four=performance.slice(i-3,i+1);
+    if(four.every(x=>x.delivery===four[0].delivery&&x.energy===four[0].energy))
+      v.add("monotone-performance","sound["+i+"]","Four consecutive shots have identical vocal direction; audition for natural variety.","warning");
+  }
   for(let i=2;i<shots.length;i++)if(shots[i].family===shots[i-1].family&&shots[i].family===shots[i-2].family)
     v.add("family-repetition","shots["+i+"]","Three consecutive shots reuse one family; review whether meaning actually changes.","warning");
   return {ok:!v.findings.some(x=>x.severity==="error"),findings:v.findings};
