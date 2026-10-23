@@ -191,10 +191,11 @@ export function parsePreproductionPlan(plan,dossier){
     if(s.sfxIntent!==null&&s.sfxIntent!==undefined)v.requireText(s.sfxIntent,p+".sfxIntent",250);
   });
   for(const shot of shots)if(!sounded.has(shot.id))v.add("silent-shot","sound","Missing narration for "+shot.id);
+  const normalizedCopy=x=>typeof x==="string"?x.trim().toLowerCase():"";
   for(let i=2;i<shots.length;i++){
-    const current=shots[i].onScreenText?.trim().toLowerCase();
-    if(current && current===shots[i-1].onScreenText?.trim().toLowerCase() &&
-      current===shots[i-2].onScreenText?.trim().toLowerCase())
+    const current=normalizedCopy(shots[i].onScreenText);
+    if(current && current===normalizedCopy(shots[i-1].onScreenText) &&
+      current===normalizedCopy(shots[i-2].onScreenText))
       v.add("repeated-copy","shots["+i+"]","Three consecutive shots display identical copy; review new information.","warning");
   }
   const performance=Array.isArray(plan.sound)?plan.sound.filter(obj):[];
