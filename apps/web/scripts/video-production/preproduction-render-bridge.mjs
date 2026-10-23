@@ -35,6 +35,15 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(plan.shots.length<3||plan.shots.length>40)
     throw Error("Video export requires 3–40 authored shots. Split or combine shots before rendering.");
   if(platform!=="youtube")throw Error("The Studio integration currently supports YouTube 1920×1080. Other platforms need separate visual playback QA.");
+  // The illustrated demo intentionally displays a hypothetical $500,000 tag.
+  // Never reuse it for different research or an incomplete number of scenes.
+  if(plan.shots.some(s=>s.sceneRecipe==="home-cost-story-v1")&&
+    (plan.shots.length!==3||
+     !plan.shots.every(s=>s.sceneRecipe==="home-cost-story-v1"&&
+       ["house","mortgage_interest","property_tax","home_insurance","maintenance"].every(id=>s.subjectIds.includes(id)))||
+     !dossier.claims.some(c=>c.status==="illustrative"&&/\\$500,000/u.test(c.text))))
+    throw Error("home-cost-story-v1 requires three matched scenes and a cited illustrative $500,000 home-cost scenario; choose the general renderer for other projects.");
+
   const sound=new Map(plan.sound.map(s=>[s.shotId,s]));
   const phases=new Map((plan.teachingSequences??[]).flatMap(x=>x.phases).map(x=>[x.shotId,x]));
   const warnings=[];
