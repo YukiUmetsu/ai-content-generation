@@ -96,6 +96,22 @@ function makeTestRevealChime() {
   return output;
 }
 
+/** Original, no-asset transition tick, deliberately softer/shorter than the answer chime.
+ * Test-only material: an editor must explicitly approve the eventual audio master.
+ */
+export function makeTestSoftTick() {
+  const samples = Math.round(SAMPLE_RATE * 0.12);
+  const output = Buffer.concat([pcmHeader(samples), Buffer.alloc(samples * 2)]);
+  for (let i = 0; i < samples; i++) {
+    const t = i / SAMPLE_RATE;
+    const envelope = Math.min(1, t / 0.006) * Math.exp(-t * 32);
+    const value = Math.round(9000 * envelope * (
+      Math.sin(2 * Math.PI * 620 * t) + 0.15 * Math.sin(2 * Math.PI * 1240 * t)) / 1.15);
+    output.writeInt16LE(value, 44 + i * 2);
+  }
+  return output;
+}
+
 async function analyzeLoudness(path, { ffmpeg, signal }) {
   const { stderr } = await mediaExec(ffmpeg, ["-hide_banner", "-nostdin", "-i", path, "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"], { signal });
   const match = stderr.match(/\{\s*"input_i"[\s\S]*?\}/);
@@ -133,7 +149,7 @@ export async function renderMasterAudio(input, config) {
     if (effect.startSample !== undefined && effect.startSample !== timeline.eventSamples[effect.eventId]) fail("shifted SFX event timing is not allowed");
     if (effect.licenseStatus !== "verified" && effect.licenseStatus !== "test-only") fail(`missing rights/license for SFX ${effect.id}`);
     if (effect.licenseStatus === "test-only" && !config.allowTestAssets) fail("explicit test-only asset permission is required");
-    if (effect.licenseStatus === "test-only" && effect.assetRef !== "self-authored-test-chime") fail("test-only SFX must be the known self-authored chime fixture");
+    if (effect.licenseStatus === "test-only" && !["self-authored-test-chime","self-authored-test-soft-tick"].includes(effect.assetRef)) fail("test-only SFX must be an original allowed procedural cue");
     if (effect.licenseStatus === "verified" && !effect.assetPath) fail("verified external SFX requires an asset path");
     if (effect.licenseStatus === "test-only") rightsFindings.push({ severity: "warning", code: "test-only-audio-not-commercial", id: effect.id });
     sfxCueSamples[effect.id] = timeline.eventSamples[effect.eventId];
@@ -153,7 +169,7 @@ export async function renderMasterAudio(input, config) {
     let path;
     if (effect.licenseStatus === "test-only") {
       path = join(dir, `sfx-${index}.wav`);
-      await writeFile(path, makeTestRevealChime(), { flag: "wx" });
+      await writeFile(path, effect.assetRef === "self-authored-test-soft-tick" ? makeTestSoftTick() : makeTestRevealChime(), { flag: "wx" });
     } else {
       path = effect.assetPath;
       const bytes = await readFile(path);
