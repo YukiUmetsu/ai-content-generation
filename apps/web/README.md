@@ -188,6 +188,41 @@ licensed real footage and richer 3D treatments remain future milestones.
 Review a real rendered portrait MP4 at normal speed before commercial release. GitHub CI performs only no-FFmpeg
 compilation and test checks; no source/voice commercial rights are inferred.
 
+## Studio main navigation
+
+The React Studio now has live destinations for all nine sidebar items.
+Research stays on the existing evidence/packaging API; Create retains the
+Kumiki tools; Jobs & QA keeps using the Rust jobs API.
+
+The other six pages operate on an explicitly local browser metadata catalog:
+
+- Projects: create, select, rename and delete project records. The active
+  project ID is passed to Create. Deleting a project removes only catalog entries,
+  never rendered video files.
+- Content: track planned videos, Shorts, articles and thumbnails with editorial
+  stages and notes. Marking Published is an author-entered status, not a verified
+  platform publish event.
+- Assets: track local reference names, sources/paths and rights status.
+  No media bytes are uploaded or licenses granted.
+- Products: manage course/download/membership/service plans, not live
+  Stripe products or a storefront.
+- Insights: only actual counts of those author-entered records, never
+  fabricated views, revenue or virality predictions.
+- Settings: the existing appearance, density and language controls, plus a
+  JSON catalog backup/import and confirmed reset.
+
+The catalog is stored under the localStorage key
+contentgen:studio-catalog:v1, with a 512 KB limit, strict schema validation,
+entry caps and project reference checks. It stores only metadata, not Fish keys,
+voice IDs, rendered videos or raw media. Failed storage writes are surfaced.
+Browser localStorage is not a durable backup: use Settings to download JSON
+if the records matter.
+
+This catalog is not connected to the standalone Video Test Studio (port 8790),
+production APIs, cloud sync or publishing providers. Tool-authored drafts are
+not automatically serialized into catalog records. Backend persistence and
+media ingestion require explicit API contracts and authorization work.
+
 ## Run and verify
 
 Requirements: Node `>=22.12`, pnpm `11.22` (declared in `package.json`).
