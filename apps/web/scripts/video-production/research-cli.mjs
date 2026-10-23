@@ -26,7 +26,7 @@ export function parseResearchArgs(argv, env = process.env) {
   const selected = readResearchModelSettingsSync();
   const model = values.model || selected?.model;
   const endpoint = values.endpoint || selected?.endpoint || "http://127.0.0.1:11434/v1/chat/completions";
-  const searchEndpoint = values["search-endpoint"] || configuredSearchEndpoint() || "http://127.0.0.1:8080/search";
+  const searchEndpoint = values["search-endpoint"] || configuredSearchEndpoint();
   for (const key of ["topic", "audience", "out-dir"])
     if (!values[key]?.trim()) throw Error("Missing required --" + key + ".");
   if (!model) throw Error("Choose an installed research model in Studio Settings or pass --model.");
@@ -34,6 +34,7 @@ export function parseResearchArgs(argv, env = process.env) {
   if (!values["allow-network"]) throw Error("Research requires explicit --allow-network for public web page retrieval.");
   const searchProvider = values["search-provider"];
   if (!["searxng", "brave"].includes(searchProvider)) throw Error("--search-provider must be searxng or brave.");
+  if (searchProvider === "searxng" && !searchEndpoint) throw Error("Local SearXNG is not configured. Run pnpm research:up or pass --search-endpoint.");
   if (searchProvider === "searxng") localSearxngEndpoint(searchEndpoint);
   if (searchProvider === "brave" && !values["approve-search-charges"])
     throw Error("Brave may incur charges; explicitly opt in with --approve-search-charges or use local SearXNG.");
@@ -52,7 +53,7 @@ export function parseResearchArgs(argv, env = process.env) {
   return {
     brief: { title: values.topic, viewerQuestion: values.question || values.topic,
       audience: values.audience, locale: values.locale },
-    options: { provider: searchProvider, searchEndpoint,
+    options: { provider: searchProvider, searchEndpoint: searchEndpoint ?? undefined,
       braveApiKey: searchProvider === "brave" ? env.BRAVE_SEARCH_API_KEY : undefined,
       model, endpoint, allowNetwork: true, maxSources },
     outDir,
