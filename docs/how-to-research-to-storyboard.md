@@ -7,7 +7,9 @@ This flow creates an **unapproved, editable video draft** from an original topic
 3. Check **Allow public web research** to explicitly permit local SearXNG searches and public HTTPS page capture. Click **Research & generate draft** once.
 4. ContentGen captures sources, checks the model's quoted phrases against captured text, builds an unverified research dossier, then uses that dossier to generate a visual/narrative storyboard. Neither action uses Fish Audio, FFmpeg, a commercial SEO provider, or a rendering service.
 5. Review source titles, links, IDs, verbatim quote previews per candidate claim, research gaps, proposed scenes, narration, visual changes, and claim IDs. **Quote matches are not fact verification.** Resolve unsupported or disputed claims independently; never infer financial figures or visual measurements from a public video's view count.
-6. Click **Open editable storyboard** to enter Video Director's shot editor and silent real-renderer preview. This is a review handoff, not an approval. Saving/exporting the project preserves existing source IDs and draft status.
+6. From **Video Director**, click **Open editable storyboard** to enter its shot editor and silent real-renderer preview. This is a review handoff, not an approval. Saving/exporting the project preserves existing source IDs and draft status.
+
+The **Research → Evidence → Create editable sourced storyboard** action uses a separate browser-local **Storyboard Planner**. Its preview is a **static planning sketch**, not the Video Director/Kumiki video renderer or an MP4. It now carries research-generated before/action/after labels as editable fields, depicts the current teaching phase without prematurely revealing the after-state, and never reuses the unrelated sample HVAC dollar amounts. Saving, reopening, importing and exporting a storyboard preserve those labels. The two editors do **not** yet share a live media-export adapter.
 
 ## Inspect the actual visual explanation
 
@@ -18,7 +20,7 @@ New research-generated teaching sequences specify three concise, visible states 
 - Check all text at the edges, the first frame of the payoff, and the actual browser-to-FFmpeg MP4. These are **manual sign-off checks**; the fast deterministic tests cover contract shape, timing, state visibility and authored bounds, not visual taste or every font/system combination.
 - Existing saved plans without structured states still use their previous generic diagrams. Analogy scenes, custom home-cost scenes, charts and unrelated shots keep their current rendering. The generic state animation is a labeled concept transition, **not** arbitrary 2D/3D illustration or physical simulation.
 
-The structured state labels are currently generated as part of the research-linked plan. Video Director's shot form does not yet expose separate before/action/after inputs; a user changing those semantics must regenerate/revise the plan upstream. Ordinary shot narration and on-screen copy remain editable in the Studio editor.
+The structured state labels are generated as part of the research-linked plan. The Research-tab Storyboard Planner exposes separate before/action/after editing fields; Video Director's production shot form does not yet expose them individually. Ordinary shot narration and on-screen copy remain editable. Research-tab static previews do not establish that the associated scene has been exported as a video.
 
 If the local planning model fails after source capture, the page keeps the research evidence visible. Choose **Retry storyboard generation** to retry planning without another web search. Changing a brief field clears the previous research and storyboard on screen so the old claims cannot silently attach to a new topic.
 

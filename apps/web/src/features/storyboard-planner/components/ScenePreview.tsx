@@ -450,6 +450,49 @@ function TakeawayScene({
   );
 }
 
+/** Research/custom storyboards must NEVER inherit the synthetic HVAC example's numbers.
+ * This is an editorial still, not a claim of animated/FFmpeg output.
+ */
+function SourceDerivedScene({board,beat,title,kicker}:{
+  board:SemanticStoryboard;beat:StoryboardBeat;title:string;kicker:string;
+}){
+  const state=beat.teachingState;
+  const subject=objectLabel(board,state?.subjectId??beat.focusTarget);
+  const resultVisible=state?.phase==="payoff";
+  const showAction=state?.phase==="mechanism"||resultVisible;
+  const left=state?.before??beat.objective;
+  const right=resultVisible&&state?state.after:state?"?":beat.visualObjective;
+  const lines=(value:string,maxChars:number)=>{
+    const words=Array.from(value.trim());
+    if(words.length<=maxChars)return [value.trim()];
+    const cut=value.lastIndexOf(" ",maxChars);
+    const at=cut>maxChars*.8 && value.slice(cut).trim().length<=maxChars?cut:maxChars;
+    return [value.slice(0,at).trim(),value.slice(at).trim()];
+  };
+  return <Frame label={title} kicker={kicker} title={title}
+    footer={`Focus: ${subject} · ${beat.claimRefs.length} research claim reference(s)`}>
+    <g data-source-derived-scene={state?.phase??"schematic"}>
+      <rect x="64" y="131" width="832" height="48" rx="10" className="sp-svg-panel"/>
+      <text x="90" y="163" className="sp-svg-accent">{clip(subject,45)}</text>
+      <rect x="64" y="204" width="360" height="153" rx="15" className="sp-svg-panel-strong"/>
+      <text x="85" y="237" className="sp-svg-small">{state?"BEFORE":"QUESTION"}</text>
+      <g role="group" aria-label={left}>{lines(clip(left,52),27).map((part,i)=><text key={i}
+        x="85" y={285+i*30} className="sp-svg-accent">{part}</text>)}</g>
+      <path d="M440 275 H514" className="sp-svg-flow"/>
+      <rect x="531" y="204" width="365" height="153" rx="15" className="sp-svg-panel-strong"/>
+      <text x="554" y="237" className="sp-svg-small">{resultVisible?"AFTER":state?"RESULT HELD":"VISUAL DIRECTION"}</text>
+      <g role="group" aria-label={right}>{lines(clip(right,52),27).map((part,i)=><text key={i}
+        x="554" y={285+i*30} className="sp-svg-accent">{part}</text>)}</g>
+      {showAction&&state&&<g data-source-derived-action="">
+        <text x="84" y="407" className="sp-svg-small">ACTION</text>
+        <g role="group" aria-label={state.action}>{lines(state.action,46).map((part,i)=><text key={i}
+          x="200" y={404+i*27} className="sp-svg-accent">{part}</text>)}</g>
+      </g>}
+      {!state&&<text x="84" y="410" className="sp-svg-small">Planning sketch from the authored brief</text>}
+    </g>
+  </Frame>;
+}
+
 export function ScenePreview({ board, beat, timing, locale }: ScenePreviewProps) {
   const t = copy(locale);
   const title = clip(beat.onScreenText.trim() || beat.objective.trim() || board.title, 46);
@@ -463,7 +506,10 @@ export function ScenePreview({ board, beat, timing, locale }: ScenePreviewProps)
     : null;
 
   let scene: ReactNode;
-  switch (beat.visualIntent) {
+  // Fixed example amounts are licensed only to the dedicated synthetic demo.
+  if(board.id!=="storyboard-hvac-replacement-cost"||!board.illustrativeData){
+    scene=<SourceDerivedScene board={board} beat={beat} title={title} kicker={kicker}/>;
+  }else switch (beat.visualIntent) {
     case "question":
       scene = <QuestionScene board={board} title={title} focus={focus} kicker={kicker} />;
       break;

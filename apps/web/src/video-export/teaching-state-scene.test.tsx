@@ -1,8 +1,9 @@
 import {describe,expect,it} from "vitest";
 import {renderToStaticMarkup} from "react-dom/server";
-import type {GeneralFrame} from "../../scripts/video-production/general-visual-plan.mjs";
+import type {GeneralFrame,GeneralVisualPlan} from "../../scripts/video-production/general-visual-plan.mjs";
 import {sampleSemanticMotion} from "./semantic-scene-motion";
 import {TeachingStateScene} from "./teaching-state-scene";
+import {GeneralExportScene} from "./general-scene";
 
 const transformation={subjectId:"home_costs",before:"Only the asking price is visible",
   action:"Reveal financing and ongoing expenses",after:"The budget includes additional costs"};
@@ -45,4 +46,34 @@ describe("source-grounded state transformation scenes",()=>{
     expect(html).toContain('data-teaching-safe-bounds="1040,230,1820,920"');
     expect(html).toContain("home costs");
   });
+});
+
+it("selects the new state transformation in the real exported general scene and locks its payoff event",()=>{
+  const baseVisual={headline:"Where does the extra money go?",subhead:"Ownership adds categories",
+    emphasis:"COSTS",items:["House","Tax","Insurance"],direction:{phase:"problem" as const,
+      subjectIds:["home_costs"],visualAction:"Show cost categories emerging",
+      learningChange:"Price differs from ongoing costs",transformation}};
+  const plan:GeneralVisualPlan={schemaVersion:1,kind:"general-explainer-visual-plan",title:"Home costs",
+    manifest:{schemaVersion:1,id:"states",durationFrames:180,width:1920,height:1080,
+      fps:{num:30,den:1},preset:"youtube"},
+    chapters:[
+      {id:"problem",intent:"general-flow",visual:baseVisual,startFrame:0,endFrame:60,
+        claimRefs:["claim_1"],evidenceRefs:[],eventIds:[]},
+      {id:"mechanism",intent:"general-flow",visual:{...baseVisual,direction:{...baseVisual.direction,
+        phase:"mechanism"}},startFrame:60,endFrame:120,claimRefs:["claim_1"],evidenceRefs:[],eventIds:[]},
+      {id:"payoff",intent:"general-payoff",visual:{...baseVisual,direction:{...baseVisual.direction,
+        phase:"payoff"}},startFrame:120,endFrame:180,claimRefs:["claim_1"],evidenceRefs:[],eventIds:["answer"]},
+    ],claims:[{id:"claim_1",status:"unverified",text:"An editorial claim"}],evidence:[],
+    events:{answer:120},payoffEventId:"answer",disclaimer:"Draft",commercialReady:false};
+  const problem=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={40}/>);
+  const mechanism=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={95}/>);
+  const exactPayoff=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={120}/>);
+  const revealed=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={150}/>);
+  expect(problem).toContain('data-teaching-state-stage="problem"');
+  expect(mechanism).toContain('data-teaching-state-stage="mechanism"');
+  expect(mechanism).toContain("Reveal financing and ongoing expenses");
+  expect(problem).not.toContain("The budget includes additional costs");
+  expect(mechanism).not.toContain("The budget includes additional costs");
+  expect(exactPayoff).not.toContain("The budget includes additional costs");
+  expect(revealed).toContain("The budget includes additional costs");
 });

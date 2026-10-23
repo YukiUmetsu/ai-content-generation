@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { countBySeverity, validateStoryboard } from "@/features/storyboard-planner/model/validate";
 import { researchToStoryboard, type ResearchDraftResult } from "./researched-storyboard";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ScenePreview } from "@/features/storyboard-planner/components/ScenePreview";
 
 export const researchedFixture: ResearchDraftResult = {
   snapshotId:"research_home",warnings:["Claims need factual review"],
@@ -16,7 +19,7 @@ export const researchedFixture: ResearchDraftResult = {
     sound:[{shotId:"shot_01",narration:"Your wall may be losing heat. Why?",delivery:"curious",energy:"focused",pauseAfterMs:0,sfxIntent:null},
       {shotId:"shot_02",narration:"Insulation resists heat flowing through the wall.",delivery:"measured",energy:"focused",pauseAfterMs:200,sfxIntent:"Soft reveal"},
       {shotId:"shot_03",narration:"When heat moves more slowly, heating needs can change.",delivery:"confident",energy:"calm",pauseAfterMs:0,sfxIntent:null}],
-    teachingSequences:[{id:"teach_01",mode:"direct",question:"How?",technicalSubjectId:"wall",claimIds:["claim_01"],phases:[{kind:"problem",shotId:"shot_01",visualAction:"Animate heat leakage",learningChange:"Heat leaks"},{kind:"mechanism",shotId:"shot_02",visualAction:"Show resistance reducing flow",learningChange:"Insulation slows flow"},{kind:"payoff",shotId:"shot_03",visualAction:"Compare before and after",learningChange:"Less heat transfer"}]}]
+    teachingSequences:[{id:"teach_01",mode:"direct",question:"How?",technicalSubjectId:"wall",claimIds:["claim_01"],visualStates:{before:"Heat moves freely through the wall",action:"Add insulation that resists heat flow",after:"Less heat passes through the insulated wall"},phases:[{kind:"problem",shotId:"shot_01",visualAction:"Animate heat leakage",learningChange:"Heat leaks"},{kind:"mechanism",shotId:"shot_02",visualAction:"Show resistance reducing flow",learningChange:"Insulation slows flow"},{kind:"payoff",shotId:"shot_03",visualAction:"Compare before and after",learningChange:"Less heat transfer"}]}]
   }
 };
 
@@ -33,7 +36,31 @@ describe("research to editable semantic storyboard",()=>{
     expect(board.beats[0].opensQuestion).toBe(board.beats.at(-1)?.answersQuestion);
     expect(board.assumptions.join(" ")).toContain("https://www.energy.gov/energysaver/insulation");
     expect(board.assumptions.join(" ")).toContain("research_home");
+    expect(board.beats.map(x=>x.teachingState?.phase)).toEqual(["problem","mechanism","payoff"]);
+    expect(board.beats[1].teachingState).toEqual({phase:"mechanism",subjectId:"wall",
+      before:"Heat moves freely through the wall",action:"Add insulation that resists heat flow",
+      after:"Less heat passes through the insulated wall"});
     expect(countBySeverity(validateStoryboard(board)).errors).toBe(0);
+  });
+  it("shows research-specific before/action/after and never unrelated HVAC dollar amounts",()=>{
+    const board=researchToStoryboard(researchedFixture,"project-preview","en");
+    const shown=renderToStaticMarkup(createElement(ScenePreview,{board,beat:board.beats[1],locale:"en"}));
+    expect(shown).toContain("Add insulation that resists heat flow");
+    expect(shown).toContain("Heat moves freely through the wall");
+    expect(shown).not.toContain("Less heat passes through the insulated wall");
+    expect(shown).not.toContain("$12,400");
+    expect(shown).not.toContain("$7,100");
+    const payoff=renderToStaticMarkup(createElement(ScenePreview,{board,beat:board.beats[2],locale:"en"}));
+    expect(payoff).toContain("Less heat passes through the insulated wall");
+  });
+  it("keeps older researched plans safe and schematic without invented numbers",()=>{
+    const fixture=structuredClone(researchedFixture);
+    delete fixture.plan.teachingSequences[0].visualStates;
+    const board=researchToStoryboard(fixture,"project-old","en");
+    expect(board.beats.every(x=>x.teachingState===undefined)).toBe(true);
+    const shown=renderToStaticMarkup(createElement(ScenePreview,{board,beat:board.beats[0],locale:"en"}));
+    expect(shown).toContain("wall");
+    expect(shown).not.toContain("$12,400");
   });
   it("rejects plans referencing unsupported claims or unrelated dossiers",()=>{
     const unrelated=structuredClone(researchedFixture);unrelated.plan.researchId="wrong";

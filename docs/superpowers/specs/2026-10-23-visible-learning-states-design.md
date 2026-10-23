@@ -27,3 +27,5 @@ Generated videos should show how a researched subject changes, not animate a seq
 ## UX and verification
 
 Video Director's existing live preview and MP4 exporter use the same scene component. Tests must check validation, legacy compatibility, propagation to the job, both problem and mechanism states, payoff reveal timing, and bounds by layout constants. Normal-speed playback and real browser-to-FFmpeg export remain manual sign-off items.
+
+The separately merged Research-tab sourced storyboard path uses a browser-local static StoryboardPlanner preview, not Video Director's MP4 renderer. Preserve and expose the state labels there for user editing; prevent the static planner from displaying hardcoded HVAC-example dollar values for research-generated topics. Neither static planning view nor its Kumiki storyboard projection is an MP4 renderer.

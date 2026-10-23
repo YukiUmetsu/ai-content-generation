@@ -18,6 +18,7 @@ import {
   isNarrativeRole,
   isPositiveInteger,
   isVisualIntent,
+  isTeachingVisualState,
   type SemanticEvent,
   type SemanticObject,
   type SemanticStoryboard,
@@ -154,6 +155,9 @@ function parseBeat(
   const cameraIntent = stringField(value, "cameraIntent", path, errors, { optional: true });
   const opensQuestion = stringField(value, "opensQuestion", path, errors, { optional: true });
   const answersQuestion = stringField(value, "answersQuestion", path, errors, { optional: true });
+  const teachingState = value.teachingState;
+  if (teachingState !== undefined && !isTeachingVisualState(teachingState))
+    errors.push({ code: "invalid-field", path: `${path}.teachingState` });
 
   if (!id) return null;
 
@@ -176,6 +180,7 @@ function parseBeat(
   if (cameraIntent !== undefined) beat.cameraIntent = cameraIntent;
   if (opensQuestion !== undefined) beat.opensQuestion = opensQuestion;
   if (answersQuestion !== undefined) beat.answersQuestion = answersQuestion;
+  if (isTeachingVisualState(teachingState)) beat.teachingState = { ...teachingState };
   return beat;
 }
 

@@ -256,6 +256,15 @@ export function SceneEditor({
             rows={3}
           />
 
+          {beat.teachingState && <div data-teaching-state-editor="" className="sp-field">
+            <p className="sp-label">{locale==="ja"?"説明する変化":"Visible teaching change"} · {beat.teachingState.subjectId} · {beat.teachingState.phase}</p>
+            <p className="sp-hint">{locale==="ja"?"研究に基づく説明を確認して修正してください。":"Review each label against your captured sources. These are editorial directions, not verified facts."}</p>
+            {(["before","action","after"] as const).map(key=><TextAreaField key={key}
+              label={key==="before"?"Before (initial state)":key==="action"?"Action (visible operation)":"After (learned result)"}
+              value={beat.teachingState![key]} rows={2}
+              onChange={text=>onChange({teachingState:{...beat.teachingState!,[key]:text}})}/>) }
+          </div>}
+
           <CheckGroup
             legend={t.objectsLabel}
             options={board.semanticObjects}

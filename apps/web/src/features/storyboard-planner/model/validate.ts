@@ -10,6 +10,7 @@
 import { estimateNarration } from "./timeline";
 import {
   MAX_ON_SCREEN_CHARS,
+  isTeachingVisualState,
   isPositiveInteger,
   type SemanticStoryboard,
   type StoryboardBeat,
@@ -139,6 +140,13 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
       addForBeat(beat, "storyboard-static-fallback-missing", "warning", `${path}.staticFallback`, {
         id: beat.id,
       });
+    }
+
+    if (beat.teachingState !== undefined) {
+      if (!isTeachingVisualState(beat.teachingState) ||
+        !beat.semanticObjects.includes(beat.teachingState.subjectId)) {
+        addForBeat(beat, "storyboard-teaching-state-invalid", "error", `${path}.teachingState`);
+      }
     }
 
     for (const objectId of beat.semanticObjects) {

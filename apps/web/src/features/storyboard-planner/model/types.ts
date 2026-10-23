@@ -63,6 +63,28 @@ export interface StoryboardQuestion {
   text: string;
 }
 
+/** Reviewable concept transition, never an inferred measured value. */
+export interface TeachingVisualState {
+  phase: "problem" | "mechanism" | "payoff";
+  subjectId: string;
+  before: string;
+  action: string;
+  after: string;
+}
+
+export function isTeachingVisualState(value: unknown): value is TeachingVisualState {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Record<string, unknown>;
+  const fields = ["phase", "subjectId", "before", "action", "after"];
+  if (Object.keys(state).length !== fields.length || Object.keys(state).some(key => !fields.includes(key)) ||
+    typeof state.phase !== "string" || !["problem", "mechanism", "payoff"].includes(state.phase) ||
+    typeof state.subjectId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.subjectId)) return false;
+  const copy = [state.before, state.action, state.after];
+  if (copy.some((text, i) => typeof text !== "string" || text.trim().length < 8 ||
+    text.length > (i === 1 ? 90 : 48) || /[\u0000-\u001f]/u.test(text))) return false;
+  return new Set(copy.map(text => (text as string).trim().toLowerCase())).size === 3;
+}
+
 export interface StoryboardBeat {
   /** Stable, author-owned id. Reordering never changes it. */
   id: string;
@@ -88,6 +110,8 @@ export interface StoryboardBeat {
   namedEvents: string[];
   /** Useful still / reduced-motion substitute. */
   staticFallback: string;
+  /** Optional source-linked before/change/after authored with this technical subject. */
+  teachingState?: TeachingVisualState;
   /** Question opened by this beat (must be declared in `questions`). */
   opensQuestion?: string;
   /** Question answered by this beat. */

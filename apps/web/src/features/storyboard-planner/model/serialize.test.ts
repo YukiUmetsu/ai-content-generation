@@ -62,6 +62,18 @@ describe("import / export round trip", () => {
     expect("extra" in result.board).toBe(false);
     expect("extra" in result.board.beats[0]).toBe(false);
   });
+  it("preserves source-grounded visual teaching states and rejects malformed imported states",()=>{
+    const raw=rawDocument();
+    raw.beats[0].teachingState={phase:"problem",subjectId:"hvac-system",
+      before:"Only the equipment quote is visible",action:"Reveal installation expenses",
+      after:"The total includes installed labor costs"};
+    const result=parseStoryboard(JSON.stringify(raw));
+    expect(result.ok).toBe(true);
+    if(result.ok)expect(result.board.beats[0].teachingState).toEqual(raw.beats[0].teachingState);
+    raw.beats[0].teachingState={phase:"payoff",subjectId:"unlisted",
+      before:"bad",action:"bad",after:"bad"};
+    expect(errorCodes(JSON.stringify(raw))).toContain("invalid-field");
+  });
 });
 
 describe("safe rejection", () => {
