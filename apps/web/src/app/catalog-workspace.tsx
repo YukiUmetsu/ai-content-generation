@@ -14,6 +14,7 @@ import {
 } from "./catalog-model";
 import { usePreferences } from "./use-preferences";
 import { ResearchModelSettings } from "./research-model-settings";
+import { PromptStudio } from "./prompt-studio";
 
 interface Props {
   section: SectionId;
@@ -261,6 +262,7 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
         </div>
       </Surface>
       <ResearchModelSettings locale={locale} />
+      <PromptStudio locale={locale} />
       <Surface header={<h2 className="font-medium">Local backup</h2>}>
         <div className="flex flex-col gap-3 text-sm">
           <p className="text-muted-foreground">Export or import the project catalog for this browser. Backups include names, editorial stages and asset license notes, not actual media files or voice credentials.</p>
