@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "research-dossier",
+  "id": "research_synthetic_home",
+  "topic": {
+    "title": "What is hidden in the cost of a home?",
+    "viewerQuestion": "Is the purchase price the total cost?",
+    "audience": "Curious homeowners",
+    "locale": "en-US"
+  },
+  "evidence": [
+    {
+      "id": "source_synthetic",
+      "title": "Synthetic fixture text only — not a factual source",
+      "sourceUri": "https://example.org/synthetic-only",
+      "retrievedAt": "2026-10-23T10:00:00.000Z",
+      "passageLocator": "Synthetic placeholder paragraph 1",
+      "snapshotSha256": "30a53c14986cdbbadfe7dab029e54579bad1d78a135ae8ccafb04b7ddbf229dc"
+    }
+  ],
+  "claims": [
+    {
+      "id": "claim_illustrative",
+      "text": "A fictional home ownership example can include several cost categories.",
+      "status": "illustrative",
+      "sourceRefs": []
+    }
+  ],
+  "assets": [],
+  "gaps": [
+    "Replace this synthetic example with actually captured evidence before real production."
+  ],
+  "review": {
+    "status": "draft"
+  }
+}

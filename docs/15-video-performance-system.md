@@ -137,3 +137,26 @@ Prefer platform-native simultaneous tests to sequential publishing changes. For 
 6. Report QA plus human preview points, measured runtime/disk/cost, known uncertainties and one revised creative hypothesis. No Codex/Work/paid services without explicit instruction.
 
 **Agent instruction:** read the dated evidence snapshot separately; optimize for user comprehension and credible watch time, choose *fewer and better* cinematic devices, reuse Kumiki primitive contracts, and return edit-ready source + provenance rather than generic "viral" render effects.
+
+## 8. Research-first preproduction contract (implemented opt-in slice, 2026-10-23)
+
+Use the new versioned dossier and five director plans before any *new cinematic* media production.
+ContentGen owns source provenance, story, explanation, shot intent, continuity intent and voice/sound intent.
+Kumiki remains the owner of visual primitives, frame sampling, camera, transformations and renderer constraints.
+
+- `research-dossier/v1` captures bounded HTTPS evidence references, passage locations, SHA-256 snapshot IDs,
+  claim statuses, research gaps, asset rights metadata and separate editorial review attestation.
+- `preproduction-plan/v1` references the dossier and contains a story with a linked central payoff,
+  per-step before/demonstration/after learning state, shot family/purpose/visible subject/claim/asset refs,
+  adjacent-shot continuity and per-shot narrator delivery/SFX intent.
+- `preproduction-bundle/v1` validates links and produces review findings plus exact dossier/plan hashes.
+  The reported `ready-for-animatic-review` status **never** authorizes rights, paid APIs or publishing.
+
+The offline/local-model CLI, contract fields, rights behavior and examples are documented in
+[the frontend README](../apps/web/README.md#research-first-cinematic-preproduction-opt-in),
+and exercised in the preproduction Node regression tests.
+
+New plans must not be silently converted to existing `video-production-job/v1`; that adapter is
+not yet implemented. Existing topic and House Math jobs retain their legacy behavior. The
+next slice should add source capture/review UI, persistence, dependency invalidation and an
+animatic compiler using real pinned Kumiki APIs rather than duplicating renderer clocks.
