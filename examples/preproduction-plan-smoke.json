@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "kind": "preproduction-plan",
+  "researchId": "research_synthetic_home",
+  "styleId": "cinematic-explainer-v1",
+  "story": {
+    "pattern": "cost-dissection",
+    "premise": "A hypothetical sticker price can hide additional categories.",
+    "hook": "IS THE STICKER PRICE THE WHOLE STORY?",
+    "question": "Is the purchase price the total cost?",
+    "answerExplanationId": "explain_answer",
+    "acts": [
+      {
+        "id": "act_open",
+        "question": "What does the sticker price leave out?",
+        "purpose": "Set up the misconception.",
+        "payoff": "Show ongoing categories."
+      },
+      {
+        "id": "act_payoff",
+        "question": "How should a cost estimate be interpreted?",
+        "purpose": "Connect categories to an assumption-dependent outcome.",
+        "payoff": "Give a qualified answer."
+      }
+    ]
+  },
+  "explanation": [
+    {
+      "id": "explain_categories",
+      "actId": "act_open",
+      "claimIds": [
+        "claim_illustrative"
+      ],
+      "before": "Assume the sticker price is everything.",
+      "demonstration": "Show a fictional ownership cost breakdown.",
+      "after": "Different categories may contribute."
+    },
+    {
+      "id": "explain_answer",
+      "actId": "act_payoff",
+      "claimIds": [
+        "claim_illustrative"
+      ],
+      "before": "Assume all owners have the same total.",
+      "demonstration": "Show why assumptions affect a hypothetical estimate.",
+      "after": "There is no universal final total."
+    }
+  ],
+  "shots": [
+    {
+      "id": "shot_question",
+      "explanationId": "explain_categories",
+      "family": "question",
+      "purpose": "hook",
+      "subjectIds": [
+        "house"
+      ],
+      "visualChange": "Show one hypothetical house and conceal the unanswered categories.",
+      "onScreenText": "Is the price the whole story?",
+      "claimIds": [
+        "claim_illustrative"
+      ],
+      "assetRefs": []
+    },
+    {
+      "id": "shot_categories",
+      "explanationId": "explain_categories",
+      "family": "process",
+      "purpose": "explain",
+      "subjectIds": [
+        "house",
+        "categories"
+      ],
+      "visualChange": "Separate the same illustrated house into labelled ongoing expense categories.",
+      "onScreenText": "More than the sticker price",
+      "claimIds": [
+        "claim_illustrative"
+      ],
+      "assetRefs": []
+    },
+    {
+      "id": "shot_answer",
+      "explanationId": "explain_answer",
+      "family": "summary",
+      "purpose": "answer",
+      "subjectIds": [
+        "categories"
+      ],
+      "visualChange": "Recombine the illustrative expense categories and label them hypothetical.",
+      "onScreenText": "Total depends on assumptions",
+      "claimIds": [
+        "claim_illustrative"
+      ],
+      "assetRefs": []
+    }
+  ],
+  "continuity": [
+    {
+      "fromShotId": "shot_question",
+      "toShotId": "shot_categories",
+      "technique": "shared-element",
+      "subjectIds": [
+        "house"
+      ],
+      "reason": "Keep the original object while adding complexity."
+    },
+    {
+      "fromShotId": "shot_categories",
+      "toShotId": "shot_answer",
+      "technique": "match-cut",
+      "subjectIds": [
+        "categories"
+      ],
+      "reason": "Preserve cost categories as the conclusion forms."
+    }
+  ],
+  "sound": [
+    {
+      "shotId": "shot_question",
+      "narration": "Is the sticker price really everything you will pay for a home?",
+      "delivery": "curious",
+      "energy": "focused",
+      "pauseAfterMs": 200,
+      "sfxIntent": null
+    },
+    {
+      "shotId": "shot_categories",
+      "narration": "In this hypothetical example, we separate the cost into several categories that can occur over time.",
+      "delivery": "conversational",
+      "energy": "calm",
+      "pauseAfterMs": 150,
+      "sfxIntent": "gentle label reveal"
+    },
+    {
+      "shotId": "shot_answer",
+      "narration": "The point isn't a magic final number. Your assumptions shape what the total could be.",
+      "delivery": "confident",
+      "energy": "focused",
+      "pauseAfterMs": 0,
+      "sfxIntent": null
+    }
+  ]
+}
