@@ -95,8 +95,8 @@ function Decomposition({state,motion,renderNode}:SceneDiagramsProps){
 function Synthesis({state,motion,renderNode}:SceneDiagramsProps){
   const all=state.visual.items;
   if(motion.isPayoffPending)return <g data-semantic-layout="synthesis" data-payoff-locked="true"/>;
-  const height=all.length===5?86:100,gap=all.length===5?17:23;
-  const top=all.length===5?238:285;
+  const height=100,gap=all.length===5?12:23;
+  const top=all.length===5?218:285;
   const base=top+(all.length-1)*(height+gap);
   const targetY=Math.min(877,base+height+74);
   return <g data-semantic-layout="synthesis" data-semantic-pending="false">
@@ -123,7 +123,9 @@ function Synthesis({state,motion,renderNode}:SceneDiagramsProps){
 export function SemanticDiagram(props:SceneDiagramsProps){
   const {state,motion}=props;
   const perspective=`translate(${motion.cameraX} ${motion.cameraY}) translate(1420 565) scale(${motion.cameraScale}) translate(-1420 -565)`;
-  return <g data-semantic-scene={motion.style} data-teaching-phase={motion.phase} transform={perspective}>
+  return <g data-semantic-scene={motion.style} data-teaching-phase={motion.phase}
+    data-semantic-subjects={state.visual.direction?.subjectIds.join(",")??undefined}
+    transform={perspective}>
     {state.intent==="general-intro"?<IntroLens {...props}/>:
       state.intent==="general-comparison"?<Contrast {...props}/>:
       state.intent==="general-breakdown"?<Decomposition {...props}/>:
