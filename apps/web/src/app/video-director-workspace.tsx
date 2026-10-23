@@ -59,11 +59,12 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const [revisions,setRevisions]=useState<Array<{shotId:string;impacts:Impact}>>([]);
   const [busy,setBusy]=useState(false);
   const [status,setStatus]=useState("");
+  const [sampleMode,setSampleMode]=useState(false);
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  function acceptProject(d:Dossier,b:Bundle){
-    setDossier(d);setBundle(b);setRevisions([]);
+  function acceptProject(d:Dossier,b:Bundle,source:"sample"|"topic"="topic"){
+    setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
@@ -80,6 +81,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     }catch(error){setStatus(error instanceof Error?error.message:"Project import failed.");}
   }
   async function importDossier(file:File|undefined){
+    setSampleMode(false);
     if(!file)return;
     try{const x=await loadJson(file) as unknown as Dossier;
       if(x.kind!=="research-dossier"||!x.id||!x.topic)throw Error("Expected a research-dossier/v1 JSON file.");
@@ -87,6 +89,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     }catch(e){setStatus(e instanceof Error?e.message:"Dossier import failed.");}
   }
   async function importBundle(file:File|undefined){
+    setSampleMode(false);
     if(!file)return;
     try{const x=await loadJson(file) as unknown as Bundle;
       if(x.kind!=="preproduction-bundle"||!x.plan?.shots?.length)
@@ -168,8 +171,21 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
         <h1 className="font-serif text-xl font-semibold">Video Director · Segment Lab</h1>
         <p className="mt-1 text-sm text-muted-foreground">Edit just one scene, generate different hook and storytelling combinations, and create a precise audio/visual regeneration plan. The source bundle is never overwritten.</p>
       </div>
-      <NewVideoSetup onGenerated={(d,b)=>acceptProject(d as Dossier,b as Bundle)}/>
-      <Surface header={<h2 className="font-medium">Or continue an existing project</h2>}>
+      {!usable&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
+      {usable&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle p-4">
+        <div>
+          <p className="font-semibold">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
+          <p className="text-xs text-muted-foreground">{dossier.topic.title} · {bundle.plan.shots.length} scenes · {sampleMode?"Synthetic demo; you can explore without voice or research setup.":"Editable source-linked draft."}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" icon={<Download className="size-4"/>}
+            onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
+          <Button variant="outline" onClick={()=>{setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setStatus("");}}>
+            Start another project
+          </Button>
+        </div>
+      </div>}
+      {!usable&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <label className={header}>Open saved project (.json)
             <input type="file" className={field+" mt-2"} accept=".json" aria-label="Saved ContentGen project"
@@ -187,8 +203,11 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
         <p className="mt-3 text-xs text-muted-foreground">{usable
           ?"Matched: "+dossier.topic.title+" · "+bundle.plan.shots.length+" shots"
           :"Import both the matching research dossier and preproduction bundle. Studio does not send either to a cloud service."}</p>
-      </Surface>
+      </Surface>}
       {usable&&<>
+        <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
+          selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
+          onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
         <Surface header={<h2 className="font-medium">2 · Choose and edit a shot</h2>}>
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
@@ -269,9 +288,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
             </>}
           </div>
         </Surface>
-        <ProductionPanel key={dossier.id}
-          dossier={dossier} bundle={bundle} selectedShotId={shotId}
-          onSelectShot={id=>chooseShot(id,true)} onApplyMotion={applyShotMotion}/>
+
       </>}
       {status&&<p role="status" className="text-sm text-muted-foreground">{status}</p>}
       <p className="text-xs text-muted-foreground">{ja?"すべての変更は下書きです。":"Every edit remains an unapproved draft. Source research, claims, voice permissions, and final export QA are never bypassed."}</p>

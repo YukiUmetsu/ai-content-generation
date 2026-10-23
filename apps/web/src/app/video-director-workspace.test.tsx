@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event";
 import { PromptStudio } from "./prompt-studio";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
 
+vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
+  <div data-testid="demo-real-scene">Actual exporter at frame {frame}</div>}));
+
 afterEach(()=>{vi.restoreAllMocks();});
 describe("AI Prompt Studio",()=>{
   it("edits and saves a custom hook prompt while leaving all other stage overrides intact",async()=>{
@@ -81,7 +84,7 @@ describe("Video Director selected-shot workbench",()=>{
     fireEvent.change(dossierInput,{target:{files:[new File([JSON.stringify(dossier)],"research.json",{type:"application/json"})]}});
     const bundleInput=screen.getByLabelText("Preproduction bundle JSON") as HTMLInputElement;
     fireEvent.change(bundleInput,{target:{files:[new File([JSON.stringify(bundle)],"bundle.json",{type:"application/json"})]}});
-    expect(await screen.findByText(/Matched: Why owning a home costs more/)).toBeInTheDocument();
+    expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
     await user.click(screen.getByRole("button",{name:"Generate 3 local AI variations"}));
     expect((await screen.findAllByText("Personal problem")).length).toBeGreaterThanOrEqual(1);
     await user.selectOptions(screen.getByRole("combobox",{name:"Script candidate"}),"hook-2");
@@ -95,5 +98,56 @@ describe("Video Director selected-shot workbench",()=>{
     expect(await screen.findByText(/New narration: hook/)).toBeInTheDocument();
     expect(screen.getByText(/does not yet synthesize partial WAVs/)).toBeInTheDocument();
     api.mockRestore();
+  });
+});
+
+describe("first-run complete Studio demo",()=>{
+  it("opens sample animations automatically, exposes a timeline, and does not ask for a JSON file or voice",async()=>{
+    const sampleDossier={kind:"research-dossier",id:"demo-id",topic:{title:"Home cost demo",audience:"Homeowners"}};
+    const sampleBundle={kind:"preproduction-bundle",researchId:"demo-id",plan:{
+      shots:[{id:"hook",purpose:"hook",visualChange:"Show home",onScreenText:"Why does it cost more?"},
+        {id:"mechanism",purpose:"explain",visualChange:"Show cost groups",onScreenText:"Extra costs"},
+        {id:"payoff",purpose:"payoff",visualChange:"Reveal answer",onScreenText:"Context matters"}],
+      sound:[{shotId:"hook",narration:"What is the cost?",sfxIntent:null},
+        {shotId:"mechanism",narration:"It involves more than a mortgage.",sfxIntent:null},
+        {shotId:"payoff",narration:"It depends on assumptions.",sfxIntent:null}],
+      teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Open question"},
+        {shotId:"mechanism",kind:"mechanism",visualAction:"Show categories"},
+        {shotId:"payoff",kind:"payoff",visualAction:"Answer"}]}],story:{question:"Why?"}}};
+    const chapters=sampleBundle.plan.shots.map((item,i)=>({
+      id:item.id,intent:i===0?"general-intro":i===2?"general-payoff":"general-breakdown",
+      startFrame:i*60,endFrame:(i+1)*60,visual:{headline:item.onScreenText,subhead:"Demonstration",
+        items:["Home","Costs"]},claimRefs:[],evidenceRefs:[],eventIds:[]
+    }));
+    const preview={kind:"live-renderer-preview/v1",schemaVersion:1,
+      sourcePlanSha256:"a".repeat(64),renderPlanSha256:"b".repeat(64),
+      plan:{kind:"general-explainer-visual-plan",schemaVersion:1,chapters,
+        manifest:{schemaVersion:1,id:"demo-id",width:1920,height:1080,durationFrames:180,
+          fps:{num:30,den:1},preset:"youtube"},events:{},payoffEventId:"payoff",
+        claims:[],evidence:[],locale:"en-US",title:"Demo",disclaimer:"DRAFT",commercialReady:false},
+      shotMap:sampleBundle.plan.shots.map((item,i)=>({
+        shotId:item.id,beatId:item.id,startFrame:i*60,endFrame:(i+1)*60,
+        visualAction:item.visualChange})),
+      timing:{basis:"estimated-text-only",spokenWpm:145,measuredNarration:false,note:"Estimated timing"},
+      visualLimits:[]};
+    const calls:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
+      calls.push(String(url));
+      if(String(url).endsWith("/demo"))return new Response(JSON.stringify({
+        dossier:sampleDossier,bundle:sampleBundle}),{status:200});
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify(preview),{status:200});
+      throw Error("Demo unexpectedly started research, TTS or full media production: "+String(url));
+    });
+    const user=userEvent.setup();
+    render(<VideoDirectorWorkspace locale="en"/>);
+    expect(screen.getByRole("button",{name:"Open interactive sample"})).toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Open interactive sample"}));
+    expect(await screen.findByText("Interactive sample loaded")).toBeInTheDocument();
+    expect(await screen.findByTestId("demo-real-scene")).toHaveTextContent("frame 0");
+    expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:"Camera movement"})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Save project"})).toBeInTheDocument();
+    expect(screen.queryByText(/Import both the matching research dossier/)).not.toBeInTheDocument();
+    expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
   });
 });
