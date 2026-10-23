@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; media-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>ContentGen — Story-first animatic</title>
+<style>
+:root{color-scheme:dark;background:#0c121b;color:#edf1f5;font:15px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;min-height:100vh}button,select,input{font:inherit}
+button,select{background:#1d2a37;color:#edf1f5;border:1px solid #466074;border-radius:9px;padding:10px 13px;cursor:pointer}
+button:hover,button:focus-visible,select:focus-visible{outline:2px solid #a6e3dd;outline-offset:2px}button[aria-pressed=true]{border-color:#80cdc2;background:#243e44}
+header{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:17px max(20px,3.5vw);border-bottom:1px solid #253545}
+header strong{font-weight:650;letter-spacing:.08em;font-size:13px;color:#e6f1f1}small{color:#a3b6c4;font-size:12px}
+main{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,345px);gap:24px;max-width:1700px;margin:0 auto;padding:22px}
+@media(max-width:1030px){main{grid-template-columns:1fr}}
+.preview{min-width:0}.screen{border-radius:15px;overflow:hidden;border:1px solid #3c5261;background:#101e29;box-shadow:0 22px 85px #0008}
+svg{display:block;width:100%;height:auto;aspect-ratio:16/9}svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+.controls{padding:15px 2px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.controls input[type=range]{min-width:170px;flex:1;accent-color:#8accc4}
+.time{color:#d7e5e8;font-variant-numeric:tabular-nums;min-width:115px;text-align:right}
+aside{display:flex;flex-direction:column;gap:14px}
+.panel{border:1px solid #293b49;background:#111c26;border-radius:14px;padding:17px}
+.panel h2{font-size:13px;margin:0 0 12px;letter-spacing:.09em;text-transform:uppercase;color:#8bd5cb}
+.phase{color:#edcf9c;font-size:12px;letter-spacing:.14em;text-transform:uppercase}
+.title{font-size:21px;font-weight:650;line-height:1.3;margin:8px 0 10px}
+.narration{line-height:1.7;color:#e1e8ed;white-space:pre-wrap}
+.info{font-size:13px;color:#a5b7c5;line-height:1.6;white-space:pre-wrap}
+ol{list-style:none;padding:0;margin:0;max-height:45vh;overflow:auto}
+li{margin:0 0 5px}
+li button{display:flex;justify-content:space-between;gap:8px;text-align:left;width:100%;padding:11px}
+li button span{display:block;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+footer{color:#a8b9c8;padding:10px max(20px,3.5vw) 24px;font-size:12px}
+</style>
+</head>
+<body>
+<header><strong>CONTENTGEN / VISUAL STORY ANIMATIC</strong><small>Offline · illustrative · no external requests</small></header>
+<main>
+<section class="preview" aria-label="Animatic preview">
+<div class="screen"><svg id="frame" role="img" aria-label="Time-based visualization of the directed explanation" viewBox="0 0 1280 720"></svg></div>
+<div class="controls">
+<button id="play" aria-label="Play animatic">Play</button>
+<input type="range" id="scrub" min="0" max="100" step="1" value="0" aria-label="Seek animatic frame">
+<span class="time" id="time">00:00 / 00:00</span>
+<button id="sound" aria-pressed="false" aria-label="Enable optional preview sound effects">SFX off</button>
+<label><small>Speed</small> <select id="speed" aria-label="Playback speed"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label>
+</div>
+<div class="info" id="timing"></div>
+</section>
+<aside>
+<section class="panel"><h2>Current discovery</h2><div class="phase" id="phase"></div><div class="title" id="title"></div><div class="narration" id="narration"></div><p class="info" id="intent"></p></section>
+<section class="panel"><h2>Story chapters</h2><ol id="shots"></ol></section>
+<section class="panel"><h2>Editorial boundaries</h2><div class="info" id="caveat"></div></section>
+</aside>
+</main>
+<footer>Draft animatic: timings are estimated, diagrams are schematic, and Web Audio cues are placeholders. Human claim and rights review, measured narration, Kumiki scenes, and final visual/audio QA remain required.</footer>
+<script type="application/json" id="animatic-data">__CONTENTGEN_ANIMATIC_DATA__</script>
+<script>
+"use strict";
+(function(){
+ const manifest=JSON.parse(document.getElementById("animatic-data").textContent);
+ const svg=document.getElementById("frame"),scrub=document.getElementById("scrub"),play=document.getElementById("play");
+ const sound=document.getElementById("sound"),speed=document.getElementById("speed"),steps=document.getElementById("shots");
+ const fps=manifest.fps,frames=manifest.totalFrames;
+ let current=0,playing=false,anchorTime=0,anchorFrame=0,request=0,ctx=null,soundOn=false,lastCueFrame=0,lastShot="";
+ const reduced=window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+ const safe=value=>String(value??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+ const clamp=(x,a,b)=>Math.max(a,Math.min(b,x)),ease=x=>{const t=clamp(x,0,1);return t*t*(3-2*t)};
+ const format=frame=>{const seconds=Math.floor(frame/fps),m=Math.floor(seconds/60),s=seconds%60;return String(m).padStart(2,"0")+":"+String(s).padStart(2,"0")};
+ const wrap=(text,n,maxLines)=>{
+   const ws=String(text||"").split(/\s+/),lines=[];let line="";
+   for(const word of ws){if((line+" "+word).trim().length>n&&line){lines.push(line);line=word;}else line=(line+" "+word).trim();}
+   if(line)lines.push(line);
+   const result=lines.slice(0,maxLines);
+   if(lines.length>maxLines&&result.length)result[result.length-1]=result[result.length-1].slice(0,Math.max(1,n-1))+"…";
+   return result;
+ };
+ const text=(value,x,y,size,color,opts={})=>{
+   const lines=wrap(value,opts.chars||38,opts.lines||2),weight=opts.weight||550,align=opts.center?"middle":"start";
+   return '<text x="'+x+'" y="'+y+'" text-anchor="'+align+'" font-size="'+size+
+     '" font-weight="'+weight+'" fill="'+color+'" opacity="'+(opts.opacity??1)+'">'+lines.map((l,i)=>
+     '<tspan x="'+x+'" dy="'+(i===0?0:Math.round(size*1.3))+'">'+safe(l)+'</tspan>').join("")+'</text>';
+ };
+ const bg='<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101e2b"/><stop offset="1" stop-color="#193745"/></linearGradient><radialGradient id="light"><stop stop-color="#72c9c0" stop-opacity=".25"/><stop offset="1" stop-color="#72c9c0" stop-opacity="0"/></radialGradient></defs><rect width="1280" height="720" fill="url(#bg)"/>';
+ function frameState(frame){
+   const s=manifest.shots.find(x=>frame>=x.startFrame&&frame<x.endFrame);
+   const local=(frame-s.startFrame)/fps,progress=(frame-s.startFrame)/Math.max(1,s.endFrame-s.startFrame-1);
+   const revealed=s.revealFrames.filter(x=>frame>=x).length,opacity=s.revealFrames.map(x=>ease((frame-x)/(fps*.3)));
+   return {s,local,progress,revealed,opacity,drift:reduced?0:7*Math.sin(local*.82)};
+ }
+ function render(frame){
+   current=clamp(Math.floor(frame),0,frames-1);
+   const {s,local,progress,revealed,opacity,drift}=frameState(current);
+   let body=bg,t=progress,sx=640+drift;
+   body+='<circle cx="'+(sx+90)+'" cy="350" r="350" fill="url(#light)"/>';
+   body+='<path d="M 70 82 H 1210" stroke="#49616d" opacity=".7"/>';
+   body+=text(s.phase.toUpperCase().replaceAll("-"," "),80,62,17,"#e8be87",{weight:750,chars:45});
+   body+=text(manifest.storyQuestion,820,62,16,"#95afb8",{chars:37,lines:1,opacity:.85});
+   if(s.phase==="problem"){
+     const scale=reduced?1:1+.018*Math.sin(local*1.1);
+     body+='<g transform="translate('+sx+' 355) scale('+scale+')">';
+     for(let i=0;i<3;i++)body+='<circle r="'+(100+i*58)+'" fill="none" stroke="#6cbeb6" stroke-width="2" opacity="'+(.36-i*.08)+'" stroke-dasharray="'+(14+i*4)+' 13" transform="rotate('+(reduced?0:local*(i%2?5:-4))+')"/>';
+     body+='<circle r="102" fill="#24424d" stroke="#a9ddd6" stroke-width="4"/>';
+     body+=text("?",0,33,118,"#f5d29b",{center:true,weight:700,lines:1});
+     body+='</g>';
+     body+=text(s.onScreenText,640,570,39,"#f0f3ef",{center:true,chars:40,lines:2,opacity:revealed?opacity[0]:0});
+   } else if(s.phase==="analogy"){
+     const maps=s.mapping.slice(0,3);
+     body+='<g opacity="'+(revealed>=1?opacity[0]:0)+'"><rect x="125" y="195" rx="30" width="385" height="300" fill="#1c3945" stroke="#7ad1c5" stroke-width="3"/>'+
+       '<rect x="770" y="195" rx="30" width="385" height="300" fill="#203345" stroke="#e1b983" stroke-width="3"/></g>';
+     body+=text(s.analogySubject||"FAMILIAR EXAMPLE",318,247,21,"#83cfc6",{center:true,weight:750,opacity:opacity[0]});
+     body+=text(s.technicalSubject||"REAL SYSTEM",960,247,21,"#e6c58f",{center:true,weight:750,opacity:opacity[0]});
+     body+='<path d="M 530 346 H 745" stroke="#88d7ce" stroke-width="5" stroke-linecap="round" stroke-dasharray="220" stroke-dashoffset="'+(220*(1-ease((progress-.18)/.47)))+'"/>';
+     body+='<circle cx="'+(530+215*ease((progress-.18)/.47))+'" cy="346" r="11" fill="#fae1ab" opacity="'+opacity[0]+'"/>';
+     maps.forEach((m,i)=>{
+       const y=307+i*65,p=opacity[Math.min(i,2)];
+       body+=text(m.familiar,318,y,22,"#f3f4ed",{center:true,chars:25,lines:1,opacity:p});
+       body+=text(m.technical,960,y,22,"#f3f4ed",{center:true,chars:25,lines:1,opacity:p});
+     });
+   } else if(s.phase==="mechanism"){
+     const count=4,points=Array.from({length:count},(_,i)=>235+i*270);
+     body+='<path d="M 195 355 H 1100" stroke="#5a7e87" stroke-width="10" stroke-linecap="round" opacity=".3"/>';
+     body+='<path d="M 195 355 H 1100" stroke="#77d5c4" stroke-width="9" stroke-linecap="round" stroke-dasharray="905" stroke-dashoffset="'+(905*(1-ease(t)))+'"/>';
+     for(let i=0;i<count;i++){
+       const cx=points[i],threshold=i/(count-1)*.76,visible=ease((t-threshold)/.14);
+       body+='<circle cx="'+cx+'" cy="'+(355+drift*(i%2?1:-1))+'" r="'+(i===0||i===count-1?73:56)+'" fill="#25424d" stroke="#89d9cc" stroke-width="3" opacity="'+visible+'"/>';
+       body+='<circle cx="'+cx+'" cy="'+(355+drift*(i%2?1:-1))+'" r="15" fill="'+(i===count-1?"#f4d4a0":"#82d1c5")+'" opacity="'+visible+'"/>';
+     }
+     const marker=195+905*clamp((t-.08)/.84,0,1);
+     body+='<circle cx="'+marker+'" cy="355" r="15" fill="#ffe0a4" opacity="'+(t>.07?1:0)+'"/>';
+     body+=text(s.onScreenText,640,550,37,"#eff8f5",{center:true,chars:42,opacity:opacity[0]});
+   } else {
+     const u=ease((t-.02)/.68);
+     for(let i=0;i<4;i++){
+       const angle=(i/4)*Math.PI*2+(reduced?0:local*.12),rad=190*(1-u)+112;
+       const cx=sx+Math.cos(angle)*rad,cy=350+Math.sin(angle)*rad;
+       body+='<circle cx="'+cx+'" cy="'+cy+'" r="'+(22+18*u)+'" fill="#2c5560" stroke="#7ad8c9" opacity="'+(.3+.7*u)+'"/>';
+     }
+     body+='<circle cx="'+sx+'" cy="350" r="'+(80+50*u)+'" fill="#31565b" stroke="#e1c18c" stroke-width="4" opacity="'+(.25+.75*u)+'"/>';
+     body+='<path d="M '+(sx-44)+' 351 l30 29 63 -68" fill="none" stroke="#f4e2b1" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="180" stroke-dashoffset="'+(180*(1-ease((t-.31)/.38)))+'"/>';
+     body+=text(s.onScreenText,640,560,38,"#f4f5ef",{center:true,chars:43,opacity:opacity[0]});
+   }
+   if(revealed>=2)body+=text(s.learningChange,640,638,24,"#b9d6d5",{center:true,chars:76,lines:2,opacity:opacity[1]});
+   body+='<rect x="0" y="712" width="'+(1280*(current/Math.max(1,frames-1)))+'" height="8" fill="#9ed9ca"/>';
+   svg.innerHTML=body;
+   document.getElementById("phase").textContent=s.phase.toUpperCase()+" · "+(manifest.shots.indexOf(s)+1)+"/"+manifest.shots.length;
+   document.getElementById("title").textContent=s.learningChange;
+   document.getElementById("narration").textContent=s.narration;
+   document.getElementById("intent").textContent="Visual intent: "+s.visualAction+(s.analogyLimit?"\nAnalogy limit: "+s.analogyLimit:"");
+   document.getElementById("time").textContent=format(current)+" / "+format(frames);
+   scrub.value=String(current);
+   if(lastShot!==s.shotId){lastShot=s.shotId;document.querySelectorAll("#shots button").forEach(el=>el.setAttribute("aria-pressed",String(el.dataset.shot===s.shotId)));}
+ }
+ function cue(kind) {
+   if(!soundOn||!ctx)return;
+   const now=ctx.currentTime,o=ctx.createOscillator(),g=ctx.createGain();
+   o.type="sine";o.frequency.setValueAtTime(kind==="settle"?590:760,now);
+   o.frequency.exponentialRampToValueAtTime(kind==="settle"?390:970,now+.09);
+   g.gain.setValueAtTime(.0001,now);
+   g.gain.exponentialRampToValueAtTime(.022,now+.012);
+   g.gain.exponentialRampToValueAtTime(.0001,now+.13);
+   o.connect(g);g.connect(ctx.destination);o.start(now);o.stop(now+.15);
+ }
+ function soundFor(previous,next){
+   if(next<=previous||next-previous>fps*2)return;
+   for(const c of manifest.soundCues)if(c.frame>previous&&c.frame<=next)cue(c.kind);
+ }
+ function tick(now){
+   if(!playing)return;
+   const next=Math.min(frames-1,Math.floor(anchorFrame+(now-anchorTime)*fps*Number(speed.value)/1000));
+   soundFor(lastCueFrame,next);lastCueFrame=next;render(next);
+   if(next>=frames-1){playing=false;play.textContent="Replay";return;}
+   request=requestAnimationFrame(tick);
+ }
+ function pause(){playing=false;cancelAnimationFrame(request);play.textContent="Play";}
+ function start(){
+   if(current>=frames-1)render(0);
+   playing=true;play.textContent="Pause";anchorTime=performance.now();anchorFrame=current;lastCueFrame=current;request=requestAnimationFrame(tick);
+ }
+ play.addEventListener("click",()=>playing?pause():start());
+ scrub.max=String(frames-1);
+ scrub.addEventListener("input",()=>{const wasPlaying=playing;pause();render(Number(scrub.value));lastCueFrame=current;if(wasPlaying)start();});
+ speed.addEventListener("change",()=>{if(playing){pause();start();}});
+ sound.addEventListener("click",async()=>{
+   if(!soundOn){try{if(!ctx)ctx=new (window.AudioContext||window.webkitAudioContext)();await ctx.resume();soundOn=true;}catch{soundOn=false;}}
+   else soundOn=false;
+   sound.setAttribute("aria-pressed",String(soundOn));sound.textContent=soundOn?"SFX on":"SFX off";
+ });
+ for(const s of manifest.shots) {
+   const li=document.createElement("li"),button=document.createElement("button");button.dataset.shot=s.shotId;
+   const heading=document.createElement("span");heading.textContent=s.phase.toUpperCase()+" · "+s.onScreenText;
+   const duration=document.createElement("small");duration.textContent=format(s.startFrame);
+   button.append(heading,duration);button.addEventListener("click",()=>{pause();render(s.startFrame);lastCueFrame=current;});
+   li.append(button);steps.append(li);
+ }
+ document.getElementById("caveat").textContent=manifest.reviewStatus+"\n\n"+manifest.caveat;
+ document.getElementById("timing").textContent=manifest.timingBasis;
+ window.addEventListener("keydown",event=>{
+   const target=event.target;
+   if(target instanceof HTMLElement&&["INPUT","TEXTAREA","SELECT","BUTTON"].includes(target.tagName))return;
+   if(event.code==="Space"){event.preventDefault();playing?pause():start();}
+   else if(event.code==="ArrowRight"){event.preventDefault();pause();render(Math.min(current+fps,frames-1));}
+   else if(event.code==="ArrowLeft"){event.preventDefault();pause();render(Math.max(0,current-fps));}
+ });
+ render(0);
+})();
+</script>
+</body></html>

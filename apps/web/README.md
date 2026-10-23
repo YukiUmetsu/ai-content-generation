@@ -744,3 +744,40 @@ The alternative `--search-provider brave` requires a **separately configured** `
 The newly created, non-overwritten directory contains `research-dossier.json`, SHA-256-identifiable `captures/source_NN.txt` and `run-manifest.json`. Sources are leads until successfully fetched; the worker rejects redirects, non-HTTPS URLs, local/private IPs, unbounded responses, and missing textual content. The extracted `quote` from each model claim must exist *verbatim* in a saved source capture. Dossier claims deliberately have `status: unverified` and `review.status: draft`; this does **not** fact-check quote interpretation, resolve contradictions, determine publication permission, or mark a video commercially ready. Web pages are untrusted data and should be assessed against primary sources and rights restrictions by a human. Page extraction is text/HTML only (no JS-required pages, PDFs, login, or robots-policy bypass). Sources failing capture are recorded as research gaps; no fabricated substitute citations are created. The model and local SearXNG endpoints must remain loopback-only.
 
 To run the new suite: `node --test scripts/video-production/research-agent.test.mjs`. The existing headless test command includes it automatically. This is CLI-only; connecting research to the main Studio UI is a separate milestone.
+
+### Playable progressive-reveal animatic (offline rough cut)
+
+Once `video:plan` has created a research-linked preproduction bundle with
+`teachingSequences`, compile a standalone HTML **animatic** to review the
+sequence before spending money on Fish voice synthesis or rendering frames:
+
+```sh
+cd apps/web
+pnpm video:plan --research ../../examples/preproduction-research-smoke.json \
+  --plan ../../examples/preproduction-plan-smoke.json \
+  --out /tmp/contentgen-story-bundle.json
+pnpm video:animatic --bundle /tmp/contentgen-story-bundle.json \
+  --out /tmp/contentgen-story-preview.html
+open /tmp/contentgen-story-preview.html  # macOS; or open in your browser
+```
+
+The preview **works offline** without a server. It has play/pause, exact-frame
+scrubbing, chapter navigation, and speed control. Teaching phases use distinct
+animated problems, optional familiar-to-technical analogy mappings, progressive
+mechanism reveals, and an earned visual payoff. Objects continue moving subtly
+between reveals rather than freezing on a title slide. The frame sampler is
+deterministic; `prefers-reduced-motion` minimizes ambient movement. When the
+Sound Director has a `sfxIntent`, quiet, **synthesized placeholder** cue sounds
+are available through an opt-in **SFX** toggle; the real SFX assets and rights
+still need selection and synchronization.
+
+This is **not** narrated or exported MP4. Durations are estimated from narration
+text at 145 words/minute, not actual Fish/local TTS timestamps, and storyboard
+illustrations are intentionally schematic. Review the shot/narration plan before
+using Kumiki for production scenes. The output is marked draft, needs editorial
+source/analogy and rights review, and contains no real audio tracks or licensed
+visuals. No external requests or model downloads happen when generating or
+opening the file. `--spoken-wpm` (95–210) and `--fps` (12–60) tune the rough
+preview only. The CLI refuses to overwrite an existing HTML file. To run its
+offline tests, use `node --test scripts/video-production/animatic.test.mjs`.
+
