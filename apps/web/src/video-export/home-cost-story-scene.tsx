@@ -101,9 +101,11 @@ function CostCard({x,y,item,index,opacity}:{x:number;y:number;item:typeof defaul
   <rect x={x+22} y={y+26} width="78" height="78" rx="18" fill="#31565C"/>
   <CostIcon index={index} x={x+61} y={y+65} color={color}/>
   <text x={x+121} y={y+59} fill={paper} fontSize="28" fontWeight="735">{item.name}</text>
-  <text x={x+121} y={y+95} fill={faint} fontSize="20">{item.description}</text>
-  <rect x={x+121} y={y+117} rx="16" width={Math.min(178,item.tag.length*14+25)} height="33" fill="#31535A"/>
-  <text x={x+134} y={y+140} fill={color} fontWeight="750" fontSize="17" letterSpacing="1.5">{item.tag}</text>
+  {fitSvgText(item.description,{maxWidthPx:300,preferredSize:20,minSize:16,maxLines:2}).lines.map((line,i)=>
+    <text key={i} data-story-cost-detail={index} x={x+121} y={y+92+i*24}
+      fill={faint} fontSize="18">{line}</text>)}
+  <rect x={x+121} y={y+134} rx="16" width={Math.min(178,item.tag.length*14+25)} height="31" fill="#31535A"/>
+  <text x={x+134} y={y+156} fill={color} fontWeight="750" fontSize="17" letterSpacing="1.5">{item.tag}</text>
  </g>;
 }
 function Mechanism({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
@@ -133,7 +135,7 @@ function Mechanism({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
       strokeDashoffset={Math.round(-motion.lightSweep*98)}/>;
   })}
   {defaults.map((item,i)=><CostCard key={i} x={812+(i%2)*474} y={291+Math.floor(i/2)*222}
-    item={{...item,name:labels[i]??item.name}} index={i}
+    item={{...item,name:labels[i]??item.name,description:state.visual.itemNotes?.[i+1]??item.description}} index={i}
     opacity={i+1<state.visibleItems?(motion.reveal[i+1]?.opacity??1):0}/>)}
   <text x="820" y="787" fill={faint} fontSize="22">Some costs recur. Repairs arrive when needed.</text>
  </g>;
