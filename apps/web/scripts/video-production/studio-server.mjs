@@ -197,7 +197,7 @@ async function listArtifacts(dir, token) {
 }
 
 /** Start one ephemeral, token-protected local test server; injectable for offline tests. */
-export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(), "Movies", "ContentGen"),
+export async function startVideoStudio({ port = Number(process.env.CONTENTGEN_STUDIO_PORT ?? "8790"), outputRoot = join(homedir(), "Movies", "ContentGen"),
   build = defaultBuild, inspect = inspectProduction, produce = produceVideo, findBrowser = findChromium,
   generateTopic = generateTopicDraft,
   env = process.env } = {}) {
@@ -402,6 +402,7 @@ export async function startVideoStudio({ port = 8788, outputRoot = join(homedir(
       else res.destroy();
     }
   });
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error("CONTENTGEN_STUDIO_PORT must be an integer between 0 and 65535");
   await new Promise((resolveStart, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => { server.off("error", reject); resolveStart(); });
