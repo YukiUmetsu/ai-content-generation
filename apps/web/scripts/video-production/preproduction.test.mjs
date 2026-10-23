@@ -160,3 +160,18 @@ test("narrative cannot bypass research with ungrounded explanation steps",()=>{
   const p=plan();p.explanation[0].claimIds=[];
   assert.ok(codes(parsePreproductionPlan(p,dossier()).findings).includes("ungrounded-explanation"));
 });
+
+test("quality warnings flag copy and delivery monotony without pretending to measure retention",()=>{
+  const d=dossier(),p=plan();
+  p.shots.forEach(s=>{s.onScreenText="Repeated label";});
+  const extraShot={...structuredClone(p.shots[1]),id:"shot_four",subjectIds:["categories"],onScreenText:"Repeated label"};
+  p.shots.splice(2,0,extraShot);
+  p.continuity[1].fromShotId="shot_four";
+  p.continuity.splice(1,0,{fromShotId:"shot_process",toShotId:"shot_four",technique:"cut",subjectIds:[],reason:"Move to a new explanation view."});
+  p.sound.splice(2,0,{...p.sound[1],shotId:"shot_four"});
+  p.sound.forEach(s=>{s.delivery="measured";s.energy="calm";});
+  const result=parsePreproductionPlan(p,d);
+  assert.equal(result.ok,true);
+  assert.ok(codes(result.findings).includes("monotone-performance"));
+  assert.ok(codes(result.findings).includes("repeated-copy"));
+});
