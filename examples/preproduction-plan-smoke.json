@@ -84,7 +84,8 @@
       "family": "summary",
       "purpose": "answer",
       "subjectIds": [
-        "categories"
+        "categories",
+        "house"
       ],
       "visualChange": "Recombine the illustrative expense categories and label them hypothetical.",
       "onScreenText": "Total depends on assumptions",
@@ -138,6 +139,38 @@
       "energy": "focused",
       "pauseAfterMs": 0,
       "sfxIntent": null
+    }
+  ],
+  "teachingSequences": [
+    {
+      "id": "teach_home_cost",
+      "mode": "direct",
+      "question": "Why is the listed price not always the full cost?",
+      "technicalSubjectId": "house",
+      "analogy": null,
+      "claimIds": [
+        "claim_illustrative"
+      ],
+      "phases": [
+        {
+          "kind": "problem",
+          "shotId": "shot_question",
+          "visualAction": "Hold on the house while the list price is highlighted and the rest of the expense categories remain hidden.",
+          "learningChange": "The purchase price might not be the full story."
+        },
+        {
+          "kind": "mechanism",
+          "shotId": "shot_categories",
+          "visualAction": "Keep the same house fixed while distinct recurring expense categories unfold around it.",
+          "learningChange": "Additional cost categories can accumulate around one purchase."
+        },
+        {
+          "kind": "payoff",
+          "shotId": "shot_answer",
+          "visualAction": "Recombine the same illustrated house and expense categories into an explicitly conditional total with visible assumptions.",
+          "learningChange": "An ownership total depends on assumptions, not a single universal number."
+        }
+      ]
     }
   ]
 }
