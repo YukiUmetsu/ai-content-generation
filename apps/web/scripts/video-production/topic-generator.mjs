@@ -15,7 +15,7 @@ export function localChatEndpoint(candidate) {
   catch { fail("local model endpoint must be an HTTP loopback chat-completions URL"); }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
     !url.port || url.username || url.password || url.search || url.hash || url.pathname !== "/v1/chat/completions") {
-    fail("local model endpoint must be http://127.0.0.1:PORT/v1/chat/completions (no credentials, queries or redirects)");
+    fail("local model endpoint must be a loopback URL such as http://127.0.0.1:PORT/v1/chat/completions (no credentials, queries or redirects)");
   }
   return url.href;
 }

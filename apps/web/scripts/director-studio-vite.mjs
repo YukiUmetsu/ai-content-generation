@@ -4,9 +4,11 @@ import { readResearchModelSettings } from "./video-production/research-model-set
 import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
+import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
 
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
+let researchDraftRunning=false;
 function send(res,status,body){
   const data=JSON.stringify(body);
   res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store",
@@ -50,6 +52,23 @@ export async function handleDirectorRequest(req,res,deps={}){
       const settings=await (deps.model??readResearchModelSettings)();
       const approaches=await (deps.editorial??generateEditorialVariants)(request,{modelSettings:settings});
       send(res,200,{approaches,editorialStatus:"unverified-draft"});
+    }else if(req.method==="POST"&&route==="/research-draft"){
+      if(researchDraftRunning){send(res,409,{error:"Research is already running. Wait for the current draft or cancel it."});return;}
+      researchDraftRunning=true;
+      const controller=new AbortController();
+      let responded=false;
+      req.on?.("aborted",()=>controller.abort());
+      res.on?.("close",()=>{if(!responded)controller.abort();});
+      try{
+        const request=await readBody(req);
+        const settings=await (deps.model??readResearchModelSettings)();
+        if(!settings?.model)throw Error("Choose an installed local model in Studio Settings.");
+        const result=await (deps.researchDraft??createStudioResearchDraft)(request,settings,{signal:controller.signal});
+        responded=true;
+        send(res,200,result);
+      }finally{researchDraftRunning=false;}
+    }else if(req.method==="GET"&&/^\/research-draft\/[^/]+$/u.test(route)){
+      send(res,200,await (deps.loadResearch??loadStudioResearchDraft)(route.slice("/research-draft/".length)));
     }else if(req.method==="POST"&&route==="/edit"){
       const request=await readBody(req);
       const result=(deps.edit??editPreproductionShot)(request.dossier,request.bundle,

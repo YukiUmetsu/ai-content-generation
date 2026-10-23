@@ -40,7 +40,8 @@ test("HTML extraction strips script/nav and normalizes entity and whitespace", (
   const text = extractPageText(html);
   assert.equal(text, "Real & Relevant One useful fact.");
   assert.ok(!text.includes("ignore previous"));
-  assert.throws(() => extractPageText("a".repeat(520000)), /bounded input/);
+  assert.equal(extractPageText("a".repeat(524288)).length,14000);
+  assert.throws(() => extractPageText("a".repeat(524289)), /bounded input/);
 });
 
 test("search provider treats results as untrusted leads and never includes private URLs", async () => {
@@ -88,10 +89,13 @@ test("local model receives bounded research source passages without cloud fallba
   const run = await analyzeCapturedResearch([capture()], topic, options, {
     transport: async (endpoint, request) => {
       assert.equal(endpoint, options.endpoint);
-      assert.ok(request.body.includes("UNTRUSTED") === false);
       const body = JSON.parse(request.body);
       assert.equal(body.model, options.model);
-      assert.ok(body.messages[1].content.includes("source_01"));
+      assert.match(body.messages[0].content,/untrusted data/i);
+      assert.equal(body.messages[0].content.includes(content),false);
+      const userContext=JSON.parse(body.messages[1].content);
+      assert.equal(userContext.sources[0].id,"source_01");
+      assert.equal(userContext.sources[0].capturedText,content);
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(candidate()) } }] }),
         { status: 200 });
     }
