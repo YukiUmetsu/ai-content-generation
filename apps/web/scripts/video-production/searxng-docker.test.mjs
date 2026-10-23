@@ -4,8 +4,9 @@ import { mkdtemp, readFile, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSearchManagerArgs, ensureLocalSecret, composeArgs, checkLocalSearch,
-  manageLocalSearch, SEARCH_IMAGE, SEARCH_URL, COMPOSE_FILE } from "./searxng-docker.mjs";
+  manageLocalSearch, SEARCH_IMAGE, COMPOSE_FILE } from "./searxng-docker.mjs";
 
+const SEARCH_URL = "http://127.0.0.1:58023";
 const commands = () => {
   const received = [];
   const fn = async args => {
