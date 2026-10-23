@@ -166,7 +166,7 @@ async fn hostile_origin_missing_token_and_replay_are_rejected_before_keychain_ac
         (Some("http://127.0.0.1:5173"), None),
         (Some("http://127.0.0.1:5173"), Some("wrong-token")),
     ] {
-        let (code, _, no_store) = request(
+        let (code, body, no_store) = request(
             &router,
             Method::PUT,
             "/api/settings/providers/youtube/key",
@@ -176,6 +176,10 @@ async fn hostile_origin_missing_token_and_replay_are_rejected_before_keychain_ac
         )
         .await;
         assert_eq!(code, StatusCode::FORBIDDEN);
+        assert_eq!(
+            body,
+            json!({"error":{"code":"forbidden","message":"Local provider settings authorization failed"}})
+        );
         assert!(no_store);
     }
     assert!(store.0.lock().unwrap().is_none());
