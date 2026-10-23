@@ -8,11 +8,12 @@ import type { HouseMathVisualPlan } from "../../scripts/video-production/visual-
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
 import { HouseMathExportScene } from "./house-math-scene";
 import { GeneralExportScene } from "./general-scene";
+import { PortraitGeneralExportScene } from "./portrait-general-scene";
 import { waitForChartStoryReadiness } from "./chart-story-preflight";
 declare global { interface Window { __contentgenBuildHash?: string } }
 
 /** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
-async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" | "general-explainer-visual-plan", payoffFrame: number) {
+async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" | "general-explainer-visual-plan", payoffFrame: number, portrait: boolean) {
   const start = performance.now();
   let stage: HTMLElement | null = null;
   while (performance.now() - start < 10000) {
@@ -26,6 +27,35 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   const isHouse = kind === "house-math-visual-plan";
   const copy = stage.querySelectorAll<SVGGraphicsElement>(isHouse ? "[data-house-copy]" : "[data-general-copy]");
   if (!copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
+  if (portrait) {
+    const portraitRoot = stage.querySelector<HTMLElement>("[data-portrait-general-scene]");
+    if (!portraitRoot || portraitRoot.dataset.safeFrameStatus !== "ok") {
+      throw new Error(`Kumiki portrait safe-area preflight failed at frame ${target}`);
+    }
+    for (const text of stage.querySelectorAll<SVGTextElement>("[data-portrait-copy]")) {
+      const box = text.getBBox();
+      if (![box.x, box.y, box.width, box.height].every(Number.isFinite) ||
+        box.width <= 0 || box.height <= 0 || box.x < 106 ||
+        box.x + box.width > 942 || box.y < 195 || box.y + box.height > 1550) {
+        throw new Error(`Portrait copy exceeds the authored safe frame at ${target}`);
+      }
+    }
+    for (const group of stage.querySelectorAll<SVGGElement>("[data-portrait-node]")) {
+      const rect = group.querySelector<SVGRectElement>("rect");
+      if (!rect) throw new Error("Portrait diagram lacks a visible card");
+      const bounds = rect.getBBox();
+      for (const text of group.querySelectorAll<SVGTextElement>("text")) {
+        const box = text.getBBox();
+        if (![box.x, box.y, box.width, box.height].every(Number.isFinite) ||
+          box.width <= 0 || box.height <= 0 ||
+          box.x < bounds.x + 22 || box.x + box.width > bounds.x + bounds.width - 12 ||
+          box.y < bounds.y + 10 || box.y + box.height > bounds.y + bounds.height - 9) {
+          throw new Error(`Portrait diagram text clips its card at frame ${target}`);
+        }
+      }
+    }
+    return;
+  }
   for (const item of copy) {
     const box = item.getBBox();
     if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0 ||
@@ -67,10 +97,10 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
 type ExportPlan = HouseMathVisualPlan | GeneralVisualPlan;
 function ExportApp({ plan }: { plan: ExportPlan }) {
   const [frame, setFrame] = useState(0);
-  return <VideoExportStage manifest={plan.manifest} frame={frame} onSeek={(absoluteFrame) => setFrame(absoluteFrame)} prepareFrame={(target) => prepareVideoFrame(target, plan.kind, plan.events[plan.payoffEventId])}>
+  return <VideoExportStage manifest={plan.manifest} frame={frame} onSeek={(absoluteFrame) => setFrame(absoluteFrame)} prepareFrame={(target) => prepareVideoFrame(target, plan.kind, plan.events[plan.payoffEventId], plan.manifest.height > plan.manifest.width)}>
     {plan.kind === "house-math-visual-plan"
       ? <HouseMathExportScene plan={plan} frame={frame} />
-      : <GeneralExportScene plan={plan} frame={frame} />}
+      : plan.manifest.height > plan.manifest.width ? <PortraitGeneralExportScene plan={plan} frame={frame} /> : <GeneralExportScene plan={plan} frame={frame} />}
   </VideoExportStage>;
 }
 
@@ -88,7 +118,9 @@ async function boot() {
   window.__contentgenBuildHash = build.sha256;
   const plan = await response.json() as ExportPlan;
   if (plan?.schemaVersion !== 1 || !["house-math-visual-plan", "general-explainer-visual-plan"].includes(plan.kind) ||
-    plan.manifest?.schemaVersion !== 1 || plan.manifest.width !== 1920 || plan.manifest.height !== 1080 ||
+    plan.manifest?.schemaVersion !== 1 || !(plan.manifest.width === 1920 && plan.manifest.height === 1080 ||
+       plan.kind === "general-explainer-visual-plan" && plan.manifest.width === 1080 && plan.manifest.height === 1920 &&
+       ["youtube-shorts","instagram-reels","tiktok"].includes(plan.manifest.preset)) ||
     !Number.isSafeInteger(plan.manifest.durationFrames) || plan.manifest.durationFrames < 1 ||
     !Array.isArray(plan.chapters) || plan.chapters.length === 0 ||
     typeof plan.events?.[plan.payoffEventId] !== "number") {
