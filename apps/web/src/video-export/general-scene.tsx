@@ -13,6 +13,7 @@ import { compileChapterAttention, sampleChapterAttention } from "./attention-sty
 import { sampleSemanticMotion } from "./semantic-scene-motion";
 import { entryFadeOpacity, motionRevealState } from "../../scripts/video-production/scene-motion.mjs";
 import { SemanticDiagram } from "./semantic-scene-diagrams";
+import { HomeCostStoryScene } from "./home-cost-story-scene";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -46,9 +47,11 @@ function Journey({ items, fps, chapterFrames, frame, fallback, visibleCount }: {
     visibleCount===0?0:Math.min(GENERAL_JOURNEY_VIEWPORT.height,
       top+visibleCount*height+(visibleCount-1)*gap+12);
   return <g transform="translate(1040 242)">
+    <clipPath id="contentgen-flow-safe-bounds"><rect x="0" y="0" width="770" height="640"/></clipPath>
     {visibleCount!==undefined&&<clipPath id="contentgen-flow-reveal">
       <rect width={GENERAL_JOURNEY_VIEWPORT.width} height={revealHeight}/>
     </clipPath>}
+    <g clipPath="url(#contentgen-flow-safe-bounds)">
     <g clipPath={visibleCount!==undefined?"url(#contentgen-flow-reveal)":undefined}>
     <DiagramStage graph={plan.graph} timeline={plan.diagramTimeline} frame={frame}
       width={GENERAL_JOURNEY_VIEWPORT.width} height={GENERAL_JOURNEY_VIEWPORT.height}
@@ -61,6 +64,7 @@ function Journey({ items, fps, chapterFrames, frame, fallback, visibleCount }: {
           index={Number(node.id.slice("step-".length))} highlight={focused} />
       </g>}
     />
+    </g>
     </g>
   </g>;
 }
@@ -146,6 +150,9 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   if (disclosure && source && disclosure.lines.length + source.lines.length > 4) {
     throw new Error(`Chart ${chapter.id} provenance copy needs shortening to fit its visual source area without clipping`);
   }
+  if(state.visual.sceneRecipe==="home-cost-story-v1"){
+    return <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>;
+  }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
   <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
     <defs>
@@ -158,7 +165,6 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     <path d="M120 156 H1800" stroke="#506676" strokeWidth="2" opacity=".7"/>
     <rect x="120" y="90" width="14" height="14" rx="4" fill={accent}/>
     <text x="156" y="107" fill={accent} fontSize="26" fontWeight="700" letterSpacing="5">CONTENTGEN · EXPLAINER</text>
-    <text x="1800" y="107" fill={muted} fontSize="24" textAnchor="end">{String(state.chapterIndex + 1).padStart(2, "0")} / {String(state.chapterCount).padStart(2, "0")}</text>
     <line x1="988" y1="222" x2="988" y2="920" stroke="#425D6D" strokeWidth="2" />
     {!isPayoffHidden && <g opacity={attention?.titleOpacity ?? state.enterProgress}
       clipPath={attention && state.visual.typographyStyle === "wipe" ? "url(#kumiki-title-wipe)" : undefined}
@@ -179,10 +185,6 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {source.lines.map((line, index) => <text data-general-chart-copy="source" key={`s-${index}`} x="1040" y={856 + disclosure.lines.length * 29 + index * 27}
         fontSize={source.fontSize} fill={muted}>{line}</text>)}
     </g>}
-    <path d="M120 978 H1800" stroke="#4C6570" strokeWidth="2" />
-    <rect x="120" y="978" width={1680 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="5" fill={accent} />
-    <text x="120" y="1034" fill={muted} fontSize="22">{state.disclaimer}</text>
-    <text x="1800" y="1034" textAnchor="end" fill={muted} fontSize="22">DRAFT · {frame}f</text>
     {transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
       fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
