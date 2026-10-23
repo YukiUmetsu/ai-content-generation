@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
@@ -55,5 +55,38 @@ describe("Studio menu workspaces", () => {
     expect(stored).toContain("Narration editing course");
     expect(stored).not.toContain("apiKey");
     expect(stored).not.toContain("voiceId");
+  });
+});
+
+describe("Research model setup in Settings", () => {
+  it("discovers installed local models and saves the selected model with the shared Settings API", async () => {
+    const calls: Array<{ path:string; body:unknown }> = [];
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path=String(input);
+      const body=init?.body ? JSON.parse(String(init.body)) as unknown : null;
+      calls.push({ path, body });
+      if (path.endsWith("/models")) return new Response(JSON.stringify({models:["qwen3:8b","gemma:4b"]}),{status:200});
+      if (path.endsWith("/save")) return new Response(JSON.stringify({saved:true,settings:body}),{status:200});
+      return new Response(JSON.stringify({
+        configured:false,searchEndpoint:"http://127.0.0.1:49273/search",
+        settings:{version:1,endpoint:"http://127.0.0.1:11434/v1/chat/completions",model:""}
+      }),{status:200});
+    });
+    try {
+      const user=userEvent.setup();
+      render(<App />);
+      await user.click(screen.getByRole("link",{name:"Settings"}));
+      expect(await screen.findByText(/SearXNG configured at/)).toHaveTextContent("49273");
+      await user.click(screen.getByRole("button",{name:"Find installed models"}));
+      expect(await screen.findByRole("combobox",{name:"Research model ID"})).toBeInTheDocument();
+      await user.selectOptions(screen.getByRole("combobox",{name:"Research model ID"}),"gemma:4b");
+      await user.click(screen.getByRole("button",{name:"Save research model"}));
+      expect(await screen.findByText(/Research model saved/)).toBeInTheDocument();
+      const saved=calls.find(call=>call.path.endsWith("/save"));
+      expect(saved?.body).toEqual({version:1,endpoint:"http://127.0.0.1:11434/v1/chat/completions",model:"gemma:4b"});
+      expect(localStorage.getItem(CATALOG_KEY)).not.toContain("gemma:4b");
+    } finally {
+      request.mockRestore();
+    }
   });
 });

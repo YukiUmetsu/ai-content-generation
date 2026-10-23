@@ -21,7 +21,11 @@
     "video:studio": "node scripts/video-production/studio-server.mjs",
     "test:video:headless": "node --test scripts/video-production/*.test.mjs",
     "video:plan": "node scripts/video-production/preproduction-cli.mjs",
-    "video:research": "node scripts/video-production/research-cli.mjs"
+    "video:research": "node scripts/video-production/research-cli.mjs",
+    "research:up": "node scripts/video-production/searxng-docker.mjs up",
+    "research:down": "node scripts/video-production/searxng-docker.mjs down",
+    "research:status": "node scripts/video-production/searxng-docker.mjs status",
+    "research:check": "node scripts/video-production/searxng-docker.mjs check"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",

@@ -10,6 +10,7 @@ import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { parseResearchDossier } from "./preproduction.mjs";
 import { localChatEndpoint } from "./topic-generator.mjs";
+import { configuredSearchEndpoint } from "./local-search-config.mjs";
 
 const MAX_RESPONSE = 512 * 1024;
 const MAX_MODEL_RESPONSE = 256 * 1024;
@@ -158,7 +159,7 @@ export async function searchCandidates(query, options, { transport = fetch, sign
   const provider = options.provider ?? "searxng";
   let endpoint, headers = {};
   if (provider === "searxng") {
-    endpoint = new URL(localSearxngEndpoint(options.searchEndpoint ?? "http://127.0.0.1:8080/search"));
+    endpoint = new URL(localSearxngEndpoint(options.searchEndpoint ?? configuredSearchEndpoint()));
     endpoint.searchParams.set("q", query);
     endpoint.searchParams.set("format", "json");
     endpoint.searchParams.set("language", options.locale === "ja-JP" ? "ja-JP" : "en-US");
@@ -170,9 +171,19 @@ export async function searchCandidates(query, options, { transport = fetch, sign
     endpoint.searchParams.set("count", "10");
     headers = { "X-Subscription-Token": options.braveApiKey, "Accept": "application/json" };
   } else throw Error("Unknown search provider.");
-  const result = await readJsonBounded(await transport(endpoint.href, {
-    redirect: "error", headers, signal: signalFor(signal, 15000)
-  }));
+  let result;
+  try {
+    result = await readJsonBounded(await transport(endpoint.href, {
+      redirect: "error", headers, signal: signalFor(signal, 15000)
+    }));
+  } catch (error) {
+    if (provider === "searxng") {
+      throw Error("Local SearXNG is unavailable or JSON search is disabled. " +
+        "Run pnpm research:up, then pnpm research:check. " +
+        "Cause: " + String(error?.message ?? error).slice(0, 160));
+    }
+    throw error;
+  }
   const raw = provider === "brave" ? result.web?.results : result.results;
   if (!Array.isArray(raw)) throw Error("Search provider returned no usable result list.");
   const unique = new Set();
