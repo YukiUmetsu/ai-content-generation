@@ -25,7 +25,10 @@ export function LiveRendererPreview({
   const {plan,shotMap}=preview;
   const total=plan.manifest.durationFrames;
   const rate=plan.manifest.fps.num/plan.manifest.fps.den;
-  const initial=shotMap.find(s=>s.shotId===selectedShotId)?.startFrame??0;
+  const maxFrame=Math.max(0,total-1);
+  const clampFrame=(value:number)=>Number.isFinite(value)
+    ?Math.max(0,Math.min(maxFrame,Math.round(value))):0;
+  const initial=clampFrame(shotMap.find(s=>s.shotId===selectedShotId)?.startFrame??0);
   const [frame,setFrame]=useState(initial);
   const [playing,setPlaying]=useState(false);
   const [speed,setSpeed]=useState(1);
@@ -35,24 +38,35 @@ export function LiveRendererPreview({
 
   const frameRef=useRef(initial);
   function seek(next:number){
-    const valid=Math.max(0,Math.min(total-1,Math.round(next)));
+    const valid=clampFrame(next);
     frameRef.current=valid;setFrame(valid);
   }
   useEffect(()=>{
     if(!playing)return;
     let request=0;
-    const start=performance.now();
+    let startTimestamp:number|null=null;
     const from=frameRef.current;
     const tick=(now:number)=>{
-      const target=Math.min(total-1,from+Math.floor((now-start)*rate*speed/1000));
+      // RAF timestamps may describe the start of the previous frame and can
+      // predate a useEffect/performance.now() call. Use one clock exclusively.
+      if(startTimestamp===null)startTimestamp=now;
+      const elapsed=Math.max(0,now-startTimestamp);
+      const advance=Math.floor(elapsed*rate*speed/1000);
+      const target=Number.isFinite(advance)
+        ?Math.max(0,Math.min(total-1,from+advance)):0;
       if(target!==frameRef.current){frameRef.current=target;setFrame(target);}
       if(target>=total-1){setPlaying(false);return;}
+      // A single callback only advances one frame: schedule the NEXT callback
+      // until paused or the very last valid frame is reached.
       request=requestAnimationFrame(tick);
     };
     request=requestAnimationFrame(tick);
     return ()=>cancelAnimationFrame(request);
   },[playing,rate,speed,total]);
-  const chapterIndex=plan.chapters.findIndex(c=>frame>=c.startFrame&&frame<c.endFrame);
+  // Never send an invalid frame to the shared Chromium export component, even
+  // if a stale seek is observed during a recompiled preview render.
+  const displayFrame=clampFrame(frame);
+  const chapterIndex=plan.chapters.findIndex(c=>displayFrame>=c.startFrame&&displayFrame<c.endFrame);
   const active=Math.max(0,chapterIndex);
   const chapter=plan.chapters[active];
   const shot=shotMap[active];
@@ -87,12 +101,12 @@ export function LiveRendererPreview({
         <p className="text-sm font-semibold">Actual Kumiki-backed visual preview</p>
         <p className="text-xs text-muted-foreground">Same scene component as MP4 export · estimated timing · silent</p>
       </div>
-      <p className="text-xs text-muted-foreground">{humanTime(frame,rate)} / {humanTime(total,rate)} · {rate.toFixed(0)} fps</p>
+      <p className="text-xs text-muted-foreground">{humanTime(displayFrame,rate)} / {humanTime(total,rate)} · {rate.toFixed(0)} fps</p>
     </div>
     <Suspense fallback={<div role="status" className="aspect-video rounded-control bg-surface-subtle p-4 text-sm">
       Loading the actual scene renderer…
     </div>}>
-      <RendererScene plan={livePlan} frame={frame}/>
+      <RendererScene plan={livePlan} frame={displayFrame}/>
     </Suspense>
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="outline" aria-label={playing?"Pause visual preview":"Play visual preview"}
@@ -101,9 +115,9 @@ export function LiveRendererPreview({
         {playing?"Pause":"Play"}
       </Button>
       <label className="flex min-w-32 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
-        <span>Scrub video · frame {frame}</span>
+        <span>Scrub video · frame {displayFrame}</span>
         <input aria-label="Scrub actual renderer frames" className="w-full accent-primary"
-          type="range" min={0} max={total-1} step={1} value={frame}
+          type="range" min={0} max={total-1} step={1} value={displayFrame}
           onChange={e=>{setPlaying(false);seek(Number(e.target.value));}}/>
       </label>
       <label className="text-xs font-medium text-muted-foreground">Speed

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
 import { LiveRendererPreview, type LiveVisualPreviewData } from "./live-renderer-preview";
@@ -96,4 +96,66 @@ describe("normal-user scene timeline editor",()=>{
    expect(save).not.toHaveBeenCalled();
    expect(network).not.toHaveBeenCalled();
  });
+});
+
+
+describe("real-time preview playback frame boundaries",()=>{
+  it("uses one RAF clock, never renders negative frames, continues at 30fps and stops on last valid frame",async()=>{
+    const pending=new Map<number,FrameRequestCallback>();
+    let nextId=0;
+    const schedule=vi.spyOn(globalThis,"requestAnimationFrame")
+      .mockImplementation(callback=>{const id=++nextId;pending.set(id,callback);return id;});
+    vi.spyOn(globalThis,"cancelAnimationFrame").mockImplementation(id=>{pending.delete(id);});
+    function advance(timestamp:number){
+      const first=pending.entries().next().value as [number,FrameRequestCallback]|undefined;
+      expect(first).toBeDefined();
+      if(!first)return;
+      pending.delete(first[0]);act(()=>first[1](timestamp));
+    }
+    const user=userEvent.setup();
+    render(<LiveRendererPreview preview={preview}/>);
+    await screen.findByTestId("exported-scene-frame");
+    await user.click(screen.getByRole("button",{name:"Play visual preview"}));
+    expect(schedule).toHaveBeenCalledTimes(1);
+    // The first RAF timestamp might precede the effect's performance.now().
+    // Old code used separate clocks and produced frame -1 on the initial tick.
+    advance(-150);
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 0");
+    expect(pending.size).toBe(1);
+    advance(-116);
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 1");
+    expect(pending.size).toBe(1);
+    advance(350);
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 15");
+    expect(pending.size).toBe(1);
+    advance(100000);
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 179");
+    expect(screen.getByRole("button",{name:"Play visual preview"})).toBeInTheDocument();
+    expect(pending.size).toBe(0);
+    // Replaying from the end must restart at the beginning with valid frames.
+    await user.click(screen.getByRole("button",{name:"Play visual preview"}));
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 0");
+    advance(5);
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 0");
+  });
+  it("cancels pending RAF callbacks when paused and clamps a stale selected shot frame",async()=>{
+    let id=0;
+    const callbacks=new Map<number,FrameRequestCallback>();
+    vi.spyOn(globalThis,"requestAnimationFrame").mockImplementation(cb=>{
+      callbacks.set(++id,cb);return id;
+    });
+    vi.spyOn(globalThis,"cancelAnimationFrame").mockImplementation(requestId=>{
+      callbacks.delete(requestId);
+    });
+    const user=userEvent.setup();
+    const outdated:LiveVisualPreviewData={...preview,
+      shotMap:preview.shotMap.map((s,index)=>index===1?{...s,startFrame:9999}:s)};
+    render(<LiveRendererPreview preview={outdated} selectedShotId="shot-costs"/>);
+    expect(await screen.findByTestId("exported-scene-frame")).toHaveTextContent("frame 179");
+    await user.click(screen.getByRole("button",{name:"Play visual preview"}));
+    expect(screen.getByTestId("exported-scene-frame")).toHaveTextContent("frame 0");
+    expect(callbacks.size).toBe(1);
+    await user.click(screen.getByRole("button",{name:"Pause visual preview"}));
+    expect(callbacks.size).toBe(0);
+  });
 });
