@@ -116,6 +116,7 @@ export function parsePreproductionPlan(plan,dossier){
     if(!v.fields(e,p,["id","actId","claimIds","before","demonstration","after"]))return;
     v.requireId(e.id,p+".id");if(!actIds.has(e.actId))v.add("missing-act",p+".actId","Unknown act.");
     v.refs(e.claimIds,p+".claimIds",claimIds);
+    if(!Array.isArray(e.claimIds)||!e.claimIds.length)v.add("ungrounded-explanation",p+".claimIds","Each learning step needs a researched or explicitly illustrative claim.");
     for(const key of ["before","demonstration","after"])v.requireText(e[key],p+"."+key,700);
   }).filter(obj);
   v.unique(explanation,"explanation");
