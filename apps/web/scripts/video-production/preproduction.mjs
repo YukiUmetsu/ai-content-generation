@@ -3,6 +3,7 @@
  * fact-checking claims. Documents remain editable until a separate approval.
  */
 import { createHash } from "node:crypto";
+import { isSceneMotion } from "./scene-motion.mjs";
 import { validateTeachingSequences, compileTeachingStoryboard } from "./visual-pedagogy.mjs";
 
 const text = (v, max=800) => typeof v === "string" && !!v.trim() && v.length <= max && !/[\u0000-\u001f]/u.test(v);
@@ -126,13 +127,14 @@ export function parsePreproductionPlan(plan,dossier){
   if(!explanationIds.has(plan.story?.answerExplanationId))v.add("unanswered-question","story.answerExplanationId","Every central question needs a planned answer.");
   for(const act of acts)if(!explanation.some(e=>e.actId===act.id))v.add("act-unexplained","explanation","No explanation for act "+act.id);
   const shots=v.items(plan.shots,"shots",160,(s,p)=>{
-    if(!v.fields(s,p,["id","explanationId","family","purpose","subjectIds","visualChange","onScreenText","claimIds","assetRefs"]))return;
+    if(!v.fields(s,p,["id","explanationId","family","purpose","subjectIds","visualChange","onScreenText","claimIds","assetRefs","motion"]))return;
     v.requireId(s.id,p+".id");if(!explanationIds.has(s.explanationId))v.add("missing-explanation",p+".explanationId","Unknown learning step.");
     if(!enums.family.includes(s.family))v.add("shot-family",p+".family","Unsupported family.");
     if(!enums.purpose.includes(s.purpose))v.add("shot-purpose",p+".purpose","Motion needs a purpose.");
     const subjectIds=v.items(s.subjectIds,p+".subjectIds",16,(x,at)=>v.requireId(x,at));
     if(!subjectIds.length)v.add("no-subject",p+".subjectIds","Visible subject required.");
     v.requireText(s.visualChange,p+".visualChange",650);v.requireText(s.onScreenText,p+".onScreenText",240);
+    if(s.motion!==undefined&&!isSceneMotion(s.motion))v.add("invalid-scene-motion",p+".motion","Use bounded reveal, pacing, camera and transition settings.");
     v.refs(s.claimIds,p+".claimIds",claimIds);
     const owner=explanation.find(e=>e.id===s.explanationId);
     for(const claimId of (Array.isArray(s.claimIds)?s.claimIds:[]))
