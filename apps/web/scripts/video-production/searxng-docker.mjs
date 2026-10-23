@@ -14,7 +14,6 @@ import { promisify } from "node:util";
 
 export const SEARCH_IMAGE = "ghcr.io/searxng/searxng:latest";
 import { COMPOSE_FILE, SECRET_FILE, ensureLocalSearchConfig, configuredSearchEndpoint, localSearchUrl, portIsAvailable } from "./local-search-config.mjs";
-export const SEARCH_URL = "http://127.0.0.1:8080"; // legacy constant retained for existing callers; runtime uses persisted port
 
 const exec = promisify(execFile);
 
