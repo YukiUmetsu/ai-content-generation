@@ -132,6 +132,10 @@ export function parsePreproductionPlan(plan,dossier){
     if(!subjectIds.length)v.add("no-subject",p+".subjectIds","Visible subject required.");
     v.requireText(s.visualChange,p+".visualChange",650);v.requireText(s.onScreenText,p+".onScreenText",240);
     v.refs(s.claimIds,p+".claimIds",claimIds);
+    const owner=explanation.find(e=>e.id===s.explanationId);
+    for(const claimId of (Array.isArray(s.claimIds)?s.claimIds:[]))
+      if(owner&&!owner.claimIds?.includes(claimId))
+        v.add("claim-leak",p+".claimIds","A shot may only use claims declared by its explanation: "+claimId);
     v.items(s.assetRefs,p+".assetRefs",12,(x,at)=>{
       v.requireId(x,at);
       const asset=assetsById.get(x);
@@ -143,7 +147,13 @@ export function parsePreproductionPlan(plan,dossier){
   }).filter(obj);
   v.unique(shots,"shots");
   if(!shots.length)v.add("no-shots","shots","A production needs planned shots.");
-  for(const e of explanation)if(!shots.some(s=>s.explanationId===e.id))v.add("unvisualized-explanation","shots","No visual treatment for "+e.id);
+  for(const e of explanation){
+    const itsShots=shots.filter(s=>s.explanationId===e.id);
+    if(!itsShots.length)v.add("unvisualized-explanation","shots","No visual treatment for "+e.id);
+    for(const claimId of (Array.isArray(e.claimIds)?e.claimIds:[]))
+      if(!itsShots.some(s=>s.claimIds?.includes(claimId)))
+        v.add("unvisualized-claim","shots","Learning-step claim has no corresponding visual: "+claimId);
+  }
   if(shots.length){
     if(shots[0].family!=="question"||shots[0].purpose!=="hook")
       v.add("hook-not-visible","shots[0]","Open with an on-screen question shot, not a generic title slide.");
