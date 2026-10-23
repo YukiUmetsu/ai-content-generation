@@ -17,7 +17,7 @@ async function api(route:string,payload:unknown){
   if(!response.ok)throw Error(String(data.error||"Local research service unavailable."));
   return data;
 }
-export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:Dossier,bundle:Bundle)=>void}){
+export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle:unknown)=>void}){
   const [brief,setBrief]=useState({title:"",viewerQuestion:"",audience:"Homeowners",locale:"en-US"});
   const [consent,setConsent]=useState(false);
   const [research,setResearch]=useState<Dossier|null>(null);
