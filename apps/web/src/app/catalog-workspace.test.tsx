@@ -44,7 +44,11 @@ describe("Studio menu workspaces", () => {
     expect(within(main).getByText("Product ideas")).toBeInTheDocument();
 
     await navigate("Settings");
+    expect(screen.getByRole("tablist",{name:"Settings sections"})).toBeInTheDocument();
+    expect(screen.getByRole("tab",{name:"AI models"})).toHaveAttribute("aria-selected","true");
+    await user.click(screen.getByRole("tab",{name:"Appearance"}));
     expect(screen.getByRole("combobox",{name:"Theme"})).toBeInTheDocument();
+    await user.click(screen.getByRole("tab",{name:"Data & privacy"}));
     expect(screen.getByRole("button",{name:"Download catalog JSON"})).toBeInTheDocument();
     expect(screen.getByLabelText("Import catalog JSON")).toBeInTheDocument();
 
@@ -55,6 +59,23 @@ describe("Studio menu workspaces", () => {
     expect(stored).toContain("Narration editing course");
     expect(stored).not.toContain("apiKey");
     expect(stored).not.toContain("voiceId");
+  });
+});
+
+describe("Settings navigation", () => {
+  it("groups model assignments, connections, appearance, prompt templates and local data in five keyboard tabs", async () => {
+    const user=userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("link",{name:"Settings"}));
+    const tabs=within(screen.getByRole("tablist",{name:"Settings sections"}));
+    expect(tabs.getAllByRole("tab")).toHaveLength(5);
+    expect(screen.getByRole("tab",{name:"AI models"})).toHaveAttribute("aria-selected","true");
+    await user.click(screen.getByRole("tab",{name:"Connections"}));
+    expect(screen.getByRole("tab",{name:"Connections"})).toHaveAttribute("aria-selected","true");
+    await user.click(screen.getByRole("tab",{name:"Prompts"}));
+    expect(screen.getByRole("tab",{name:"Prompts"})).toHaveAttribute("aria-selected","true");
+    await user.click(screen.getByRole("tab",{name:"AI models"}));
+    expect(screen.getByRole("tab",{name:"AI models"})).toHaveAttribute("aria-selected","true");
   });
 });
 

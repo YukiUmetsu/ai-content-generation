@@ -11,6 +11,7 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub mod market_api;
+pub mod evidence_api;
 pub mod market_store;
 pub mod market_worker;
 pub mod youtube_api;
@@ -18,6 +19,7 @@ pub mod youtube_api;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/research/evidence", get(evidence_not_implemented))
+        .nest("/api/research", evidence_api::router())
         .nest("/api/research/market", market_api::router())
 }
 
