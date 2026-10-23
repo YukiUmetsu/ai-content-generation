@@ -2,9 +2,10 @@ import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { researchModelSettingsPlugin } from "./scripts/research-model-vite.mjs";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), researchModelSettingsPlugin()],
   input: {
     studio: fileURLToPath(new URL("./index.html", import.meta.url)),
     headlessVideo: fileURLToPath(new URL("./video-export.html", import.meta.url)),
