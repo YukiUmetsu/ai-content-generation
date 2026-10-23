@@ -832,3 +832,46 @@ perform it. Final media rendering and human visual/audio review remain separate.
 
 Use `pnpm --dir apps/web run test:video:headless` for the prompt, evidence and
 revision contract tests; `pnpm --dir apps/web test` covers Studio interactions.
+
+### Incremental media regeneration (real WAV + H.264 segment reuse)
+
+The existing production CLI can rebuild a revised **video-production-job/v1**
+using an explicitly chosen previous **job-owned production output**, avoiding
+unchanged model requests and Chromium frame captures where safe:
+
+    cd apps/web
+    pnpm video:produce --job ../../outputs/revised-job.json \
+      --out ../../outputs/revised-render \
+      --reuse-from ../../outputs/first-render \
+      --provider local --provider-revision YOUR_ENGINE_VERSION \
+      --local-voice-authorized --allow-test-assets \
+      --browser-executable /path/to/installed/chromium
+
+Use the same appropriate provider/voice permissions as the original job.
+For Fish, the existing network, voice-reference, text-transmission and cost
+approvals are still required even when speech is reused.
+
+**Actual reuse behavior:**
+
+- Narration is content-addressed by text, locale, voice/profile, provider and
+  engine version, licensing and approval. Previously normalized 48 kHz mono WAV
+  beats are reused only after metadata, SHA-256, sample probe and current permission
+  checks. Only changed beats call the authorized speech provider.
+- H.264 chunks are now chapter-aligned, with at most 150 frames per chunk.
+  Reuse requires the same Kumiki build, global scene dependencies, full chapter
+  content, absolute frame range, raster/FPS, whole video duration and matching
+  SHA-256 plus measured video properties. Changed scenes render normally.
+  When a narration edit changes total duration, the producer conservatively
+  renders the visuals again instead of assuming synchronization remains correct.
+- Audio master, captions, mux, QA and review stills are rebuilt and checked.
+  Prior releases and caches are always read-only.
+
+Legacy cached video chunks may not be chapter-aligned and are rendered normally;
+their individually verified speech caches can still be reused. Build changes
+also disable video segment reuse. A corrupt previous cache fails closed.
+
+**Boundary:** This currently rebuilds `video-production-job/v1` jobs. The Video
+Director UI edits `preproduction-edit/v1` bundles, which aren't yet automatically
+converted into renderer jobs. That connection is a subsequent milestone.
+This is not an arbitrary external MP4 editor: it generates new releases from
+existing validated ContentGen production jobs, preserving unchanged media safely.
