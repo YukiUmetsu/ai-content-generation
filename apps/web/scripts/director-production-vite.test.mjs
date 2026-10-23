@@ -162,3 +162,16 @@ test("topic-first path requires public-network opt in, uses installed model, and
   assert.equal(bridged.status,200);
   assert.equal(bridged.data.job.beats.length,3);
 });
+
+
+test("one-click sample works without a configured research model, external network or media tools",async()=>{
+  let sideEffects=0;
+  const server=createDirectorProduction({readModel:async()=>{sideEffects++;throw Error("not configured");},
+    build:async()=>{sideEffects++;},produce:async()=>{sideEffects++;}});
+  const response=await invoke(server,"GET","/demo");
+  assert.equal(response.status,200);
+  assert.equal(response.data.dossier.kind,"research-dossier");
+  assert.equal(response.data.bundle.kind,"preproduction-bundle");
+  assert.equal(response.data.bundle.status,"draft-needs-review");
+  assert.equal(sideEffects,0);
+});
