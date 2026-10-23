@@ -228,8 +228,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       commercialRightsVerified: beat.commercialRightsVerified === true,
     }));
     const regeneration = { previousOutputUsed: !!previous,
-      reusedSpeechBeatIds: [...reusedSpeechIds], rebuiltSpeechBeats:job.beats.length-reusedSpeechIds.length,
-      reusedVideoSegments:render.reusedSegmentCount??0, renderedVideoSegments:render.renderedSegmentCount??null,
+      reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
+      reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
     await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
