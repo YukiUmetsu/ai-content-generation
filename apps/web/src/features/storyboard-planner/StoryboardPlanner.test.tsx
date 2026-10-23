@@ -204,11 +204,15 @@ describe("StoryboardPlanner", () => {
     expect(screen.getByLabelText("Narration")).not.toHaveValue("A custom opening for the Alpha project.");
   });
 
-  it("surfaces a corrupt local draft and preserves it instead of overwriting on mount", () => {
+  it("surfaces a corrupt local draft and preserves it even if the editor is changed", async () => {
+    const user = userEvent.setup();
     const key = "contentgen:project-storyboard:v1:project-corrupt";
-    localStorage.setItem(key, '{"kind":"not-a-storyboard","apiKey":"keep-original"}');
+    const original = '{"kind":"not-a-storyboard","apiKey":"keep-original"}';
+    localStorage.setItem(key, original);
     render(<StoryboardPlanner locale="en" {...{ projectId: "project-corrupt" }} />);
     expect(screen.getByRole("alert")).toHaveTextContent(/stored storyboard.*could not be loaded/i);
-    expect(localStorage.getItem(key)).toContain("keep-original");
+    await user.clear(screen.getByLabelText("Narration"));
+    await user.type(screen.getByLabelText("Narration"), "Unsaved because the stored draft is damaged.");
+    expect(localStorage.getItem(key)).toBe(original);
   });
 });
