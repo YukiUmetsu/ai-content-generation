@@ -10,6 +10,36 @@ five feature slots are independently owned: **Brand & appearance** and **Motion
 remain integration slots. The shell, split pane, preview canvas, inspector,
 appearance/density axes and error boundary are provided.
 
+## Start here: try the interactive Video Director
+
+From the repository root, run:
+
+```bash
+git pull
+cd apps/web
+pnpm install
+pnpm dev
+```
+
+Open the localhost URL Vite prints (normally **http://127.0.0.1:5173**), select
+**Video Director** from the main sidebar, then click **Open interactive sample**.
+A three-scene synthetic project is included in the server: **no sample JSON
+file to download or upload**, and **no Docker, AI model, TTS, or FFmpeg** needed
+to see the actual animation player and per-scene motion controls. One click
+opens the sample's real visual preview and timeline automatically. You can
+scrub, play, edit motion, save the sample as your own project, or start another
+project at any time.
+
+**Important: `pnpm video:studio` starts an older, separate video test interface
+on port 8790.** It is **not** the main React Video Director and does not
+contain the built-in demo/onboarding described here.
+
+If you do not see **Open interactive sample**, verify you are using the Vite
+URL and have pulled the latest main branch; stop and restart `pnpm dev` if
+it was already running. In main Studio the built-in demo route
+`/api/contentgen-video/demo` returns the example JSON, but you never need
+to fetch or edit that route yourself.
+
 ## Headless video production (draft MP4 pipeline)
 
 The headless command now connects automatic Fish Audio or local-loopback narration to sample-accurate scene timing, SFX, a Kumiki frame-export scene, bounded browser capture, FFmpeg encoding/muxing, and a measured QA report. **This is an automated *draft*, not a published or commercially approved video.** The example House Math jobs are hypothetical and test-only; neither a live Fish API request nor real browser playback has been verified by CI.
