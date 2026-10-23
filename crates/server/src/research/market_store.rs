@@ -83,6 +83,17 @@ pub struct MarketVideoRecord {
     pub expires_at: i64,
 }
 
+/// A cached public video that overlaps the creator's subject. Matching words
+/// explain the local lookup, not a recommendation score or factual evidence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelatedMarketVideo {
+    #[serde(flatten)]
+    pub video: MarketVideoRecord,
+    pub watchlist_name: String,
+    pub matched_terms: Vec<String>,
+}
+
 fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
     let name = draft.name.trim();
     let query = draft.query.trim();
@@ -432,4 +443,97 @@ pub fn list_observations(
     })?
     .collect::<rusqlite::Result<Vec<_>>>()
     .map_err(Into::into)
+}
+
+/// Read-only, bounded cross-watchlist lookup. No provider request, quota
+/// reservation, or persistent metadata is created by this operation.
+pub fn find_related_observations(
+    db: &Connection,
+    topic: &str,
+    now: i64,
+) -> Result<Vec<RelatedMarketVideo>, MarketError> {
+    use std::collections::HashSet;
+
+    let topic = topic.trim();
+    if topic.is_empty() || topic.chars().count() > 160 || topic.chars().any(char::is_control) {
+        return Err(MarketError::Invalid(
+            "topic must be 1–160 safe characters".into(),
+        ));
+    }
+    const STOP: &[&str] = &[
+        "the", "and", "for", "are", "you", "your", "that", "this", "which", "what", "why", "how",
+        "with", "from", "does", "about", "versus", "was", "has", "have", "its", "not", "but",
+        "can", "all", "into", "should", "when", "where", "who", "than", "their", "our", "will",
+    ];
+    let mut terms = Vec::new();
+    for term in topic.to_lowercase().split(|c: char| !c.is_alphanumeric()) {
+        if term.chars().count() >= 3 && !STOP.contains(&term) && !terms.contains(&term.to_owned()) {
+            terms.push(term.to_owned());
+        }
+    }
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query = db.prepare(
+        "SELECT o.video_id,o.title,o.channel_id,o.channel_title,o.published_at,
+                o.duration_seconds,o.view_count,o.like_count,o.comment_count,
+                o.subscriber_count,o.observed_at,o.expires_at,w.name
+         FROM market_video_observations o
+         JOIN market_watchlists w ON w.id=o.watchlist_id
+         WHERE o.expires_at>?1
+         ORDER BY o.observed_at DESC,o.rowid DESC LIMIT 5000",
+    )?;
+    let rows = query.query_map([now], |row| {
+        Ok((
+            VideoObservation {
+                video_id: row.get(0)?,
+                title: row.get(1)?,
+                channel_id: row.get(2)?,
+                channel_title: row.get(3)?,
+                published_at: row.get(4)?,
+                duration_seconds: row.get(5)?,
+                view_count: row.get(6)?,
+                like_count: row.get(7)?,
+                comment_count: row.get(8)?,
+                subscriber_count: row.get(9)?,
+            },
+            row.get::<_, i64>(10)?,
+            row.get::<_, i64>(11)?,
+            row.get::<_, String>(12)?,
+        ))
+    })?;
+    let mut seen = HashSet::new();
+    let mut matches = Vec::new();
+    for row in rows {
+        let (video, observed_at, expires_at, watchlist_name) = row?;
+        if !seen.insert(video.video_id.clone()) {
+            continue;
+        }
+        let lower = video.title.to_lowercase();
+        let matched_terms: Vec<String> = terms
+            .iter()
+            .filter(|term| lower.contains(term.as_str()))
+            .cloned()
+            .collect();
+        let minimum = if terms.len() >= 3 { 2 } else { 1 };
+        if matched_terms.len() < minimum {
+            continue;
+        }
+        matches.push(RelatedMarketVideo {
+            video: MarketVideoRecord {
+                source_url: format!("https://www.youtube.com/watch?v={}", video.video_id),
+                provider: "youtube-data-api",
+                video,
+                observed_at,
+                expires_at,
+            },
+            watchlist_name,
+            matched_terms,
+        });
+        if matches.len() == 12 {
+            break;
+        }
+    }
+    Ok(matches)
 }

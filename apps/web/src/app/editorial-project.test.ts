@@ -31,4 +31,19 @@ describe("editorial handoff transaction", () => {
     expect(initial.activeProjectId).toBe("project-local");
     expect(initial.projects).toHaveLength(1);
   });
+
+  it("keeps creator-selected YouTube URLs in notes but never copies provider statistics", () => {
+    const draft = createDraft("heat pump installation");
+    draft.input.inspirationUrls = [
+      "https://www.youtube.com/watch?v=abcABC12345",
+      "https://www.youtube.com/watch?v=defDEF12345",
+    ];
+    const next = createEditorialProject(newCatalog(),draft,"en");
+    expect(next.content[0].notes).toContain("abcABC12345");
+    expect(next.content[0].notes).toContain("defDEF12345");
+    expect(next.content[0].notes).not.toContain("views");
+    const board = loadProjectStoryboard(next.activeProjectId).board!;
+    expect(board.assumptions.join(" ")).toContain("defDEF12345");
+    expect(board.claims.every(c => c.status === "unverified" && c.sourceRefs.length === 0)).toBe(true);
+  });
 });

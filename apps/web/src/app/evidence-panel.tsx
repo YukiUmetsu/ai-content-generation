@@ -22,6 +22,8 @@ import type { Locale } from "@/features/registry";
 
 interface EvidencePanelProps {
   locale: Locale;
+  query?: string;
+  onQueryChange?: (value: string) => void;
 }
 
 const MAX_QUERY_LENGTH = 500;
@@ -321,8 +323,10 @@ function ContradictionCard({
   );
 }
 
-export function EvidencePanel({ locale }: EvidencePanelProps) {
-  const [query, setQuery] = useState("");
+export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }: EvidencePanelProps) {
+  const [localQuery, setLocalQuery] = useState("");
+  const query = controlledQuery ?? localQuery;
+  const setQuery = onQueryChange ?? setLocalQuery;
   const [response, setResponse] = useState<EvidenceSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [slow, setSlow] = useState(false);

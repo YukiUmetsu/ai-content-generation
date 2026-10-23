@@ -12,6 +12,8 @@ export interface EditorialInput {
   reviewNotes: string;
   /** Optional creator-selected reference URL, explicitly NOT evidence. */
   inspirationUrl: string;
+  /** Up to five creator-selected URLs; persisted without provider metrics. */
+  inspirationUrls: string[];
 }
 
 export interface EditorialApproach {
@@ -47,10 +49,10 @@ const bounded = (value: unknown, label: string, max: number, min = 0): string =>
   }
   return value.trim();
 };
-const exact = (candidate: unknown, fields: readonly string[], label: string): Record<string, unknown> => {
+const exact = (candidate: unknown, fields: readonly string[], label: string, optional: readonly string[] = []): Record<string, unknown> => {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw Error(`Invalid ${label}.`);
   const raw = candidate as Record<string, unknown>;
-  if (Object.keys(raw).some(field => !fields.includes(field)) || fields.some(field => !(field in raw))) throw Error(`Unexpected or missing ${label} fields.`);
+  if (Object.keys(raw).some(field => !fields.includes(field) && !optional.includes(field)) || fields.some(field => !(field in raw))) throw Error(`Unexpected or missing ${label} fields.`);
   return raw;
 };
 const urlOrEmpty = (value: unknown): string => {
@@ -64,7 +66,11 @@ const urlOrEmpty = (value: unknown): string => {
 };
 
 export function validateEditorialInput(candidate: unknown): EditorialInput {
-  const data = exact(candidate, ["topic", "audience", "viewerQuestion", "payoff", "reviewNotes", "inspirationUrl"], "editorial input");
+  const data = exact(candidate, ["topic", "audience", "viewerQuestion", "payoff", "reviewNotes", "inspirationUrl"], "editorial input", ["inspirationUrls"]);
+  if (data.inspirationUrls !== undefined && (!Array.isArray(data.inspirationUrls) || data.inspirationUrls.length > 5)) {
+    throw Error("Select a maximum of five inspiration links.");
+  }
+  const links = data.inspirationUrls === undefined ? [] : (data.inspirationUrls as unknown[]).map(urlOrEmpty);
   return {
     topic: bounded(data.topic, "Topic", 160, 3),
     audience: bounded(data.audience, "Audience", 120, 3),
@@ -72,6 +78,7 @@ export function validateEditorialInput(candidate: unknown): EditorialInput {
     payoff: bounded(data.payoff, "Payoff", 320, 3),
     reviewNotes: bounded(data.reviewNotes, "Review notes", 1800),
     inspirationUrl: urlOrEmpty(data.inspirationUrl),
+    inspirationUrls: [...new Set(links.filter(Boolean))],
   };
 }
 
@@ -104,7 +111,7 @@ export function createDraft(topic: string): EditorialDraft {
     audience: "people exploring this topic",
     viewerQuestion: `What should I understand about ${original}?`.slice(0, 200),
     payoff: `Explain the important parts of ${original}, including what still needs verification.`.slice(0, 320),
-    reviewNotes: "", inspirationUrl: "",
+    reviewNotes: "", inspirationUrl: "", inspirationUrls: [],
   };
   return { version: 1, input, approaches: starterApproaches(input), selectedId: "direct" };
 }
@@ -159,7 +166,7 @@ export function loadEditorialDraft(watchlistId: string, query: string): {draft: 
 export function draftToStoryboard(candidate: EditorialDraft, projectId: string, locale: Locale): SemanticStoryboard {
   if (!KEY.test(projectId)) throw Error("Invalid video project ID.");
   const draft = validateEditorialDraft(candidate);
-  const { topic, audience, viewerQuestion, payoff, reviewNotes, inspirationUrl } = draft.input;
+  const { topic, audience, viewerQuestion, payoff, reviewNotes, inspirationUrl, inspirationUrls } = draft.input;
   const approach = draft.approaches.find(a => a.id === draft.selectedId)!;
   const claimRefs = ["claim-editorial-review"];
   const beat = (id: string, role: StoryboardBeat["role"], narration: string, visualIntent: StoryboardBeat["visualIntent"],
@@ -210,7 +217,7 @@ export function draftToStoryboard(candidate: EditorialDraft, projectId: string, 
       "Unverified editorial outline. No claims have been independently fact-checked or approved for publication.",
       `Audience: ${audience}. Intended answer: ${payoff}`,
       `Thumbnail concept: ${approach.thumbnail}. Sound intent: ${approach.sfxIntent || "None"}.`,
-      ...(inspirationUrl ? [`Public video provided for inspiration only, NOT evidence: ${inspirationUrl}`] : []),
+      ...[...new Set([inspirationUrl,...inspirationUrls].filter(Boolean))].map(url => `Public video provided for inspiration only, NOT evidence: ${url}`),
       ...(reviewNotes ? [`Creator review notes (unverified): ${reviewNotes}`] : []),
     ],
   };
