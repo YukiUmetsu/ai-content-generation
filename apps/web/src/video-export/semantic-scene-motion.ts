@@ -34,7 +34,12 @@ export function sampleSemanticMotion({
     "general-intro":"question-lens","general-flow":"journey",
     "general-comparison":"contrast","general-breakdown":"decomposition","general-payoff":"synthesis"
   };
-  const revealStep=Math.max(1,Math.min(24,Math.floor(durationFrames/itemCount)));
+  // A payoff's editorial state switches all parts on after the event.
+  // Stagger their visual entries *within* that reveal instead of hiding the
+  // last elements until the narration has nearly finished.
+  const revealStep=intent==="general-payoff"
+    ?Math.max(1,Math.floor(20/Math.max(1,itemCount-1)))
+    :Math.max(1,Math.min(24,Math.floor(durationFrames/itemCount)));
   const focusIndex=Math.min(itemCount-1,Math.max(0,visibleItems-1));
   const timeline=localFrame/Math.max(1,durationFrames-1);
   const completion=ease(timeline);
