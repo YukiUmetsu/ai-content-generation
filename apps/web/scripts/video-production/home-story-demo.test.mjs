@@ -1,0 +1,46 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+import { compilePreproductionBundle, parsePreproductionPlan } from "./preproduction.mjs";
+import { compilePreproductionRenderJob } from "./preproduction-render-bridge.mjs";
+import { compileLiveVisualPreview } from "./live-visual-preview.mjs";
+import { parseVideoProductionJob } from "./job.mjs";
+
+const fixture=name=>JSON.parse(readFileSync(new URL("../../../../examples/"+name,import.meta.url),"utf8"));
+test("built-in interactive demo is an actual instructive home-cost story, not empty House/Categories cards",()=>{
+ const dossier=fixture("preproduction-research-smoke.json");
+ const plan=fixture("preproduction-plan-smoke.json");
+ assert.equal(parsePreproductionPlan(plan,dossier).ok,true);
+ assert.equal(dossier.claims[0].status,"illustrative");
+ assert.match(dossier.claims[0].text,/mortgage interest|financing interest/iu);
+ assert.ok(plan.sound.every(x=>x.narration.length>45));
+ assert.equal(plan.shots.length,3);
+ assert.deepEqual(plan.shots.map(x=>x.sceneRecipe),Array(3).fill("home-cost-story-v1"));
+ const bundle=compilePreproductionBundle(dossier,plan);
+ const bridged=compilePreproductionRenderJob(dossier,bundle);
+ assert.equal(parseVideoProductionJob(bridged.job).ok,true);
+ assert.deepEqual(bridged.job.beats.map(x=>x.visual.sceneRecipe),Array(3).fill("home-cost-story-v1"));
+ assert.ok(bridged.job.beats[1].visual.items.some(x=>/interest/iu.test(x)));
+ assert.ok(bridged.job.beats[1].visual.items.some(x=>/insurance/iu.test(x)));
+ assert.ok(bridged.job.beats[1].visual.items.some(x=>/maintenance/iu.test(x)));
+ const preview=compileLiveVisualPreview(dossier,bundle);
+ assert.equal(preview.plan.chapters.length,3);
+ assert.deepEqual(preview.plan.chapters.map(x=>x.visual.sceneRecipe),Array(3).fill("home-cost-story-v1"));
+ assert.equal(preview.plan.commercialReady,false);
+ assert.equal(preview.timing.measuredNarration,false);
+});
+test("unknown recipes fail closed while project retains claim and rights provenance",()=>{
+ const dossier=fixture("preproduction-research-smoke.json");
+ const plan=fixture("preproduction-plan-smoke.json");
+ const forged=structuredClone(plan);forged.shots[0].sceneRecipe="run-user-script";
+ const parsed=parsePreproductionPlan(forged,dossier);
+ assert.equal(parsed.ok,false);
+ assert.ok(parsed.findings.some(x=>x.code==="unknown-scene-recipe"));
+ const bundle=compilePreproductionBundle(dossier,plan);
+ const bridged=compilePreproductionRenderJob(dossier,bundle);
+ assert.equal(bridged.job.approval,"test-only");
+ assert.equal(bridged.job.policy.reviewerApproved,false);
+ assert.equal(bridged.job.policy.commercialRightsVerified,false);
+ assert.deepEqual(bridged.job.claims,dossier.claims);
+ assert.deepEqual(bridged.job.evidence,dossier.evidence);
+});
