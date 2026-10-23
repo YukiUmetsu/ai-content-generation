@@ -42,7 +42,7 @@ function report() {
 }
 export function parseResearchDossier(dossier){
   const v=report();
-  if(!v.fields(dossier,"$",["schemaVersion","kind","id","topic","evidence","claims","gaps","review"]))return {ok:false,findings:v.findings};
+  if(!v.fields(dossier,"$",["schemaVersion","kind","id","topic","evidence","claims","assets","gaps","review"]))return {ok:false,findings:v.findings};
   if(dossier.schemaVersion!==1||dossier.kind!=="research-dossier")v.add("schema","$","Expected research-dossier/v1.");
   v.requireId(dossier.id,"id");
   if(v.fields(dossier.topic,"topic",["title","viewerQuestion","audience","locale"])){
@@ -71,6 +71,13 @@ export function parseResearchDossier(dossier){
     if(c.status==="verified"&&!refs.length)v.add("source-required",p+".sourceRefs","A verified claim needs a captured source.");
   });
   v.unique(claims,"claims");
+  const assets=v.items(dossier.assets ?? [],"assets",64,(asset,p)=>{
+    if(!v.fields(asset,p,["id","kind","ref","licenseStatus"]))return;
+    v.requireId(asset.id,p+".id");v.requireText(asset.ref,p+".ref",500);
+    if(!["illustration","photo","video","three-model","audio"].includes(asset.kind))v.add("asset-kind",p+".kind","Unsupported asset type.");
+    if(!["verified","unverified","test-only"].includes(asset.licenseStatus))v.add("asset-license",p+".licenseStatus","Asset rights need explicit status.");
+  });
+  v.unique(assets,"assets");
   if(!claims.length)v.add("claims-required","claims","Research requires recorded claims.");
   v.items(dossier.gaps,"gaps",30,(x,p)=>v.requireText(x,p,400));
   if(v.fields(dossier.review,"review",["status","reviewer"])){
@@ -89,6 +96,7 @@ export function parsePreproductionPlan(plan,dossier){
   if(plan.researchId!==dossier.id)v.add("dossier-mismatch","researchId","The plan must pin the research dossier.");
   if(plan.styleId!=="cinematic-explainer-v1")v.add("style","styleId","Unknown visual direction.");
   const claimIds=new Set(dossier.claims.map(x=>x.id));
+  const assetsById=new Map((dossier.assets ?? []).map(x=>[x.id,x]));
   if(v.fields(plan.story,"story",["pattern","premise","hook","question","answerExplanationId","acts"])){
     if(!enums.pattern.includes(plan.story.pattern))v.add("pattern","story.pattern","Unsupported story structure.");
     v.requireText(plan.story.premise,"story.premise",600);
@@ -124,7 +132,13 @@ export function parsePreproductionPlan(plan,dossier){
     if(!subjectIds.length)v.add("no-subject",p+".subjectIds","Visible subject required.");
     v.requireText(s.visualChange,p+".visualChange",650);v.requireText(s.onScreenText,p+".onScreenText",240);
     v.refs(s.claimIds,p+".claimIds",claimIds);
-    v.items(s.assetRefs,p+".assetRefs",12,(x,at)=>v.requireId(x,at));
+    v.items(s.assetRefs,p+".assetRefs",12,(x,at)=>{
+      v.requireId(x,at);
+      const asset=assetsById.get(x);
+      if(!asset)v.add("missing-asset-reference",at,"Unknown asset; do not invent one.");
+      else if(asset.licenseStatus!=="verified"&&asset.licenseStatus!=="test-only")
+        v.add("asset-rights-unresolved",at,"Asset rights require review before preproduction can be ready.");
+    });
     if(s.family==="mechanism"&&!s.assetRefs?.length)v.add("missing-asset",p+".assetRefs","A mechanism requires an actual approved asset, not an invented object.");
   });
   v.unique(shots,"shots");
@@ -173,6 +187,10 @@ export function inspectPreproduction(dossier,plan){
   for(const claimId of used){
     const claim=dossier.claims.find(c=>c.id===claimId);
     if(!["verified","illustrative"].includes(claim?.status))findings.push({severity:"error",code:"claim-unreviewed",path:"research.claims",message:"Used claim needs verification: "+claimId});
+  }
+  for(const shot of plan.shots)for(const assetId of shot.assetRefs){
+    if(dossier.assets?.find(a=>a.id===assetId)?.licenseStatus==="test-only")
+      findings.push({severity:"error",code:"test-asset-not-approved",path:"research.assets",message:"A test-only asset is not production ready: "+assetId});
   }
   if(dossier.gaps.length)findings.push({severity:"warning",code:"research-gaps",path:"research.gaps",message:"Open research gaps require editorial assessment."});
   return {ready:!findings.some(x=>x.severity==="error"),findings};
