@@ -131,13 +131,17 @@ export async function produceVideo(candidate, options, deps = {}) {
   const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
+  const reusedSpeechIds = [];
   let stage;
   try {
     options.onProgress?.({ phase: "narration", message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
       reuseCacheRoot:previous?.cacheRoot,
-      onReuse:event=>options.onProgress?.({phase:"speech-reused",...event}),
+      onReuse:event=>{
+        reusedSpeechIds.push(event.beatId);
+        options.onProgress?.({phase:"speech-reused",...event});
+      },
       allowNetwork: options.allowNetwork, voiceReferenceConsent: options.voiceReferenceConsent,
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
@@ -223,14 +227,18 @@ export async function produceVideo(candidate, options, deps = {}) {
       licenseStatus: beat.licenseStatus ?? job.voice.licenseStatus,
       commercialRightsVerified: beat.commercialRightsVerified === true,
     }));
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes }, null, 2), { flag: "wx" });
+    const regeneration = { previousOutputUsed: !!previous,
+      reusedSpeechBeatIds: [...reusedSpeechIds], rebuiltSpeechBeats:job.beats.length-reusedSpeechIds.length,
+      reusedVideoSegments:render.reusedSegmentCount??0, renderedVideoSegments:render.renderedSegmentCount??null,
+      audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.
     if (await exists(releaseDir)) fail("release appeared concurrently; refusing to overwrite");
     await rename(working, releaseDir);
     options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening." });
-    return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash };
+    return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration };
   } finally {
     if (stage) await stage.close();
     // Only the uniquely allocated staging directory is eligible for cleanup.
