@@ -139,12 +139,21 @@ fn twenty_searches_is_a_hard_rolling_budget_even_after_watchlist_deletion() {
         market_store::complete_run(&db, &run.id, &[], now + i).unwrap();
     }
     assert_eq!(market_store::used_search_calls(&db, now + 20).unwrap(), 20);
-    assert!(market_store::claim_watchlist(&db, &first.id, now + 20, true)
-        .unwrap().is_none());
+    assert!(
+        market_store::claim_watchlist(&db, &first.id, now + 20, true)
+            .unwrap()
+            .is_none()
+    );
     market_store::delete_watchlist(&db, &first.id).unwrap();
     let second = market_store::create_watchlist(&db, draft(true), now + 20).unwrap();
-    assert!(market_store::claim_watchlist(&db, &second.id, now + 21, true)
-        .unwrap().is_none());
+    assert!(
+        market_store::claim_watchlist(&db, &second.id, now + 21, true)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(market_store::used_search_calls(&db, now + 21).unwrap(), 20);
-    assert_eq!(market_store::used_search_calls(&db, now + 86_420).unwrap(), 0);
+    assert_eq!(
+        market_store::used_search_calls(&db, now + 86_420).unwrap(),
+        0
+    );
 }
