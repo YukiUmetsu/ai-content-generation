@@ -14,6 +14,7 @@ const integer = (v, min = 0) => Number.isSafeInteger(v) && v >= min;
 const allowedIntents = new Set(["house-intro", "cost-breakdown", "cost-timeline", "cost-comparison", "cost-payoff"]);
 const genericIntents = new Set(["general-intro", "general-flow", "general-comparison", "general-breakdown", "general-payoff"]);
 const byPreset = new Map(presets.map((preset) => [preset.id, preset]));
+const portraitPresets = new Set(["youtube-shorts", "instagram-reels", "tiktok"]);
 
 /** @param {unknown} input */
 export function parseVideoProductionJob(input) {
@@ -104,6 +105,13 @@ export function parseVideoProductionJob(input) {
       !d.targetDurationSeconds.every((value) => integer(value, 1)) ||
       d.targetDurationSeconds[0] > d.targetDurationSeconds[1]) {
       add("invalid-duration-policy", "destination.targetDurationSeconds", "Expected ordered positive duration bounds.");
+    }
+    if (family === "general-explainer-v1" && !["youtube", ...portraitPresets].includes(d.presetId)) {
+      add("unsupported-general-preset", "destination.presetId", "Generic video supports YouTube landscape, Shorts, Reels or TikTok portrait.");
+    }
+    if (family === "general-explainer-v1" && portraitPresets.has(d.presetId) && (input.mode !== "smoke" ||
+      d.targetDurationSeconds?.[1] > 180 || d.minimumDurationSeconds !== null)) {
+      add("portrait-duration-invalid", "destination", "Portrait general explainers must be short-form and within 180 seconds.");
     }
     if (input.mode === "youtube-long" && (d.presetId !== "youtube" || !integer(d.minimumDurationSeconds, 480) || d.targetDurationSeconds?.[1] < 480)) {
       add("invalid-duration-policy", "destination.minimumDurationSeconds", "YouTube long production requires at least 480 seconds and a landscape profile.");
@@ -274,7 +282,10 @@ export function parseVideoProductionJob(input) {
         if (has(beat.visual, "typographyStyle") && !["snap", "overshoot", "wipe"].includes(beat.visual.typographyStyle)) {
           add("invalid-typography-style", `beats[${index}].visual.typographyStyle`, "Choose a supported Kumiki impact typography treatment.");
         }
-        if (has(beat.visual, "chart")) validateChart(beat.visual.chart, `beats[${index}].visual.chart`, beat);
+        if (has(beat.visual, "chart")) {
+          if (portraitPresets.has(input.destination?.presetId)) add("portrait-chart-unavailable", `beats[${index}].visual.chart`, "ChartStory needs a portrait-specific source disclosure and measured layout; use a qualitative scene.");
+          else validateChart(beat.visual.chart, `beats[${index}].visual.chart`, beat);
+        }
         if (!Array.isArray(beat.visual.items) || beat.visual.items.length < 2 || beat.visual.items.length > 5) {
           add("invalid-diagram-items", `beats[${index}].visual.items`, "A generic scene needs 2–5 specific, meaningful diagram labels.");
         } else for (const [itemIndex, label] of beat.visual.items.entries()) {

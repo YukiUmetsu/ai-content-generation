@@ -7,8 +7,11 @@ const ease = (x) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 -
 export function compileGeneralVisuals(job, timeline) {
   const parsed = parseVideoProductionJob(job);
   if (!parsed.ok || job.visualFamily !== "general-explainer-v1") fail(parsed.findings?.map((f) => f.code).join(", ") || "visual family mismatch");
-  if (job.destination.presetId !== "youtube" || job.destination.width !== 1920 || job.destination.height !== 1080) fail("only landscape YouTube 1920 × 1080 is supported in G1");
+  const portrait = ["youtube-shorts", "instagram-reels", "tiktok"].includes(job.destination.presetId);
+  if (!["youtube", "youtube-shorts", "instagram-reels", "tiktok"].includes(job.destination.presetId) ||
+    job.destination.width !== (portrait ? 1080 : 1920) || job.destination.height !== (portrait ? 1920 : 1080)) fail("unsupported general video platform raster");
   if (timeline?.sampleRate !== 48000 || !Number.isSafeInteger(timeline.totalFrames) || timeline.totalFrames < 1) fail("measured 48 kHz audio timeline required");
+  if (portrait && timeline.totalFrames * job.destination.fps.den > 180 * job.destination.fps.num) fail("portrait narration exceeds the 180-second short-form limit; shorten the script rather than cropping audio");
   if (timeline.fps?.num !== job.destination.fps.num || timeline.fps?.den !== job.destination.fps.den) fail("timeline FPS mismatch");
   const minimumSeconds = Math.max(job.mode === "youtube-long" ? 480 : 0, job.destination.minimumDurationSeconds ?? 0);
   if (timeline.totalSamples < minimumSeconds * 48000) fail(`video requires ${minimumSeconds} seconds of measured narration`);
@@ -28,7 +31,7 @@ export function compileGeneralVisuals(job, timeline) {
   if (timeline.eventFrames?.[payoffEventId] !== chapters.at(-1).startFrame || !chapters.at(-1).eventIds.includes(payoffEventId)) fail("payoff event must start the final payoff beat");
   return {
     schemaVersion: 1, kind: "general-explainer-visual-plan", title: job.topic.title, locale: job.locale,
-    manifest: { schemaVersion: 1, id: job.id, durationFrames: timeline.totalFrames, width: 1920, height: 1080, fps: { ...job.destination.fps }, preset: "youtube" },
+    manifest: { schemaVersion: 1, id: job.id, durationFrames: timeline.totalFrames, width: job.destination.width, height: job.destination.height, fps: { ...job.destination.fps }, preset: job.destination.presetId },
     chapters, claims: structuredClone(job.claims), evidence: structuredClone(job.evidence ?? []),
     events: { ...timeline.eventFrames }, payoffEventId,
     disclaimer: "UNVERIFIED EDITORIAL DRAFT · REVIEW CLAIMS AND RIGHTS",
