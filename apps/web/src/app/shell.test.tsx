@@ -69,6 +69,6 @@ describe("Studio shell", () => {
     await waitFor(()=>expect(screen.getByTestId("platform-layout-frame")).toHaveAttribute("data-profile","youtube-shorts"));
     await user.selectOptions(screen.getByRole("combobox",{name:/Platform/i}),"youtube");
     await waitFor(()=>expect(screen.getByTestId("platform-layout-frame")).toHaveAttribute("data-profile","youtube"));
-    expect(within(screen.getByLabelText(/how to use this tool/i)).getByText("Live")).toBeInTheDocument();
+    expect(within(screen.getByLabelText(/how to use this tool/i)).getByText("Live preview")).toBeInTheDocument();
   });
 });
