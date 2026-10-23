@@ -140,3 +140,18 @@ test("the opening must show the question and the ending must show its answer",()
   assert.ok(found.includes("hook-not-visible"));
   assert.ok(found.includes("payoff-not-visible"));
 });
+
+test("shot claim must belong to its explanation and each explanation claim must be visualized",()=>{
+  const d=dossier(),p=plan();
+  p.shots[1].claimIds=["claim_cost"];
+  assert.ok(codes(parsePreproductionPlan(p,d).findings).includes("claim-leak"));
+  const missing=plan();missing.shots[2].claimIds=[];
+  assert.ok(codes(parsePreproductionPlan(missing,d).findings).includes("unvisualized-claim"));
+});
+test("checked-in synthetic fixtures run completely offline but remain unreviewed",async()=>{
+  const d=JSON.parse(await readFile(new URL("../../../../examples/preproduction-research-smoke.json",import.meta.url),"utf8"));
+  const p=JSON.parse(await readFile(new URL("../../../../examples/preproduction-plan-smoke.json",import.meta.url),"utf8"));
+  assert.equal(parseResearchDossier(d).ok,true);
+  assert.equal(parsePreproductionPlan(p,d).ok,true);
+  assert.equal(compilePreproductionBundle(d,p).status,"draft-needs-review");
+});
