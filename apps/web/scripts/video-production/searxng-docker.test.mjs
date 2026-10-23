@@ -63,7 +63,7 @@ test("local check distinguishes healthy SearXNG, wrong port listener, JSON disab
   const denied = await checkLocalSearch({ search: true, endpoint: SEARCH_URL + "/search", transport: async () => new Response("not allowed", { status: 403 }) });
   assert.match(denied.reason, /JSON disabled/);
   const json = await checkLocalSearch({ search: true, endpoint: SEARCH_URL + "/search", transport: async url => {
-    assert.equal(new URL(url).host, "127.0.0.1:8080");
+    assert.equal(new URL(url).host, "127.0.0.1:58023");
     assert.equal(new URL(url).searchParams.get("format"), "json");
     return new Response(JSON.stringify({ results: [{ title: "x" }] }), { status: 200 });
   } });
