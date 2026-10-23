@@ -1,7 +1,7 @@
 /** Versioned, browser-local storyboard drafts keyed by the selected local project.
  * This is an authoring cache, not a backend project, approved release, or media artifact.
  */
-import { canonicalJson, parseStoryboard, serializeStoryboard } from "./serialize";
+import { canonicalJson, parseStoryboardDraft, serializeStoryboard } from "./serialize";
 import type { SemanticStoryboard } from "./types";
 
 export const PROJECT_STORYBOARD_PREFIX = "contentgen:project-storyboard:v1:";
@@ -27,7 +27,7 @@ export function loadProjectStoryboard(projectId: string): {
     const raw = localStorage.getItem(projectStoryboardKey(projectId));
     if (raw === null) return { board: null, warning: null };
     boundedJson(raw);
-    const parsed = parseStoryboard(raw);
+    const parsed = parseStoryboardDraft(raw);
     if (!parsed.ok) throw new Error("The saved document has an invalid storyboard schema.");
     // Reject unknown fields rather than silently dropping them on the next save.
     if (canonicalJson(JSON.parse(raw) as unknown) !== serializeStoryboard(parsed.board)) {
@@ -43,7 +43,7 @@ export function loadProjectStoryboard(projectId: string): {
 export function saveProjectStoryboard(projectId: string, board: SemanticStoryboard): void {
   const raw = serializeStoryboard(board);
   boundedJson(raw);
-  const parsed = parseStoryboard(raw);
+  const parsed = parseStoryboardDraft(raw);
   if (!parsed.ok || canonicalJson(board) !== serializeStoryboard(parsed.board)) {
     throw new Error("Draft failed schema validation. Export a copy before continuing.");
   }
