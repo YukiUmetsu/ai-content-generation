@@ -11,6 +11,7 @@ export function compileGeneralVisuals(job, timeline) {
   if (!["youtube", "youtube-shorts", "instagram-reels", "tiktok"].includes(job.destination.presetId) ||
     job.destination.width !== (portrait ? 1080 : 1920) || job.destination.height !== (portrait ? 1920 : 1080)) fail("unsupported general video platform raster");
   if (timeline?.sampleRate !== 48000 || !Number.isSafeInteger(timeline.totalFrames) || timeline.totalFrames < 1) fail("measured 48 kHz audio timeline required");
+  if (portrait && timeline.totalFrames * job.destination.fps.den > 180 * job.destination.fps.num) fail("portrait narration exceeds the 180-second short-form limit; shorten the script rather than cropping audio");
   if (timeline.fps?.num !== job.destination.fps.num || timeline.fps?.den !== job.destination.fps.den) fail("timeline FPS mismatch");
   const minimumSeconds = Math.max(job.mode === "youtube-long" ? 480 : 0, job.destination.minimumDurationSeconds ?? 0);
   if (timeline.totalSamples < minimumSeconds * 48000) fail(`video requires ${minimumSeconds} seconds of measured narration`);
