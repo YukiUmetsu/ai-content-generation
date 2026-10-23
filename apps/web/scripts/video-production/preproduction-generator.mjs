@@ -21,6 +21,20 @@ const SYSTEM = [
   "shots:[{id,explanationId,family,purpose,subjectIds,visualChange,onScreenText,claimIds,assetRefs}]",
   "continuity:[{fromShotId,toShotId,technique,subjectIds,reason}] for each pair of adjacent shots.",
   "sound:[{shotId,narration,delivery,energy,pauseAfterMs,sfxIntent}] exactly one per shot.",
+  "REQUIRED teachingSequences: nonempty array of {id,mode,question,technicalSubjectId,analogy,claimIds,phases}.",
+  "For a sequence, mode is direct or analogy. Direct: analogy=null; phases exactly problem→mechanism→payoff.",
+  "Analogy mode: phases exactly problem→analogy→mechanism→payoff. analogy={familiarSystem,technicalSystem,analogySubjectId,mappings:[{familiar,technical}],breaksAt}; include at least two genuine distinct correspondences.",
+  "Each phase={kind,shotId,visualAction,learningChange}. Every phase must link to a DIFFERENT already-declared shot, in chronological order.",
+  "The shot for problem/mechanism/payoff must have the technicalSubjectId in subjectIds. The analogy shot must show analogySubjectId instead.",
+  "Use the same technical subject across the demonstration so changes are visibly continuous, not new title slides.",
+  "Every teaching claimId must appear on one of those shots and refer only to supplied research claims; no new facts from a metaphor.",
+  "At least one sequence payoff must use a shot associated with story.answerExplanationId.",
+  "Problem: show an observable obstacle, misconception or missing piece. Analogy: show a familiar operation with explicit mapping. Mechanism: transform the technical subject to demonstrate why it works. Payoff: visually resolve the question with an evidence-limited takeaway.",
+  "Analogy.breaksAt states precisely where the familiar model stops corresponding to reality; include that limitation in the end narration where necessary.",
+  "Prefer a direct demonstration when an analogy distorts the science; do not force metaphors, rates of cuts, or unsourced visual statistics.",
+  "VisualAction must describe a genuinely changing visible state, not repeat the on-screen text. LearningChange states what viewers now understand.",
+  "Give the narration distinct question/problem/insight/payoff delivery; do not make every beat a uniform paragraph.",
+
   "story.pattern: "+vocab.storyPattern,
   "shots.family: "+vocab.shotFamily,
   "shots.purpose: "+vocab.shotPurpose,
@@ -67,5 +81,7 @@ export async function generatePreproductionPlan(dossier, options, {transport=fet
   catch{throw Error("Local model did not return a structured preproduction plan.");}
   const parsed=parsePreproductionPlan(result,dossier);
   if(!parsed.ok)throw Error("Planning output rejected: "+parsed.findings.filter(f=>f.severity==="error").map(f=>f.code).join(", "));
+  if(!Array.isArray(result.teachingSequences)||!result.teachingSequences.length)
+    throw Error("Planning output rejected: missing research-grounded teachingSequences. Regenerate or edit the draft; no automatic retry.");
   return result;
 }

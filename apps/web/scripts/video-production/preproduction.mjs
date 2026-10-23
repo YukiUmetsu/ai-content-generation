@@ -3,6 +3,7 @@
  * fact-checking claims. Documents remain editable until a separate approval.
  */
 import { createHash } from "node:crypto";
+import { validateTeachingSequences, compileTeachingStoryboard } from "./visual-pedagogy.mjs";
 
 const text = (v, max=800) => typeof v === "string" && !!v.trim() && v.length <= max && !/[\u0000-\u001f]/u.test(v);
 const id = (v) => typeof v === "string" && /^[a-z][a-z0-9_-]{0,80}$/iu.test(v);
@@ -91,7 +92,7 @@ export function parsePreproductionPlan(plan,dossier){
   const research=parseResearchDossier(dossier);
   if(!research.ok)return {ok:false,findings:research.findings.map(x=>({...x,path:"research."+x.path}))};
   const v=report();
-  if(!v.fields(plan,"$",["schemaVersion","kind","researchId","styleId","story","explanation","shots","continuity","sound"]))return {ok:false,findings:v.findings};
+  if(!v.fields(plan,"$",["schemaVersion","kind","researchId","styleId","story","explanation","shots","continuity","sound","teachingSequences"]))return {ok:false,findings:v.findings};
   if(plan.schemaVersion!==1||plan.kind!=="preproduction-plan")v.add("schema","$","Expected preproduction-plan/v1.");
   if(plan.researchId!==dossier.id)v.add("dossier-mismatch","researchId","The plan must pin the research dossier.");
   if(plan.styleId!=="cinematic-explainer-v1")v.add("style","styleId","Unknown visual direction.");
@@ -206,6 +207,8 @@ export function parsePreproductionPlan(plan,dossier){
   }
   for(let i=2;i<shots.length;i++)if(shots[i].family===shots[i-1].family&&shots[i].family===shots[i-2].family)
     v.add("family-repetition","shots["+i+"]","Three consecutive shots reuse one family; review whether meaning actually changes.","warning");
+  // Additive, opt-in v1 teaching sequences. Existing human-authored plans remain valid.
+  v.findings.push(...validateTeachingSequences(plan,dossier).findings);
   return {ok:!v.findings.some(x=>x.severity==="error"),findings:v.findings};
 }
 /** Readiness is editorial only, never commercial/publishing approval. */
@@ -233,6 +236,7 @@ export function compilePreproductionBundle(dossier,plan){
   const assessment=inspectPreproduction(dossier,plan);
   return {schemaVersion:1,kind:"preproduction-bundle",styleId:plan.styleId,
     researchId:dossier.id,researchSha256:digest(dossier),planSha256:digest(plan),plan,assessment,
+    teachingStoryboard:compileTeachingStoryboard(plan,dossier),
     status:assessment.ready?"ready-for-animatic-review":"draft-needs-review",
     caveat:"No provider call, source fact-checking, rights clearance, render, approval, or publication was performed."};
 }

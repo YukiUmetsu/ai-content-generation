@@ -37,7 +37,7 @@ function plan(){
         visualChange:"Reveal the house with an unanswered cost question.",onScreenText:"Just the purchase price?",claimIds:["claim_illustration"],assetRefs:[]},
       {id:"shot_process",explanationId:"explain_parts",family:"process",purpose:"explain",subjectIds:["house","costs"],
         visualChange:"Expand from the same house into cost categories.",onScreenText:"Several ongoing costs",claimIds:["claim_illustration"],assetRefs:[]},
-      {id:"shot_answer",explanationId:"explain_total",family:"summary",purpose:"answer",subjectIds:["costs"],
+      {id:"shot_answer",explanationId:"explain_total",family:"summary",purpose:"answer",subjectIds:["costs","house"],
         visualChange:"Resolve the cost categories into a conditional total.",onScreenText:"It depends on your assumptions",claimIds:["claim_cost"],assetRefs:[]}],
     continuity:[
       {fromShotId:"shot_question",toShotId:"shot_process",technique:"shared-element",subjectIds:["house"],reason:"Preserve the house as costs appear."},
@@ -45,7 +45,13 @@ function plan(){
     sound:[
       {shotId:"shot_question",narration:"Is the price on the listing really all you will pay?",delivery:"curious",energy:"focused",pauseAfterMs:200,sfxIntent:null},
       {shotId:"shot_process",narration:"An illustrative ownership budget includes several categories over time.",delivery:"conversational",energy:"calm",pauseAfterMs:120,sfxIntent:"cost category reveals"},
-      {shotId:"shot_answer",narration:"The total depends on your assumptions, and these figures are only an example.",delivery:"confident",energy:"focused",pauseAfterMs:0,sfxIntent:null}]
+      {shotId:"shot_answer",narration:"The total depends on your assumptions, and these figures are only an example.",delivery:"confident",energy:"focused",pauseAfterMs:0,sfxIntent:null}],
+    teachingSequences:[{id:"teach_house",mode:"direct",question:"What is hidden in the listing price?",
+      technicalSubjectId:"house",analogy:null,claimIds:["claim_illustration","claim_cost"],phases:[
+      {kind:"problem",shotId:"shot_question",visualAction:"Hold on the house and isolate the listing price while obscuring ongoing costs.",learningChange:"The sticker price may not include everything."},
+      {kind:"mechanism",shotId:"shot_process",visualAction:"Keep the house anchored while three illustrated cost components appear in succession.",learningChange:"Separate categories contribute to ownership costs."},
+      {kind:"payoff",shotId:"shot_answer",visualAction:"Recombine the house and its categories into an assumption-dependent illustrative result.",learningChange:"The answer depends on assumptions rather than a universal figure."}
+      ]}]
   };
 }
 const codes = findings => findings.map(x=>x.code);
@@ -58,6 +64,8 @@ test("research and all five plans compile to an editable review-ready bundle",()
   assert.equal(b.status,"ready-for-animatic-review");
   assert.match(b.researchSha256,/^[a-f0-9]{64}$/);
   assert.equal(b.plan.shots.length,3);
+  assert.equal(b.teachingStoryboard.beats.length,3);
+  assert.equal(b.teachingStoryboard.kind,"visual-teaching-storyboard");
 });
 test("research must have captured sources with locators and hashes",()=>{
   const d=dossier();d.evidence=[];
