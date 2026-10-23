@@ -11,7 +11,9 @@ const dossier={schemaVersion:1,kind:"research-dossier",id:"research_proof",topic
   evidence:[{id:"source_01",title:"Energy department",sourceUri:"https://www.energy.gov/",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,35)",snapshotSha256:createHash("sha256").update(capturedText).digest("hex")}],
   claims:[{id:"claim_01",text:"Insulation resists heat flow.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:["Costs depend on region."],review:{status:"draft"}};
 const research={dossier,captures:[{id:"source_01",url:"https://www.energy.gov/",title:"Energy department",text:capturedText,retrievedAt:"2026-10-23T00:00:00.000Z"}],
-  quotePreviews:[{claimId:"claim_01",sourceId:"source_01",quote:"Insulation resists the flow of heat"}],warnings:["Unverified"],provider:"searxng",model:"local"};
+  quotePreviews:[{claimId:"claim_01",sourceId:"source_01",quote:"Insulation resists the flow of heat"}],
+  claimSupport:[{claimId:"claim_01",sourceId:"source_01",quote:"Insulation resists the flow of heat"}],
+  warnings:["Unverified"],provider:"searxng",model:"local"};
 const plan={schemaVersion:1,kind:"preproduction-plan",researchId:"research_proof",shots:[{id:"shot1",family:"question",purpose:"hook"}]};
 const brief={title:"Insulation",viewerQuestion:"Why use it?",audience:"Homeowners",locale:"en-US"};
 const settings={model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};
@@ -66,7 +68,17 @@ test("failed planning or inconsistent quote produces no successful persisted dra
   try{
     await assert.rejects(createStudioResearchDraft(brief,settings,{root,searchEndpoint:"http://127.0.0.1:58023/search",research:async()=>research,generate:async()=>{throw Error("Model invalid JSON");}}),/Model invalid JSON/);
     assert.deepEqual(await readdir(root),[]);
-    await assert.rejects(createStudioResearchDraft(brief,settings,{root,searchEndpoint:"http://127.0.0.1:58023/search",research:async()=>({...research,quotePreviews:[{claimId:"claim_01",sourceId:"source_01",quote:"invented number"}]}),generate:async()=>plan}),/quote|support/i);
+    await assert.rejects(createStudioResearchDraft(brief,settings,{root,searchEndpoint:"http://127.0.0.1:58023/search",research:async()=>({...research,claimSupport:[{claimId:"claim_01",sourceId:"source_01",quote:"invented number"}]}),generate:async()=>plan}),/quote|support/i);
     assert.deepEqual(await readdir(root),[]);
   }finally{await rm(root,{recursive:true,force:true});}
+});
+test("research-to-story Studio pipeline uses separate selected text models",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-two-models-"));t.after(()=>rm(root,{recursive:true,force:true}));
+  const calls=[];
+  await createStudioResearchDraft(brief,settings,{root,searchEndpoint:"http://127.0.0.1:58023/search",
+    storyModelSettings:{model:"story-model",endpoint:"http://127.0.0.1:10100/inference/v1/chat/completions"},
+    research:async(_brief,opts)=>{calls.push(["research",opts.model,opts.endpoint]);return research;},
+    generate:async(_dossier,opts)=>{calls.push(["story",opts.model,opts.endpoint]);return plan;}});
+  assert.deepEqual(calls,[["research","local","http://127.0.0.1:11434/v1/chat/completions"],
+    ["story","story-model","http://127.0.0.1:10100/inference/v1/chat/completions"]]);
 });

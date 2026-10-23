@@ -4,20 +4,22 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { generateTopicDraft } from "./topic-generator.mjs";
+import { resolveModelForTaskSync } from "./model-profiles.mjs";
 
 export function parseTopicCli(argv) {
   const { values } = parseArgs({ args: argv, options: {
     help: { type: "boolean", default: false },
     topic: { type: "string" }, question: { type: "string" }, audience: { type: "string" }, notes: { type: "string" },
-    model: { type: "string" }, endpoint: { type: "string", default: "http://127.0.0.1:11434/v1/chat/completions" },
+    model: { type: "string" }, endpoint: { type: "string" },
     mode: { type: "string", default: "smoke" }, locale: { type: "string", default: "en-US" }, out: { type: "string" },
   }, strict: true, allowPositionals: false });
   if (values.help) return { help: true };
   if (!["smoke", "youtube-long"].includes(values.mode)) throw new Error("--mode must be smoke or youtube-long; portrait is a separate milestone");
   if (!values.out || !values.out.endsWith(".json")) throw new Error("--out must name a new .json job file");
+  const selected = resolveModelForTaskSync("script");
   return { topic: values.topic, viewerQuestion: values.question, audience: values.audience,
-    notes: values.notes, mode: values.mode, locale: values.locale, model: values.model,
-    endpoint: values.endpoint, out: resolve(values.out) };
+    notes: values.notes, mode: values.mode, locale: values.locale, model: values.model ?? selected.model,
+    endpoint: values.endpoint ?? selected.endpoint, out: resolve(values.out) };
 }
 
 export async function runTopicCli(argv, { generate = generateTopicDraft, logger = console.log } = {}) {

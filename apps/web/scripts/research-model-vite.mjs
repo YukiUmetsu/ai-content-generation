@@ -1,6 +1,7 @@
 /** Vite-only same-origin localhost Settings API. No Docker/model starts or paid requests. */
 import { readResearchModelSettings, saveResearchModelSettings, discoverResearchModels,
   DEFAULT_MODEL_ENDPOINT } from "./video-production/research-model-settings.mjs";
+import { readModelProfiles, saveModelProfiles } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 
 const PREFIX = "/api/local-research-model";
@@ -19,6 +20,7 @@ async function requestBody(req) {
 }
 export async function handleResearchSettings(req, res, deps = {}) {
   const { read = readResearchModelSettings, save = saveResearchModelSettings,
+    readProfiles = readModelProfiles, saveProfiles = saveModelProfiles,
     models = discoverResearchModels, searchEndpoint = configuredSearchEndpoint } = deps;
   const host = req.headers.host ?? "";
   const origin = req.headers.origin;
@@ -40,6 +42,11 @@ export async function handleResearchSettings(req, res, deps = {}) {
         settings: settings ?? { version: 1, endpoint: DEFAULT_MODEL_ENDPOINT, model: "" },
         configured: !!settings, searchEndpoint: searchEndpoint(),
       });
+    } else if (req.method === "GET" && route === "/profiles") {
+      output(res, 200, { profiles: await readProfiles(), searchEndpoint: searchEndpoint() });
+    } else if (req.method === "POST" && route === "/profiles/save") {
+      const profiles = await saveProfiles(await requestBody(req));
+      output(res, 200, { profiles, saved: true });
     } else if (req.method === "POST" && route === "/models") {
       const { endpoint } = await requestBody(req);
       const ids = await models(endpoint);

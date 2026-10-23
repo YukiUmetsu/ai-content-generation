@@ -34,7 +34,7 @@ export async function saveResearchModelSettings(candidate, path = MODEL_SETTINGS
 }
 export function modelsEndpoint(chatEndpoint) {
   const url = new URL(localChatEndpoint(chatEndpoint));
-  url.pathname = "/v1/models";
+  url.pathname = url.pathname.replace(/\/chat\/completions$/u, "/models");
   return url.href;
 }
 export async function discoverResearchModels(endpoint, { transport = fetch } = {}) {

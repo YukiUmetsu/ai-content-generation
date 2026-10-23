@@ -1,6 +1,6 @@
 /** Local-only Studio bridge for prompt templates and selected-shot variation/editing. */
 import { PROMPT_DEFAULTS, readPromptOverrides, savePromptOverrides } from "./video-production/prompt-profiles.mjs";
-import { readResearchModelSettings } from "./video-production/research-model-settings.mjs";
+import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
@@ -41,7 +41,7 @@ export async function handleDirectorRequest(req,res,deps={}){
       send(res,200,{settings:await (deps.save??savePromptOverrides)(await readBody(req)),saved:true});
     }else if(req.method==="POST"&&route==="/variants"){
       const request=await readBody(req);
-      const settings=await (deps.model??readResearchModelSettings)();
+      const settings=await (deps.model??resolveModelForTask)("hooks");
       if(!settings?.model)throw Error("Choose your installed local model in Studio Settings.");
       const result=await (deps.generate??generateHookVariants)({
         dossier:request.dossier,bundle:request.bundle,shotId:request.shotId
@@ -49,7 +49,7 @@ export async function handleDirectorRequest(req,res,deps={}){
       send(res,200,result);
     }else if(req.method==="POST"&&route==="/brief-variants"){
       const request=await readBody(req);
-      const settings=await (deps.model??readResearchModelSettings)();
+      const settings=await (deps.model??resolveModelForTask)("hooks");
       const approaches=await (deps.editorial??generateEditorialVariants)(request,{modelSettings:settings});
       send(res,200,{approaches,editorialStatus:"unverified-draft"});
     }else if(req.method==="POST"&&route==="/research-draft"){
@@ -61,9 +61,12 @@ export async function handleDirectorRequest(req,res,deps={}){
       res.on?.("close",()=>{if(!responded)controller.abort();});
       try{
         const request=await readBody(req);
-        const settings=await (deps.model??readResearchModelSettings)();
+        const readModel=deps.model??resolveModelForTask;
+        const settings=await readModel("research");
         if(!settings?.model)throw Error("Choose an installed local model in Studio Settings.");
-        const result=await (deps.researchDraft??createStudioResearchDraft)(request,settings,{signal:controller.signal});
+        const storyModelSettings=await readModel("story");
+        if(!storyModelSettings?.model)throw Error("Choose an installed story-planning model in Studio Settings.");
+        const result=await (deps.researchDraft??createStudioResearchDraft)(request,settings,{signal:controller.signal,storyModelSettings});
         responded=true;
         send(res,200,result);
       }finally{researchDraftRunning=false;}
