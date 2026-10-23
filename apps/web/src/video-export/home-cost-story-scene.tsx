@@ -135,7 +135,7 @@ function Mechanism({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
   {defaults.map((item,i)=><CostCard key={i} x={812+(i%2)*474} y={291+Math.floor(i/2)*222}
     item={{...item,name:labels[i]??item.name}} index={i}
     opacity={i+1<state.visibleItems?(motion.reveal[i+1]?.opacity??1):0}/>)}
-  <text x="820" y="787" fill={faint} fontSize="22">Four categories. No invented forecast.</text>
+  <text x="820" y="787" fill={faint} fontSize="22">Some costs recur. Repairs arrive when needed.</text>
  </g>;
 }
 function Payoff({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
