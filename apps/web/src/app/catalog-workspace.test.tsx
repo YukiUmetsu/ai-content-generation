@@ -10,10 +10,10 @@ describe("Studio menu workspaces", () => {
   it("opens all six formerly blank menu sections and persists author-entered catalog entries", async () => {
     const user = userEvent.setup();
     render(<App />);
-    const navigate = async (name:string) => user.click(screen.getByRole("link",{name,exact:true}));
+    const navigate = async (name:string) => user.click(screen.getByRole("link",{name}));
     await navigate("Projects");
     expect(screen.queryByText(/outside this foundation/i)).not.toBeInTheDocument();
-    await user.type(screen.getByRole("textbox",{name:"Name",exact:true}),"Short documentaries");
+    await user.type(screen.getByRole("textbox",{name:"Name"}),"Short documentaries");
     await user.click(screen.getByRole("button",{name:"Create project"}));
     expect(screen.getByText("Short documentaries",{selector:"strong"})).toBeInTheDocument();
 
