@@ -456,13 +456,14 @@ pub fn find_related_observations(
 
     let topic = topic.trim();
     if topic.is_empty() || topic.chars().count() > 160 || topic.chars().any(char::is_control) {
-        return Err(MarketError::Invalid("topic must be 1–160 safe characters".into()));
+        return Err(MarketError::Invalid(
+            "topic must be 1–160 safe characters".into(),
+        ));
     }
     const STOP: &[&str] = &[
-        "the", "and", "for", "are", "you", "your", "that", "this", "which",
-        "what", "why", "how", "with", "from", "does", "about", "versus",
-        "was", "has", "have", "its", "not", "but", "can", "all", "into",
-        "should", "when", "where", "who", "than", "their", "our", "will",
+        "the", "and", "for", "are", "you", "your", "that", "this", "which", "what", "why", "how",
+        "with", "from", "does", "about", "versus", "was", "has", "have", "its", "not", "but",
+        "can", "all", "into", "should", "when", "where", "who", "than", "their", "our", "will",
     ];
     let mut terms = Vec::new();
     for term in topic.to_lowercase().split(|c: char| !c.is_alphanumeric()) {
@@ -486,13 +487,20 @@ pub fn find_related_observations(
     let rows = query.query_map([now], |row| {
         Ok((
             VideoObservation {
-                video_id: row.get(0)?, title: row.get(1)?, channel_id: row.get(2)?,
-                channel_title: row.get(3)?, published_at: row.get(4)?,
-                duration_seconds: row.get(5)?, view_count: row.get(6)?,
-                like_count: row.get(7)?, comment_count: row.get(8)?,
+                video_id: row.get(0)?,
+                title: row.get(1)?,
+                channel_id: row.get(2)?,
+                channel_title: row.get(3)?,
+                published_at: row.get(4)?,
+                duration_seconds: row.get(5)?,
+                view_count: row.get(6)?,
+                like_count: row.get(7)?,
+                comment_count: row.get(8)?,
                 subscriber_count: row.get(9)?,
             },
-            row.get::<_, i64>(10)?, row.get::<_, i64>(11)?, row.get::<_, String>(12)?,
+            row.get::<_, i64>(10)?,
+            row.get::<_, i64>(11)?,
+            row.get::<_, String>(12)?,
         ))
     })?;
     let mut seen = HashSet::new();
@@ -503,7 +511,11 @@ pub fn find_related_observations(
             continue;
         }
         let lower = video.title.to_lowercase();
-        let matched_terms: Vec<String> = terms.iter().filter(|term| lower.contains(term.as_str())).cloned().collect();
+        let matched_terms: Vec<String> = terms
+            .iter()
+            .filter(|term| lower.contains(term.as_str()))
+            .cloned()
+            .collect();
         let minimum = if terms.len() >= 3 { 2 } else { 1 };
         if matched_terms.len() < minimum {
             continue;
@@ -511,9 +523,13 @@ pub fn find_related_observations(
         matches.push(RelatedMarketVideo {
             video: MarketVideoRecord {
                 source_url: format!("https://www.youtube.com/watch?v={}", video.video_id),
-                provider: "youtube-data-api", video, observed_at, expires_at,
+                provider: "youtube-data-api",
+                video,
+                observed_at,
+                expires_at,
             },
-            watchlist_name, matched_terms,
+            watchlist_name,
+            matched_terms,
         });
         if matches.len() == 12 {
             break;

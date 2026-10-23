@@ -1,7 +1,10 @@
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use contentgen_server::{AppState, build_router, db};
-use contentgen_server::research::{market_api::epoch_now, market_store::{self, MarketWatchlistDraft, VideoObservation}};
+use contentgen_server::research::{
+    market_api::epoch_now,
+    market_store::{self, MarketWatchlistDraft, VideoObservation},
+};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -149,27 +152,64 @@ async fn related_is_read_only_local_cache_and_validates_the_topic() {
     let (dir, router) = setup();
     let db = db::open(dir.path().join("research.sqlite3")).unwrap();
     let now = epoch_now();
-    let watch = market_store::create_watchlist(&db, MarketWatchlistDraft {
-        name:"Home Energy".into(), query:"heat pump installation costs".into(),
-        region:"US".into(), language:"en".into(), enabled:true,
-    }, now).unwrap();
-    let run = market_store::claim_watchlist(&db, &watch.id, now, true).unwrap().unwrap();
-    market_store::complete_run(&db, &run.id, &[VideoObservation {
-        video_id:"heatABC1234".into(), title:"Heat Pump Installation Explained".into(),
-        channel_id:"UCsample".into(), channel_title:"Example".into(),
-        published_at:"2026-10-20T00:00:00Z".into(), duration_seconds:Some(320),
-        view_count:Some(1200), like_count:None, comment_count:None, subscriber_count:None,
-    }], now).unwrap();
+    let watch = market_store::create_watchlist(
+        &db,
+        MarketWatchlistDraft {
+            name: "Home Energy".into(),
+            query: "heat pump installation costs".into(),
+            region: "US".into(),
+            language: "en".into(),
+            enabled: true,
+        },
+        now,
+    )
+    .unwrap();
+    let run = market_store::claim_watchlist(&db, &watch.id, now, true)
+        .unwrap()
+        .unwrap();
+    market_store::complete_run(
+        &db,
+        &run.id,
+        &[VideoObservation {
+            video_id: "heatABC1234".into(),
+            title: "Heat Pump Installation Explained".into(),
+            channel_id: "UCsample".into(),
+            channel_title: "Example".into(),
+            published_at: "2026-10-20T00:00:00Z".into(),
+            duration_seconds: Some(320),
+            view_count: Some(1200),
+            like_count: None,
+            comment_count: None,
+            subscriber_count: None,
+        }],
+        now,
+    )
+    .unwrap();
     let budget = market_store::used_search_calls(&db, now).unwrap();
-    let (status, body) = call(&router, Method::GET,
-        "/api/research/market/related?topic=heat%20pump", None, false).await;
+    let (status, body) = call(
+        &router,
+        Method::GET,
+        "/api/research/market/related?topic=heat%20pump",
+        None,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert_eq!(body["videos"].as_array().unwrap().len(), 1);
     assert_eq!(body["videos"][0]["watchlistName"], "Home Energy");
-    assert_eq!(body["videos"][0]["sourceUrl"], "https://www.youtube.com/watch?v=heatABC1234");
+    assert_eq!(
+        body["videos"][0]["sourceUrl"],
+        "https://www.youtube.com/watch?v=heatABC1234"
+    );
     assert_eq!(body["videos"][0]["matchedTerms"], json!(["heat", "pump"]));
     assert_eq!(market_store::used_search_calls(&db, now).unwrap(), budget);
-    let (status, _) = call(&router, Method::GET,
-        "/api/research/market/related?topic=%20", None, false).await;
+    let (status, _) = call(
+        &router,
+        Method::GET,
+        "/api/research/market/related?topic=%20",
+        None,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

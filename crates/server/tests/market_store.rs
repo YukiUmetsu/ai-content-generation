@@ -163,37 +163,85 @@ fn related_videos_match_across_watchlists_dedupe_and_exclude_expired() {
     let db = db_ready();
     let now = 1_000_000;
     let first = market_store::create_watchlist(&db, draft(true), now).unwrap();
-    let second = market_store::create_watchlist(&db, MarketWatchlistDraft {
-        name: "Home Energy".into(), query: "heat pump operating costs".into(),
-        ..draft(true)
-    }, now).unwrap();
+    let second = market_store::create_watchlist(
+        &db,
+        MarketWatchlistDraft {
+            name: "Home Energy".into(),
+            query: "heat pump operating costs".into(),
+            ..draft(true)
+        },
+        now,
+    )
+    .unwrap();
     let sample = |video_id: &str, title: &str| VideoObservation {
-        video_id: video_id.into(), title: title.into(), channel_id: "UCdemo".into(),
-        channel_title: "Explainer".into(), published_at: "2026-01-01T00:00:00Z".into(),
-        duration_seconds: Some(360), view_count: Some(123), like_count: None,
-        comment_count: None, subscriber_count: None,
+        video_id: video_id.into(),
+        title: title.into(),
+        channel_id: "UCdemo".into(),
+        channel_title: "Explainer".into(),
+        published_at: "2026-01-01T00:00:00Z".into(),
+        duration_seconds: Some(360),
+        view_count: Some(123),
+        like_count: None,
+        comment_count: None,
+        subscriber_count: None,
     };
-    let run = market_store::claim_watchlist(&db, &first.id, now, true).unwrap().unwrap();
-    market_store::complete_run(&db, &run.id, &[
-        sample("pumpABC1234", "HEAT PUMP Installation Breakdown"),
-        sample("roofABC1234", "Why a new roof costs so much"),
-        sample("oldABC12345", "Gas Furnace: heating cost"),
-    ], now + 1).unwrap();
-    let run = market_store::claim_watchlist(&db, &second.id, now + 2, true).unwrap().unwrap();
-    market_store::complete_run(&db, &run.id, &[
-        sample("pumpABC1234", "Heat Pump Installation Explained"),
-        sample("energyABC12", "Comparing gas furnace and heat pumps"),
-    ], now + 3).unwrap();
+    let run = market_store::claim_watchlist(&db, &first.id, now, true)
+        .unwrap()
+        .unwrap();
+    market_store::complete_run(
+        &db,
+        &run.id,
+        &[
+            sample("pumpABC1234", "HEAT PUMP Installation Breakdown"),
+            sample("roofABC1234", "Why a new roof costs so much"),
+            sample("oldABC12345", "Gas Furnace: heating cost"),
+        ],
+        now + 1,
+    )
+    .unwrap();
+    let run = market_store::claim_watchlist(&db, &second.id, now + 2, true)
+        .unwrap()
+        .unwrap();
+    market_store::complete_run(
+        &db,
+        &run.id,
+        &[
+            sample("pumpABC1234", "Heat Pump Installation Explained"),
+            sample("energyABC12", "Comparing gas furnace and heat pumps"),
+        ],
+        now + 3,
+    )
+    .unwrap();
     let budget = market_store::used_search_calls(&db, now + 4).unwrap();
-    let rows = market_store::find_related_observations(&db, "HEAT PUMP vs GAS furnace!", now + 4).unwrap();
+    let rows =
+        market_store::find_related_observations(&db, "HEAT PUMP vs GAS furnace!", now + 4).unwrap();
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows.iter().filter(|x| x.video.video.video_id == "pumpABC1234").count(), 1);
-    let duplicate = rows.iter().find(|x| x.video.video.video_id == "pumpABC1234").unwrap();
+    assert_eq!(
+        rows.iter()
+            .filter(|x| x.video.video.video_id == "pumpABC1234")
+            .count(),
+        1
+    );
+    let duplicate = rows
+        .iter()
+        .find(|x| x.video.video.video_id == "pumpABC1234")
+        .unwrap();
     assert_eq!(duplicate.watchlist_name, "Home Energy");
     assert!(duplicate.matched_terms.contains(&"heat".to_string()));
-    assert_eq!(market_store::used_search_calls(&db, now + 4).unwrap(), budget);
-    assert!(market_store::find_related_observations(&db, "unrelated", now + 4).unwrap().is_empty());
-    assert!(market_store::find_related_observations(&db, "heat pump", now + 3 + 30*86400).unwrap().is_empty());
+    assert_eq!(
+        market_store::used_search_calls(&db, now + 4).unwrap(),
+        budget
+    );
+    assert!(
+        market_store::find_related_observations(&db, "unrelated", now + 4)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        market_store::find_related_observations(&db, "heat pump", now + 3 + 30 * 86400)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -201,5 +249,9 @@ fn related_videos_reject_invalid_and_vague_topics() {
     let db = db_ready();
     assert!(market_store::find_related_observations(&db, " ", 1_000_000).is_err());
     assert!(market_store::find_related_observations(&db, &"x".repeat(161), 1_000_000).is_err());
-    assert!(market_store::find_related_observations(&db, "the of is", 1_000_000).unwrap().is_empty());
+    assert!(
+        market_store::find_related_observations(&db, "the of is", 1_000_000)
+            .unwrap()
+            .is_empty()
+    );
 }
