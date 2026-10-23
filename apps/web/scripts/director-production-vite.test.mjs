@@ -175,3 +175,28 @@ test("one-click sample works without a configured research model, external netwo
   assert.equal(response.data.bundle.status,"draft-needs-review");
   assert.equal(sideEffects,0);
 });
+
+
+test("actual renderer preview is identical to the edit plan and never starts voice/build/video jobs",async()=>{
+ let calls=0;
+ const server=createDirectorProduction({
+   build:async()=>{calls++;throw Error("must not build for frame preview");},
+   inspect:async()=>{calls++;throw Error("must not inspect voice for frame preview");},
+   produce:async()=>{calls++;throw Error("must not synthesize or render for frame preview");}
+ });
+ const project=inputs();
+ const answer=await invoke(server,"POST","/live-preview",project);
+ assert.equal(answer.status,200);
+ assert.equal(answer.data.kind,"live-renderer-preview/v1");
+ assert.equal(answer.data.plan.kind,"general-explainer-visual-plan");
+ assert.equal(answer.data.shotMap.length,project.bundle.plan.shots.length);
+ assert.equal(answer.data.timing.measuredNarration,false);
+ assert.equal(calls,0);
+ const status=await invoke(server,"GET","/status");
+ assert.equal(status.data.state,"idle");
+ const mismatch=structuredClone(project);
+ mismatch.bundle.plan.sound[0].narration="Changed without revalidation";
+ const rejected=await invoke(server,"POST","/live-preview",mismatch);
+ assert.equal(rejected.status,422);
+ assert.equal(calls,0);
+});
