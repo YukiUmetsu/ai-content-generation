@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createReadStream } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -112,6 +112,12 @@ export function createDirectorProduction(deps={}){
     if(!authorize(req,res))return;
     const route=(req.url||"/").split("?")[0];
     try{
+      if(req.method==="GET"&&route==="/demo"){
+        const dossier=JSON.parse(readFileSync(new URL("../../../examples/preproduction-research-smoke.json",import.meta.url),"utf8"));
+        const plan=JSON.parse(readFileSync(new URL("../../../examples/preproduction-plan-smoke.json",import.meta.url),"utf8"));
+        respond(res,200,{dossier,bundle:compilePreproductionBundle(dossier,plan),
+          note:"Synthetic example only. No factual claims are verified."});return;
+      }
       if(req.method==="GET"&&route==="/status"){respond(res,200,status);return;}
       if(req.method==="GET"&&route.startsWith("/preview/")){
         if(!preview||route!=="/preview/"+preview.id){respond(res,404,{error:"Preview expired."});return;}
