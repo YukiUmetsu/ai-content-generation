@@ -69,6 +69,26 @@ test("simple explanation legitimately uses direct teaching rather than a forced 
   assert.equal(parsePreproductionPlan(p,d).ok,true);
   assert.deepEqual(compileTeachingStoryboard(p,d).beats.map(b=>b.phase),["problem","mechanism","payoff"]);
 });
+test("explicit visual states make a technical subject's transformation auditable without invalidating old plans",()=>{
+  const p=direct();
+  const states={before:"The purchase price stands alone",action:"Reveal financing and ongoing costs",
+    after:"Budget now includes added cost categories"};
+  p.teachingSequences[0].visualStates=states;
+  assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+  assert.deepEqual(compileTeachingStoryboard(p,dossier()).teachingSequences[0].visualStates,states);
+  delete p.teachingSequences[0].visualStates;
+  assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+});
+test("visible learning states reject repeating labels, placeholders and unsafe payloads",()=>{
+  const p=direct();
+  p.teachingSequences[0].visualStates={before:"The initial bill is fixed",action:"Step 1",after:"The initial bill is fixed"};
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-state-repeat"));
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-state-placeholder"));
+  p.teachingSequences[0].visualStates={before:"A house has a listed price",action:"Add the separate cost categories",after:"The budget now includes recurring costs",html:"<script>"};
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-unknown-field"));
+  p.teachingSequences[0].visualStates.after="Extra cost\nInjected label";
+  assert.ok(codes(validateTeachingSequences(p,dossier())).includes("teaching-state-text"));
+});
 test("previously saved v1 plans without teachingSequences remain readable",()=>{
   const p=direct();delete p.teachingSequences;
   assert.equal(parsePreproductionPlan(p,dossier()).ok,true);

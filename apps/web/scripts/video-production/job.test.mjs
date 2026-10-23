@@ -30,6 +30,19 @@ test("validates a general explainer and rejects family-incompatible or unsafe di
   missing.beats[0].visual.items = [];
   assert.ok(errorCodes(parseVideoProductionJob(missing)).includes("invalid-diagram-items"));
 });
+test("generic scene transformations accept bounded state copy and reject injected or mismatched fields",()=>{
+  const job=structuredClone(general);
+  job.beats[0].visual.direction={phase:"problem",subjectIds:["house"],
+    visualAction:"Reveal cost drivers",learningChange:"Price differs from total cost",
+    transformation:{subjectId:"house",before:"Only purchase price visible",
+      action:"Reveal recurring obligations",after:"Multiple cost categories visible"}};
+  assert.equal(parseVideoProductionJob(job).ok,true);
+  job.beats[0].visual.direction.transformation.subjectId="other";
+  assert.ok(errorCodes(parseVideoProductionJob(job)).includes("invalid-teaching-transformation"));
+  job.beats[0].visual.direction.transformation.subjectId="house";
+  job.beats[0].visual.direction.transformation.after="Danger\nInjected";
+  assert.ok(errorCodes(parseVideoProductionJob(job)).includes("invalid-teaching-transformation"));
+});
 
 test("does not allow a duplicate beat or event identifier", () => {
   const job = modified((value) => { value.beats.push(value.beats[0]); return value; });

@@ -23,6 +23,8 @@ const SYSTEM = [
   "continuity:[{fromShotId,toShotId,technique,subjectIds,reason}] for each pair of adjacent shots.",
   "sound:[{shotId,narration,delivery,energy,pauseAfterMs,sfxIntent}] exactly one per shot.",
   "REQUIRED teachingSequences: nonempty array of {id,mode,question,technicalSubjectId,analogy,claimIds,phases}.",
+  "REQUIRED in EACH teaching sequence: visualStates:{before,action,after}. Before/after are 8–48 characters each; action is 8–90 characters. Describe visible subject states and operation, not topic headings.",
+  "Before and after must be observably different for the SAME technicalSubjectId; action explains precisely which visible part changes and why, grounded only in supplied claim IDs. Never invent numbers or measurements.",
   "For a sequence, mode is direct or analogy. Direct: analogy=null; phases exactly problem→mechanism→payoff.",
   "Analogy mode: phases exactly problem→analogy→mechanism→payoff. analogy={familiarSystem,technicalSystem,analogySubjectId,mappings:[{familiar,technical}],breaksAt}; include at least two genuine distinct correspondences.",
   "Each phase={kind,shotId,visualAction,learningChange}. Every phase must link to a DIFFERENT already-declared shot, in chronological order.",
@@ -84,5 +86,7 @@ export async function generatePreproductionPlan(dossier, options, {transport=fet
   if(!parsed.ok)throw Error("Planning output rejected: "+parsed.findings.filter(f=>f.severity==="error").map(f=>f.code).join(", "));
   if(!Array.isArray(result.teachingSequences)||!result.teachingSequences.length)
     throw Error("Planning output rejected: missing research-grounded teachingSequences. Regenerate or edit the draft; no automatic retry.");
+  if(result.teachingSequences.some(seq=>!seq.visualStates))
+    throw Error("Planning output rejected: each teaching sequence needs concrete visualStates before/action/after. Regenerate or edit the draft; no automatic retry.");
   return result;
 }

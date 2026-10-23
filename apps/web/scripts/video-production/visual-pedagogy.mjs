@@ -40,12 +40,25 @@ export function validateTeachingSequences(plan, dossier) {
   let resolvesCentralQuestion = false;
   for (let n=0; n<plan.teachingSequences.length; n++) {
     const seq=plan.teachingSequences[n], p="teachingSequences["+n+"]";
-    if (!extra(seq,["id","mode","question","technicalSubjectId","analogy","claimIds","phases"],p)) continue;
+    if (!extra(seq,["id","mode","question","technicalSubjectId","analogy","claimIds","phases","visualStates"],p)) continue;
     if (!id(seq.id)||seenSequences.has(seq.id)) error("teaching-id",p+".id","Stable unique sequence ID required.");
     seenSequences.add(seq.id);
     if (!["direct","analogy"].includes(seq.mode)) error("teaching-mode",p+".mode","Choose direct or analogy.");
     strings(seq.question,p+".question",320);
     if (!id(seq.technicalSubjectId)) error("teaching-subject",p+".technicalSubjectId","Stable technical subject ID required.");
+    if (seq.visualStates !== undefined && extra(seq.visualStates,["before","action","after"],p+".visualStates")) {
+      const labels=["before","action","after"].map(kind=>{
+        const value=seq.visualStates[kind],at=p+".visualStates."+kind;
+        const max=kind==="action"?90:48;
+        if (!nonempty(value,max) || value.trim().length<8 || /[\r\n]/u.test(value))
+          error("teaching-state-text",at,"Use an 8–"+max+" character, single-line visible state or action.");
+        if (typeof value==="string" && /^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu.test(value.trim()))
+          error("teaching-state-placeholder",at,"Replace a generic placeholder with a concrete visible state.");
+        return typeof value==="string"?value.trim().toLocaleLowerCase():"";
+      });
+      if (labels.every(Boolean) && new Set(labels).size!==labels.length)
+        error("teaching-state-repeat",p+".visualStates","Before, action and after must show distinct visible information.");
+    }
     if (!Array.isArray(seq.claimIds) || !seq.claimIds.length || seq.claimIds.length>20 ||
       new Set(seq.claimIds).size!==seq.claimIds.length || seq.claimIds.some(x=>!id(x)||!knownClaims.has(x)))
       error("teaching-claims",p+".claimIds","Use non-duplicate claim IDs from the captured research dossier.");
@@ -144,7 +157,8 @@ export function compileTeachingStoryboard(plan,dossier){
     schemaVersion:1,kind:"visual-teaching-storyboard",researchId:dossier.id,
     storyQuestion:plan.story.question,teachingSequences:(plan.teachingSequences??[]).map(seq=>({
       id:seq.id,mode:seq.mode,question:seq.question,technicalSubjectId:seq.technicalSubjectId,
-      claimIds:[...seq.claimIds],analogy:seq.analogy
+      claimIds:[...seq.claimIds],analogy:seq.analogy,
+      ...(seq.visualStates?{visualStates:{...seq.visualStates}}:{})
     })),
     beats,
     advisory:"Intent and source IDs only. Requires editorial fact/analogy review, licensed assets and Kumiki scene compilation before media exists."

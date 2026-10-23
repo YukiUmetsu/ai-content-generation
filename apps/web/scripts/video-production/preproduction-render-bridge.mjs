@@ -46,6 +46,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
 
   const sound=new Map(plan.sound.map(s=>[s.shotId,s]));
   const phases=new Map((plan.teachingSequences??[]).flatMap(x=>x.phases).map(x=>[x.shotId,x]));
+  const sequenceByShot=new Map((plan.teachingSequences??[]).flatMap(seq=>seq.phases.map(phase=>[phase.shotId,seq])));
   const warnings=[];
   const scenes=plan.shots.map((shot,i)=>{
     const phase=phases.get(shot.id),voice=sound.get(shot.id);
@@ -66,8 +67,8 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const unique=[...new Set(visualLabels)].slice(0,5);
     while(unique.length<2)unique.push(unique.length?"How it changes":"Main idea");
     const intent=mapFamily[shot.family]??"general-flow";
-    if(!shot.sceneRecipe&&["mechanism","process","question"].includes(shot.family) &&
-      (phase?.visualAction||"").trim())
+    if(!shot.sceneRecipe&&!sequenceByShot.get(shot.id)?.visualStates &&
+      ["mechanism","process","question"].includes(shot.family) && (phase?.visualAction||"").trim())
       warnings.push("Shot "+shot.id+": detailed motion intent is represented by a schematic flow, not a custom 2D/3D scene.");
     if(voice.sfxIntent)warnings.push("Shot "+shot.id+": requested SFX '"+safe(voice.sfxIntent,60)+
       "' is not rendered automatically; only the existing test-only payoff chime is supported.");
@@ -98,6 +99,14 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
       visualAction:(phase?.visualAction??shot.visualChange).slice(0,650),
       learningChange:(phase?.learningChange??shot.visualChange).slice(0,650)
     };
+    const sequence=sequenceByShot.get(shot.id);
+    if(!shot.sceneRecipe && sequence?.visualStates && phase &&
+      ["problem","mechanism","payoff"].includes(phase.kind) &&
+      shot.subjectIds.includes(sequence.technicalSubjectId))
+      job.beats[i].visual.direction.transformation={
+        subjectId:sequence.technicalSubjectId,
+        ...sequence.visualStates
+      };
     const refs=plan.shots[i].claimIds.filter(id=>known.has(id));
     if(!refs.length)throw Error("Shot "+plan.shots[i].id+" must reference at least one research claim.");
     job.beats[i].claimRefs=refs;
@@ -126,7 +135,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(dossier.review.status!=="human-reviewed")
     warnings.unshift("Research has not been human-reviewed. Export is strictly an unverified test draft.");
   if(dossier.gaps.length)warnings.push("Research dossier has "+dossier.gaps.length+" unresolved gap(s).");
-  warnings.unshift("The default renderer uses schematic Kumiki scenes; supported authored recipes use dedicated illustrations, but arbitrary visualAction/3D assets and per-shot SFX are not compiled.");
+  warnings.unshift("Structured before/action/after teaching states render as subject-preserving transformations when present. Other generic shots remain schematic; arbitrary 3D assets and per-shot SFX are not compiled.");
   return {
     schemaVersion:1,kind:"research-to-render-job/v1",job,
     sourceResearchSha256:bundle.researchSha256,sourcePlanSha256:bundle.planSha256,

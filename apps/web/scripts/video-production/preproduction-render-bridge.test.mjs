@@ -10,6 +10,32 @@ const dossier=()=>f("preproduction-research-smoke.json");
 const plan=()=>f("preproduction-plan-smoke.json");
 const bundle=()=>compilePreproductionBundle(dossier(),plan());
 
+test("researched teaching states become real renderer direction on the same technical subject",()=>{
+  const d=dossier(),p=plan();
+  p.shots.forEach(s=>{delete s.sceneRecipe;});
+  p.teachingSequences[0].visualStates={before:"Only the home listing price is shown",
+    action:"Reveal financing and recurring expense categories",
+    after:"The ownership budget includes additional costs"};
+  const compiled=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  for(const beat of compiled.job.beats){
+    assert.deepEqual(beat.visual.direction.transformation,{
+      subjectId:"house",...p.teachingSequences[0].visualStates
+    });
+  }
+  assert.equal(compiled.job.approval,"test-only");
+  assert.equal(parseVideoProductionJob(compiled.job).ok,true);
+});
+test("legacy plans and bespoke authored recipes do not gain a fabricated transformation",()=>{
+  const d=dossier(),p=plan();
+  const legacy=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  assert.equal(legacy.job.beats[0].visual.direction.transformation,undefined);
+  const withStates=plan();withStates.teachingSequences[0].visualStates={
+    before:"The displayed asking price stands alone",action:"Reveal added ownership costs",
+    after:"Budget includes ongoing expense categories"};
+  const special=compilePreproductionRenderJob(d,compilePreproductionBundle(d,withStates));
+  assert.equal(special.job.beats[0].visual.direction.transformation,undefined);
+});
+
 test("real synthetic research dossier maps to a valid test-only, source-linked render job",()=>{
   const d=dossier(),b=bundle();
   const bridge=compilePreproductionRenderJob(d,b);
