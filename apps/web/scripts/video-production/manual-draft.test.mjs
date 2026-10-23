@@ -67,3 +67,28 @@ test("human script supports many scene types but forbids fake 8+ minute claims",
   assert.equal(long.job.destination.minimumDurationSeconds, 480);
   assert.equal(long.job.mode, "youtube-long");
 });
+
+test("portrait modes are independently authored 1080x1920 outputs, not cropped landscape", () => {
+  for (const preset of ["youtube-shorts", "instagram-reels", "tiktok"]) {
+    const result = createManualVideoDraft({ ...brief, platform: preset });
+    assert.equal(result.job.destination.presetId, preset);
+    assert.equal(result.job.destination.width, 1080);
+    assert.equal(result.job.destination.height, 1920);
+    assert.deepEqual(result.job.destination.targetDurationSeconds, [20, 180]);
+    assert.equal(result.job.destination.minimumDurationSeconds, null);
+    assert.equal(parseVideoProductionJob(result.job).ok, true);
+  }
+  assert.notEqual(createManualVideoDraft(brief).job.id,
+    createManualVideoDraft({ ...brief, platform: "youtube-shorts" }).job.id);
+});
+test("rejects long-form vertical output and mismatched or unsupported short presets", () => {
+  assert.throws(() => createManualVideoDraft({ ...brief, platform: "youtube-shorts", length: "youtube-long" }), /long videos/i);
+  assert.throws(() => createManualVideoDraft({ ...brief, platform: "tiktok-ads" }), /unsupported|platform/i);
+  const portrait = createManualVideoDraft({ ...brief, platform: "youtube-shorts" }).job;
+  const bad = structuredClone(portrait);
+  bad.destination.width = 1920;
+  assert.ok(parseVideoProductionJob(bad).findings.some(x => x.code === "preset-raster-mismatch"));
+  const chart = structuredClone(portrait);
+  chart.beats[1].visual.chart = { kind: "quantitative-chart-v1" };
+  assert.ok(parseVideoProductionJob(chart).findings.some(x => x.code === "portrait-chart-unavailable"));
+});

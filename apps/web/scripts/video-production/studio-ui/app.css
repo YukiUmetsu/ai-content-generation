@@ -47,3 +47,20 @@ fieldset{border:0;padding:0;margin:0}.provider-options{display:flex;background:#
 #manual-add-button { width:100%; margin-bottom:10px; }
 #manual-generate-button { width:100%; }
 @media(max-width:600px) { .manual-grid { grid-template-columns:1fr; } .manual-scene { padding:12px; } }
+
+/* The output inspector respects the authored raster rather than stretching Shorts into 16:9. */
+.media-frame[data-aspect="portrait"] { aspect-ratio: 9 / 16; width:min(100%,360px); max-height:640px; margin-inline:auto; }
+.stills-grid[data-aspect="portrait"] img { aspect-ratio:9/16; object-fit:contain; background:#080c12; }
+
+/* Compact scene toolbar and portable project controls. */
+.manual-scene-tools { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:5px; }
+.manual-scene-tools .button { padding:6px 9px; min-width:32px; font-size:.75rem; }
+.manual-scene-tools .button:disabled { opacity:.36; cursor:not-allowed; }
+.manual-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:10px 0; }
+.manual-actions button { min-height:40px; }
+.manual-actions #manual-add-button { grid-column:1/-1; margin:0; }
+@media(max-width:520px) {
+  .manual-actions { grid-template-columns:1fr; }
+  .manual-scene-header { align-items:flex-start; flex-direction:column; }
+  .manual-scene-tools { justify-content:flex-start; }
+}

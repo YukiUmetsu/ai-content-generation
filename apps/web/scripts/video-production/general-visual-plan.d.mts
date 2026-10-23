@@ -13,7 +13,7 @@ export interface GeneralVisualPlan {
   kind: "general-explainer-visual-plan";
   title: string;
   locale?: "en-US" | "ja-JP";
-  manifest: { schemaVersion: 1; id: string; durationFrames: number; width: 1920; height: 1080; fps: { num: number; den: number }; preset: "youtube" };
+  manifest: { schemaVersion: 1; id: string; durationFrames: number; width: number; height: number; fps: { num: number; den: number }; preset: "youtube" | "youtube-shorts" | "instagram-reels" | "tiktok" };
   chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; visual: { headline: string; subhead: string; emphasis: string; items: string[]; chart?: QuantitativeChart; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe" }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
   claims: Array<{ id: string; status: "verified" | "unverified" | "illustrative" | "disputed"; text: string; sourceRefs?: string[] }>;
   evidence: Array<{ id: string; title: string; sourceUri: string; retrievedAt: string; passageLocator: string; snapshotSha256: string }>;

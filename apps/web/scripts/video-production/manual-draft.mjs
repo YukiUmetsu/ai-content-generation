@@ -27,6 +27,9 @@ export function createManualVideoDraft(input) {
   const locale = input.locale;
   if (!["en-US", "ja-JP"].includes(locale)) fail("Narration must use English or Japanese.");
   const episodeLength = input.length === "youtube-long" ? "youtube-long" : "smoke";
+  const platform = input.platform ?? "youtube";
+  if (!["youtube", "youtube-shorts", "instagram-reels", "tiktok"].includes(platform)) fail("Choose a supported landscape or portrait platform.");
+  if (episodeLength === "youtube-long" && platform !== "youtube") fail("Long videos require the YouTube landscape output.");
   const scenes = input.scenes;
   if (!Array.isArray(scenes) || scenes.length < 3 || scenes.length > 40) fail("Write 3–40 scenes, including an opening and a final answer.");
   if (episodeLength === "youtube-long" && scenes.length < 10) fail("Long videos require at least 10 authored scenes.");
@@ -56,14 +59,14 @@ export function createManualVideoDraft(input) {
       pauseAfterMs: last ? 0 : 160,
     };
   });
-  const draftId = createHash("sha256").update(JSON.stringify({ title, question, audience, locale, normalized })).digest("hex").slice(0, 16);
+  const draftId = createHash("sha256").update(JSON.stringify({ title, question, audience, locale, platform, normalized })).digest("hex").slice(0, 16);
   const job = {
     schemaVersion: 1, kind: "video-production-job", visualFamily: "general-explainer-v1",
     id: `manual-${draftId}`, mode: episodeLength, locale, approval: "test-only",
     topic: { title, viewerQuestion: question, payoffEventId: "topic-payoff" },
     references: { brandKit: { id: "manual_general", revision: 1 }, storyboard: { id: `manual_${draftId}`, revision: 1 }, selectedPackagingId: "manual" },
-    destination: { presetId: "youtube", width: 1920, height: 1080, fps: { num: 30, den: 1 },
-      targetDurationSeconds: episodeLength === "smoke" ? [20, 360] : [480, 1800],
+    destination: { presetId: platform, width: platform === "youtube" ? 1920 : 1080, height: platform === "youtube" ? 1080 : 1920, fps: { num: 30, den: 1 },
+      targetDurationSeconds: episodeLength === "youtube-long" ? [480, 1800] : platform === "youtube" ? [20, 360] : [20, 180],
       minimumDurationSeconds: episodeLength === "smoke" ? null : 480 },
     voice: { profileId: "general-manual-narrator", provider: "fish", modelId: "s2.1-pro-free",
       voiceId: "configure-a-licensed-reference", locale, licenseStatus: "unknown" },

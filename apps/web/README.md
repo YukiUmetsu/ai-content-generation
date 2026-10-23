@@ -98,6 +98,58 @@ The independently testable worker modules (`scripts/video-production/{speech,tim
 
 `renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. The speech, mastering, segmented encoding and final MP4 mux each have FFmpeg-backed tests; the orchestration integration test uses an injected provider and browser, so **real visual playback remains unverified**.
 
+### Native 9:16 short videos
+
+Choose **Create your video** in the local Studio and set **Output format** to
+YouTube Shorts, Instagram Reels, or TikTok. All three target a **newly authored
+1080×1920** general-explainer composition; landscape YouTube remains 1920×1080.
+The same authored narration and semantic beats can be compiled into either
+output, but each output gets an independent scene layout, not a crop/stretch.
+Measured narration drives the existing Fish/local TTS, frame capture, H.264
+and artifact QA pipeline.
+
+This milestone pins Kumiki `ShortSafeFrame` (source
+`YukiUmetsu/kumiki-ui@f0c227a58227a87004000eb2bb324ea7e298ce8a`,
+`registry/visual/safe-frame.ts` +
+`registry/visual/short-safe-frame.tsx`) in ContentGen. Its approximate
+platform safeInset profiles reserve the app's top/side/bottom UI areas,
+while measured SVG text preflight rejects copy outside the safe zone and
+cards with clipped labels. Guides never export. Actual platform UI can
+change, so manual playback inspection remains mandatory.
+
+Scope: human-authored short-form general videos only (up to 180 seconds
+of measured narration); locally model-generated topic videos and House Math
+test fixtures retain the existing landscape output. Numerical ChartStory
+is explicitly blocked in portrait until its legend/source disclosure is
+reflowed and tested; it is not silently omitted. Supports the same opening
+hook and title treatment recipes as landscape. This work does not
+claim timed-word karaoke, real footage decoding, CapCut-equivalent effects,
+or any proven algorithm for virality. Drafts remain unpublished and
+commercial rights unverified.
+
+### Manual Studio editing and portable project files
+
+The **Create your video** workspace includes ordered scene cards. Use the up/down
+controls to move **middle scenes** while keeping the opening hook and final
+answer fixed; duplicate or remove middle scenes (3–40 scene bound), and edit
+narration/diagram labels. Any change invalidates the previous readiness check:
+click **Create editable storyboard**, review, then **Check readiness** again.
+
+**Export storyboard JSON** saves your local work, including *incomplete*
+scenes, to a text file; **Import storyboard JSON** restores it after bounded,
+strict schema validation. This is an authored-content-only file—not a raw
+production job dump. It does **not** include Fish API keys, voice IDs,
+authorization, generated audio, output paths or release claims. Import checks
+for unknown fields, unsafe control characters and scene limits before changing
+the current editor. Failed imports leave the existing work alone. No cloud
+storage, browser localStorage, or automatic uploads are involved. The normal
+preflight remains strict: incomplete imported scenes cannot render until
+filled in and successfully recompiled.
+
+These controls help with local authoring and versioning; they are not a
+visual timeline preview, waveform editor, autosave service, or true
+word-synchronized subtitle system.
+
 ### General video authoring in Studio (manual, no text model)
 
 Select **Create your video** in the local Video Test Studio. Type a title, question
@@ -130,11 +182,10 @@ intentionally disabled without source-backed evidence; word-synced captions
 are disabled without real word alignment. Unrelated generic/House Math jobs
 remain unchanged. No fake audio beat detection or virality scores.
 
-This first slice remains landscape (1920 × 1080) only. For real Shorts, the
-production manifest, ShortSafeFrame, portrait diagrams, captions, clip assets
-and browser-export geometry need a **separately composed 1080 × 1920 render**.
-A 9:16 output is not provided by cropping landscape. Review rendered video at
-normal speed before any commercial release. GitHub CI performs only no-FFmpeg
+The manual video Studio now supports a separately composed 1080 × 1920
+portrait explainer for Shorts/Reels/TikTok. Captions with word alignment,
+licensed real footage and richer 3D treatments remain future milestones.
+Review a real rendered portrait MP4 at normal speed before commercial release. GitHub CI performs only no-FFmpeg
 compilation and test checks; no source/voice commercial rights are inferred.
 
 ## Run and verify

@@ -8,6 +8,7 @@ let currentReview = null;
 let clientError = "";
 let currentDraftId = "";
 let currentDraftSource = "";
+let currentDraftIsPortrait = false;
 let topicDirty = true;
 
 function config() {
@@ -67,7 +68,7 @@ function showMode() {
   $("topic-review").hidden = !(topic && currentDraftSource === "local-openai-compatible" ||
     manual && currentDraftSource === "human") || !currentDraftId;
   $("fixture-caption").textContent = manual
-    ? "Human-authored general explainer · Kumiki attention-editing · 1920 × 1080 · 30 fps"
+    ? `Human-authored general explainer · Kumiki attention-editing · ${$("manual-platform").value === "youtube" ? "1920 × 1080" : "1080 × 1920"} · 30 fps`
     : topic ? "Local topic generator · general explainer · 1920 × 1080 · 30 fps"
     : "Illustrative House Math scenario · YouTube landscape · 30 fps";
 }
@@ -142,6 +143,7 @@ function showClaims(job) {
 function showDraft(draft) {
   if (!draft?.job) return;
   currentDraftId = draft.job.id;
+  currentDraftIsPortrait = draft.job.destination?.height > draft.job.destination?.width;
   currentDraftSource = draft.generator?.provider || "local-openai-compatible";
   topicDirty = false;
   const narrationLength = draft.narrationLength || { count: draft.words ?? "Unmeasured", unit: "words" };
@@ -193,7 +195,7 @@ function makeManualCard() {
   const article = document.createElement("article");
   article.className = "manual-scene";
   // This template contains no user-supplied HTML; all authored values use native form controls.
-  article.innerHTML = `<div class="manual-scene-header"><strong class="manual-scene-number"></strong><button type="button" class="manual-remove-button button button-secondary">Remove</button></div>
+  article.innerHTML = `<div class="manual-scene-header"><strong class="manual-scene-number"></strong><div class="manual-scene-tools"><button type="button" class="manual-up-button button button-secondary" aria-label="Move scene earlier">↑</button><button type="button" class="manual-down-button button button-secondary" aria-label="Move scene later">↓</button><button type="button" class="manual-duplicate-button button button-secondary">Duplicate</button><button type="button" class="manual-remove-button button button-secondary">Remove</button></div></div>
     <div class="field-group"><label>Headline <input class="manual-headline" maxlength="68" placeholder="A clear on-screen idea" required></label></div>
     <div class="field-group"><label>Narration <textarea class="manual-narration" rows="3" maxlength="1600" placeholder="What the narrator says in this scene (at least 20 characters)" required></textarea></label></div>
     <div class="field-group"><label>Supporting copy <input class="manual-subhead" maxlength="115" placeholder="Optional one-line explanation"></label></div>
@@ -206,7 +208,47 @@ function makeManualCard() {
     topicDirty = true;
     invalidate();
   });
+  for (const [selector, delta] of [[".manual-up-button", -1], [".manual-down-button", 1]]) {
+    article.querySelector(selector).addEventListener("click", () => {
+      const cards = [...manualScenes.children], index = cards.indexOf(article), target = index + delta;
+      if (index <= 0 || index >= cards.length - 1 || target <= 0 || target >= cards.length - 1) return;
+      if (delta < 0) manualScenes.insertBefore(article, cards[target]);
+      else manualScenes.insertBefore(cards[target], article);
+      refreshManualCardRoles(); markManualDirty();
+      article.querySelector(".manual-headline").focus();
+    });
+  }
+  article.querySelector(".manual-duplicate-button").addEventListener("click", () => {
+    const cards = [...manualScenes.children], index = cards.indexOf(article);
+    if (index <= 0 || index >= cards.length - 1 || cards.length >= 40) return;
+    const copy = makeManualCard();
+    assignManualCard(copy, readManualCard(article));
+    manualScenes.insertBefore(copy, article.nextSibling);
+    refreshManualCardRoles(); markManualDirty();
+    copy.querySelector(".manual-headline").focus();
+  });
   return article;
+}
+function markManualDirty() {
+  topicDirty = true;
+  preflightReady = false;
+  invalidate();
+}
+function readManualCard(card) {
+  return {
+    headline: card.querySelector(".manual-headline").value.trim(),
+    narration: card.querySelector(".manual-narration").value.trim(),
+    subhead: card.querySelector(".manual-subhead").value.trim(),
+    intent: card.querySelector(".manual-intent").value,
+    items: card.querySelector(".manual-items").value.split(/\r?\n/u).map(x => x.trim()).filter(Boolean),
+  };
+}
+function assignManualCard(card, scene) {
+  card.querySelector(".manual-headline").value = scene.headline;
+  card.querySelector(".manual-narration").value = scene.narration;
+  card.querySelector(".manual-subhead").value = scene.subhead || "";
+  card.querySelector(".manual-intent").value = scene.intent || "general-flow";
+  card.querySelector(".manual-items").value = scene.items.join("\n");
 }
 function refreshManualCardRoles() {
   const cards = [...manualScenes.children];
@@ -214,7 +256,12 @@ function refreshManualCardRoles() {
     const first = index === 0, last = index === cards.length - 1;
     card.querySelector(".manual-scene-number").textContent = `Scene ${index + 1} · ${first ? "Opening hook" : last ? "Final answer" : "Explanation"}`;
     card.querySelector(".manual-intent").disabled = first || last;
-    card.querySelector(".manual-remove-button").hidden = first || last;
+    for (const selector of [".manual-up-button",".manual-down-button",".manual-duplicate-button",".manual-remove-button"]) {
+      card.querySelector(selector).hidden = first || last;
+    }
+    card.querySelector(".manual-up-button").disabled = index <= 1;
+    card.querySelector(".manual-down-button").disabled = index >= cards.length - 2;
+    card.querySelector(".manual-duplicate-button").disabled = cards.length >= 40;
   }
 }
 function addManualScene() {
@@ -229,20 +276,125 @@ function addManualScene() {
 }
 function manualInput() {
   const cards = [...manualScenes.querySelectorAll(".manual-scene")];
-  const scenes = cards.map((card) => ({
-    headline: card.querySelector(".manual-headline").value.trim(),
-    narration: card.querySelector(".manual-narration").value.trim(),
-    subhead: card.querySelector(".manual-subhead").value.trim(),
-    intent: card.querySelector(".manual-intent").value,
-    items: card.querySelector(".manual-items").value.split(/\r?\n/u).map(x => x.trim()).filter(Boolean),
-  }));
+  const scenes = cards.map(readManualCard);
   return {
     title: $("manual-title").value.trim(), viewerQuestion: $("manual-question").value.trim(),
     audience: $("manual-audience").value.trim(), locale: $("manual-locale").value,
-    length: $("manual-length").value, hookStrategy: $("manual-hook").value,
+    length: $("manual-length").value, platform: $("manual-platform").value, hookStrategy: $("manual-hook").value,
     typographyStyle: $("manual-typography").value, scenes,
   };
 }
+/** Portable human-authored content only; NEVER export credentials, voices or render artifacts. */
+const STORY_KIND = "contentgen-manual-storyboard";
+const allowedStoryOptions = {
+  length: ["smoke", "youtube-long"],
+  platform: ["youtube", "youtube-shorts", "instagram-reels", "tiktok"],
+  locale: ["en-US", "ja-JP"],
+  hookStrategy: ["action-first", "unexpected-reveal", "transformation"],
+  typographyStyle: ["snap", "overshoot", "wipe"],
+  intent: ["general-flow", "general-comparison", "general-breakdown"],
+};
+function safeStoryText(value, field, max, min = 0) {
+  if (typeof value !== "string" || value.length > max || value.trim().length < min ||
+    /[\u0000-\u0008\u000e-\u001f]/u.test(value)) {
+    throw new Error(field + " must be " + min + "–" + max + " characters without control codes.");
+  }
+  return value.trim();
+}
+function validateImportedStory(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source) ||
+      source.kind !== STORY_KIND || source.schemaVersion !== 1) {
+    throw new Error("File is not a ContentGen manual storyboard v1.");
+  }
+  const allowed = ["kind","schemaVersion","title","viewerQuestion","audience",
+    "length","platform","locale","hookStrategy","typographyStyle","scenes"];
+  for (const key of Object.keys(source)) {
+    if (!allowed.includes(key)) throw new Error("Unknown storyboard field: " + key);
+  }
+  const result = {
+    title: safeStoryText(source.title, "Title", 180),
+    viewerQuestion: safeStoryText(source.viewerQuestion ?? "", "Viewer question", 240),
+    audience: safeStoryText(source.audience ?? "", "Audience", 160),
+  };
+  for (const key of ["length","platform","locale","hookStrategy","typographyStyle"]) {
+    if (!allowedStoryOptions[key].includes(source[key])) throw new Error("Unsupported storyboard " + key + ".");
+    result[key] = source[key];
+  }
+  if (result.platform !== "youtube" && result.length !== "smoke") {
+    throw new Error("Long-form production requires landscape YouTube.");
+  }
+  if (!Array.isArray(source.scenes) || source.scenes.length < 3 || source.scenes.length > 40) {
+    throw new Error("A storyboard needs 3–40 scenes.");
+  }
+
+  result.scenes = source.scenes.map((scene, i) => {
+    if (!scene || typeof scene !== "object" || Array.isArray(scene)) {
+      throw new Error("Invalid scene at index " + i);
+    }
+    for (const key of Object.keys(scene)) {
+      if (!["headline","narration","subhead","intent","items"].includes(key)) {
+        throw new Error("Unknown scene field " + key);
+      }
+    }
+    if (!allowedStoryOptions.intent.includes(scene.intent)) {
+      throw new Error("Invalid scene treatment at index " + i);
+    }
+    if (!Array.isArray(scene.items) || scene.items.length > 5) {
+      throw new Error("Scene " + (i + 1) + " accepts up to five labels while drafting.");
+    }
+    return {
+      headline: safeStoryText(scene.headline, "Headline", 68),
+      narration: safeStoryText(scene.narration, "Narration", 1600),
+      subhead: safeStoryText(scene.subhead ?? "", "Supporting copy", 115),
+      intent: scene.intent,
+      items: scene.items.map(item => safeStoryText(item, "Diagram label", 44)),
+    };
+  });
+  return result;
+}
+function applyImportedStory(source) {
+  const story = validateImportedStory(source); // fail atomically: no partial form edits
+  for (const [id,key] of [["manual-title","title"],["manual-question","viewerQuestion"],
+    ["manual-audience","audience"],["manual-length","length"],["manual-platform","platform"],
+    ["manual-locale","locale"],["manual-hook","hookStrategy"],
+    ["manual-typography","typographyStyle"]]) $(id).value = story[key];
+  manualScenes.replaceChildren();
+  for (const scene of story.scenes) {
+    const card = makeManualCard();
+    assignManualCard(card, scene);
+    manualScenes.append(card);
+  }
+  $("manual-length").querySelector('option[value="youtube-long"]').disabled = story.platform !== "youtube";
+  refreshManualCardRoles();
+  form.elements.mode.value = "manual";
+  markManualDirty();
+  showMode();
+}
+function exportManualStory() {
+  try {
+    const story = validateImportedStory({ kind: STORY_KIND, schemaVersion: 1, ...manualInput() });
+    const blob = new Blob([JSON.stringify({ kind: STORY_KIND, schemaVersion: 1, ...story }, null, 2) + "\n"],
+      { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = "contentgen-storyboard.json";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    $("activity-message").textContent = "Story exported locally without Fish credentials.";
+  } catch (error) { $("activity-message").textContent = error.message; }
+}
+async function importManualStory() {
+  const file = $("manual-import-file").files?.[0];
+  if (!file) return;
+  try {
+    if (file.size > 128 * 1024) throw new Error("Storyboard exceeds 128 KB.");
+    applyImportedStory(JSON.parse(await file.text()));
+    $("activity-message").textContent = "Story imported. Create the editable storyboard before preflight.";
+  } catch (error) {
+    $("activity-message").textContent = "Import refused: " + error.message;
+  } finally { $("manual-import-file").value = ""; }
+}
+
 async function generateManual() {
   if (runningRequest) return;
   runningRequest = true;
@@ -312,6 +464,8 @@ function showReview(state) {
   currentReview = state.artifacts.video;
   $("empty-preview").hidden = true;
   $("review-content").hidden = false;
+  $("film-preview").parentElement.dataset.aspect = currentDraftIsPortrait ? "portrait" : "landscape";
+  $("stills").dataset.aspect = currentDraftIsPortrait ? "portrait" : "landscape";
   $("film-preview").src = state.artifacts.video;
   $("voice-audio").src = state.artifacts.voice;
   $("master-audio").src = state.artifacts.master;
@@ -443,6 +597,15 @@ form.addEventListener("change", (event) => { if (event.target.name === "provider
 $("generate-button").addEventListener("click", generate);
 $("manual-add-button").addEventListener("click", addManualScene);
 $("manual-generate-button").addEventListener("click", generateManual);
+$("manual-export-button").addEventListener("click", exportManualStory);
+$("manual-import-button").addEventListener("click", () => $("manual-import-file").click());
+$("manual-import-file").addEventListener("change", importManualStory);
+$("manual-platform").addEventListener("change", () => {
+  if ($("manual-platform").value !== "youtube") $("manual-length").value = "smoke";
+  $("manual-length").querySelector('option[value="youtube-long"]').disabled = $("manual-platform").value !== "youtube";
+  showMode();
+  topicDirty = true; invalidate();
+});
 for (let n = 0; n < 3; n++) manualScenes.append(makeManualCard());
 refreshManualCardRoles();
 $("save-draft-button").addEventListener("click", saveDraft);

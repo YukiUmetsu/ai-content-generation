@@ -57,17 +57,27 @@
             <div class="field-group"><label for="manual-audience">Intended audience</label><input id="manual-audience" maxlength="160" placeholder="e.g. Homeowners"></div>
             <div class="manual-grid">
               <div class="field-group"><label for="manual-length">Length</label><select id="manual-length"><option value="smoke">Short explainer (landscape)</option><option value="youtube-long">Long YouTube film (8+ min minimum)</option></select></div>
+              <div class="field-group"><label for="manual-platform">Output format</label>
+                <select id="manual-platform"><option value="youtube">YouTube landscape · 1920×1080</option>
+                  <option value="youtube-shorts">YouTube Shorts · 1080×1920</option>
+                  <option value="instagram-reels">Instagram Reels · 1080×1920</option>
+                  <option value="tiktok">TikTok · 1080×1920</option></select></div>
               <div class="field-group"><label for="manual-locale">Narration</label><select id="manual-locale"><option value="en-US">English</option><option value="ja-JP">日本語</option></select></div>
             </div>
             <div class="manual-grid">
               <div class="field-group"><label for="manual-hook">Kumiki opening recipe</label><select id="manual-hook"><option value="action-first">Action-first</option><option value="unexpected-reveal">Unexpected reveal</option><option value="transformation">Transformation</option></select></div>
               <div class="field-group"><label for="manual-typography">Kumiki title treatment</label><select id="manual-typography"><option value="snap">Snap</option><option value="overshoot">Overshoot</option><option value="wipe">Wipe</option></select></div>
             </div>
-            <p class="helper">These use the pinned Kumiki attention-editing recipe plans. The current renderer produces a 1920 × 1080 landscape explainer; true 9:16 Shorts are not implemented by simply cropping it.</p>
+            <p class="helper">Kumiki compiles the opening and title treatments. Portrait videos are independently composed at 1080×1920 with ShortSafeFrame reserved UI regions; the output is never cropped from landscape.</p>
             <div id="manual-scenes" class="manual-scenes"></div>
-            <button id="manual-add-button" type="button" class="button button-secondary">+ Add a middle scene</button>
+            <div class="manual-actions">
+              <button id="manual-add-button" type="button" class="button button-secondary">+ Add a middle scene</button>
+              <button id="manual-export-button" type="button" class="button button-secondary">Export storyboard JSON</button>
+              <button id="manual-import-button" type="button" class="button button-secondary">Import storyboard JSON</button>
+              <input id="manual-import-file" type="file" accept=".json,application/json" hidden aria-label="Choose a ContentGen storyboard JSON file">
+            </div>
             <button id="manual-generate-button" type="button" class="button button-primary">Create editable storyboard →</button>
-            <p class="helper">Each scene needs a headline, spoken narration (20+ characters), and 2–5 visual labels. The first scene is the hook; the last is the answer. Scenes remain editable as JSON after creation.</p>
+            <p class="helper">Each scene needs a headline, spoken narration (20+ characters), and 2–5 visual labels. The first scene is the hook; the last is the answer. Reorder or duplicate middle scenes and save/load a local storyboard JSON without API keys or voice settings.</p>
           </section>
 
           <section class="panel" aria-labelledby="narrator-heading">
