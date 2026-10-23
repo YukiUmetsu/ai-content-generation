@@ -173,6 +173,11 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     void apply({narration:spoken.narration,visualChange:picture.firstVisual,
       visualAction:picture.firstVisual,onScreenText:picture.onScreenText,sfxIntent:sound.sfxIntent});
   }
+  const visualTextSaved=shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
+  const dirty=!!shot&&!!audio&&(
+    draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
+    draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
+    draft.sfxIntent!==(audio.sfxIntent??"")||draft.visualElementsText.trim()!==visualTextSaved.trim());
   const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId;
   const mergedImpact={
     speech:new Set(revisions.flatMap(x=>x.impacts.speechRegenerate)),
@@ -248,7 +253,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
                 <label className={header}>Sound effect intent (optional)<input className={field+" mt-2"} maxLength={250} aria-label="Edit sound effect intent" value={draft.sfxIntent} onChange={e=>setDraft({...draft,sfxIntent:e.target.value})}/></label>
               </div>
             </div>
-            <Button icon={<Save className="size-4"/>} disabled={busy||false}
+            <Button icon={<Save className="size-4"/>} disabled={busy||!dirty}
               onClick={()=>{try{void apply(changes());}catch(error){setStatus(error instanceof Error?error.message:"Review the visual elements.");}}}>Apply selected-shot edit</Button>
           </div>
         </Surface>
