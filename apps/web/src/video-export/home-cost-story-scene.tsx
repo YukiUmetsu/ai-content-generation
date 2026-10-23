@@ -101,11 +101,11 @@ function CostCard({x,y,item,index,opacity}:{x:number;y:number;item:typeof defaul
   <rect x={x+22} y={y+26} width="78" height="78" rx="18" fill="#31565C"/>
   <CostIcon index={index} x={x+61} y={y+65} color={color}/>
   <text x={x+121} y={y+59} fill={paper} fontSize="28" fontWeight="735">{item.name}</text>
-  {fitSvgText(item.description,{maxWidthPx:300,preferredSize:20,minSize:16,maxLines:2}).lines.map((line,i)=>
-    <text key={i} data-story-cost-detail={index} x={x+121} y={y+92+i*24}
+  {fitSvgText(item.description,{maxWidthPx:300,preferredSize:19,minSize:14,maxLines:3}).lines.map((line,i)=>
+    <text key={i} data-story-cost-detail={index} x={x+121} y={y+93+i*19}
       fill={faint} fontSize="18">{line}</text>)}
-  <rect x={x+121} y={y+134} rx="16" width={Math.min(178,item.tag.length*14+25)} height="31" fill="#31535A"/>
-  <text x={x+134} y={y+156} fill={color} fontWeight="750" fontSize="17" letterSpacing="1.5">{item.tag}</text>
+  <rect x={x+121} y={y+149} rx="16" width={Math.min(178,item.tag.length*14+25)} height="31" fill="#31535A"/>
+  <text x={x+134} y={y+169} fill={color} fontWeight="750" fontSize="17" letterSpacing="1.5">{item.tag}</text>
  </g>;
 }
 function Mechanism({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
