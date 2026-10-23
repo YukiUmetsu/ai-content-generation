@@ -24,6 +24,16 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
   const [busy,setBusy]=useState("");
   const [error,setError]=useState("");
   const edit=(changes:Partial<typeof brief>)=>{setBrief(x=>({...x,...changes}));setResearch(null);};
+  async function demo(){
+    setBusy("demo");setError("");
+    try{
+      const response=await fetch("/api/contentgen-video/demo",{cache:"no-store",signal:AbortSignal.timeout(10000)});
+      const data=await response.json() as Record<string,unknown>;
+      if(!response.ok)throw Error(String(data.error||"Demo unavailable."));
+      onGenerated(data.dossier,data.bundle);
+    }catch(e){setError(e instanceof Error?e.message:"Demo failed to load.");}
+    finally{setBusy("");}
+  }
   async function capture(){
     setBusy("research");setError("");
     try{
@@ -65,6 +75,12 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
           onChange={e=>setConsent(e.target.checked)}/>
         Allow ContentGen to query my local SearXNG instance and fetch public web pages for this topic. The installed LLM analyzes these captured passages locally. Retrieved content is untrusted.
       </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="outline" disabled={!!busy} onClick={()=>void demo()}>
+          Try sample project (no research/model setup)
+        </Button>
+        <p className="text-xs text-muted-foreground">Synthetic figures and claims; for interface testing only.</p>
+      </div>
       <Button disabled={!consent||!brief.title.trim()||!brief.audience.trim()||!!busy}
         onClick={()=>void capture()} icon={<BookOpen className="size-4"/>}>
         {busy==="research"?"Researching public sources…":"Research this topic"}
