@@ -1,17 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FEATURE_IDS, FEATURE_METADATA, type FeatureId } from "@/features/registry";
 import { Header } from "./header";
 import { InspectorPanel } from "./inspector";
 import { MobileNavDrawer, StudioSidebar } from "./sidebar";
-import { sectionLabel, type SectionId } from "./navigation";
+import type { SectionId } from "./navigation";
 import { usePreferences } from "./use-preferences";
 import { Workspace } from "./workspace";
-import { EmptyState } from "./empty-state";
+import { CatalogWorkspace } from "./catalog-workspace";
+import { loadCatalog, persistCatalog, type StudioCatalog } from "./catalog-model";
 import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 
-const PROJECT_ID = "demo-project-1";
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -22,6 +22,20 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function Shell() {
   const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("create");
+  const [initialCatalog] = useState(loadCatalog);
+  const [catalog, setCatalog] = useState(initialCatalog.catalog);
+  const [catalogError, setCatalogError] = useState<string | null>(initialCatalog.warning);
+  const saveCatalog = useCallback((next: StudioCatalog): boolean => {
+    try {
+      persistCatalog(next);
+      setCatalog(next);
+      setCatalogError(null);
+      return true;
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : "Local catalog could not be saved.");
+      return false;
+    }
+  }, []);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [toolGuideOpen, setToolGuideOpen] = useState(true);
@@ -86,6 +100,11 @@ export function Shell() {
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {catalogError && (
+          <div role="alert" className="border-b border-danger/40 bg-danger/10 px-4 py-2 text-sm text-danger">
+            Local catalog: {catalogError}. Existing data has not been overwritten.
+          </div>
+        )}
         {activeSection !== "create" && (
           <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
         )}
@@ -93,8 +112,9 @@ export function Shell() {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
           {activeSection === "create" ? (
             <Workspace
+              key={catalog.activeProjectId}
               locale={locale}
-              projectId={PROJECT_ID}
+              projectId={catalog.activeProjectId}
               activeFeatureId={activeFeatureId}
               onFeatureChange={setActiveFeatureId}
               onOpenNav={() => setMobileNavOpen(true)}
@@ -106,16 +126,14 @@ export function Shell() {
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} />
           ) : (
-            <main
-              id="workspace"
-              aria-label="Workspace"
-              className="flex min-h-0 flex-1 flex-col overflow-auto p-4"
-            >
-              <EmptyState
-                title={sectionEmptyTitle(activeSection, locale)}
-                description={sectionEmptyDescription(activeSection, locale)}
-              />
-            </main>
+            <CatalogWorkspace
+              key={activeSection + ":" + catalog.activeProjectId}
+              section={activeSection}
+              locale={locale}
+              catalog={catalog}
+              save={saveCatalog}
+              onCreate={() => setActiveSection("create")}
+            />
           )}
 
           {activeSection === "create" && (
@@ -134,23 +152,3 @@ export function Shell() {
   );
 }
 
-function sectionEmptyTitle(id: SectionId, locale: "en" | "ja"): string {
-  const labels: Record<SectionId, Record<"en" | "ja", string>> = {
-    projects: { en: "Projects", ja: "プロジェクト" },
-    research: { en: "Research", ja: "調査" },
-    create: { en: "Create", ja: "作成" },
-    content: { en: "Content", ja: "コンテンツ" },
-    assets: { en: "Assets", ja: "アセット" },
-    products: { en: "Products", ja: "プロダクト" },
-    "jobs-qa": { en: "Jobs & QA", ja: "ジョブとQA" },
-    insights: { en: "Insights", ja: "分析" },
-    settings: { en: "Settings", ja: "設定" },
-  };
-  return locale === "ja" ? labels[id].ja + "はこの基盤の範囲外です" : labels[id].en + " is outside this foundation";
-}
-
-function sectionEmptyDescription(id: SectionId, locale: "en" | "ja"): string {
-  return locale === "ja"
-    ? "「" + sectionLabel(id, locale) + "」の機能はまだ接続されていません。作成セクションで使用可能なスタジオツールから始めてください。"
-    : "The " + sectionLabel(id, locale).toLowerCase() + " area is not wired in this foundation. Start with the available studio tools in Create.";
-}
