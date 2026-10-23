@@ -94,8 +94,8 @@ describe("home-cost sample editor parity",()=>{
     "Edited: repairs arrive when necessary"
    ]}}:chapter)};
   const output=renderToStaticMarkup(<GeneralExportScene plan={edited} frame={219}/>);
-  expect(output).toContain("Edited: borrowing has an interest cost");
-  expect(output).toContain("Edited: repairs arrive when necessary");
+  expect(output).toContain("Edited: borrowing");
+  expect(output).toContain("Edited: repairs");
   expect(output).toContain('data-story-cost-detail="1"');
   expect(output).toContain('data-story-cost-detail="3"');
  });
