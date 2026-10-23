@@ -79,6 +79,14 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   job.claims=structuredClone(dossier.claims);
   const known=new Set(dossier.claims.map(x=>x.id));
   for(let i=0;i<job.beats.length;i++){
+    const shot=plan.shots[i];
+    const phase=phases.get(shot.id);
+    job.beats[i].visual.direction={
+      phase:phase?.kind??"none",
+      subjectIds:shot.subjectIds.slice(0,5),
+      visualAction:(phase?.visualAction??shot.visualChange).slice(0,650),
+      learningChange:(phase?.learningChange??shot.visualChange).slice(0,650)
+    };
     const refs=plan.shots[i].claimIds.filter(id=>known.has(id));
     if(!refs.length)throw Error("Shot "+plan.shots[i].id+" must reference at least one research claim.");
     job.beats[i].claimRefs=refs;
