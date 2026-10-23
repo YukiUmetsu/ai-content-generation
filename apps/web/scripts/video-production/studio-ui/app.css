@@ -47,3 +47,7 @@ fieldset{border:0;padding:0;margin:0}.provider-options{display:flex;background:#
 #manual-add-button { width:100%; margin-bottom:10px; }
 #manual-generate-button { width:100%; }
 @media(max-width:600px) { .manual-grid { grid-template-columns:1fr; } .manual-scene { padding:12px; } }
+
+/* The output inspector respects the authored raster rather than stretching Shorts into 16:9. */
+.media-frame[data-aspect="portrait"] { aspect-ratio: 9 / 16; width:min(100%,360px); max-height:640px; margin-inline:auto; }
+.stills-grid[data-aspect="portrait"] img { aspect-ratio:9/16; object-fit:contain; background:#080c12; }
