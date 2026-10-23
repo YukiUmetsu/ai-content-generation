@@ -19,7 +19,7 @@ const capture = () => ({ id: "source_01", url, title: "Insulation overview",
 const candidate = () => ({ claims: [{ text: "Insulation resists heat flow.",
   support: [{ sourceId: "source_01", quote: "material that resists the flow of heat" }] }], gaps: [] });
 const options = { provider: "searxng", model: "already-installed-model",
-  endpoint: "http://127.0.0.1:11434/v1/chat/completions", allowNetwork: true, maxSources: 2 };
+  endpoint: "http://127.0.0.1:11434/v1/chat/completions", allowNetwork: true, maxSources: 2, searchEndpoint: "http://127.0.0.1:58023/search" };
 
 test("public source policy blocks loopback, addresses, custom ports and non-HTTPS", async () => {
   for (const candidate of ["http://www.energy.gov/", "https://127.0.0.1/", "https://[::1]/",
@@ -45,7 +45,7 @@ test("HTML extraction strips script/nav and normalizes entity and whitespace", (
 
 test("search provider treats results as untrusted leads and never includes private URLs", async () => {
   const transport = async (requestUrl) => {
-    assert.match(requestUrl, /^http:\/\/127\.0\.0\.1:8080\/search/);
+    assert.match(requestUrl, /^http:\/\/127\.0\.0\.1:58023\/search/);
     assert.ok(new URL(requestUrl).searchParams.get("q")?.includes("heat"));
     return new Response(JSON.stringify({ results: [
       { title: "Private", url: "http://localhost:9999/internal" },
@@ -141,7 +141,7 @@ test("CLI writes captures and dossier to a NEW restricted folder, never replaces
   t.after(() => rm(root, { recursive: true, force: true }));
   const out = join(root, "study");
   const params = ["--topic", topic.title, "--question", topic.viewerQuestion, "--audience", topic.audience,
-    "--model", "installed-local", "--allow-network", "--out-dir", out];
+    "--model", "installed-local", "--search-endpoint", "http://127.0.0.1:58023/search", "--allow-network", "--out-dir", out];
   assert.throws(() => parseResearchArgs(params.filter(x => x !== "--allow-network"), {}), /allow-network/);
   assert.throws(() => parseResearchArgs([...params, "--search-provider", "brave"], {}), /approve-search-charges/);
   assert.throws(() => parseResearchArgs([...params, "--search-provider", "brave", "--approve-search-charges"], {}), /BRAVE_SEARCH_API_KEY/);
