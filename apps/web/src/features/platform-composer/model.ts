@@ -49,16 +49,16 @@ export function createDeliveryLayout(input:DeliveryInput):DeliveryLayout {
   const orientation=portrait?"portrait":landscape?"landscape":"square";
   const inset=.025;
   const x=content.x+inset, w=content.width-inset*2;
-  const titleHeight=content.height*(portrait?.20:.22);
-  const subtitleHeight=content.height*(portrait?.10:.12);
+  const titleHeight=content.height*(portrait ? .20 : .22);
+  const subtitleHeight=content.height*(portrait ? .10 : .12);
   const titleY=content.y+content.height*.035;
   const subtitleY=titleY+titleHeight+content.height*.025;
   const graphicsY=subtitleY+subtitleHeight+content.height*.06;
   const graphicsHeight=Math.max(.08,content.y+content.height*.93-graphicsY);
-  const gap=portrait?.018:.023;
-  const graphics=labels.map((label,i)=>{
+  const gap=portrait ? .018 : .023;
+  const graphics=labels.map((_,i)=>{
     const split=landscape&&labels.length<=3;
-    const cols=split?labels.length:portrait&&labels.length>2?2:2;
+    const cols=split?labels.length:2;
     const rows=Math.ceil(labels.length/cols);
     const width=(w-gap*(cols-1))/cols;
     const height=(graphicsHeight-gap*(rows-1))/rows;
