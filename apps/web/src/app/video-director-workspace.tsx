@@ -96,6 +96,12 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
       setStatus("Preproduction bundle loaded. Select a shot to revise.");
     }catch(e){setStatus(e instanceof Error?e.message:"Bundle import failed.");}
   }
+  function chooseShot(id:string,focusEditor=false){
+    if(!bundle)return;
+    setShotId(id);setDraft(shotDraft(bundle,id));
+    setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");
+    if(focusEditor)document.querySelector<HTMLSelectElement>('select[aria-label="Selected video shot"]')?.focus();
+  }
   function changes(){
     if(!shot||!audio)return {};
     const result:Record<string,string|null>={};
@@ -174,8 +180,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
               <select aria-label="Selected video shot" className={field+" mt-2"} value={shotId}
-                onChange={e=>{if(!bundle)return;setShotId(e.target.value);setDraft(shotDraft(bundle,e.target.value));
-                  setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");}}>
+                onChange={e=>chooseShot(e.target.value)}>
                 {bundle.plan.shots.map((s,i)=><option key={s.id} value={s.id}>{String(i+1).padStart(2,"0")} · {s.id} · {s.purpose}</option>)}
               </select>
             </label>
@@ -252,7 +257,8 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           </div>
         </Surface>
         <ProductionPanel key={bundle.planSha256??JSON.stringify(bundle.plan.shots.map(s=>s.id))}
-          dossier={dossier} bundle={bundle}/>
+          dossier={dossier} bundle={bundle} selectedShotId={shotId}
+          onSelectShot={id=>chooseShot(id,true)}/>
       </>}
       {status&&<p role="status" className="text-sm text-muted-foreground">{status}</p>}
       <p className="text-xs text-muted-foreground">{ja?"すべての変更は下書きです。":"Every edit remains an unapproved draft. Source research, claims, voice permissions, and final export QA are never bypassed."}</p>
