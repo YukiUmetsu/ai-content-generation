@@ -17,7 +17,7 @@ function dossier() {
       snapshotSha256:createHash("sha256").update("synthetic fixture paragraph 1").digest("hex")}],
     claims:[{id:"claim_illustration",text:"Illustrative ownership costs have multiple components.",status:"illustrative",sourceRefs:[]},
       {id:"claim_cost",text:"This is a synthetic example for testing, not a market estimate.",status:"verified",sourceRefs:["evidence_home"]}],
-    gaps:[],review:{status:"human-reviewed",reviewer:"fixture"}
+    assets:[],gaps:[],review:{status:"human-reviewed",reviewer:"fixture"}
   };
 }
 function plan(){
@@ -118,4 +118,25 @@ test("CLI writes a non-overwriting, local-only review bundle",async(t)=>{
   assert.equal(a.assessment.ready,true);assert.equal(JSON.parse(await readFile(out,"utf8")).plan.story.pattern,"cost-dissection");
   await assert.rejects(runPreproductionCli(["--research",source,"--plan",authored,"--out",out],{log:()=>{}}),/EEXIST/);
   assert.equal(calls,0);
+});
+
+test("unknown assets, test-only assets and missing publication evidence cannot be hidden",()=>{
+  const d=dossier(), p=plan();
+  p.shots[1].assetRefs=["phantom"];
+  assert.ok(codes(parsePreproductionPlan(p,d).findings).includes("missing-asset-reference"));
+  d.assets=[{id:"phantom",kind:"illustration",ref:"synthetic-local-fixture",licenseStatus:"test-only"}];
+  assert.equal(parsePreproductionPlan(p,d).ok,true);
+  assert.ok(codes(inspectPreproduction(d,p).findings).includes("test-asset-not-approved"));
+});
+test("malformed model plan is rejected with findings, not a runtime null dereference",()=>{
+  const p=plan();p.shots=[null,{bad:"shape"}];
+  const result=parsePreproductionPlan(p,dossier());
+  assert.equal(result.ok,false);
+  assert.ok(result.findings.length>0);
+});
+test("the opening must show the question and the ending must show its answer",()=>{
+  const p=plan();p.shots[0].family="evidence";p.shots[2].purpose="explain";
+  const found=codes(parsePreproductionPlan(p,dossier()).findings);
+  assert.ok(found.includes("hook-not-visible"));
+  assert.ok(found.includes("payoff-not-visible"));
 });
