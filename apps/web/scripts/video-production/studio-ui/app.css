@@ -34,3 +34,16 @@ fieldset{border:0;padding:0;margin:0}.provider-options{display:flex;background:#
 
 /* Debug output is local, bounded and deliberately never contains provider payloads. */
 .fish-debug-output { overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.78rem; max-height: 24rem; overflow-y: auto; }
+
+/* Manual general-video storyboard: compact, readable and keyboard-accessible. */
+.manual-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:var(--space-3,12px); }
+.manual-scenes { display:grid; gap:14px; margin:16px 0; }
+.manual-scene { border:1px solid var(--line,#556271); background:rgba(100,140,170,.045); border-radius:14px; padding:16px; display:grid; gap:10px; }
+.manual-scene-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.manual-scene-header strong { font-size:.88rem; letter-spacing:.02em; }
+.manual-scene .field-group { margin:0; }
+.manual-scene label { display:grid; gap:7px; font-size:.85rem; }
+.manual-scene .manual-remove-button { font-size:.78rem; padding:7px 10px; }
+#manual-add-button { width:100%; margin-bottom:10px; }
+#manual-generate-button { width:100%; }
+@media(max-width:600px) { .manual-grid { grid-template-columns:1fr; } .manual-scene { padding:12px; } }
