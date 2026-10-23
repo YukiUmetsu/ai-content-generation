@@ -81,3 +81,22 @@ describe("authored home ownership visuals in the actual renderer",()=>{
     expect(edited).not.toBe(same);
   });
 });
+
+
+describe("home-cost sample editor parity",()=>{
+ it("displays revised on-screen teaching explanations from the selected source shot",()=>{
+  const edited:GeneralVisualPlan={...plan,chapters:plan.chapters.map((chapter,index)=>
+   index===1?{...chapter,visual:{...chapter.visual,itemNotes:[
+    "The quoted price is not the full spending total",
+    "Edited: borrowing has an interest cost",
+    "A recurring local expense",
+    "Insures against covered risks",
+    "Edited: repairs arrive when necessary"
+   ]}}:chapter)};
+  const output=renderToStaticMarkup(<GeneralExportScene plan={edited} frame={219}/>);
+  expect(output).toContain("Edited: borrowing has an interest cost");
+  expect(output).toContain("Edited: repairs arrive when necessary");
+  expect(output).toContain('data-story-cost-detail="1"');
+  expect(output).toContain('data-story-cost-detail="3"');
+ });
+});
