@@ -14,6 +14,7 @@ const integer = (v, min = 0) => Number.isSafeInteger(v) && v >= min;
 const allowedIntents = new Set(["house-intro", "cost-breakdown", "cost-timeline", "cost-comparison", "cost-payoff"]);
 const genericIntents = new Set(["general-intro", "general-flow", "general-comparison", "general-breakdown", "general-payoff"]);
 const byPreset = new Map(presets.map((preset) => [preset.id, preset]));
+const portraitPresets = new Set(["youtube-shorts", "instagram-reels", "tiktok"]);
 
 /** @param {unknown} input */
 export function parseVideoProductionJob(input) {
@@ -104,6 +105,13 @@ export function parseVideoProductionJob(input) {
       !d.targetDurationSeconds.every((value) => integer(value, 1)) ||
       d.targetDurationSeconds[0] > d.targetDurationSeconds[1]) {
       add("invalid-duration-policy", "destination.targetDurationSeconds", "Expected ordered positive duration bounds.");
+    }
+    if (family === "general-explainer-v1" && !["youtube", ...portraitPresets].includes(d.presetId)) {
+      add("unsupported-general-preset", "destination.presetId", "Generic video supports YouTube landscape, Shorts, Reels or TikTok portrait.");
+    }
+    if (family === "general-explainer-v1" && portraitPresets.has(d.presetId) && (input.mode !== "smoke" ||
+      d.targetDurationSeconds?.[1] > 180 || d.minimumDurationSeconds !== null)) {
+      add("portrait-duration-invalid", "destination", "Portrait general explainers must be short-form and within 180 seconds.");
     }
     if (input.mode === "youtube-long" && (d.presetId !== "youtube" || !integer(d.minimumDurationSeconds, 480) || d.targetDurationSeconds?.[1] < 480)) {
       add("invalid-duration-policy", "destination.minimumDurationSeconds", "YouTube long production requires at least 480 seconds and a landscape profile.");
