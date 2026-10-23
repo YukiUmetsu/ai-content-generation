@@ -6,6 +6,7 @@
  * @typedef {Record<string, unknown>} ObjectValue
  */
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
+import { isSceneMotion } from "./scene-motion.mjs";
 
 const has = (o, k) => Object.hasOwn(o, k);
 const object = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -267,7 +268,7 @@ export function parseVideoProductionJob(input) {
     }
     idList(beat.eventIds, `beats[${index}].eventIds`);
     if (!integer(beat.pauseAfterMs, 0) || beat.pauseAfterMs > 60000) add("invalid-pause", `beats[${index}].pauseAfterMs`, "Pause must be 0–60,000 milliseconds.");
-    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart", "hookStrategy", "typographyStyle", "direction"] : ["headline", "subhead", "emphasis"])) {
+    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart", "hookStrategy", "typographyStyle", "direction", "motion"] : ["headline", "subhead", "emphasis"])) {
       for (const [key, maxLength] of [["headline", 68], ["subhead", 115], ["emphasis", 28]]) {
         const value = beat.visual[key];
         if (!string(value) || value.length > maxLength || /[\r\n\u0000-\u001f]/.test(value)) {
@@ -282,6 +283,9 @@ export function parseVideoProductionJob(input) {
         if (has(beat.visual, "typographyStyle") && !["snap", "overshoot", "wipe"].includes(beat.visual.typographyStyle)) {
           add("invalid-typography-style", `beats[${index}].visual.typographyStyle`, "Choose a supported Kumiki impact typography treatment.");
         }
+        if (has(beat.visual,"motion")&&!isSceneMotion(beat.visual.motion))
+          add("invalid-scene-motion",`beats[${index}].visual.motion`,
+            "Use a bounded scene motion preset: reveal delay, pace, camera and transition.");
         if (has(beat.visual, "direction")) {
           const path = `beats[${index}].visual.direction`;
           const dir = beat.visual.direction;

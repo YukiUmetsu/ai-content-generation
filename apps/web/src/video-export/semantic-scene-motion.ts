@@ -21,10 +21,12 @@ export interface SemanticFrame {
   isPayoffPending:boolean;
 }
 export function sampleSemanticMotion({
-  intent,phase="none",localFrame,durationFrames,visibleItems,itemCount,reducedMotion=false
+  intent,phase="none",localFrame,durationFrames,visibleItems,itemCount,reducedMotion=false,
+  cameraMode="subtle",revealStartFrame,revealStepFrames
 }:{
   intent:Intent;phase?:TeachingPhase;localFrame:number;durationFrames:number;visibleItems:number;
   itemCount:number;reducedMotion?:boolean;
+  cameraMode?:"locked"|"subtle"|"cinematic";revealStartFrame?:number;revealStepFrames?:number;
 }):SemanticFrame {
   if(!Number.isSafeInteger(localFrame)||!Number.isSafeInteger(durationFrames)||durationFrames<1||
     localFrame<0||localFrame>=durationFrames||!Number.isInteger(itemCount)||itemCount<2||itemCount>5||
@@ -48,18 +50,22 @@ export function sampleSemanticMotion({
     const visible=index<visibleItems;
     // The editorial sampler owns *whether* an item exists. This controls only
     // its visual introduction and cannot leak future answers or labels.
-    const startedAt=index*revealStep+(intent==="general-payoff"?1:0);
+    const startedAt=revealStartFrame!==undefined&&revealStepFrames!==undefined
+      ?revealStartFrame+index*revealStepFrames
+      :index*revealStep+(intent==="general-payoff"?1:0);
     const local=Math.max(0,localFrame-startedAt);
-    const p=reducedMotion?1:ease((local+1)/Math.max(1,Math.min(12,revealStep)));
+    const actualStep=revealStepFrames??revealStep;
+    const p=reducedMotion?1:ease((local+1)/Math.max(1,Math.min(12,actualStep)));
     return {visible,opacity:visible?quantize(p):0,
       offset:visible&&!reducedMotion?quantize((1-p)*30):0,
       scale:visible&&!reducedMotion?quantize(.94+.06*p):1,
       focused:visible&&index===focusIndex};
   });
   const glide=reduceMotionGuard(reducedMotion,Math.sin(timeline*Math.PI*1.7));
-  const cameraX=quantize((1-entry)*-14+glide*5);
-  const cameraY=quantize((1-entry)*11-Math.sin(timeline*Math.PI)*7*(reducedMotion?0:1));
-  const cameraScale=quantize(1+(reducedMotion?0:.012*ease(timeline)));
+  const cameraMultiplier=cameraMode==="locked"?0:cameraMode==="cinematic"?1.65:1;
+  const cameraX=quantize(((1-entry)*-14+glide*5)*cameraMultiplier);
+  const cameraY=quantize(((1-entry)*11-Math.sin(timeline*Math.PI)*7*(reducedMotion?0:1))*cameraMultiplier);
+  const cameraScale=quantize(1+(reducedMotion?0:.012*ease(timeline)*cameraMultiplier));
   return {
     style:style[intent],phase,cameraX,cameraY,cameraScale,
     focusIndex,reveal:reveals,

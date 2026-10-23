@@ -81,6 +81,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   for(let i=0;i<job.beats.length;i++){
     const shot=plan.shots[i];
     const phase=phases.get(shot.id);
+    if(shot.motion)job.beats[i].visual.motion=structuredClone(shot.motion);
     job.beats[i].visual.direction={
       phase:phase?.kind??"none",
       subjectIds:shot.subjectIds.slice(0,5),

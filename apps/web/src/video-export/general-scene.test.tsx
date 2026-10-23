@@ -139,3 +139,50 @@ describe("cinematic semantic visual treatments on the actual exported frame",()=
     expect(late).toContain("DELIVERED, NOT MAGIC");
   });
 });
+
+
+describe("authored timeline motion in the actual MP4 export React scene",()=>{
+  it("changes only controlled visual frames and fades without modifying authored labels",()=>{
+    const tuned:GeneralVisualPlan={...plan,chapters:plan.chapters.map((chapter,index)=>
+      index===1?{...chapter,intent:"general-breakdown",visual:{...chapter.visual,
+        items:["Tax","Insurance","Repairs","Utilities"],
+        motion:{revealDelayPercent:25,revealPace:"deliberate",camera:"locked",transition:"fade"}
+      }}:chapter)};
+    const first=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={60}/>);
+    const later=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={118}/>);
+    expect(first).toContain('data-scene-entry-fade=""');
+    expect(first).not.toContain('>Tax</text>');
+    expect(first).not.toContain('>Utilities</text>');
+    expect(later).toContain('>Tax</text>');
+    expect(later).toContain('>Utilities</text>');
+    expect(later).not.toContain('data-scene-entry-fade=""');
+    expect(later).toContain('data-semantic-scene="decomposition"');
+    const changedCamera:GeneralVisualPlan={...tuned,chapters:tuned.chapters.map((chapter,index)=>
+      index===1?{...chapter,visual:{...chapter.visual,motion:{
+        ...chapter.visual.motion!,camera:"cinematic" as const}}}:chapter)};
+    expect(renderToStaticMarkup(<GeneralExportScene plan={changedCamera} frame={100}/>))
+      .not.toBe(renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={100}/>));
+  });
+  it("never spoils an authored payoff on its event frame and reveals it later",()=>{
+    const tuned:GeneralVisualPlan={...plan,chapters:plan.chapters.map((chapter,index)=>
+      index===2?{...chapter,visual:{...chapter.visual,motion:{
+        revealDelayPercent:30,revealPace:"deliberate",camera:"cinematic",transition:"fade"}}}:chapter)};
+    const event=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={120}/>);
+    const revealed=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={179}/>);
+    expect(event).toContain('data-payoff-locked="true"');
+    expect(event).not.toContain('DELIVERED, NOT MAGIC');
+    expect(revealed).toContain('DELIVERED, NOT MAGIC');
+    expect(revealed).toContain('data-semantic-scene="synthesis"');
+  });
+  it("gates unrevealed Kumiki process stages rather than only title cards",()=>{
+    const tuned:GeneralVisualPlan={...plan,chapters:plan.chapters.map((chapter,index)=>
+      index===1?{...chapter,visual:{...chapter.visual,motion:{
+        revealDelayPercent:30,revealPace:"balanced",camera:"subtle",transition:"cut"}}}:chapter)};
+    const start=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={60}/>);
+    const finish=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={119}/>);
+    expect(start).toContain('id="contentgen-flow-reveal"');
+    expect(start).toContain('height="0"');
+    expect(finish).toContain('data-km-diagram-stage');
+    expect(finish).not.toContain('height="0"');
+  });
+});

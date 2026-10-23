@@ -11,6 +11,7 @@ import { ChartStoryView } from "@/components/infographic/chart-story-react";
 import { buildQuantitativeChartStory } from "./quantitative-chart-story";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
 import { sampleSemanticMotion } from "./semantic-scene-motion";
+import { entryFadeOpacity, motionRevealState } from "../../scripts/video-production/scene-motion.mjs";
 import { SemanticDiagram } from "./semantic-scene-diagrams";
 
 const ink = "#F5F2EB";
@@ -28,7 +29,7 @@ function Node({ x, y, width, height, label, index, highlight = false }: { x: num
   </g>;
 }
 
-function Journey({ items, fps, chapterFrames, frame, fallback }: { items: string[]; fps: RationalFps; chapterFrames: number; frame: number; fallback: ReactNode }) {
+function Journey({ items, fps, chapterFrames, frame, fallback, visibleCount }: { items: string[]; fps: RationalFps; chapterFrames: number; frame: number; fallback: ReactNode; visibleCount?: number }) {
   const plan = useMemo(() => createGeneralJourney(items, chapterFrames, fps), [items, chapterFrames, fps]);
   if (!plan) return fallback;
   const sample = evaluateProcessJourney(plan, frame);
@@ -36,7 +37,19 @@ function Journey({ items, fps, chapterFrames, frame, fallback }: { items: string
     <circle cx={sample.position.x} cy={sample.position.y} r="25" fill={turquoise} opacity=".15" />
     <circle data-process-journey-subject={sample.subjectId} cx={sample.position.x} cy={sample.position.y} r="13" fill={accent} stroke="#101D2D" strokeWidth="4" />
   </>;
+  // The Kumiki process graph remains intact for accurate routes, but authored
+  // motion reveals only the permitted top-to-bottom stages.
+  const height=items.length>=5?84:items.length===4?100:116;
+  const gap=Math.min(90,Math.floor((GENERAL_JOURNEY_VIEWPORT.height-80-items.length*height)/(items.length-1)));
+  const top=Math.round((GENERAL_JOURNEY_VIEWPORT.height-(items.length*height+(items.length-1)*gap))/2);
+  const revealHeight=visibleCount===undefined?GENERAL_JOURNEY_VIEWPORT.height:
+    visibleCount===0?0:Math.min(GENERAL_JOURNEY_VIEWPORT.height,
+      top+visibleCount*height+(visibleCount-1)*gap+12);
   return <g transform="translate(1040 242)">
+    {visibleCount!==undefined&&<clipPath id="contentgen-flow-reveal">
+      <rect width={GENERAL_JOURNEY_VIEWPORT.width} height={revealHeight}/>
+    </clipPath>}
+    <g clipPath={visibleCount!==undefined?"url(#contentgen-flow-reveal)":undefined}>
     <DiagramStage graph={plan.graph} timeline={plan.diagramTimeline} frame={frame}
       width={GENERAL_JOURNEY_VIEWPORT.width} height={GENERAL_JOURNEY_VIEWPORT.height}
       ariaLabel="Illustrative process showing how the stages connect" reducedMotion={false}
@@ -48,6 +61,7 @@ function Journey({ items, fps, chapterFrames, frame, fallback }: { items: string
           index={Number(node.id.slice("step-".length))} highlight={focused} />
       </g>}
     />
+    </g>
   </g>;
 }
 
@@ -69,7 +83,8 @@ function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: Rati
   const items = state.visual.items.slice(0, state.visibleItems);
   const all = state.visual.items;
   if (state.intent === "general-flow") return <Journey items={all} fps={fps} chapterFrames={chapterFrames}
-    frame={state.localFrame} fallback={<StaticVerticalDiagram state={state} />} />;
+    frame={state.localFrame} fallback={<StaticVerticalDiagram state={state} />}
+    visibleCount={state.visual.motion?state.visibleItems:undefined} />;
   if (state.intent === "general-comparison" && all.length <= 3) {
     const width = all.length === 3 ? 220 : 325;
     const gap = all.length === 3 ? 25 : 40;
@@ -105,10 +120,17 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     ? sampleChapterAttention(compiledAttention, state.localFrame, chapter.endFrame - chapter.startFrame)
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
+  const chapterFrames=chapter.endFrame-chapter.startFrame;
+  const authoredReveal=state.visual.motion?motionRevealState({frame:state.localFrame,frames:chapterFrames,
+    itemCount:state.visual.items.length,intent:state.intent,motion:state.visual.motion}):null;
   const semanticMotion = sampleSemanticMotion({intent:state.intent,
     phase:state.visual.direction?.phase??"none",
-    localFrame:state.localFrame,durationFrames:chapter.endFrame-chapter.startFrame,
-    visibleItems:diagramState.visibleItems,itemCount:state.visual.items.length});
+    localFrame:state.localFrame,durationFrames:chapterFrames,
+    visibleItems:diagramState.visibleItems,itemCount:state.visual.items.length,
+    cameraMode:state.visual.motion?.camera??"subtle",
+    revealStartFrame:authoredReveal?.revealStartFrame,revealStepFrames:authoredReveal?.revealStepFrames});
+  const transitionOpacity=state.visual.motion
+    ?entryFadeOpacity(state.localFrame,chapterFrames,state.visual.motion):0;
 
   const typographyScale = attention?.titleScale ?? 1;
   const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
@@ -146,8 +168,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
     {!chartStory && (state.intent==="general-flow"
-      ? <Diagram state={diagramState} fps={plan.manifest.fps}
-          chapterFrames={chapter.endFrame - chapter.startFrame}/>
+      ? <g transform={state.visual.motion?.camera
+          ?`translate(${semanticMotion.cameraX} ${semanticMotion.cameraY}) translate(1420 565) scale(${semanticMotion.cameraScale}) translate(-1420 -565)`
+          :undefined}><Diagram state={diagramState} fps={plan.manifest.fps}
+          chapterFrames={chapter.endFrame - chapter.startFrame}/></g>
       : <SemanticDiagram state={diagramState} motion={semanticMotion} renderNode={Node}/>)}
     {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
       {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
@@ -159,6 +183,8 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     <rect x="120" y="978" width={1680 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="5" fill={accent} />
     <text x="120" y="1034" fill={muted} fontSize="22">{state.disclaimer}</text>
     <text x="1800" y="1034" textAnchor="end" fill={muted} fontSize="22">DRAFT · {frame}f</text>
+    {transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
+      fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
   {chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />

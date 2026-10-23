@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
+import { DEFAULT_SCENE_MOTION, type SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 const RendererScene=lazy(()=>import("./live-renderer-scene"));
 export type LiveVisualPreviewData={
@@ -16,9 +17,10 @@ const humanTime=(frame:number,fps:number)=>{
   return Math.floor(seconds/60).toString().padStart(2,"0")+":"+Math.floor(seconds%60).toString().padStart(2,"0");
 };
 export function LiveRendererPreview({
-  preview,selectedShotId,onSelectShot
+  preview,selectedShotId,onSelectShot,onSaveMotion
 }:{
   preview:LiveVisualPreviewData;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;
+  onSaveMotion?:(shotId:string,motion:SceneMotion)=>Promise<void>;
 }){
   const {plan,shotMap}=preview;
   const total=plan.manifest.durationFrames;
@@ -27,6 +29,10 @@ export function LiveRendererPreview({
   const [frame,setFrame]=useState(initial);
   const [playing,setPlaying]=useState(false);
   const [speed,setSpeed]=useState(1);
+  const [drafts,setDrafts]=useState<Record<string,SceneMotion>>({});
+  const [saving,setSaving]=useState(false);
+  const [feedback,setFeedback]=useState("");
+
   const frameRef=useRef(initial);
   function seek(next:number){
     const valid=Math.max(0,Math.min(total-1,Math.round(next)));
@@ -50,6 +56,27 @@ export function LiveRendererPreview({
   const active=Math.max(0,chapterIndex);
   const chapter=plan.chapters[active];
   const shot=shotMap[active];
+  const savedMotion=chapter.visual.motion??DEFAULT_SCENE_MOTION;
+  const motionDraft=drafts[shot.shotId]??savedMotion;
+  const dirty=JSON.stringify(motionDraft)!==JSON.stringify(savedMotion);
+  const livePlan:GeneralVisualPlan=Object.keys(drafts).length
+    ?{...plan,chapters:plan.chapters.map((item,index)=>drafts[shotMap[index].shotId]
+      ?{...item,visual:{...item.visual,motion:drafts[shotMap[index].shotId]}}
+      :item)}:plan;
+  function changeMotion(patch:Partial<SceneMotion>){
+    setPlaying(false);setFeedback("");
+    setDrafts(current=>({...current,[shot.shotId]:{...motionDraft,...patch}}));
+  }
+  async function saveMotion(){
+    if(!onSaveMotion||!dirty)return;
+    setSaving(true);setPlaying(false);setFeedback("");
+    try{
+      await onSaveMotion(shot.shotId,motionDraft);
+      setDrafts(current=>{const next={...current};delete next[shot.shotId];return next;});
+      setFeedback("Scene motion saved to your project. This setting also applies to the next MP4.");
+    }catch(error){setFeedback(error instanceof Error?error.message:"Could not save scene motion.");}
+    finally{setSaving(false);}
+  }
   const seekShot=(i:number)=>{
     const index=Math.max(0,Math.min(plan.chapters.length-1,i));
     setPlaying(false);seek(plan.chapters[index].startFrame);
@@ -65,7 +92,7 @@ export function LiveRendererPreview({
     <Suspense fallback={<div role="status" className="aspect-video rounded-control bg-surface-subtle p-4 text-sm">
       Loading the actual scene renderer…
     </div>}>
-      <RendererScene plan={plan} frame={frame}/>
+      <RendererScene plan={livePlan} frame={frame}/>
     </Suspense>
     <div className="flex flex-wrap items-center gap-2">
       <Button size="sm" variant="outline" aria-label={playing?"Pause visual preview":"Play visual preview"}
@@ -96,6 +123,70 @@ export function LiveRendererPreview({
       <Button variant="outline" size="sm" onClick={()=>{setPlaying(false);seek(chapter.endFrame-1);}}>
         Inspect end of shot
       </Button>
+    </div>
+    <div className="space-y-2">
+      <p className="text-xs font-semibold">Scene timeline · choose a segment to inspect</p>
+      <div className="flex w-full gap-1 overflow-x-auto pb-2" role="group" aria-label="Video scene timeline">
+        {shotMap.map((item,index)=><button key={item.shotId} type="button"
+          aria-label={`Timeline shot ${index+1}: ${plan.chapters[index].visual.headline}`}
+          aria-pressed={index===active}
+          style={{flexGrow:plan.chapters[index].endFrame-plan.chapters[index].startFrame}}
+          className={`min-w-24 rounded-control border px-2 py-3 text-left text-xs transition-colors ${index===active
+            ?"border-primary bg-primary/10 text-foreground":"border-border bg-surface text-muted-foreground hover:bg-surface-subtle"}`}
+          onClick={()=>seekShot(index)}>
+          <span className="block font-semibold">{index+1} · {plan.chapters[index].intent.replace("general-","")}</span>
+          <span className="mt-1 block truncate">{plan.chapters[index].visual.headline}</span>
+        </button>)}
+      </div>
+    </div>
+    <div className="space-y-3 rounded-control border border-border bg-surface-subtle p-3">
+      <div>
+        <p className="text-sm font-semibold">Scene motion · shot {active+1}</p>
+        <p className="mt-1 text-xs text-muted-foreground">Adjust these controls while watching the actual exporter scene. Changes are previews until you save.</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-xs font-medium">Reveal start · {motionDraft.revealDelayPercent}% into the scene
+          <input aria-label="Reveal start percent" className="accent-primary" type="range" min={0} max={30} step={5}
+            value={motionDraft.revealDelayPercent} onChange={e=>changeMotion({revealDelayPercent:Number(e.target.value)})}/>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-medium">Reveal pace
+          <select aria-label="Reveal pacing" className="rounded-control border border-input bg-surface px-2 py-2 text-xs"
+            value={motionDraft.revealPace} onChange={e=>changeMotion({revealPace:e.target.value as SceneMotion["revealPace"]})}>
+            <option value="snappy">Snappy · faster disclosures</option>
+            <option value="balanced">Balanced</option>
+            <option value="deliberate">Deliberate · spaced out</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-medium">Camera motion
+          <select aria-label="Camera movement" className="rounded-control border border-input bg-surface px-2 py-2 text-xs"
+            value={motionDraft.camera} onChange={e=>changeMotion({camera:e.target.value as SceneMotion["camera"]})}>
+            <option value="locked">Locked · no camera movement</option>
+            <option value="subtle">Subtle drift</option>
+            <option value="cinematic">Cinematic drift</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-medium">Scene entry
+          <select aria-label="Scene transition" className="rounded-control border border-input bg-surface px-2 py-2 text-xs"
+            value={motionDraft.transition} onChange={e=>changeMotion({transition:e.target.value as SceneMotion["transition"]})}>
+            <option value="cut">Cut · immediate</option>
+            <option value="fade">Fade in from dark</option>
+          </select>
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={!dirty||saving||!onSaveMotion} onClick={()=>void saveMotion()}>
+          {saving?"Saving motion…":"Save motion to project"}
+        </Button>
+        <Button size="sm" variant="outline" disabled={!drafts[shot.shotId]||saving}
+          onClick={()=>{setDrafts(x=>{const next={...x};delete next[shot.shotId];return next;});setFeedback("");}}>
+          Discard unsaved changes
+        </Button>
+        <Button size="sm" variant="outline" disabled={saving}
+          onClick={()=>changeMotion({...DEFAULT_SCENE_MOTION})}>Restore default motion</Button>
+        {dirty&&<span role="status" className="text-xs text-muted-foreground">Unsaved · only this preview is changed</span>}
+      </div>
+      {feedback&&<p role="status" className="text-xs text-muted-foreground">{feedback}</p>}
+      <p className="text-xs text-muted-foreground">Reveal timing is relative to scene duration. The payoff cannot appear before its event. Fade means fade-in from dark, not a crossfade between shots. Voice timing is still estimated here.</p>
     </div>
     <label className="block text-xs font-medium text-muted-foreground">
       Select a rendered shot to inspect or edit

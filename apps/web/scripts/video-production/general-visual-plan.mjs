@@ -1,5 +1,6 @@
 /** Pure semantic diagram plan and frame state. Narration timing remains owned by ContentGen. */
 import { parseVideoProductionJob } from "./job.mjs";
+import { motionRevealState } from "./scene-motion.mjs";
 
 const fail = (reason) => { throw new Error(`General explainer visual plan invalid: ${reason}`); };
 const ease = (x) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
@@ -50,10 +51,16 @@ export function getGeneralFrame(plan, absoluteFrame) {
   const started = !isPayoff || absoluteFrame > plan.events[plan.payoffEventId];
   const revealOffset = isPayoff ? Math.max(0, absoluteFrame - plan.events[plan.payoffEventId]) : localFrame;
   const enterProgress = started ? ease(revealOffset / 24) : 0;
-  const visibleItems = !started ? 0 : isPayoff
-    ? (revealOffset >= 24 ? chapter.visual.items.length : 1)
-    : Math.min(chapter.visual.items.length,
-      1 + Math.floor(revealOffset / Math.max(1, Math.min(24, Math.floor(chapterFrames / chapter.visual.items.length)))));
+  // Original frame sampling remains identical for older jobs without motion.
+  // Authored controls are time-relative to measured narration in the real MP4.
+  const visibleItems = chapter.visual.motion
+    ? motionRevealState({frame:localFrame,frames:chapterFrames,
+        itemCount:chapter.visual.items.length,intent:chapter.intent,
+        motion:chapter.visual.motion}).visibleItems
+    : !started ? 0 : isPayoff
+      ? (revealOffset >= 24 ? chapter.visual.items.length : 1)
+      : Math.min(chapter.visual.items.length,
+        1 + Math.floor(revealOffset / Math.max(1, Math.min(24, Math.floor(chapterFrames / chapter.visual.items.length)))));
   return {
     frame: absoluteFrame, chapterIndex, chapterCount: plan.chapters.length,
     intent: chapter.intent, visual: chapter.visual, visibleItems, localFrame, enterProgress,
