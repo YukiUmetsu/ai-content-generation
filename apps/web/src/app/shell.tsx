@@ -3,10 +3,10 @@ import { FEATURE_IDS, FEATURE_METADATA, type FeatureId } from "@/features/regist
 import { Header } from "./header";
 import { InspectorPanel } from "./inspector";
 import { MobileNavDrawer, StudioSidebar } from "./sidebar";
-import { sectionLabel, type SectionId } from "./navigation";
+import type { SectionId } from "./navigation";
 import { usePreferences } from "./use-preferences";
 import { Workspace } from "./workspace";
-import { EmptyState } from "./empty-state";
+import { LocalStudioWorkspace } from "./local-workspaces";
 import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
@@ -106,16 +106,7 @@ export function Shell() {
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} />
           ) : (
-            <main
-              id="workspace"
-              aria-label="Workspace"
-              className="flex min-h-0 flex-1 flex-col overflow-auto p-4"
-            >
-              <EmptyState
-                title={sectionEmptyTitle(activeSection, locale)}
-                description={sectionEmptyDescription(activeSection, locale)}
-              />
-            </main>
+            <LocalStudioWorkspace key={activeSection} section={activeSection} locale={locale} />
           )}
 
           {activeSection === "create" && (
@@ -132,25 +123,4 @@ export function Shell() {
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} showTrigger={false} />
     </div>
   );
-}
-
-function sectionEmptyTitle(id: SectionId, locale: "en" | "ja"): string {
-  const labels: Record<SectionId, Record<"en" | "ja", string>> = {
-    projects: { en: "Projects", ja: "プロジェクト" },
-    research: { en: "Research", ja: "調査" },
-    create: { en: "Create", ja: "作成" },
-    content: { en: "Content", ja: "コンテンツ" },
-    assets: { en: "Assets", ja: "アセット" },
-    products: { en: "Products", ja: "プロダクト" },
-    "jobs-qa": { en: "Jobs & QA", ja: "ジョブとQA" },
-    insights: { en: "Insights", ja: "分析" },
-    settings: { en: "Settings", ja: "設定" },
-  };
-  return locale === "ja" ? labels[id].ja + "はこの基盤の範囲外です" : labels[id].en + " is outside this foundation";
-}
-
-function sectionEmptyDescription(id: SectionId, locale: "en" | "ja"): string {
-  return locale === "ja"
-    ? "「" + sectionLabel(id, locale) + "」の機能はまだ接続されていません。作成セクションで使用可能なスタジオツールから始めてください。"
-    : "The " + sectionLabel(id, locale).toLowerCase() + " area is not wired in this foundation. Start with the available studio tools in Create.";
 }
