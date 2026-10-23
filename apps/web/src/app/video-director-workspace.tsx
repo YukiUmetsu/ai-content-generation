@@ -103,7 +103,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     if(!bundle||!dossier||!shot)return;
     setBusy(true);setStatus("");
     try{
-      const result=await request("variants",{bundle,dossier,shotId:shot.id}) as {variants:Variant[]};
+      const result=await request("variants",{bundle,dossier,shotId:shot.id}) as unknown as {variants:Variant[]};
       setVariants(result.variants);setVoiceVariant(result.variants[0].id);
       setVisualVariant(result.variants[0].id);setSoundVariant(result.variants[0].id);
       setStatus("Three unreviewed creative hypotheses generated. Mix script, visual and sound treatments before applying.");
@@ -144,7 +144,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
               <select aria-label="Selected video shot" className={field+" mt-2"} value={shotId}
-                onChange={e=>{setShotId(e.target.value);setDraft(shotDraft(bundle,e.target.value));
+                onChange={e=>{if(!bundle)return;setShotId(e.target.value);setDraft(shotDraft(bundle,e.target.value));
                   setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");}}>
                 {bundle.plan.shots.map((s,i)=><option key={s.id} value={s.id}>{String(i+1).padStart(2,"0")} · {s.id} · {s.purpose}</option>)}
               </select>
