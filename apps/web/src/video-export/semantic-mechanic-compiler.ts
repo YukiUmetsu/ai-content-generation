@@ -79,7 +79,7 @@ export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):S
       if(isSubject)return {...base,x:lerp(1300,1535,t),y:473,width:98,height:92,opacity:1,emphasis:t>.5};
     }
     if(spec.operator==="accumulate"){
-      if(index>=0)return move({...base,x:1085,y:317+index*70,width:195,height:57,opacity:1},
+      if(index>=0)return move({...base,x:1085,y:351+index*64,width:195,height:54,opacity:1},
         {...stack.get(actor.id),opacity:1},t);
       if(isSubject)return {...base,x:1070,y:782,width:242,height:88,opacity:1};
       if(isOutcome)return {...base,x:1500,y:782,width:244,height:88,opacity:reveal,emphasis:true};
@@ -98,7 +98,7 @@ export function compileSemanticMechanic(spec:VisualMechanicV1,options:Options):S
     return base;
   });
   let kumikiBacked=false;
-  if(options.phase==="mechanism"&&options.localFrame!==undefined&&options.durationFrames!==undefined&&options.fps){
+  if(options.phase==="mechanism"&&!options.reducedMotion&&options.localFrame!==undefined&&options.durationFrames!==undefined&&options.fps){
     if(!Number.isSafeInteger(options.localFrame)||!Number.isSafeInteger(options.durationFrames)||
       options.durationFrames<4||options.localFrame<0||options.localFrame>=options.durationFrames)
       throw Error("Kumiki semantic animation needs a valid Video Director frame and duration.");

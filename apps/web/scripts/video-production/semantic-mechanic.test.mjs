@@ -17,6 +17,8 @@ function mechanic(operator){
   if(operator==="transfer") {spec.operands=["origin","target"];spec.outcomeId="system";}
   if(operator==="compare") spec.outcomeId="system";
   if(operator==="reveal") {spec.operands=["origin","one"];spec.outcomeId="one";}
+  const visible=new Set([spec.subjectId,...spec.operands,spec.outcomeId]);
+  spec.actors=spec.actors.filter(a=>visible.has(a.id));
   return spec;
 }
 const codes=(spec,ctx=context)=>validateVisualMechanic(spec,ctx).findings.map(x=>x.code);
@@ -37,6 +39,8 @@ test("reject unknown, duplicate, missing or mismatched actor identity and subjec
   assert.ok(codes(z).includes("mechanic-actor-ref"));
   const unknown=mechanic("split");unknown.javascript="alert(1)";
   assert.ok(codes(unknown).includes("mechanic-unknown-field"));
+  const unused=mechanic("split");unused.actors.push({id:"distraction",label:"Meaningless decoration",role:"part",claimIds:["claim_1"]});
+  assert.ok(codes(unused).includes("mechanic-unused-actor"));
 });
 test("reject URLs, script markup, unsolicited numbers, unlicensed keys and invented claims",()=>{
   const url=mechanic("split");url.actors[1].assetKey="https://untrusted.test/icon.svg";

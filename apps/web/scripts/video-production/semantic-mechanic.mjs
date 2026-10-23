@@ -57,6 +57,11 @@ export function validateVisualMechanic(mechanic,context={}){
     if(!id(ref)||!byId.has(ref))add("mechanic-actor-ref",`visualMechanic.operands[${i}]`,"Operand must name an existing actor.");
   if(!id(mechanic.outcomeId)||!byId.has(mechanic.outcomeId))
     add("mechanic-actor-ref","visualMechanic.outcomeId","Outcome must name an existing actor.");
+  if(Array.isArray(actors)&&Array.isArray(operands)){
+    const required=new Set([mechanic.subjectId,...operands,mechanic.outcomeId]);
+    for(const [i,actor] of actors.entries())if(object(actor)&&!required.has(actor.id))
+      add("mechanic-unused-actor",`visualMechanic.actors[${i}]`,"Each visual actor must participate in the current operation; remove unrelated decoration.");
+  }
   if(!byId.has(mechanic.subjectId)||byId.get(mechanic.subjectId)?.role!=="subject")
     add("mechanic-subject","visualMechanic.actors","A subject actor with the technical subject ID is required.");
   if(VISUAL_OPERATORS.includes(mechanic.operator)&&Array.isArray(operands)){

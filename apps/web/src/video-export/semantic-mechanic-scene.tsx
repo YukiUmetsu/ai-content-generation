@@ -16,6 +16,9 @@ function Actor({actor}:{actor:SemanticActorPose}){
   const {x,y,width,height,opacity}=actor;
   const centerX=x+width/2,centerY=y+height/2;
   const text=fitSvgText(actor.label,{maxWidthPx:width-24,preferredSize:24,minSize:13,maxLines:2});
+  // Assembly's physical subcomponents shrink into compact pieces. Fade their
+  // explanatory copy before it could wrap into illegible syllables.
+  const labelOpacity=actor.role==="part"?Math.max(0,Math.min(1,(width-99)/42)):1;
   return <g data-semantic-actor={actor.id} data-semantic-role={actor.role} data-semantic-rect={`${x},${y},${width},${height}`}
     role="group" aria-label={opacity>.015?actor.label:undefined} opacity={opacity}>
     {actor.role==="source"||actor.role==="destination"
@@ -40,10 +43,10 @@ function Actor({actor}:{actor:SemanticActorPose}){
         <path d={`M${x+12} ${y+13} h${Math.min(38,width-24)}`} stroke={color} strokeWidth="5" strokeLinecap="round"/>
         <rect x={x+12} y={y+22} width="11" height="11" rx="3" fill={color} opacity=".75"/>
       </>}
-    {opacity>.015 && text.lines.map((line,index)=><text key={index} x={centerX}
+    {opacity>.015&&labelOpacity>.02&&text.lines.map((line,index)=><text key={index} x={centerX}
       y={centerY+(index-(text.lines.length-1)/2)*Math.min(29,text.fontSize*1.3)+text.fontSize*.31}
       textAnchor="middle" fontSize={text.fontSize} fontWeight="680" fill="#F8F6F1"
-      stroke="#20323B" strokeWidth="2.8" paintOrder="stroke">{line}</text>)}
+      stroke="#20323B" strokeWidth="2.8" opacity={labelOpacity} paintOrder="stroke">{line}</text>)}
   </g>;
 }
 
@@ -93,6 +96,9 @@ export function SemanticMechanicScene({mechanic,phase,motion,reducedMotion=false
     <g clipPath="url(#contentgen-semantic-safe)">
       <rect x="1053" y="250" width="754" height="638" rx="32" fill="#132C39" fillOpacity=".48" stroke="#3D6570" strokeWidth="2"/>
       <text x="1090" y="305" fill="#B9D7D8" fontSize="21" letterSpacing="2" fontWeight="750">{titles[pose.operator]}</text>
+      {pose.operator==="transfer"&&<text x="1100" y="830" fill="#AFC9D2" fontSize="25" fontWeight="650">
+        {mechanic.actors.find(a=>a.id===mechanic.subjectId)?.label}
+      </text>}
       <Paths pose={pose}/>
       {pose.actors.map(actor=><Actor key={actor.id} actor={actor}/>)}
     </g>

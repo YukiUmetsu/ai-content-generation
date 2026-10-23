@@ -19,6 +19,8 @@ function mechanic(operator:VisualOperator):VisualMechanicV1 {
   if(operator==="split"||operator==="compare")spec.outcomeId="packet";
   if(operator==="transfer"){spec.operands=["sender","receiver"];spec.outcomeId="packet";}
   if(operator==="reveal"){spec.operands=["sender","part_a"];spec.outcomeId="part_a";}
+  const required=new Set([spec.subjectId,...spec.operands,spec.outcomeId]);
+  spec.actors=spec.actors.filter(actor=>required.has(actor.id));
   return spec;
 }
 const poses=(operator:VisualOperator,phase:"problem"|"mechanism"|"payoff",progress:number)=>
@@ -84,6 +86,27 @@ describe("semantic animation engine",()=>{
     const revealed=compileSemanticMechanic(mechanic("reveal"),{phase:"payoff",progress:.5,payoffLocked:false,reducedMotion:true});
     expect(locked.actors.find(x=>x.id==="part_a")?.opacity).toBe(0);
     expect(revealed.actors.find(x=>x.id==="part_a")?.opacity).toBe(1);
+  });
+  it("checks seven sampled times and a maximum six-operand stage without screenshot AI",()=>{
+    const six=mechanic("accumulate");
+    for(const [id,label] of [["part_c","Taxes"],["part_d","Insurance"],["part_e","Maintenance"],["part_f","Financing"]]){
+      six.actors.push({id,label,role:"part",claimIds:["claim"]});six.operands.push(id);
+    }
+    for(const time of [0,.1,.25,.5,.75,.95,1]){
+      const rendered=compileSemanticMechanic(six,{phase:"mechanism",progress:time});
+      for(const actor of rendered.actors){
+        expect(actor.x).toBeGreaterThanOrEqual(1040);
+        expect(actor.y).toBeGreaterThanOrEqual(230);
+        expect(actor.x+actor.width).toBeLessThanOrEqual(1820);
+        expect(actor.y+actor.height).toBeLessThanOrEqual(920);
+      }
+    }
+    const finished=compileSemanticMechanic(six,{phase:"payoff",progress:1});
+    const occupied=finished.actors.filter(a=>a.opacity>.9&&six.operands.includes(a.id));
+    for(let i=0;i<occupied.length;i++)for(let j=i+1;j<occupied.length;j++){
+      const a=occupied[i],b=occupied[j];
+      expect(a.x+a.width<=b.x||b.x+b.width<=a.x||a.y+a.height<=b.y||b.y+b.height<=a.y).toBe(true);
+    }
   });
   it("the real Video Director frame route uses the semantic scene before legacy text cards",()=>{
     const transfer=mechanic("transfer");
