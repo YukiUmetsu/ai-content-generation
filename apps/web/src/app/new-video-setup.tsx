@@ -32,7 +32,9 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
   const edit=(changes:Partial<typeof brief>)=>{
     revision.current++;
     setBrief(x=>({...x,...changes}));
-    setResearch(null);setQuotePreviews([]);setBundle(null);setError("");setBusy("");
+    // The server serializes research/story calls. Keep the action locked until
+    // an obsolete request settles, even though its response will be ignored.
+    setResearch(null);setQuotePreviews([]);setBundle(null);setError("");
   };
   async function demo(){
     setBusy("demo");setError("");
@@ -50,7 +52,7 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
   }
   async function draftStoryboard(dossier:Dossier,run:number){
     if(run!==revision.current)return;
-    setBusy("story");
+    setBusy("story");setError("");
     try{
       const result=await api("story",{dossier});
       if(run!==revision.current)return;
@@ -62,7 +64,7 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
       setBundle(generated);
     }catch(e){
       if(run===revision.current)setError(e instanceof Error?e.message:"The local model could not draft the story.");
-    }finally{if(run===revision.current)setBusy("");}
+    }finally{setBusy("");}
   }
   async function researchAndGenerate(){
     const run=++revision.current;
@@ -83,7 +85,7 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
       await draftStoryboard(dossier,run);
     }catch(e){
       if(run===revision.current)setError(e instanceof Error?e.message:"Research could not finish.");
-    }finally{if(run===revision.current)setBusy("");}
+    }finally{setBusy("");}
   }
   return <Surface header={<h2 className="flex items-center gap-2 font-medium"><Sparkles className="size-4"/>Start a video from a topic</h2>}>
     <div className="space-y-4 text-sm">

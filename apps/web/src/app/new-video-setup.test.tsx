@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { NewVideoSetup } from "./new-video-setup";
 afterEach(()=>vi.restoreAllMocks());
@@ -70,9 +70,84 @@ describe("topic-first production workflow",()=>{
     expect(screen.getByText(/Public reference/)).toBeInTheDocument();
     expect(created).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button",{name:"Retry storyboard generation"}));
-    expect(await screen.findByText("A useful flow")).toBeInTheDocument();
+    expect(await screen.findByText(/A useful flow/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(researchCalls).toBe(1);
     expect(storyCalls).toBe(2);
+  });
+  it("does not overlap local research when the topic changes during an in-flight request",async()=>{
+    const dossier={kind:"research-dossier",id:"fresh",topic:{title:"Windows",audience:"Homeowners"},
+      evidence:[],claims:[],gaps:[]};
+    const bundle={kind:"preproduction-bundle",researchId:"fresh",status:"draft-needs-review",
+      plan:{shots:[{id:"one",visualChange:"A comparison",onScreenText:"New topic",claimIds:[]}],sound:[]}};
+    let finishFirstResearch:((response:Response)=>void)|undefined;
+    const firstResearch=new Promise<Response>(resolve=>{finishFirstResearch=resolve;});
+    let researchCalls=0,storyCalls=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async path=>{
+      if(String(path).endsWith("/research")){
+        researchCalls++;
+        if(researchCalls===1)return firstResearch;
+        return new Response(JSON.stringify({dossier}),{status:200});
+      }
+      if(String(path).endsWith("/story")){
+        storyCalls++;
+        return new Response(JSON.stringify({bundle}),{status:200});
+      }
+      throw Error("Unexpected request");
+    });
+    const created=vi.fn(),user=userEvent.setup();
+    render(<NewVideoSetup onGenerated={created}/>);
+    const topic=screen.getByRole("textbox",{name:"New video topic"});
+    const start=screen.getByRole("button",{name:"Research & generate draft"});
+    await user.type(topic,"Roofs");
+    await user.click(screen.getByRole("checkbox",{name:"Allow public web research"}));
+    await user.click(start);
+    expect(researchCalls).toBe(1);
+    await user.clear(topic);
+    await user.type(topic,"Windows");
+    expect(start).toBeDisabled();
+    await user.click(start);
+    expect(researchCalls).toBe(1);
+    await act(async()=>{finishFirstResearch?.(new Response(JSON.stringify({dossier}),{status:200}));});
+    await waitFor(()=>expect(start).toBeEnabled());
+    expect(screen.queryByText(/New topic/)).not.toBeInTheDocument();
+    expect(storyCalls).toBe(0);
+    await user.click(start);
+    expect(await screen.findByText(/New topic/)).toBeInTheDocument();
+    expect(researchCalls).toBe(2);
+    expect(storyCalls).toBe(1);
+    expect(created).not.toHaveBeenCalled();
+  });
+  it("holds the local request lock until an outdated storyboard request settles",async()=>{
+    const dossier={kind:"research-dossier",id:"old",topic:{title:"Roofs",audience:"Homeowners"},
+      evidence:[],claims:[],gaps:[]};
+    let finishStory:((response:Response)=>void)|undefined;
+    const pendingStory=new Promise<Response>(resolve=>{finishStory=resolve;});
+    let storyCalls=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async path=>{
+      if(String(path).endsWith("/research"))return new Response(JSON.stringify({dossier}),{status:200});
+      if(String(path).endsWith("/story")){
+        storyCalls++;
+        return pendingStory;
+      }
+      throw Error("Unexpected request");
+    });
+    const created=vi.fn(),user=userEvent.setup();
+    render(<NewVideoSetup onGenerated={created}/>);
+    const topic=screen.getByRole("textbox",{name:"New video topic"});
+    const start=screen.getByRole("button",{name:"Research & generate draft"});
+    await user.type(topic,"Roofs");
+    await user.click(screen.getByRole("checkbox",{name:"Allow public web research"}));
+    await user.click(start);
+    await waitFor(()=>expect(storyCalls).toBe(1));
+    await user.clear(topic);
+    await user.type(topic,"Windows");
+    expect(start).toBeDisabled();
+    await act(async()=>{finishStory?.(new Response(JSON.stringify({bundle:{kind:"preproduction-bundle",
+      researchId:"old",status:"draft-needs-review",plan:{shots:[{id:"one"}]}}}),{status:200}));});
+    await waitFor(()=>expect(start).toBeEnabled());
+    expect(screen.queryByRole("button",{name:"Open editable storyboard"})).not.toBeInTheDocument();
+    expect(created).not.toHaveBeenCalled();
   });
 });
 
