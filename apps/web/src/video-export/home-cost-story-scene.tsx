@@ -104,8 +104,8 @@ function CostCard({x,y,item,index,opacity}:{x:number;y:number;item:typeof defaul
   {fitSvgText(item.description,{maxWidthPx:300,preferredSize:19,minSize:14,maxLines:3}).lines.map((line,i)=>
     <text key={i} data-story-cost-detail={index} x={x+121} y={y+93+i*19}
       fill={faint} fontSize="18">{line}</text>)}
-  <rect x={x+121} y={y+149} rx="16" width={Math.min(178,item.tag.length*14+25)} height="31" fill="#31535A"/>
-  <text x={x+134} y={y+169} fill={color} fontWeight="750" fontSize="17" letterSpacing="1.5">{item.tag}</text>
+  <rect x={x+121} y={y+145} rx="16" width={Math.min(178,item.tag.length*14+25)} height="31" fill="#31535A"/>
+  <text x={x+134} y={y+164} fill={color} fontWeight="750" fontSize="17" letterSpacing="1.5">{item.tag}</text>
  </g>;
 }
 function Mechanism({state,motion}:{state:GeneralFrame;motion:SemanticFrame}){
