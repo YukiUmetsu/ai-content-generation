@@ -241,7 +241,60 @@ Further **separately validated** registry upgrades should target:
 }
 ```
 
-The hash above is **only a format example**, not genuine retrieved evidence. A real source record must use the SHA-256 of the *actual preserved content snapshot*, a precise passage locator, and its retrieval time. The validator checks shape, reference integrity and immutable-source metadata; it does **not** fetch a source, recalculate its hash or decide whether a quoted claim is true. The general visual compiler retains the claim-to-snapshot reference chain for future `chart-story` rendering and review. Model-generated jobs remain unverified and must not invent these records. Numeric chart visuals are **not yet enabled** by this metadata contract.
+The hash above is **only a format example**, not genuine retrieved evidence. A real source record must use the SHA-256 of the *actual preserved content snapshot*, a precise passage locator, and its retrieval time. The validator checks shape, reference integrity and immutable-source metadata; it does **not** fetch a source, recalculate its hash or decide whether a quoted claim is true. The general visual compiler retains the claim-to-snapshot reference chain for future `chart-story` rendering and review. Model-generated jobs remain unverified and must not invent these records.
+
+### Validated quantitative chart metadata (renderer not yet enabled)
+
+An existing `general-explainer-v1` beat may additionally carry an optional
+`beats[].visual.chart` object. This is **validated source/assumption metadata**
+for a future Kumiki `ChartStory` adapter—not a request to render proportional
+bars with the current qualitative scene. Existing jobs without `chart` (and all
+House Math jobs) remain unchanged. A chart beat still needs the existing
+`headline`, `subhead`, `emphasis`, and 2–5 `items` used by today's scene.
+
+```json
+{
+  "kind": "quantitative-chart-v1",
+  "categories": ["Scenario A", "Scenario B", "Scenario C"],
+  "series": [
+    { "id": "example", "label": "Hypothetical duration", "values": [12, null, 18] }
+  ],
+  "unit": "ms",
+  "provenance": {
+    "basis": "illustrative",
+    "disclosure": "Illustrative hypothetical values, not observations.",
+    "claimRefs": ["illustrative-duration-claim"],
+    "assumptions": ["These values were authored solely to explain the visual form."]
+  }
+}
+```
+
+Chart categories require 2–12 unique, safe single-line labels; 1–4 series
+must each contain exactly one finite number or `null` per category and at
+least one actual number. `null` means **missing**, never zero. Series IDs
+are unique; labels, unit and disclosure are required and length-bounded.
+No numeric strings, `NaN`, infinities or arbitrary nested/unknown fields
+are accepted.
+
+- **Measured** requires `provenance.basis: "measured"`, a non-empty
+  disclosure, `claimRefs` attached to that narrated beat and pointing only
+  to `verified` claims, plus `evidenceRefs` that **exactly equal** the union
+  of those claims' `sourceRefs`. Each evidence ref must resolve to a
+  registered source snapshot. Do not author these refs or quantities from
+  a model's unsupported assertion.
+- **Illustrative** requires `provenance.basis: "illustrative"`, refs to
+  `illustrative` claims attached to the beat, 1–5 explicit value assumptions,
+  and a disclosure beginning with `Illustrative`, `Hypothetical`, `Synthetic`
+  (or `例示`, `仮定`, `架空`). It must **not** contain `evidenceRefs`, which could
+  misrepresent invented values as actual observations.
+
+The parser checks **shape and reference consistency, not truth**: it cannot
+recalculate or independently inspect the original source table, determine
+whether the verified claim supports *each* plotted value, audit arithmetic
+or infer the unit from the source. Those remain mandatory human/source
+review before any measured chart is published. The generic topic generator
+does not synthesize quantitative series, the current renderer ignores chart
+metadata, and ChartStory scenario/reveal timing remains a future adapter.
 
 Kumiki has one root `registry.json`, not per-item JSON files expected by the
 shadcn GitHub registry flow. `scripts/vendor-kumiki.mjs` is the reproducible

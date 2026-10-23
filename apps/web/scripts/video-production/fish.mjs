@@ -3,7 +3,8 @@ const API_URL = "https://api.fish.audio/v1/tts";
 const MAX_WAV_BYTES = 16 * 1024 * 1024;
 const ACCEPTED_MODELS = new Set(["s1", "s2-pro", "s2.1-pro", "s2.1-pro-free", "drama-3"]);
 const PAID_MODELS = new Set(["s1", "s2-pro", "s2.1-pro", "drama-3"]);
-const WAV_TYPES = new Set(["audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "application/octet-stream"]);
+const PCM_TYPES = new Set(["audio/pcm", "audio/x-pcm", "audio/l16", "application/octet-stream"]);
+const SAMPLE_RATE = 44100;
 
 export class FishSynthesisError extends Error {
   constructor(code, message, status = null) {
@@ -18,18 +19,28 @@ export class FishSynthesisError extends Error {
 
 const fail = (code, message, status) => new FishSynthesisError(code, message, status);
 
+/** Turn Fish's completed streaming WAV into a seekable PCM WAV.
+ * Some streamed responses use unknown-length RIFF/data markers. Repair only
+ * those explicit markers after the bounded HTTP stream has ended; never
+ * forgive a finite declared size that exceeds the received bytes.
+ */
 function validateWave(bytes) {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (buffer.length < 46 || buffer.toString("ascii", 0, 4) !== "RIFF" || buffer.toString("ascii", 8, 12) !== "WAVE") {
     throw fail("invalid-wav", "Fish returned an invalid or empty WAV file.");
   }
-  const declaredLength = buffer.readUInt32LE(4) + 8;
+  const riffSize = buffer.readUInt32LE(4);
+  const streamingRiff = riffSize === 0xffffffff || riffSize === 0x7fffeffc;
+  const declaredLength = streamingRiff ? buffer.length : riffSize + 8;
   if (declaredLength > buffer.length || declaredLength < 46) throw fail("invalid-wav", "Fish returned an incomplete WAV payload.");
-  let offset = 12, foundFormat = false, foundSamples = false;
+  let offset = 12, foundFormat = false, foundSamples = false, rewriteDataAt = -1, rewriteDataLength = 0;
   while (offset + 8 <= declaredLength) {
     const kind = buffer.toString("ascii", offset, offset + 4);
-    const length = buffer.readUInt32LE(offset + 4);
+    const rawLength = buffer.readUInt32LE(offset + 4);
     const dataStart = offset + 8;
+    const unknownDataLength = kind === "data" && streamingRiff &&
+      (rawLength === 0xffffffff || rawLength === 0x7fffeffc || rawLength === 0);
+    const length = unknownDataLength ? declaredLength - dataStart : rawLength;
     if (dataStart + length > declaredLength) throw fail("invalid-wav", "Fish returned a truncated WAV chunk.");
     if (kind === "fmt " && length >= 16) {
       if (buffer.readUInt16LE(dataStart) !== 1 || buffer.readUInt16LE(dataStart + 2) !== 1 ||
@@ -38,18 +49,81 @@ function validateWave(bytes) {
       }
       foundFormat = true;
     }
-    if (kind === "data" && length > 0) foundSamples = true;
+    if (kind === "data" && length > 0) {
+      if (unknownDataLength && length % 2 !== 0) throw fail("invalid-wav", "Fish returned an incomplete PCM sample.");
+      foundSamples = true;
+      if (unknownDataLength) { rewriteDataAt = offset + 4; rewriteDataLength = length; }
+    }
+    if (unknownDataLength) break;
     offset = dataStart + length + (length % 2);
   }
   if (!foundFormat || !foundSamples) throw fail("invalid-wav", "Fish returned a WAV without audio samples.");
+  if (!streamingRiff) return bytes;
+  const normalized = Buffer.from(buffer);
+  normalized.writeUInt32LE(normalized.length - 8, 4);
+  if (rewriteDataAt !== -1) normalized.writeUInt32LE(rewriteDataLength, rewriteDataAt);
+  return normalized;
 }
 
-async function readBounded(response, signal) {
-  const mediaType = (response.headers?.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  if (!WAV_TYPES.has(mediaType)) throw fail("wrong-content-type", "Fish returned an unexpected audio content type.");
+/** Assemble a seekable WAV from Fish's completed raw PCM16 stream.
+ * The rest of ContentGen still consumes 44.1 kHz mono WAV bytes.
+ */
+function wrapPcmAsWave(pcm) {
+  if (pcm.byteLength < 2 || pcm.byteLength % 2 !== 0) {
+    throw fail("invalid-pcm", "Fish returned empty or incomplete 16-bit PCM samples.");
+  }
+  if (pcm.byteLength > MAX_WAV_BYTES - 44) {
+    throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
+  }
+  const output = Buffer.allocUnsafe(44 + pcm.byteLength);
+  output.write("RIFF", 0);
+  output.writeUInt32LE(output.length - 8, 4);
+  output.write("WAVE", 8);
+  output.write("fmt ", 12);
+  output.writeUInt32LE(16, 16);
+  output.writeUInt16LE(1, 20);
+  output.writeUInt16LE(1, 22);
+  output.writeUInt32LE(SAMPLE_RATE, 24);
+  output.writeUInt32LE(SAMPLE_RATE * 2, 28);
+  output.writeUInt16LE(2, 32);
+  output.writeUInt16LE(16, 34);
+  output.write("data", 36);
+  output.writeUInt32LE(pcm.byteLength, 40);
+  Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).copy(output, 44);
+  validateWave(output);
+  return output;
+}
+
+/** Records only lengths and a fixed audio-format classification; never payload bytes. */
+function audioSignature(bytes) {
+  if (!bytes.length) return "empty";
+  if (bytes.length >= 12 && Buffer.from(bytes).toString("ascii", 0, 4) === "RIFF" &&
+      Buffer.from(bytes).toString("ascii", 8, 12) === "WAVE") return "WAV";
+  if (bytes.length >= 3 && Buffer.from(bytes).toString("ascii", 0, 3) === "ID3") return "MP3";
+  if (bytes.length >= 4 && Buffer.from(bytes).toString("ascii", 0, 4) === "OggS") return "Ogg";
+  const prefix = Buffer.from(bytes.subarray(0, Math.min(bytes.length, 16))).toString("ascii");
+  if (/^[ \t\r\n]*[{[]/.test(prefix) && /^[\x20-\x7e\r\n\t]*$/.test(prefix)) return "JSON-like";
+  return "unrecognized-or-raw-PCM";
+}
+function safeMime(value) {
+  const mime = (value ?? "").split(";")[0].trim().toLowerCase();
+  return /^[a-z][a-z0-9.+-]*\/[a-z0-9.+-]{1,40}$/.test(mime) ? mime : "missing-or-invalid";
+}
+function safeRequestId(value, apiKey) {
+  return value && /^[A-Za-z0-9._:-]{1,80}$/.test(value) && !value.includes(apiKey) ? value : null;
+}
+function safeContentLength(value) {
+  if (!value || !/^\d{1,12}$/.test(value)) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : null;
+}
+
+async function readBounded(response, signal, diagnostic) {
+  const mediaType = safeMime(response.headers?.get("content-type"));
+  if (!PCM_TYPES.has(mediaType)) throw fail("wrong-content-type", `Fish returned an unexpected audio content type (${mediaType}); expected raw PCM.`);
   const declared = response.headers?.get("content-length");
-  if (declared && Number(declared) > MAX_WAV_BYTES) throw fail("response-too-large", "Fish WAV exceeded the per-beat size limit.");
-  if (!response.body) throw fail("invalid-wav", "Fish response had no WAV body.");
+  if (declared && Number(declared) > MAX_WAV_BYTES - 44) throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
+  if (!response.body) throw fail("invalid-pcm", "Fish response had no PCM audio body.");
   const reader = response.body.getReader();
   const chunks = [];
   let length = 0;
@@ -59,7 +133,8 @@ async function readBounded(response, signal) {
       const part = await reader.read();
       if (part.done) break;
       length += part.value.byteLength;
-      if (length > MAX_WAV_BYTES) throw fail("response-too-large", "Fish WAV exceeded the per-beat size limit.");
+      diagnostic.receivedBytes = length;
+      if (length > MAX_WAV_BYTES - 44) throw fail("response-too-large", "Fish PCM exceeded the per-beat size limit.");
       chunks.push(part.value);
     }
   } catch (error) {
@@ -71,8 +146,14 @@ async function readBounded(response, signal) {
   const result = new Uint8Array(length);
   let written = 0;
   for (const chunk of chunks) { result.set(chunk, written); written += chunk.byteLength; }
-  validateWave(result);
-  return result;
+  diagnostic.audioSignature = audioSignature(result);
+  if (diagnostic.declaredBytes !== null && diagnostic.declaredBytes !== result.length) {
+    throw fail("provider-stream", "Fish PCM body size differs from its declared Content-Length.");
+  }
+  if (["WAV", "MP3", "Ogg", "JSON-like"].includes(diagnostic.audioSignature)) {
+    throw fail("wrong-audio-format", `Fish returned ${diagnostic.audioSignature} despite the requested PCM format.`);
+  }
+  return wrapPcmAsWave(result);
 }
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -104,14 +185,14 @@ export async function synthesizeFishBeat(request, dependencies = {}) {
     reference_id: request.voiceId,
     language: request.locale,
     normalize: true,
-    format: "wav",
-    sample_rate: 44100,
+    format: "pcm",
+    sample_rate: SAMPLE_RATE,
     prosody: { speed: pace, volume: 0, normalize_loudness: true },
   };
   const headers = {
     Authorization: `Bearer ${dependencies.apiKey}`,
     "Content-Type": "application/json",
-    Accept: "audio/wav",
+    Accept: "audio/pcm",
     model: request.modelId,
   };
 
@@ -123,12 +204,37 @@ export async function synthesizeFishBeat(request, dependencies = {}) {
     const signal = dependencies.signal
       ? AbortSignal.any([controller.signal, dependencies.signal])
       : controller.signal;
+    const startMs = Date.now();
+    // A strictly allowlisted request/response summary. Never include API keys,
+    // authorization headers, voice identifiers, narration text or raw body data.
+    const diagnostic = {
+      kind: "fish-diagnostic", provider: "fish", endpoint: "/v1/tts",
+      method: "POST", model: request.modelId, requestedFormat: "pcm",
+      sampleRate: SAMPLE_RATE, hasVoiceReference: true,
+      attempt: attempt + 1, maxAttempts: attempts,
+      httpStatus: null, contentType: null, declaredBytes: null,
+      receivedBytes: 0, audioSignature: null, requestId: null,
+    };
+    const emit = (event, more = {}) => {
+      const summary = { ...diagnostic, ...more, event, elapsedMs: Math.max(0, Date.now() - startMs) };
+      try { dependencies.onDiagnostic?.(summary); } catch { /* Diagnostics are best effort; never break synthesis. */ }
+      return summary;
+    };
     let error;
+    emit("request");
     try {
       if (signal.aborted) throw fail("provider-timeout", "Fish audio request timed out or was aborted.");
       const response = await (dependencies.fetchImpl ?? fetch)(API_URL, {
         method: "POST", headers, body: JSON.stringify(payload), signal, redirect: "error",
       });
+      diagnostic.httpStatus = response.status;
+      diagnostic.contentType = safeMime(response.headers?.get("content-type"));
+      diagnostic.declaredBytes = safeContentLength(response.headers?.get("content-length"));
+      diagnostic.requestId = safeRequestId(
+        response.headers?.get("x-request-id") || response.headers?.get("x-fish-request-id") ||
+        response.headers?.get("cf-ray"), dependencies.apiKey,
+      );
+      emit("response");
       if (!response.ok) {
         const status = response.status;
         if (status === 401) throw fail("unauthorized", "Fish rejected API authorization.", status);
@@ -138,14 +244,15 @@ export async function synthesizeFishBeat(request, dependencies = {}) {
         if (status >= 500) throw fail("provider-unavailable", "Fish speech service is unavailable.", status);
         throw fail("provider-rejected", "Fish rejected the TTS request.", status);
       }
-      const audio = await readBounded(response, signal);
+      const audio = await readBounded(response, signal, diagnostic);
+      emit("complete", { wavBytes: audio.byteLength });
       return {
         audio,
         provider: "fish",
         modelId: request.modelId,
         voiceId: request.voiceId,
         encoding: "wav",
-        sampleRate: 44100,
+        sampleRate: SAMPLE_RATE,
         prosodyApplied: { pace: request.direction?.pace ?? "measured" },
         commercialRightsVerified: request.rightsContext.commercialRightsVerified === true,
       };
@@ -156,6 +263,11 @@ export async function synthesizeFishBeat(request, dependencies = {}) {
     } finally {
       clearTimeout(timer);
     }
+    const final = emit("failure", { errorCode: error.code });
+    error.diagnostic = final;
+    // Concise enough for the Studio status text, with detailed fields shown
+    // separately. Only print previously allowlisted values.
+    error.message += ` [Fish ${error.code}; HTTP ${diagnostic.httpStatus ?? "none"}; ${diagnostic.receivedBytes} bytes; ${diagnostic.audioSignature ?? "no audio signature"}]`;
     const transient = ["rate-limited", "provider-unavailable", "provider-network", "provider-timeout"].includes(error.code);
     if (!transient || attempt === attempts - 1 || dependencies.signal?.aborted) throw error;
     await (dependencies.sleep ?? defaultSleep)(Math.min(2000, 250 * (2 ** attempt)));

@@ -10,6 +10,7 @@ import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
 import { buildSampleTimeline, toFrame } from "./timeline.mjs";
+import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
@@ -116,9 +117,15 @@ export async function produceVideo(candidate, options, deps = {}) {
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
+      onDiagnostic: options.onProgress,
     });
     options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
     const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
+    const captionReadability = analyzeCaptionReadability(
+      timeline, Object.fromEntries(job.beats.map((beat) => [beat.id, beat.narration])),
+      { profile: job.mode === "youtube-long" ? "long" : "short" },
+    );
+    if (!captionReadability.ok) fail("caption-readability preflight found missing or invalid beat captions");
     const plan = job.visualFamily === "general-explainer-v1"
       ? compileGeneralVisuals(job, timeline) : compileHouseMathVisuals(job, timeline);
     const frames = plan.manifest.durationFrames;
@@ -180,7 +187,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
     options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…" });
     const versions = deps.toolVersions ?? await toolVersions();
-    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed" });
+    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability });
     const manifestPath = join(working, "render-manifest.json");
     const narration = speech.map((beat) => ({
       id: beat.id, sha256: beat.sha256, samples: beat.samples,

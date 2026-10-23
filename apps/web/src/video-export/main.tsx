@@ -8,6 +8,7 @@ import type { HouseMathVisualPlan } from "../../scripts/video-production/visual-
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
 import { HouseMathExportScene } from "./house-math-scene";
 import { GeneralExportScene } from "./general-scene";
+import { waitForChartStoryReadiness } from "./chart-story-preflight";
 declare global { interface Window { __contentgenBuildHash?: string } }
 
 /** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
@@ -21,6 +22,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   }
   if (!stage || stage.dataset.frame !== String(target)) throw new Error(`Video scene frame ${target} did not settle`);
   await document.fonts.ready;
+  await waitForChartStoryReadiness(stage);
   const isHouse = kind === "house-math-visual-plan";
   const copy = stage.querySelectorAll<SVGGraphicsElement>(isHouse ? "[data-house-copy]" : "[data-general-copy]");
   if (!copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
@@ -32,6 +34,13 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
     }
   }
   if (!isHouse) {
+    for (const item of stage.querySelectorAll<SVGGraphicsElement>("[data-general-chart-copy]")) {
+      const box = item.getBBox();
+      if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0 ||
+        box.x < 1036 || box.x + box.width > 1805 || box.y < 813 || box.y + box.height > 962) {
+        throw new Error(`Chart disclosure or source note is clipped at frame ${target}`);
+      }
+    }
     for (const diagram of stage.querySelectorAll<SVGSVGElement>("[data-km-diagram-stage]")) {
       const overlapAttr = diagram.getAttribute("data-diagram-overlaps");
       const count = Number(overlapAttr);

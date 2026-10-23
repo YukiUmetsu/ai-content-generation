@@ -7,6 +7,8 @@ import { DiagramStage } from "@/components/motion/diagram-stage-react";
 import { evaluateProcessJourney } from "@/components/motion/process-journey";
 import { createGeneralJourney, GENERAL_JOURNEY_VIEWPORT } from "./general-journey";
 import type { RationalFps } from "@/components/motion/types";
+import { ChartStoryView } from "@/components/infographic/chart-story-react";
+import { buildQuantitativeChartStory } from "./quantitative-chart-story";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -93,10 +95,23 @@ function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: Rati
 
 export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; frame: number }) {
   const state = getGeneralFrame(plan, frame);
+  const chapter = plan.chapters[state.chapterIndex];
+  const chart = state.visual.chart;
+  const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
+    chart, beatId: chapter.id, title: state.visual.headline,
+    durationFrames: chapter.endFrame - chapter.startFrame, fps: plan.manifest.fps,
+    locale: plan.locale ?? "en-US", evidence: plan.evidence,
+  }) : undefined, [chart, chapter, state.visual.headline, plan.manifest.fps, plan.locale, plan.evidence]);
   const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
   const heading = fitSvgText(state.visual.headline, { maxWidthPx: 760, preferredSize: 72, minSize: 35, maxLines: 3 });
   const sub = fitSvgText(state.visual.subhead, { maxWidthPx: 750, preferredSize: 32, minSize: 22, maxLines: 4 });
-  return <svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
+  const disclosure = chartStory ? fitSvgText(chartStory.disclosure, { maxWidthPx: 760, preferredSize: 22, minSize: 18, maxLines: 3 }) : undefined;
+  const source = chartStory ? fitSvgText(chartStory.sourceText, { maxWidthPx: 760, preferredSize: 20, minSize: 17, maxLines: 3 }) : undefined;
+  if (disclosure && source && disclosure.lines.length + source.lines.length > 4) {
+    throw new Error(`Chart ${chapter.id} provenance copy needs shortening to fit its visual source area without clipping`);
+  }
+  return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
+  <svg xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
     <defs>
       <linearGradient id="general-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#101D2D"/><stop offset="1" stopColor="#1D3A48"/></linearGradient>
       <radialGradient id="general-glow"><stop offset="0" stopColor="#D9AF7C" stopOpacity=".16"/><stop offset="1" stopColor="#D9AF7C" stopOpacity="0"/></radialGradient>
@@ -113,11 +128,21 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    <Diagram state={state} fps={plan.manifest.fps}
-      chapterFrames={plan.chapters[state.chapterIndex].endFrame - plan.chapters[state.chapterIndex].startFrame} />
+    {!chartStory && <Diagram state={state} fps={plan.manifest.fps}
+      chapterFrames={chapter.endFrame - chapter.startFrame} />}
+    {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
+      {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
+        fontSize={disclosure.fontSize} fill={accent}>{line}</text>)}
+      {source.lines.map((line, index) => <text data-general-chart-copy="source" key={`s-${index}`} x="1040" y={856 + disclosure.lines.length * 29 + index * 27}
+        fontSize={source.fontSize} fill={muted}>{line}</text>)}
+    </g>}
     <path d="M120 978 H1800" stroke="#4C6570" strokeWidth="2" />
     <rect x="120" y="978" width={1680 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="5" fill={accent} />
     <text x="120" y="1034" fill={muted} fontSize="22">{state.disclaimer}</text>
     <text x="1800" y="1034" textAnchor="end" fill={muted} fontSize="22">DRAFT · {frame}f</text>
-  </svg>;
+  </svg>
+  {chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
+    <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />
+  </div>}
+  </div>;
 }

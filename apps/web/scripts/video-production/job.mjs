@@ -173,6 +173,82 @@ export function parseVideoProductionJob(input) {
     if (claim.status === "verified" && (!Array.isArray(claim.sourceRefs) || claim.sourceRefs.length === 0)) add("missing-source", `claims[${index}].sourceRefs`, "A verified claim needs a source reference.");
   }
   const claimIds = new Set(claims.map((item) => item.id));
+  const claimsById = new Map(claims.filter((item) => string(item.id)).map((item) => [item.id, item]));
+  const safeChartText = (value, limit) => string(value) && value.length <= limit && !/[\r\n\u0000-\u001f]/.test(value);
+  const validateChart = (chart, path, beat) => {
+    if (!fields(chart, path, ["kind", "categories", "series", "unit", "provenance"])) return;
+    if (chart.kind !== "quantitative-chart-v1") add("invalid-chart-kind", `${path}.kind`, "Choose quantitative-chart-v1.");
+    if (!safeChartText(chart.unit, 32)) add("invalid-chart-unit", `${path}.unit`, "Chart unit must be a safe, non-empty line of at most 32 characters.");
+
+    const categories = Array.isArray(chart.categories) ? chart.categories : [];
+    if (!Array.isArray(chart.categories) || categories.length < 2 || categories.length > 12) {
+      add("invalid-chart-categories", `${path}.categories`, "A chart needs 2–12 category labels.");
+    }
+    categories.forEach((label, index) => {
+      if (!safeChartText(label, 44)) add("invalid-chart-category", `${path}.categories[${index}]`, "Each category must be one safe line of at most 44 characters.");
+    });
+    const normalizedCategories = categories.filter((label) => safeChartText(label, 44)).map((label) => label.trim().toLocaleLowerCase());
+    if (new Set(normalizedCategories).size !== normalizedCategories.length) add("duplicate-chart-category", `${path}.categories`, "Category labels must be unique.");
+
+    const series = objects(chart.series, `${path}.series`, ["id", "label", "values"]);
+    if (series.length < 1 || series.length > 4) add("invalid-chart-series", `${path}.series`, "A chart needs 1–4 data series.");
+    series.forEach((item, index) => {
+      const seriesPath = `${path}.series[${index}]`;
+      if (!safeChartText(item.label, 44)) add("invalid-chart-series-label", `${seriesPath}.label`, "Series label must be one safe line of at most 44 characters.");
+      if (!Array.isArray(item.values) || item.values.length !== categories.length) {
+        add("invalid-chart-values", `${seriesPath}.values`, "Each series must have exactly one value per category.");
+        return;
+      }
+      item.values.forEach((value, valueIndex) => {
+        if (value !== null && (typeof value !== "number" || !Number.isFinite(value))) {
+          add("invalid-chart-value", `${seriesPath}.values[${valueIndex}]`, "Chart values must be finite numbers or null for missing observations.");
+        }
+      });
+      if (!item.values.some((value) => typeof value === "number" && Number.isFinite(value))) {
+        add("empty-chart-series", `${seriesPath}.values`, "A series cannot consist only of missing or invalid observations.");
+      }
+    });
+
+    const provenancePath = `${path}.provenance`;
+    const p = chart.provenance;
+    if (!fields(p, provenancePath, ["basis", "disclosure", "claimRefs", "evidenceRefs", "assumptions"])) return;
+    if (!safeChartText(p.disclosure, 180)) add("invalid-chart-disclosure", `${provenancePath}.disclosure`, "A visible, one-line chart disclosure (at most 180 characters) is required.");
+    if (!["measured", "illustrative"].includes(p.basis)) {
+      add("invalid-chart-provenance", `${provenancePath}.basis`, "Quantities must be explicitly measured or illustrative.");
+      return;
+    }
+    const chartClaimRefs = idList(p.claimRefs, `${provenancePath}.claimRefs`);
+    if (!chartClaimRefs.length) add("chart-missing-claims", `${provenancePath}.claimRefs`, "Quantitative data must identify supporting or illustrative claim IDs.");
+    for (const ref of chartClaimRefs) {
+      if (!Array.isArray(beat.claimRefs) || !beat.claimRefs.includes(ref)) {
+        add("chart-claim-not-in-beat", `${provenancePath}.claimRefs`, `Chart claim ${ref} must be attached to the narrated beat.`);
+      }
+      const claim = claimsById.get(ref);
+      if (p.basis === "measured" && (claim?.status !== "verified" || !Array.isArray(claim.sourceRefs) || claim.sourceRefs.length === 0)) {
+        add("chart-unverified-claim", `${provenancePath}.claimRefs`, `Measured values require an evidence-backed verified claim: ${ref}.`);
+      }
+      if (p.basis === "illustrative" && claim?.status !== "illustrative") {
+        add("chart-claim-status-mismatch", `${provenancePath}.claimRefs`, `Illustrative values require an illustrative claim: ${ref}.`);
+      }
+    }
+    if (p.basis === "measured") {
+      if (has(p, "assumptions")) add("invalid-chart-provenance", `${provenancePath}.assumptions`, "Measured charts cannot silently mix illustrative assumptions.");
+      const declared = idList(p.evidenceRefs, `${provenancePath}.evidenceRefs`);
+      const expected = new Set(chartClaimRefs.flatMap((ref) => claimsById.get(ref)?.sourceRefs ?? []));
+      if (declared.length === 0 || declared.length !== expected.size || declared.some((ref) => !expected.has(ref) || !evidenceIds.has(ref))) {
+        add("chart-evidence-mismatch", `${provenancePath}.evidenceRefs`, "Evidence refs must exactly match the verified chart claims' registered source snapshots.");
+      }
+    } else {
+      if (has(p, "evidenceRefs")) add("invalid-chart-provenance", `${provenancePath}.evidenceRefs`, "Illustrative values must not be presented as measured source data.");
+      if (safeChartText(p.disclosure, 180) && !/^(illustrative|hypothetical|synthetic|例示|仮定|架空)/i.test(p.disclosure.trim())) {
+        add("invalid-chart-disclosure", `${provenancePath}.disclosure`, "Illustrative disclosures must visibly begin with an illustrative/hypothetical/synthetic qualifier.");
+      }
+      if (!Array.isArray(p.assumptions) || p.assumptions.length < 1 || p.assumptions.length > 5 ||
+        !p.assumptions.every((assumption) => safeChartText(assumption, 160))) {
+        add("invalid-chart-assumptions", `${provenancePath}.assumptions`, "Illustrative charts require 1–5 safe, explicit value assumptions.");
+      }
+    }
+  };
   const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual"]);
   if (beats.length === 0) add("empty-narration", "beats", "At least one narrated beat is required.");
   for (const [index, beat] of beats.entries()) {
@@ -183,7 +259,7 @@ export function parseVideoProductionJob(input) {
     }
     idList(beat.eventIds, `beats[${index}].eventIds`);
     if (!integer(beat.pauseAfterMs, 0) || beat.pauseAfterMs > 60000) add("invalid-pause", `beats[${index}].pauseAfterMs`, "Pause must be 0–60,000 milliseconds.");
-    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items"] : ["headline", "subhead", "emphasis"])) {
+    if (has(beat, "visual") && fields(beat.visual, `beats[${index}].visual`, family === "general-explainer-v1" ? ["headline", "subhead", "emphasis", "items", "chart"] : ["headline", "subhead", "emphasis"])) {
       for (const [key, maxLength] of [["headline", 68], ["subhead", 115], ["emphasis", 28]]) {
         const value = beat.visual[key];
         if (!string(value) || value.length > maxLength || /[\r\n\u0000-\u001f]/.test(value)) {
@@ -191,6 +267,7 @@ export function parseVideoProductionJob(input) {
         }
       }
       if (family === "general-explainer-v1") {
+        if (has(beat.visual, "chart")) validateChart(beat.visual.chart, `beats[${index}].visual.chart`, beat);
         if (!Array.isArray(beat.visual.items) || beat.visual.items.length < 2 || beat.visual.items.length > 5) {
           add("invalid-diagram-items", `beats[${index}].visual.items`, "A generic scene needs 2–5 specific, meaningful diagram labels.");
         } else for (const [itemIndex, label] of beat.visual.items.entries()) {

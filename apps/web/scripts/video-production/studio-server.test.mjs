@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { JSDOM } from "jsdom";
 import { createStudioJob, startVideoStudio } from "./studio-server.mjs";
 
 const fishConfig = {
@@ -170,6 +171,48 @@ test("worker errors redact any provider key and never expose incomplete media", 
   assert.equal(state.artifacts, null);
 });
 
+test("studio reports bounded Fish request diagnostics without secrets or worker payloads", async (t) => {
+  const studio = await harness(t, { produce: async (_job, options) => {
+    for (let i = 0; i < 35; i++) options.onProgress({
+      kind: "fish-diagnostic", event: i === 34 ? "failure" : "response",
+      attempt: 1, maxAttempts: 3, beatId: "beat-1", model: "s2.1-pro-free",
+      requestedFormat: "pcm", sampleRate: 44100,
+      httpStatus: 200, contentType: "audio/pcm", receivedBytes: 4400 + i,
+      declaredBytes: 9000, elapsedMs: 18, audioSignature: "unrecognized-or-raw-PCM",
+      requestId: i === 34 ? "req-test-35" : fishConfig.apiKey,
+      text: "SHOULD-NOT-APPEAR", apiKey: fishConfig.apiKey,
+    });
+    throw new Error("Fish returned invalid PCM from the stream");
+  } });
+  await studio.send("/api/preflight", "POST", fishConfig);
+  await studio.send("/api/render", "POST", { ...fishConfig, confirmRender: true });
+  const state = await until(studio, (s) => s.status === "failed");
+  assert.equal(state.fishDiagnostics.length, 32);
+  assert.equal(state.fishDiagnostics.at(-1).event, "failure");
+  assert.equal(state.fishDiagnostics.at(-1).requestId, "req-test-35");
+  assert.equal(state.fishDiagnostics[0].requestId, undefined);
+  assert.equal(state.fishDiagnostics.at(-1).receivedBytes, 4434);
+  assert.equal(state.artifacts, null);
+  const report = JSON.stringify(state);
+  assert.equal(report.includes(fishConfig.apiKey), false);
+  assert.equal(report.includes("SHOULD-NOT-APPEAR"), false);
+  assert.equal(report.includes("apiKey"), false);
+});
+
+test("studio renders provider diagnostics using text content, not HTML", async (t) => {
+  const dom = await localStudioPage(t);
+  dom.window.__diagnosticFixture = { status: "failed", phase: "failed",
+    message: "Fish returned an invalid PCM response.",
+    fishDiagnostics: [{ event: "failure", requestId: "<img src=x onerror=alert(1)>",
+      contentType: "audio/pcm", receivedBytes: 512 }] };
+  dom.window.eval("showStatus(window.__diagnosticFixture)");
+  const details = dom.window.document.getElementById("fish-diagnostics");
+  assert.equal(details.hidden, false);
+  assert.equal(details.open, true);
+  assert.match(dom.window.document.getElementById("fish-diagnostics-text").textContent, /receivedBytes/);
+  assert.equal(dom.window.document.querySelector("#fish-diagnostics img"), null);
+});
+
 test("local voice setup requires loopback and explicit authorization", async (t) => {
   const studio = await harness(t);
   assert.equal((await studio.send("/api/preflight", "POST", { ...localConfig, endpoint: "https://remote.example" })).status, 400);
@@ -239,4 +282,48 @@ test("serves an interactive accessible frontend with local-only script and styli
   assert.match(client, /\/api\/preflight/);
   assert.match(client, /\$\("topic-locale"\)\.value/);
   assert.equal((await studio.send("/studio.css")).status, 200);
+});
+
+async function localStudioPage(t) {
+  const html = await readFile(new URL("./studio-ui/index.html", import.meta.url), "utf8");
+  const client = await readFile(new URL("./studio-ui/app.js", import.meta.url), "utf8");
+  const dom = new JSDOM(html, { url: "http://127.0.0.1/", runScripts: "outside-only" });
+  t.after(() => dom.window.close());
+  dom.window.fetch = async () => ({ ok: true, json: async () => ({ status: "idle", message: "Idle" }) });
+  dom.window.setInterval = () => 0;
+  dom.window.eval(client);
+  dom.window.document.querySelector('input[name="mode"][value="topic"]').checked = true;
+  return dom;
+}
+
+test("generated topic claims show declared statuses, source provenance and clear unsourced warnings safely", async (t) => {
+  const dom = await localStudioPage(t);
+  const draft = { job: { id: "topic-claim-review", topic: { title: "Heat pumps" }, beats: [{ id: "beat-01" }],
+    claims: [
+      { id: "c1", status: "verified", text: "<img src=x onerror=alert(1)> Heat moves.", sourceRefs: ["src-1"] },
+      { id: "c2", status: "unverified", text: "No source attached" },
+      { id: "c3", status: "illustrative", text: "Diagram is schematic" },
+      { id: "c4", status: "disputed", text: "The estimate is contested", sourceRefs: ["missing-source"] },
+    ], evidence: [{ id: "src-1", title: "<script>Source title</script>",
+      passageLocator: "Section 2, paragraph 3", sourceUri: "https://example.org/report" }] } };
+  dom.window.__testDraft = draft;
+  dom.window.eval("showDraft(window.__testDraft)");
+  const document = dom.window.document;
+  assert.equal(document.getElementById("topic-review").hidden, false);
+  assert.deepEqual([...document.querySelectorAll(".draft-claim")].map((row) => row.dataset.status),
+    ["verified", "unverified", "illustrative", "disputed"]);
+  const summary = document.getElementById("draft-claims").textContent;
+  for (const label of ["Verified (declared)", "Unverified", "Illustrative", "Disputed",
+    "src-1", "<script>Source title</script>", "Section 2, paragraph 3", "https://example.org/report",
+    "No source linked", "missing-source", "Human review required"]) assert.ok(summary.includes(label), label);
+  assert.equal(document.querySelector("#draft-claims img, #draft-claims script"), null);
+  assert.match(document.getElementById("draft-json").value, /"claims"/);
+});
+
+test("generated topic claims review explains an empty claim registry", async (t) => {
+  const dom = await localStudioPage(t);
+  dom.window.__testDraft = { job: { id: "empty-claims", topic: { title: "Topic" }, beats: [], claims: [] } };
+  dom.window.eval("showDraft(window.__testDraft)");
+  assert.match(dom.window.document.getElementById("draft-claims").textContent, /No claims declared/);
+  assert.match(dom.window.document.getElementById("draft-claims").textContent, /Human review required/);
 });

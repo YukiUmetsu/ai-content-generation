@@ -528,6 +528,7 @@ function legendLayout(
           style: typeStyle(style, "caption"),
           color: item.suppressed ? style.color.inkSubtle : style.color.inkMuted,
           role: "chart-legend-label",
+          semanticId: item.semanticId,
           valign: "middle",
           maxLines: 1,
         },
@@ -940,11 +941,12 @@ function dataLabel(
 
 /**
  * Keeps data labels from colliding: a label is accepted only when it clears
- * every label already accepted (dense or crossing series simply drop the
- * labels that would overprint — the axis still carries every value).
+ * every label already accepted and every `reserved` box, such as other series'
+ * markers (dense or crossing series simply drop the labels that would
+ * overprint — the axis still carries every value).
  */
-function labelCollector() {
-  const placed: RectInfo[] = [];
+function labelCollector(reserved: readonly RectInfo[] = []) {
+  const placed: RectInfo[] = [...reserved];
   return (label: TextPrimitive | null): TextPrimitive | null => {
     if (!label) return null;
     const box = { x: label.x, y: label.y, width: label.width, height: label.height };
@@ -1096,7 +1098,17 @@ function lineMarks(input: RecipeInput, withArea: boolean): RecipeOutput {
   const wash = withArea || (domain.zero && domain.kind === "linear" && playable.length === 1);
   const markerSize = round(style.stroke.strong * 3.2);
   const markerRing = Math.max(1.5, round(style.stroke.strong * 0.8));
-  const accept = labelCollector();
+  const markerBox = (index: number, value: number): RectInfo => ({
+    x: round(scales.center(index) - markerSize / 2), y: round(scales.yFor(value) - markerSize / 2), width: markerSize, height: markerSize,
+  });
+  // Labels never overprint a marker, and the lowest of several series labels its points underneath.
+  const accept = labelCollector(playable.flatMap((entry) =>
+    entry.values.flatMap((value, index) => (value === null ? [] : [markerBox(index, value)]))));
+  const labelBelow = (seriesIndex: number, index: number, value: number) => {
+    const others = playable.filter((_, i) => i !== seriesIndex).map((entry) => entry.values[index]).filter((v): v is number => v !== null);
+    const room = scales.area.y + scales.area.height - (scales.yFor(value) + markerSize / 2);
+    return others.some((v) => v > value) && others.every((v) => v >= value) && room >= dataLabelHeadroom(style);
+  };
 
   for (let i = 0; i < count; i += 1) {
     anchors[`category:${i}`] = {
@@ -1180,11 +1192,12 @@ function lineMarks(input: RecipeInput, withArea: boolean): RecipeOutput {
           )
         );
         if (input.valueLabels) {
+          const below = labelBelow(seriesIndex, point.index, point.value);
           const label = dataLabel(
             formatNumber(point.value, { language: context.language }),
             scales.center(point.index),
-            round(scales.yFor(point.value) - markerSize / 2),
-            "above",
+            round(scales.yFor(point.value) + (below ? markerSize / 2 : -markerSize / 2)),
+            below ? "below" : "above",
             scales.band,
             style.color.inkMuted,
             `${entry.series.id}:${point.index}:value`,
