@@ -70,9 +70,14 @@
             </div>
             <p class="helper">Kumiki compiles the opening and title treatments. Portrait videos are independently composed at 1080×1920 with ShortSafeFrame reserved UI regions; the output is never cropped from landscape.</p>
             <div id="manual-scenes" class="manual-scenes"></div>
-            <button id="manual-add-button" type="button" class="button button-secondary">+ Add a middle scene</button>
+            <div class="manual-actions">
+              <button id="manual-add-button" type="button" class="button button-secondary">+ Add a middle scene</button>
+              <button id="manual-export-button" type="button" class="button button-secondary">Export storyboard JSON</button>
+              <button id="manual-import-button" type="button" class="button button-secondary">Import storyboard JSON</button>
+              <input id="manual-import-file" type="file" accept=".json,application/json" hidden aria-label="Choose a ContentGen storyboard JSON file">
+            </div>
             <button id="manual-generate-button" type="button" class="button button-primary">Create editable storyboard →</button>
-            <p class="helper">Each scene needs a headline, spoken narration (20+ characters), and 2–5 visual labels. The first scene is the hook; the last is the answer. Scenes remain editable as JSON after creation.</p>
+            <p class="helper">Each scene needs a headline, spoken narration (20+ characters), and 2–5 visual labels. The first scene is the hook; the last is the answer. Reorder or duplicate middle scenes and save/load a local storyboard JSON without API keys or voice settings.</p>
           </section>
 
           <section class="panel" aria-labelledby="narrator-heading">
