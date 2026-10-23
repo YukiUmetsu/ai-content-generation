@@ -1077,3 +1077,32 @@ durations, speech, external footage, 3D rigs, voice mix and licensed SFX are
 not changed by the timeline editor. Old jobs with no authored motion retain
 their previous visual behavior. For visual QA check frame 0, every reveal
 point, the last frame and the first payoff event in the real player.
+
+
+### What the interactive home-cost sample actually teaches
+
+**Video Director → Open interactive sample** now loads a deliberately authored
+hypothetical **$500,000 home** story rather than three generic 'House' and
+'Categories' cards. Scene 1 shows the house and its asking-price tag; scene 2
+keeps that house on-screen while separately revealing **mortgage interest**
+(if financed), **property tax**, **home insurance**, and **maintenance**, each
+with its own illustration; scene 3 assembles these into a qualified idea of
+spending over time. This is **not** a forecast of total ownership costs, and
+does not subtract possible later proceeds from sale. All facts are marked
+illustrative or unverified in the project metadata and production QA.
+
+The sample includes a constrained `home-cost-story-v1` recipe authored in its
+shots and carried through the same source-hash-validated job and visual plan
+used by both the live Studio preview and full MP4 exporter. This is a curated
+educational **example**, not a claim that all arbitrary topic scripts already
+generate the same tailored 2D/3D visual storytelling. The default general
+explainer remains available, and unsupported recipes fail validation.
+
+**Export cleanup:** The renderer no longer burns chapter-number counters,
+frame counters or 'UNVERIFIED EDITORIAL DRAFT' banners across the video.
+Review status and commercial-rights checks remain mandatory in the project,
+Studio UI, release manifest and QA; removing text from the film does not
+authorize publication. General Kumiki process journeys now clip inside their
+safe 770×640 region, preventing artwork from bleeding off the 1920×1080
+canvas. Inspect the actual silent preview at each scene start, mid-reveal,
+and final frame before generating narrated MP4s.

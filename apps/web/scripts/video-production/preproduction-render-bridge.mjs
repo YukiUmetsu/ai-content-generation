@@ -35,6 +35,15 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(plan.shots.length<3||plan.shots.length>40)
     throw Error("Video export requires 3–40 authored shots. Split or combine shots before rendering.");
   if(platform!=="youtube")throw Error("The Studio integration currently supports YouTube 1920×1080. Other platforms need separate visual playback QA.");
+  // The illustrated demo intentionally displays a hypothetical $500,000 tag.
+  // Never reuse it for different research or an incomplete number of scenes.
+  if(plan.shots.some(s=>s.sceneRecipe==="home-cost-story-v1")&&
+    (plan.shots.length!==3||
+     !plan.shots.every(s=>s.sceneRecipe==="home-cost-story-v1"&&
+       ["house","mortgage_interest","property_tax","home_insurance","maintenance"].every(id=>s.subjectIds.includes(id)))||
+     !dossier.claims.some(c=>c.status==="illustrative"&&/\$500,000/u.test(c.text))))
+    throw Error("home-cost-story-v1 requires three matched scenes and an explicitly illustrative $500,000 home-cost scenario; choose the general renderer for other projects.");
+
   const sound=new Map(plan.sound.map(s=>[s.shotId,s]));
   const phases=new Map((plan.teachingSequences??[]).flatMap(x=>x.phases).map(x=>[x.shotId,x]));
   const warnings=[];
@@ -57,7 +66,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const unique=[...new Set(visualLabels)].slice(0,5);
     while(unique.length<2)unique.push(unique.length?"How it changes":"Main idea");
     const intent=mapFamily[shot.family]??"general-flow";
-    if(["mechanism","process","question"].includes(shot.family) &&
+    if(!shot.sceneRecipe&&["mechanism","process","question"].includes(shot.family) &&
       (phase?.visualAction||"").trim())
       warnings.push("Shot "+shot.id+": detailed motion intent is represented by a schematic flow, not a custom 2D/3D scene.");
     if(voice.sfxIntent)warnings.push("Shot "+shot.id+": requested SFX '"+safe(voice.sfxIntent,60)+
@@ -82,6 +91,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const shot=plan.shots[i];
     const phase=phases.get(shot.id);
     if(shot.motion)job.beats[i].visual.motion=structuredClone(shot.motion);
+    if(shot.sceneRecipe)job.beats[i].visual.sceneRecipe=shot.sceneRecipe;
     job.beats[i].visual.direction={
       phase:phase?.kind??"none",
       subjectIds:shot.subjectIds.slice(0,5),
@@ -116,7 +126,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(dossier.review.status!=="human-reviewed")
     warnings.unshift("Research has not been human-reviewed. Export is strictly an unverified test draft.");
   if(dossier.gaps.length)warnings.push("Research dossier has "+dossier.gaps.length+" unresolved gap(s).");
-  warnings.unshift("This bridge exports schematic labels and Kumiki general diagrams; custom visualAction/3D assets and per-shot SFX are not yet compiled.");
+  warnings.unshift("The default renderer uses schematic Kumiki scenes; supported authored recipes use dedicated illustrations, but arbitrary visualAction/3D assets and per-shot SFX are not compiled.");
   return {
     schemaVersion:1,kind:"research-to-render-job/v1",job,
     sourceResearchSha256:bundle.researchSha256,sourcePlanSha256:bundle.planSha256,
