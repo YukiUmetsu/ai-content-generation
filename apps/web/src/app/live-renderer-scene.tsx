@@ -13,7 +13,6 @@ export default function LiveRendererScene({plan,frame}:{plan:GeneralVisualPlan;f
       const measured=node.getBoundingClientRect().width;
       if(measured>0)setWidth(measured);
     };
-    update();
     if(typeof ResizeObserver==="undefined")return;
     const observer=new ResizeObserver(update);
     observer.observe(node);
