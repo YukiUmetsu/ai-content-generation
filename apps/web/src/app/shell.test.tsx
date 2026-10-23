@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
+import { CATALOG_KEY, parseCatalog } from "./catalog-model";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("Studio shell", () => {
   it("opens directly into a focused create workspace with a real preview and a tool guide", async () => {
@@ -70,5 +73,38 @@ describe("Studio shell", () => {
     await user.selectOptions(screen.getByRole("combobox",{name:/Platform/i}),"youtube");
     await waitFor(()=>expect(screen.getByTestId("platform-layout-frame")).toHaveAttribute("data-profile","youtube"));
     expect(within(screen.getByLabelText(/how to use this tool/i)).getByText("Live preview")).toBeInTheDocument();
+  });
+
+  it("carries a public YouTube observation into a saved, editable Content video idea", async () => {
+    localStorage.removeItem(CATALOG_KEY);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const data = url.endsWith("/status")
+        ? {apiKeyConfigured:true, collecting:false, searchCallsLast24h:2, searchCallLimit:20}
+        : url.endsWith("/watchlists")
+          ? {watchlists:[{id:"watch-demo",name:"House Math",query:"heat pump savings",region:"US",language:"en",enabled:true,createdAt:1,updatedAt:1,nextDueAt:1,lastFinishedAt:1,backoffUntil:0,errorCode:null}]}
+          : url.endsWith("/videos")
+            ? {videos:[{videoId:"abcABC12345",title:"Competitor video",channelId:"UCdemo",channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:60,viewCount:1234,likeCount:null,commentCount:null,subscriberCount:null,sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",provider:"youtube-data-api",observedAt:1,expiresAt:9999999999}]}
+            : null;
+      if (!data) throw Error("Unexpected route: " + url);
+      return new Response(JSON.stringify(data),{headers:{"content-type":"application/json"}});
+    }));
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("link", {name:"Research"}));
+    await user.click(screen.getByRole("tab", {name:"YouTube Intelligence"}));
+    await user.click(await screen.findByRole("button", {name:"Use for video"}));
+    const title = screen.getByRole("textbox", {name:"Working video title"});
+    await user.clear(title);
+    await user.type(title,"The Real Cost of Heat Pumps in Oklahoma");
+    await user.click(screen.getByRole("button", {name:"Save video idea"}));
+    await waitFor(() => {
+      const saved = parseCatalog(localStorage.getItem(CATALOG_KEY)!);
+      expect(saved.content).toEqual(expect.arrayContaining([expect.objectContaining({
+        name:"The Real Cost of Heat Pumps in Oklahoma",kind:"video",stage:"idea",
+        notes:"Public YouTube inspiration: https://www.youtube.com/watch?v=abcABC12345",
+      })]));
+    });
+    expect(screen.getByText("The Real Cost of Heat Pumps in Oklahoma")).toBeInTheDocument();
   });
 });

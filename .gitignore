@@ -8,6 +8,7 @@ coverage
 apps/web/.qa/
 /target/
 /data/
+.superpowers/
 *.db
 *.db-shm
 *.db-wal

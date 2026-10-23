@@ -314,9 +314,9 @@ fn migrations_apply_in_order_to_fresh_database() {
 
     let report = db::migrate(&mut connection).unwrap();
     assert_eq!(report.from_version, 0);
-    assert_eq!(report.to_version, 1);
-    assert_eq!(report.applied, vec![1]);
-    assert_eq!(db::user_version(&connection).unwrap(), 1);
+    assert_eq!(report.to_version, 2);
+    assert_eq!(report.applied, vec![1, 2]);
+    assert_eq!(db::user_version(&connection).unwrap(), 2);
     assert_eq!(
         db::MIGRATION_VERSION,
         db::MIGRATIONS
@@ -342,6 +342,10 @@ fn migrations_apply_in_order_to_fresh_database() {
         "job_edges",
         "job_nodes",
         "jobs",
+        "market_runs",
+        "market_search_budget",
+        "market_video_observations",
+        "market_watchlists",
         "packaging_hypothesis_sets",
         "packaging_metric_provenance",
         "schema_migrations",
@@ -395,8 +399,8 @@ fn migrations_apply_in_order_to_fresh_database() {
     }
 
     let second = db::migrate(&mut connection).unwrap();
-    assert_eq!(second.from_version, 1);
-    assert_eq!(second.to_version, 1);
+    assert_eq!(second.from_version, 2);
+    assert_eq!(second.to_version, 2);
     assert!(second.applied.is_empty());
 
     let integrity: String = connection
@@ -427,13 +431,13 @@ fn migration_rejects_tampered_checksums_and_newer_schemas() {
     ));
 
     let mut newer = db::open_in_memory().unwrap();
-    newer.pragma_update(None, "user_version", 2).unwrap();
+    newer.pragma_update(None, "user_version", 3).unwrap();
     let error = db::migrate(&mut newer).unwrap_err();
     assert!(matches!(
         error,
         db::DbError::UnsupportedSchemaVersion {
-            found: 2,
-            supported: 1
+            found: 3,
+            supported: 2
         }
     ));
 }

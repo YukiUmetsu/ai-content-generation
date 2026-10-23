@@ -1,14 +1,16 @@
 import { Tabs } from "@/components/ui/tabs";
 import { EvidencePanel } from "@/app/evidence-panel";
 import { PackagingPanel } from "@/app/packaging-panel";
+import { YoutubeIntelligencePanel } from "@/app/youtube-intelligence-panel";
 import { translate } from "@/i18n/messages";
 import type { Locale } from "@/features/registry";
 
 interface ResearchWorkspaceProps {
   locale: Locale;
+  onUseVideo: (idea: {title: string; sourceUrl: string}) => boolean;
 }
 
-export function ResearchWorkspace({ locale }: ResearchWorkspaceProps) {
+export function ResearchWorkspace({ locale, onUseVideo }: ResearchWorkspaceProps) {
   return (
     <section
       id="workspace"
@@ -27,6 +29,9 @@ export function ResearchWorkspace({ locale }: ResearchWorkspaceProps) {
           <Tabs.Tab value={1} className="h-11">
             {translate(locale, "navPackaging")}
           </Tabs.Tab>
+          <Tabs.Tab value={2} className="h-11">
+            {locale === "ja" ? "YouTube 市場" : "YouTube Intelligence"}
+          </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value={0} keepMounted className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
@@ -35,6 +40,10 @@ export function ResearchWorkspace({ locale }: ResearchWorkspaceProps) {
 
         <Tabs.Panel value={1} keepMounted className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
           <PackagingPanel locale={locale} />
+        </Tabs.Panel>
+
+        <Tabs.Panel value={2} className="mt-3 flex min-h-0 flex-1 flex-col overflow-auto">
+          <YoutubeIntelligencePanel locale={locale} onUseVideo={onUseVideo} />
         </Tabs.Panel>
       </Tabs>
     </section>

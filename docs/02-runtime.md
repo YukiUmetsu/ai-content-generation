@@ -69,3 +69,7 @@ This trades incremental build speed for lower disk use. Enforce `.gitignore` for
 4. Test with lightweight deterministic/mock providers in CI; separate opt-in integration suite checks installed local inference, graphics, speech and media binaries. Failure messages must explain configuration and alternatives.
 
 **Core workflows:** `research.import/search/refresh`, `seo.observe`, `article.generate`, `graphic.render`, `thumbnail.render`, `script/storyboard`, `speech.synthesize`, `video.render/qa`, `character.pose/animate`, `demo.capture`, `course.package`, `publish.prepare`. Every workflow may be run without an optional provider when a deterministic/manual fallback exists.
+
+### Local YouTube collector runtime
+
+`contentgen-server` starts one in-process YouTube market worker, not an OS daemon or scheduled cloud job. It reads `CONTENTGEN_YOUTUBE_API_KEY` only from the local process environment, skips remote work without that key and without explicitly enabled watchlists, and stops with the server. On restart it reconciles interrupted runs and expires observations. Watchlist changes and manual collection require a local-only header; the server binds to loopback. The Vite dev proxy routes `/api/research/market` to Rust port 8787 before the broader `/api/research` prefix goes to the separate evidence service on port 8788. The backend uses SQLite for the search-call reservation and dated 30-day observations. Provider response errors are sanitized, and tests use local fixtures rather than live YouTube calls.

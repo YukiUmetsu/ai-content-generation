@@ -50,6 +50,12 @@ flowchart LR
 
 **Offline behavior:** import exported keyword CSV / Search Console data; manually enter hypotheses; use stored observations and lexical search. Missing external credentials = disabled integration, not fabricated volumes. Paid calls display budget cap; cache vendor responses with expiry, only spend when approved.
 
+### Implemented: local public YouTube niche observations
+
+The opt-in YouTube Intelligence tab tracks named search phrases via the official YouTube Data API v3 when `CONTENTGEN_YOUTUBE_API_KEY` is set **and** a watchlist is enabled. The in-process Rust worker polls while the local server runs. The API records per-run source URL, video/channel identifiers, publication time, provider, observation time, duration, and nullable public views/likes/comments/subscriber counts in SQLite. These are observations, not impressions, creator analytics, search volume or revenue. Manual collection uses the same conservative search-call budget. It is disabled by default, limited to 10 enabled watchlists and 20 search requests in a rolling 24 hours; observation rows expire after 30 days.
+
+Current editor handoff is deliberately narrow: **Use for video** creates an editable, user-authored title and a source-inspiration link in the local Content catalog. It does not yet automatically rank opportunities, synthesize a video brief, choose hooks or generate media from competitors. A later research-to-video compiler should use dated, attributable evidence and fresh independent sources, label heuristic scores as heuristic, and require editorial review before a script is produced.
+
 **Search and provenance UI:** one primary search, saved queries, collection sidebar, compact filter chips, ranked snippets with evidence badges and observation date, source comparison, conflict queue, SEO opportunity queue and create-from-brief action. Avoid large unexplained dashboards or invisible source confidence scores.
 
 **Freshness and privacy:** research permissions, robots/ToS, host and rate limits, timeout, dedupe and content rights are checked before crawl; retrieved HTML is untrusted prompt data. Version changed sources; recompute dependency impact to claims/content, propose edits rather than alter approved assets. Don't crawl private/authenticated pages without authorization or send private research to unapproved remote models.

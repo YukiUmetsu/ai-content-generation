@@ -7,7 +7,7 @@ import type { SectionId } from "./navigation";
 import { usePreferences } from "./use-preferences";
 import { Workspace } from "./workspace";
 import { CatalogWorkspace } from "./catalog-workspace";
-import { loadCatalog, persistCatalog, type StudioCatalog } from "./catalog-model";
+import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type StudioCatalog } from "./catalog-model";
 import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
@@ -37,6 +37,20 @@ export function Shell() {
       return false;
     }
   }, []);
+  const saveVideoIdea = useCallback((idea: {title: string; sourceUrl: string}): boolean => {
+    const item: LocalContent = {
+      id: makeCatalogId("item"),
+      projectId: catalog.activeProjectId,
+      name: idea.title.trim().slice(0, 120),
+      notes: `Public YouTube inspiration: ${idea.sourceUrl}`,
+      createdAt: new Date().toISOString(),
+      kind: "video",
+      stage: "idea",
+    };
+    const saved = saveCatalog({...catalog, content: [...catalog.content, item]});
+    if (saved) setActiveSection("content");
+    return saved;
+  }, [catalog, saveCatalog]);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [toolGuideOpen, setToolGuideOpen] = useState(true);
@@ -125,7 +139,7 @@ export function Shell() {
           ) : activeSection === "video-director" ? (
             <VideoDirectorWorkspace locale={locale}/>
           ) : activeSection === "research" ? (
-            <ResearchWorkspace locale={locale} />
+            <ResearchWorkspace locale={locale} onUseVideo={saveVideoIdea} />
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} />
           ) : (

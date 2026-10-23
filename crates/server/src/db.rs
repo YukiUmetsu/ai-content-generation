@@ -21,11 +21,18 @@ impl Migration {
 
 /// Ordered, additive migrations. Append new entries; never renumber or edit an
 /// already-applied migration without a deliberate compatibility plan.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "0001_evidence_packaging_jobs",
-    sql: include_str!("../../../migrations/0001_evidence_packaging_jobs.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "0001_evidence_packaging_jobs",
+        sql: include_str!("../../../migrations/0001_evidence_packaging_jobs.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "0002_youtube_market_watchlists",
+        sql: include_str!("../../../migrations/0002_youtube_market_watchlists.sql"),
+    },
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationReport {

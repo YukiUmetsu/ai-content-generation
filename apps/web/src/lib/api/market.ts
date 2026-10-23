@@ -1,0 +1,176 @@
+/** Typed, validated loopback client for opt-in public YouTube observations. */
+
+const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+const PREFIX = "/api/research/market";
+
+export interface MarketStatus {
+  apiKeyConfigured: boolean;
+  collecting: boolean;
+  searchCallsLast24h: number;
+  searchCallLimit: number;
+}
+
+export interface MarketWatchlistDraft {
+  name: string;
+  query: string;
+  region: string;
+  language: string;
+  enabled: boolean;
+}
+
+export interface MarketWatchlist extends MarketWatchlistDraft {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  nextDueAt: number;
+  lastFinishedAt: number | null;
+  backoffUntil: number;
+  errorCode: string | null;
+}
+
+export interface MarketVideo {
+  videoId: string;
+  title: string;
+  channelId: string;
+  channelTitle: string;
+  publishedAt: string;
+  durationSeconds: number | null;
+  viewCount: number | null;
+  likeCount: number | null;
+  commentCount: number | null;
+  subscriberCount: number | null;
+  sourceUrl: string;
+  provider: "youtube-data-api";
+  observedAt: number;
+  expiresAt: number;
+}
+
+function obj(raw: unknown, name: string): Record<string, unknown> {
+  if (!raw || Array.isArray(raw) || typeof raw !== "object") throw Error(`Invalid ${name} response from local server.`);
+  return raw as Record<string, unknown>;
+}
+function str(value: unknown, field: string): string {
+  if (typeof value !== "string") throw Error(`Missing or invalid ${field} from local server.`);
+  return value;
+}
+function num(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw Error(`Missing or invalid ${field} from local server.`);
+  return value;
+}
+function bool(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw Error(`Missing or invalid ${field} from local server.`);
+  return value;
+}
+function nullableString(value: unknown, field: string): string | null {
+  return value === null ? null : str(value, field);
+}
+function nullableNumber(value: unknown, field: string): number | null {
+  return value === null ? null : num(value, field);
+}
+
+export function parseMarketStatus(raw: unknown): MarketStatus {
+  const x = obj(raw, "market status");
+  return {
+    apiKeyConfigured: bool(x.apiKeyConfigured, "apiKeyConfigured"),
+    collecting: bool(x.collecting, "collecting"),
+    searchCallsLast24h: num(x.searchCallsLast24h, "searchCallsLast24h"),
+    searchCallLimit: num(x.searchCallLimit, "searchCallLimit"),
+  };
+}
+
+export function parseWatchlist(raw: unknown): MarketWatchlist {
+  const x = obj(raw, "watchlist");
+  return {
+    id: str(x.id, "id"), name: str(x.name, "name"),
+    query: str(x.query, "query"), region: str(x.region, "region"),
+    language: str(x.language, "language"), enabled: bool(x.enabled, "enabled"),
+    createdAt: num(x.createdAt, "createdAt"), updatedAt: num(x.updatedAt, "updatedAt"),
+    nextDueAt: num(x.nextDueAt, "nextDueAt"),
+    lastFinishedAt: nullableNumber(x.lastFinishedAt, "lastFinishedAt"),
+    backoffUntil: num(x.backoffUntil, "backoffUntil"),
+    errorCode: nullableString(x.errorCode, "errorCode"),
+  };
+}
+
+export function parseVideos(raw: unknown): MarketVideo[] {
+  const x = obj(raw, "market videos");
+  if (!Array.isArray(x.videos) || x.videos.length > 100) throw Error("Invalid video list from local server.");
+  return x.videos.map((item, i) => {
+    const v = obj(item, `video ${i}`);
+    const sourceUrl = str(v.sourceUrl, "sourceUrl");
+    const videoId = str(v.videoId, "videoId");
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId) ||
+        sourceUrl !== `https://www.youtube.com/watch?v=${videoId}`) {
+      throw Error("Invalid YouTube source URL from local server.");
+    }
+    const provider = str(v.provider, "provider");
+    if (provider !== "youtube-data-api") throw Error("Unsupported market data provider.");
+    return {
+      videoId, sourceUrl, provider,
+      title: str(v.title, "title"), channelId: str(v.channelId, "channelId"),
+      channelTitle: str(v.channelTitle, "channelTitle"),
+      publishedAt: str(v.publishedAt, "publishedAt"),
+      durationSeconds: nullableNumber(v.durationSeconds, "durationSeconds"),
+      viewCount: nullableNumber(v.viewCount, "viewCount"),
+      likeCount: nullableNumber(v.likeCount, "likeCount"),
+      commentCount: nullableNumber(v.commentCount, "commentCount"),
+      subscriberCount: nullableNumber(v.subscriberCount, "subscriberCount"),
+      observedAt: num(v.observedAt, "observedAt"),
+      expiresAt: num(v.expiresAt, "expiresAt"),
+    };
+  });
+}
+
+async function send(path: string, method = "GET", payload?: unknown): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${PREFIX}${path}`, {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...(method === "GET" ? {} : {"X-Contentgen-Market": "local-only"}),
+        ...(payload === undefined ? {} : {"Content-Type": "application/json"}),
+      },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw Error("Cannot reach the local ContentGen server. Start it and retry.");
+  }
+  if (response.status === 204) return null;
+  let raw: unknown;
+  try { raw = await response.json(); }
+  catch { throw Error(`Local market API returned HTTP ${response.status} without valid JSON.`); }
+  if (!response.ok) {
+    const maybe = obj(raw, "market error");
+    const error = maybe.error && typeof maybe.error === "object" && !Array.isArray(maybe.error)
+      ? maybe.error as Record<string, unknown> : {};
+    throw Error(typeof error.message === "string" ? error.message : `Market API request failed (HTTP ${response.status}).`);
+  }
+  return raw;
+}
+
+export async function loadMarketStatus(): Promise<MarketStatus> {
+  return parseMarketStatus(await send("/status"));
+}
+export async function loadMarketWatchlists(): Promise<MarketWatchlist[]> {
+  const x = obj(await send("/watchlists"), "watchlists");
+  if (!Array.isArray(x.watchlists) || x.watchlists.length > 100) throw Error("Invalid watchlists response.");
+  return x.watchlists.map(parseWatchlist);
+}
+export async function createMarketWatchlist(draft: MarketWatchlistDraft): Promise<MarketWatchlist> {
+  return parseWatchlist(await send("/watchlists", "POST", draft));
+}
+export async function updateMarketWatchlist(id: string, draft: MarketWatchlistDraft): Promise<MarketWatchlist> {
+  return parseWatchlist(await send(`/watchlists/${encodeURIComponent(id)}`, "PATCH", draft));
+}
+export async function deleteMarketWatchlist(id: string): Promise<void> {
+  await send(`/watchlists/${encodeURIComponent(id)}`, "DELETE");
+}
+export async function requestMarketCollection(id: string): Promise<string> {
+  const x = obj(await send(`/watchlists/${encodeURIComponent(id)}/collect`, "POST"), "collection");
+  return str(x.runId, "runId");
+}
+export async function loadMarketVideos(id: string): Promise<MarketVideo[]> {
+  return parseVideos(await send(`/watchlists/${encodeURIComponent(id)}/videos`));
+}
