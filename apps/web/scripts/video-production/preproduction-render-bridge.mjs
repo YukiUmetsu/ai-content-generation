@@ -42,7 +42,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
      !plan.shots.every(s=>s.sceneRecipe==="home-cost-story-v1"&&
        ["house","mortgage_interest","property_tax","home_insurance","maintenance"].every(id=>s.subjectIds.includes(id)))||
      !dossier.claims.some(c=>c.status==="illustrative"&&/\$500,000/u.test(c.text))))
-    throw Error("home-cost-story-v1 requires three matched scenes and a cited illustrative $500,000 home-cost scenario; choose the general renderer for other projects.");
+    throw Error("home-cost-story-v1 requires three matched scenes and an explicitly illustrative $500,000 home-cost scenario; choose the general renderer for other projects.");
 
   const sound=new Map(plan.sound.map(s=>[s.shotId,s]));
   const phases=new Map((plan.teachingSequences??[]).flatMap(x=>x.phases).map(x=>[x.shotId,x]));
