@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "lint": "eslint .",
-    "test": "vitest run && node --test scripts/vendor-kumiki-paths.test.mjs",
+    "test": "vitest run && node --test scripts/vendor-kumiki-paths.test.mjs && node --test scripts/settings-proxy.test.mjs",
     "test:watch": "vitest",
     "kumiki:update": "node scripts/vendor-kumiki.mjs --update-lock",
     "kumiki:verify": "node scripts/vendor-kumiki.mjs",
