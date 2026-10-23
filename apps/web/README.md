@@ -127,6 +127,29 @@ claim timed-word karaoke, real footage decoding, CapCut-equivalent effects,
 or any proven algorithm for virality. Drafts remain unpublished and
 commercial rights unverified.
 
+### Manual Studio editing and portable project files
+
+The **Create your video** workspace includes ordered scene cards. Use the up/down
+controls to move **middle scenes** while keeping the opening hook and final
+answer fixed; duplicate or remove middle scenes (3–40 scene bound), and edit
+narration/diagram labels. Any change invalidates the previous readiness check:
+click **Create editable storyboard**, review, then **Check readiness** again.
+
+**Export storyboard JSON** saves your local work, including *incomplete*
+scenes, to a text file; **Import storyboard JSON** restores it after bounded,
+strict schema validation. This is an authored-content-only file—not a raw
+production job dump. It does **not** include Fish API keys, voice IDs,
+authorization, generated audio, output paths or release claims. Import checks
+for unknown fields, unsafe control characters and scene limits before changing
+the current editor. Failed imports leave the existing work alone. No cloud
+storage, browser localStorage, or automatic uploads are involved. The normal
+preflight remains strict: incomplete imported scenes cannot render until
+filled in and successfully recompiled.
+
+These controls help with local authoring and versioning; they are not a
+visual timeline preview, waveform editor, autosave service, or true
+word-synchronized subtitle system.
+
 ### General video authoring in Studio (manual, no text model)
 
 Select **Create your video** in the local Video Test Studio. Type a title, question
