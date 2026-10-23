@@ -10,6 +10,7 @@ import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
 import { parseResearchDossier } from "./preproduction.mjs";
 import { localChatEndpoint } from "./topic-generator.mjs";
+import { resolveStagePrompt } from "./prompt-profiles.mjs";
 import { configuredSearchEndpoint } from "./local-search-config.mjs";
 
 const MAX_RESPONSE = 512 * 1024;
@@ -247,7 +248,7 @@ export async function analyzeCapturedResearch(captures, brief, options, { transp
   if (!limitString(options.model, 120)) throw Error("Select an installed local LLM with --model.");
   const body = JSON.stringify({
     model: options.model, temperature: 0.2, stream: false, response_format: { type: "json_object" },
-    messages: [{ role: "system", content: RESEARCH_SYSTEM },
+    messages: [{ role: "system", content: resolveStagePrompt("research", RESEARCH_SYSTEM) },
       { role: "user", content: JSON.stringify({ topic: brief, sources: captures.map(c => ({
         id: c.id, title: c.title, capturedText: c.text.slice(0, 9500)
       })) }) }],
