@@ -24,7 +24,7 @@ pnpm install --frozen-lockfile  # one time
 pnpm video:studio
 ```
 
-Open **http://127.0.0.1:8788**. The **local Video Test Studio** offers a complete browser test path:
+Open **http://127.0.0.1:8790** (change with `CONTENTGEN_STUDIO_PORT=8791 pnpm video:studio` if needed). The **local Video Test Studio** offers a complete browser test path:
 
 1. Choose **Quick smoke test** (3 beats, ~30–60 seconds), **Long-form YouTube** (26 beats, at least 8 measured minutes), or **Your own topic**. For a custom topic, enter its question, intended audience, optional notes, and an installed local text-model endpoint; click **Generate local draft**.
    The model proposes three alternate titles/hooks and writes an editable, scene-by-scene narrated story. Review its `job.json` in the editor and **Save draft edits** before testing. The model's statements are explicitly **unverified**, not invented citations or commercial-ready claims. For custom long-form, the model must produce a substantive script and the finished narration must still measure at least eight minutes.
