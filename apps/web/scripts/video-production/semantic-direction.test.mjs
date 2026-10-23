@@ -16,9 +16,9 @@ test("semantic direction survives the full source→job→visual render-plan pip
   const bridged=compilePreproductionRenderJob(dossier,bundle);
   const first=bridged.job.beats[0].visual.direction;
   assert.equal(first.phase,"problem");
-  assert.deepEqual(first.subjectIds,["house"]);
+  assert.deepEqual(first.subjectIds,["house","mortgage_interest","property_tax","home_insurance","maintenance"]);
   assert.match(first.visualAction,/house/);
-  assert.match(first.learningChange,/purchase price/i);
+  assert.match(first.learningChange,/list price/i);
   assert.equal(parseVideoProductionJob(bridged.job).ok,true);
   const timeline=buildSampleTimeline(bridged.job.beats.map(b=>({
     id:b.id,samples:48000*5,pauseAfterMs:b.pauseAfterMs,eventIds:b.eventIds
