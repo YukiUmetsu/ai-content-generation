@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { researchVideoTopic, localSearxngEndpoint } from "./research-agent.mjs";
 import { localChatEndpoint } from "./topic-generator.mjs";
 import { configuredSearchEndpoint } from "./local-search-config.mjs";
-import { readResearchModelSettingsSync } from "./research-model-settings.mjs";
+import { resolveModelForTaskSync } from "./model-profiles.mjs";
 
 export function parseResearchArgs(argv, env = process.env) {
   const { values } = parseArgs({ args: argv, strict: true, allowPositionals: false, options: {
@@ -23,7 +23,7 @@ export function parseResearchArgs(argv, env = process.env) {
     "out-dir": { type: "string" },
   } });
   if (values.help) return { help: true };
-  const selected = readResearchModelSettingsSync();
+  const selected = resolveModelForTaskSync("research");
   const model = values.model || selected?.model;
   const endpoint = values.endpoint || selected?.endpoint || "http://127.0.0.1:11434/v1/chat/completions";
   const searchEndpoint = values["search-endpoint"] || configuredSearchEndpoint();

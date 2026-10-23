@@ -256,18 +256,31 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
     <SectionIntro section="settings" locale={locale} description={localMessage(locale,
       "Configure local models, provider connections and your Studio workspace. API keys are not included in browser storage or catalog backups.",
       "ローカルモデル、API 接続、Studio の設定を管理します。API キーはブラウザーやバックアップに保存されません。")}/>
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Surface header={<h2 className="font-medium">Appearance & language</h2>}>
+    <div className="space-y-6">
+      <ResearchModelSettings locale={locale}/>
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+      <Surface header={<h2 className="font-medium">{localMessage(locale,"Appearance & language","表示と言語")}</h2>}>
         <div className="flex flex-col gap-3">
-          <Dropdown name="Theme" selected={appearance} choices={["light","dark"] as const} onSelect={setAppearance}/>
-          <Dropdown name="Density" selected={density} choices={["compact","spacious"] as const} onSelect={setDensity}/>
-          <Dropdown name="Language" selected={locale} choices={["en","ja"] as const} onSelect={setLocale}/>
+          <Dropdown name={localMessage(locale,"Theme","テーマ")} selected={appearance} choices={["light","dark"] as const} onSelect={setAppearance}/>
+          <Dropdown name={localMessage(locale,"Density","表示密度")} selected={density} choices={["compact","spacious"] as const} onSelect={setDensity}/>
+          <Dropdown name={localMessage(locale,"Language","言語")} selected={locale} choices={["en","ja"] as const} onSelect={setLocale}/>
         </div>
       </Surface>
-      <ResearchModelSettings locale={locale} />
       <ProviderConnections locale={locale} />
-      <PromptStudio locale={locale} />
-      <Surface header={<h2 className="font-medium">Local backup</h2>}>
+      </div>
+      <details className="group rounded-xl border border-border bg-surface">
+        <summary className="cursor-pointer select-none px-5 py-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {localMessage(locale,"Advanced · Prompt templates","詳細設定 · プロンプトテンプレート")}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">{localMessage(locale,"Edit stage instructions when needed","必要な場合のみ編集")}</span>
+        </summary>
+        <div className="border-t border-border p-4"><PromptStudio locale={locale}/></div>
+      </details>
+      <details className="group rounded-xl border border-border bg-surface">
+        <summary className="cursor-pointer select-none px-5 py-4 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {localMessage(locale,"Data & privacy · Local backup","データとプライバシー · ローカルバックアップ")}
+        </summary>
+        <div className="border-t border-border p-4">
+      <Surface header={<h2 className="font-medium">{localMessage(locale,"Local catalog backup","ローカルカタログのバックアップ")}</h2>}>
         <div className="flex flex-col gap-3 text-sm">
           <p className="text-muted-foreground">Export or import the project catalog for this browser. Backups include names, editorial stages and asset license notes, not actual media files or voice credentials.</p>
           <Button icon={<Download className="size-4"/>} onClick={download}>Download catalog JSON</Button>
@@ -282,6 +295,8 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
           {status&&<p role="status" className="text-xs text-muted-foreground">{status}</p>}
         </div>
       </Surface>
+        </div>
+      </details>
     </div>
   </>;
 }

@@ -74,7 +74,10 @@ export async function createStudioResearchDraft(candidate,modelSettings,deps={})
     endpoint:settings.endpoint,allowNetwork:true,maxSources:4};
   const output=await (deps.research??researchVideoTopic)(brief,options,{signal:deps.signal});
   const quotes=checkedQuotes(output);
-  const plan=await (deps.generate??generatePreproductionPlan)(output.dossier,options,{signal:deps.signal});
+  const storySettings=deps.storyModelSettings
+    ? validateResearchModelSettings({...deps.storyModelSettings,version:1}) : settings;
+  const plan=await (deps.generate??generatePreproductionPlan)(output.dossier,
+    {...options,model:storySettings.model,endpoint:storySettings.endpoint},{signal:deps.signal});
   const saved=await (deps.persist??persistSnapshot)(output,plan,quotes,deps.root??DEFAULT_ROOT);
   return {dossier:output.dossier,plan,quotes,snapshotId:output.dossier.id,
     artifactId:typeof saved==="string"?basename(saved,".json"):undefined,warnings:output.warnings};

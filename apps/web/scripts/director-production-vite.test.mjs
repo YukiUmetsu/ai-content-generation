@@ -56,6 +56,16 @@ test("same-origin and explicit action gates block background production",async()
   const missing=await invoke(server,"POST","/check",{...inputs(),settings:{...config,localVoiceAuthorized:false}});
   assert.equal(missing.status,422);
 });
+test("Research and Story endpoints ask for independent model tasks",async()=>{
+  const seen=[];
+  const server=createDirectorProduction({readModel:async task=>{seen.push(task);return {model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};},
+    searchEndpoint:()=>"http://127.0.0.1:58023/search",
+    research:async()=>({dossier:inputs().dossier,quotePreviews:[],warnings:[]}),
+    generateStory:async()=>fixture("preproduction-plan-smoke.json")});
+  assert.equal((await invoke(server,"POST","/research",{allowNetwork:true,brief:{title:"Costs",viewerQuestion:"Why?",audience:"Owners"}})).status,200);
+  assert.equal((await invoke(server,"POST","/story",{dossier:inputs().dossier})).status,200);
+  assert.deepEqual(seen,["research","story"]);
+});
 test("a normal UI sequence checks tools, renders a new MP4, reuses previous output and shows progress",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-render-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const observed=[],performed=[];
