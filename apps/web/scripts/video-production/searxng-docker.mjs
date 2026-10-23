@@ -38,7 +38,9 @@ export function composeArgs(args, envFile = SECRET_FILE) {
     "--env-file", envFile, "-f", COMPOSE_FILE, ...args];
 }
 export function parseSearchManagerArgs(argv) {
-  const { values, positionals } = parseArgs({ args: argv, strict: true, allowPositionals: true,
+  // pnpm forwards an optional "--" separator; don't interpret it as a positional.
+  const normalizedArgs = argv.filter(argument => argument !== "--");
+  const { values, positionals } = parseArgs({ args: normalizedArgs, strict: true, allowPositionals: true,
     options: {
       help: { type: "boolean", default: false },
       "allow-image-pull": { type: "boolean", default: false },
