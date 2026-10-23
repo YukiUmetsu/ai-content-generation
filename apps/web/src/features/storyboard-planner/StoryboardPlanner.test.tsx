@@ -204,6 +204,33 @@ describe("StoryboardPlanner", () => {
     expect(screen.getByLabelText("Narration")).not.toHaveValue("A custom opening for the Alpha project.");
   });
 
+  it("recovers a deliberately empty beat list after deleting the last scene", async () => {
+    const user = userEvent.setup();
+    const project = { projectId: "project-empty" };
+    const key = "contentgen:project-storyboard:v1:project-empty";
+    const first = render(<StoryboardPlanner locale="en" {...project} />);
+    for (let index = 5; index >= 1; index -= 1) {
+      await user.click(screen.getByRole("button", { name: `Delete beat ${index}` }));
+    }
+    expect(screen.queryAllByRole("button", { name: /^Select beat/ })).toHaveLength(0);
+    expect(JSON.parse(localStorage.getItem(key) ?? "null")).toHaveProperty("beats", []);
+    first.unmount();
+    render(<StoryboardPlanner locale="en" {...project} />);
+    expect(screen.queryAllByRole("button", { name: /^Select beat/ })).toHaveLength(0);
+  });
+
+  it("restores an incomplete duration edit rather than an older storyboard", async () => {
+    const user = userEvent.setup();
+    const project = { projectId: "project-duration" };
+    const key = "contentgen:project-storyboard:v1:project-duration";
+    const first = render(<StoryboardPlanner locale="en" {...project} />);
+    await user.clear(screen.getByRole("spinbutton", { name: "Duration (frames)" }));
+    expect(JSON.parse(localStorage.getItem(key) ?? "null").beats[0].durationFrames).toBe(0);
+    first.unmount();
+    render(<StoryboardPlanner locale="en" {...project} />);
+    expect(screen.getByRole("spinbutton", { name: "Duration (frames)" })).toHaveValue(0);
+  });
+
   it("surfaces a corrupt local draft and preserves it even if the editor is changed", async () => {
     const user = userEvent.setup();
     const key = "contentgen:project-storyboard:v1:project-corrupt";
