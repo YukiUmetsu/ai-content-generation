@@ -100,15 +100,16 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   const state = getGeneralFrame(plan, frame);
   const chapter = plan.chapters[state.chapterIndex];
   const chart = state.visual.chart;
-  const semanticMotion = sampleSemanticMotion({intent:state.intent,
-    phase:state.visual.direction?.phase??"none",
-    localFrame:state.localFrame,durationFrames:chapter.endFrame-chapter.startFrame,
-    visibleItems:state.visibleItems,itemCount:state.visual.items.length});
   const compiledAttention = useMemo(() => compileChapterAttention(chapter, plan), [chapter, plan]);
   const attention = compiledAttention
     ? sampleChapterAttention(compiledAttention, state.localFrame, chapter.endFrame - chapter.startFrame)
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
+  const semanticMotion = sampleSemanticMotion({intent:state.intent,
+    phase:state.visual.direction?.phase??"none",
+    localFrame:state.localFrame,durationFrames:chapter.endFrame-chapter.startFrame,
+    visibleItems:diagramState.visibleItems,itemCount:state.visual.items.length});
+
   const typographyScale = attention?.titleScale ?? 1;
   const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
     chart, beatId: chapter.id, title: state.visual.headline,
