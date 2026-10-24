@@ -196,6 +196,22 @@ test("independent visual generation reports truncation and rejects repeated phas
   });
 });
 
+test("payoff direction request demands a new resolution and includes earlier phase actions",async()=>{
+  const {phases,...structure}=unit("Full installation cost");
+  let request;
+  const transport=async(_url,options)=>{
+    request=JSON.parse(options.body);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      message:{content:JSON.stringify(phases[2])},finish_reason:"stop",
+    }]})};
+  };
+  await generateSceneDirection(outline,0,2,structure,phases.slice(0,2),dossier,quotes,settings,{transport});
+  assert.match(request.messages[0].content,/payoff.*resolv|resolv.*payoff/is);
+  assert.match(request.messages[0].content,/not repeat|do not repeat/i);
+  assert.deepEqual(JSON.parse(request.messages[1].content).previousVisuals,
+    phases.slice(0,2).map(({visualAction,learningChange})=>({visualAction,learningChange})));
+});
+
 test("a truncated subtask is retried with a stricter, smaller JSON text budget",async()=>{
   const original=unit("Full cost");
   const {phases,...structure}=original;
@@ -350,14 +366,45 @@ test("invalid split scene fragments never assemble into an accepted visual or st
   }),error=>error.code==="schema_invalid"&&error.field==="before/action/after");
   await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
     transport:transportFor({visualElements:[]})
-  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements"&&error.schemaIssue==="wrong_shape");
   await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
     transport:transportFor({visualElements:[...phases[0].visualElements,{label:"Labor meter",detail:"Tracks installation work"}]})
   }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
   const previous=[phases[0]];
   const {narration,visualElements,...direction}=phases[0];
   assert.throws(()=>assembleSceneVisual(direction,{visualElements},previous),
-    error=>error.code==="schema_invalid"&&error.field==="visualAction");
+    error=>error.code==="schema_invalid"&&error.field==="visualAction"&&error.schemaIssue==="duplicate_previous");
+  const newAction={...direction,visualAction:"Slide the incomplete price label beside the bill"};
+  assert.throws(()=>assembleSceneVisual(newAction,{visualElements},previous),
+    error=>error.code==="schema_invalid"&&error.field==="learningChange"&&error.schemaIssue==="duplicate_previous");
+});
+
+test("internal visual element descriptions may exceed the 44-character label budget",async()=>{
+  const {phases,...structure}=unit("Full installation cost");
+  const elements=[{label:"Permit tags",detail:"Animated cost labels attaching to the schematic"},
+    {label:"Ductwork lines",detail:"Complex routing lines connecting to the unit"}];
+  const result=await generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
+    transport:transportFor({visualElements:elements}),
+  });
+  assert.deepEqual(result.visualElements,elements);
+  await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
+    transport:transportFor({visualElements:[{label:"This label is far too long to appear on a video",detail:"Cost label"},elements[1]]}),
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements"&&error.schemaIssue==="invalid_element");
+});
+
+test("direction schema errors distinguish missing fields, wrong types, and oversized values",async()=>{
+  const {phases,...structure}=unit("Full installation cost");
+  for(const [patch,field,issue] of [
+    [{visualAction:undefined},"visualAction","missing"],
+    [{learningChange:42},"learningChange","wrong_type"],
+    [{onScreenText:"x".repeat(121)},"onScreenText","too_long"],
+  ]){
+    const direction={visualAction:phases[0].visualAction,learningChange:phases[0].learningChange,
+      onScreenText:phases[0].onScreenText,...patch};
+    await assert.rejects(generateSceneDirection(outline,0,0,structure,[],dossier,quotes,settings,{
+      transport:transportFor(direction),
+    }),error=>error.code==="schema_invalid"&&error.field===field&&error.schemaIssue===issue);
+  }
 });
 
 test("tiny scene core rejects labels that final visual mechanic forbids",async()=>{
