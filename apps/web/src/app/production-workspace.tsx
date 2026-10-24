@@ -274,7 +274,11 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
                 {tr("Go to research","調査へ")}
               </button></div>}
             {board&&<ProductionClaimIssues issues={issues} draft={draft} locale={locale}
-              onOpenBeat={()=>onOpenStoryboard()} onFindEvidence={()=>selectStep("research")}
+              onOpenBeat={beatId=>{
+                try { sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,beatId); }
+                catch { /* The planner still opens when session storage is unavailable. */ }
+                onOpenStoryboard();
+              }} onFindEvidence={()=>selectStep("research")}
               onRetryRepair={job?.status==="paused"&&job.stage==="evidence-repair"?()=>void retryEvidence():undefined}/>}
           </>}
           {step==="visuals"&&<div className={contentCard}>
