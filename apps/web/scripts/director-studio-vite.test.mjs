@@ -135,6 +135,15 @@ test("compile saved research rejects malformed IDs and mismatched saved plans",a
   assert.equal(cross.status,422);
 });
 
+test("rejects a null storyboard instead of silently compiling without synchronization",async()=>{
+  let loaded=0;
+  const result=await post("/compile-saved-research",{
+    artifactId:"research_hvac-123456789abc",projectId:"project-demo",storyboard:null,
+  },{loadResearch:async()=>{loaded++;throw Error("Should reject before loading source.");}});
+  assert.equal(result.status,422);
+  assert.equal(loaded,0);
+});
+
 test("passes an explicitly saved storyboard through the deterministic Director synchronizer",async()=>{
   const artifactId="research_hvac-123456789abc";
   const dossier={id:"research_hvac"},plan={researchId:"research_hvac",shots:[{id:"shot_one"}]};
