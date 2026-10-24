@@ -105,8 +105,12 @@ export function isTeachingVisualState(value: unknown): value is TeachingVisualSt
     typeof state.phase !== "string" || !["problem", "mechanism", "payoff"].includes(state.phase) ||
     typeof state.subjectId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.subjectId)) return false;
   const copy = [state.before, state.action, state.after];
-  if (copy.some((text, i) => typeof text !== "string" || text.trim().length < 8 ||
-    text.length > (i === 1 ? 90 : 48) || Array.from(text).some(char => char.charCodeAt(0) < 32))) return false;
+  // Editorial descriptions are not on-screen labels. Keep in sync with the
+  // research scene-state validator's 500-character safety bound; 48/90 are
+  // prompting targets, not reasons to discard successfully generated research.
+  const MAX_DESCRIPTION_LENGTH = 500;
+  if (copy.some(text => typeof text !== "string" || text.trim().length < 8 ||
+    text.length > MAX_DESCRIPTION_LENGTH || Array.from(text).some(char => char.charCodeAt(0) < 32))) return false;
   return new Set(copy.map(text => (text as string).trim().toLowerCase())).size === 3;
 }
 
