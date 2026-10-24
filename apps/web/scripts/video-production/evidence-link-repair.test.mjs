@@ -60,3 +60,17 @@ test("source-linked unverified claims are not incorrectly repaired",async()=>{
   assert.equal(inspect.linked,1);
   assert.equal((await repairCapturedLinks(input)).autoFixed,0);
 });
+
+test("every cited source needs a captured verbatim quote; unsupported extra references are removed",async()=>{
+  const input=fixture();
+  input.dossier.claims[0].sourceRefs=["source_01","source_02"];
+  input.quotes[0].sourceId="source_01";
+  const extra="Another captured source discusses unrelated home renovations.";
+  input.dossier.evidence.push({id:"source_02",snapshotSha256:hash(extra)});
+  input.captures.push({id:"source_02",text:extra});
+  assert.deepEqual(inspectCapturedLinks(input).issues.map(x=>x.reason),["source_mismatch"]);
+  const repaired=await repairCapturedLinks(input);
+  assert.equal(repaired.autoFixed,1);
+  assert.deepEqual(repaired.document.dossier.claims[0].sourceRefs,["source_01"]);
+  assert.equal(inspectCapturedLinks(repaired.document).linked,1);
+});
