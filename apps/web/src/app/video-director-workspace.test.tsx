@@ -8,6 +8,16 @@ import * as projectStorage from "@/features/storyboard-planner/model/project-sto
 vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
   <div data-testid="demo-real-scene">Actual exporter at frame {frame}</div>}));
 
+// Asset and sound libraries are independent local sidecars, not AI generation.
+function localMediaCatalogResponse(url:unknown):Response|null {
+  const path=String(url);
+  const result=path.startsWith("/api/contentgen-assets/approved?")?{assets:[]}:
+    path.startsWith("/api/contentgen-assets/selected?")?{selections:[],invalidShots:[]}:
+    path==="/api/contentgen-sfx/library"?{assets:[]}:
+    path==="/api/contentgen-sfx/choices"?{scenes:[]}:null;
+  return result?new Response(JSON.stringify(result),{status:200}):null;
+}
+
 afterEach(()=>{vi.restoreAllMocks();});
 describe("AI Prompt Studio",()=>{
   it("edits and saves a custom hook prompt while leaving all other stage overrides intact",async()=>{
@@ -133,6 +143,7 @@ describe("first-run complete Studio demo",()=>{
       visualLimits:[]};
     const calls:string[]=[];
     vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
+      const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
       calls.push(String(url));
       if(String(url).endsWith("/demo"))return new Response(JSON.stringify({
         dossier:sampleDossier,bundle:sampleBundle}),{status:200});
@@ -197,7 +208,10 @@ describe("editing meaningful visible teaching elements as a normal Studio user",
      sound:[{shotId:"hook",narration:"The question is interesting for learners.",sfxIntent:null}],
      teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Show question"}]}]
    }};
-   const network=vi.spyOn(globalThis,"fetch");
+   const network=vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+     const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
+     throw Error("Invalid visual edit unexpectedly requested "+String(url));
+   });
    const user=userEvent.setup();
    render(<VideoDirectorWorkspace locale="en"/>);
    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
@@ -208,7 +222,7 @@ describe("editing meaningful visible teaching elements as a normal Studio user",
      target:{value:"House | Some house\nCategories | Many categories"}});
    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
    expect(await screen.findByText(/specific visual elements/i)).toBeInTheDocument();
-   expect(network).not.toHaveBeenCalled();
+   expect(network.mock.calls.filter(([url])=>String(url).endsWith("/edit"))).toHaveLength(0);
  });
 });
 
@@ -222,6 +236,7 @@ describe("saved research to Video Director handoff",()=>{
   it("opens the exact saved research artifact without generating a fresh storyboard",async()=>{
     const calls:string[]=[];
     vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
+      const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
       calls.push(String(url));
       expect(init?.method).toBe("POST");
       expect(JSON.parse(String(init?.body))).toEqual({artifactId});
