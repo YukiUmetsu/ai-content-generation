@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneVisual,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedSceneStates,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
+import {withModelDebugContext} from "./research-ai-debug.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
 const quotes=[{claimId:"claim_01",sourceId:"source_01",quote:"Installation requires equipment and labor."}];
@@ -128,6 +129,23 @@ test("schema errors identify the invalid field with no source text",async()=>{
     assert.doesNotMatch(error.message,/Installation requires equipment/);
     return true;
   });
+});
+
+test("real model parser captures invalid visualElements for opt-in schema diagnostics",async()=>{
+  const {phases,...structure}=unit("Installed system");
+  const direction=phases[0];
+  const raw='{"visualElements":[{"label":"Only one part","detail":"Visible but incomplete"}]}';
+  const entries=[];
+  const transport=async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({
+    choices:[{finish_reason:"stop",message:{content:raw}}],
+  })});
+  await assert.rejects(withModelDebugContext({
+    jobId:"job_"+"a".repeat(24),stage:"scene:2",currentStep:"visual:2:elements",model:settings.model,attempt:2,
+  },()=>generateSceneElements(outline,0,0,structure,direction,dossier,quotes,settings,{transport}),{
+    enabled:true,log:(...args)=>entries.push(args),
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  assert.equal(entries.length,1);
+  assert.equal(JSON.parse(entries[0][1]).output,raw);
 });
 
 test("small model generates scene structure, independent visuals and narrations without a full-scene response",async()=>{
