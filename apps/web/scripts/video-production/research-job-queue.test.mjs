@@ -7,6 +7,7 @@ import {createResearchJobManager} from "./research-job-queue.mjs";
 import {buildDeterministicDossier} from "./research-job-evidence.mjs";
 import {assembleResumablePlan} from "./research-job-planner.mjs";
 import {loadStudioResearchDraft} from "./studio-research.mjs";
+import {captureModelOutput} from "./research-ai-debug.mjs";
 
 const brief={title:"Heat pump costs",viewerQuestion:"Why are installations expensive?",audience:"Homeowners",locale:"en-US",searchArtifactId:"search_20261023T000000000Z-123456789abc"};
 const model={model:"local-small",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};
@@ -41,6 +42,40 @@ test("retry resumes from completed scene, not source capture or outline",async()
     assert.equal(done.artifactId,"research_test-0123456789ab");
     assert.equal(captures,1);assert.equal(outlines,1);assert.equal(sceneOne,1);assert.equal(sceneTwo,4);
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("opt-in diagnostics retain raw answers from all failed retries without exposing them in job state",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  const previous=process.env.CONTENTGEN_DEBUG_AI_OUTPUT;
+  const originalWarn=console.warn;
+  const entries=[];
+  let calls=0;
+  process.env.CONTENTGEN_DEBUG_AI_OUTPUT="1";
+  console.warn=(...args)=>entries.push(args);
+  const manager=fixture(root,{scene:async(_outline,index)=>{
+    if(index===1&&++calls<=2){
+      captureModelOutput(JSON.stringify({visualElements:[{label:`invalid ${calls}`}]}));
+      throw Object.assign(Error("private schema text"),{code:"schema_invalid",field:"visualElements"});
+    }
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const state=await settled(manager,jobId);
+    assert.equal(state.status,"completed");
+    const debug=entries.filter(parts=>parts[0]==="[contentgen-ai-schema-error]").map(parts=>JSON.parse(parts[1]));
+    assert.equal(debug.length,2);
+    assert.deepEqual(debug.map(entry=>entry.attempt),[1,2]);
+    assert.deepEqual(debug.map(entry=>entry.output).map(output=>JSON.parse(output).visualElements[0].label),
+      ["invalid 1","invalid 2"]);
+    assert.ok(debug.every(entry=>entry.jobId===jobId&&entry.model===model.model&&entry.field==="visualElements"));
+    assert.doesNotMatch(JSON.stringify(state),/invalid [12]|private schema text/);
+  }finally{
+    if(previous===undefined)delete process.env.CONTENTGEN_DEBUG_AI_OUTPUT;
+    else process.env.CONTENTGEN_DEBUG_AI_OUTPUT=previous;
+    console.warn=originalWarn;
+    await rm(root,{recursive:true,force:true});
+  }
 });
 
 test("one invalid local scene response gets a bounded repair attempt",async()=>{
