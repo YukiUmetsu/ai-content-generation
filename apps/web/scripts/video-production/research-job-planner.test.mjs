@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneVisual,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
+import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneVisual,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedSceneStates,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
@@ -360,6 +360,26 @@ test("tiny scene states reject placeholders before accepting a checkpoint",async
   }),error=>error.code==="schema_invalid"&&error.field==="before");
   assert.throws(()=>assembleSceneStructure(core,{before:"Main idea",action:"Split the bill into parts",after:"Both parts are visible"}),
     error=>error.code==="schema_invalid"&&error.field==="before");
+});
+
+test("scene state validation categorizes an invalid before without exposing its contents",()=>{
+  const valid={before:"Previously worn roof surface",action:"Reveal the damaged roofing layers",after:"New layers cover the roof"};
+  const invalid=[
+    [{...valid,before:"Before"},"placeholder"],
+    [{...valid,before:"Roof"},"too_short"],
+    [{...valid,before:"An overly elaborate starting state that exceeds the field length limit"},"too_long"],
+    [{...valid,before:123},"wrong_type"],
+    [{...valid,before:undefined},"missing"],
+  ];
+  for(const [value,schemaIssue] of invalid){
+    assert.throws(()=>validateSavedSceneStates(value),error=>{
+      assert.equal(error.code,"schema_invalid");
+      assert.equal(error.field,"before");
+      assert.equal(error.schemaIssue,schemaIssue);
+      assert.doesNotMatch(error.message,/overly elaborate|Previously worn/i);
+      return true;
+    });
+  }
 });
 
 test("whole-scene acceptance catches downstream mechanic and state violations",async()=>{
