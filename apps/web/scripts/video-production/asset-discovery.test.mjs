@@ -200,6 +200,7 @@ test("approved Pexels video resolves its own provider ID and stores an MP4 with 
   const saved=await approveAsset(input,{root,fetchImpl,pexelsKey:"private-key"});
   assert.equal(saved.assetType,"video");
   assert.equal(saved.durationSeconds,12);
+  assert.deepEqual({width:saved.width,height:saved.height},{width:1280,height:720});
   assert.equal(saved.files[0].name,"video.mp4");
   assert.deepEqual(await readFile(saved.localPath),bytes);
   assert.equal((await listApprovedAssets({projectId:"project-1"},{root}))[0].sha256,saved.sha256);
@@ -259,4 +260,43 @@ test("scene selection pins only an approved SHA, can be revised and detects a da
   await clearSelectedSceneAsset({projectId:"project-1",shotId:"shot-house"},{root});
   assert.deepEqual(await listSelectedSceneAssets({projectId:"project-1"},{root}),
     {schemaVersion:1,kind:"contentgen-scene-media-selections",selections:[],invalidShots:[]});
+});
+
+test("portrait discovery uses script timing and returns an explainable strong video suggestion",async()=>{
+  const calls=[];
+  const bundleWithSound={plan:{...bundle.plan,sound:[{shotId:"shot-house",narration:
+    "A storm sends roof tiles sliding off the house while the owner watches.",pauseAfterMs:500}]}};
+  const fetchImpl=async url=>{
+    calls.push(String(url));
+    if(String(url).includes("/v1/videos/search"))return response({videos:[{
+      id:91,url:"https://www.pexels.com/video/roof-tiles-91/",image:"https://images.pexels.com/videos/91/frame.jpg",
+      duration:20,user:{name:"Video Artist"},video_files:[{quality:"hd",file_type:"video/mp4",width:720,height:1280,
+        link:"https://videos.pexels.com/video-files/91/portrait.mp4"}]}]});
+    return response({photos:[{id:92,url:"https://www.pexels.com/photo/roof-tiles-92/",alt:"Roof tiles",
+      photographer:"Photo Artist",width:1000,height:1800,
+      src:{medium:"https://images.pexels.com/photos/92/roof.jpeg"}}]});
+  };
+  const result=await discoverShotAssets({bundle:bundleWithSound,providers:["pexels"],
+    destination:"portrait",sceneDurationsSeconds:{"shot-house":18},allowExternalSearch:true},
+    {fetchImpl,pexelsKey:"private-key"});
+  assert.ok(calls.every(url=>url.includes("orientation=portrait")));
+  const scene=result.scenes[0];
+  assert.deepEqual(scene.shotDuration,{seconds:18,source:"measured"});
+  assert.equal(scene.recommendedAssetKey,"pexels:video:91");
+  assert.equal(scene.candidates[0].assetType,"video");
+  assert.equal(scene.candidates[0].width,720);
+  assert.equal(scene.candidates[0].height,1280);
+  assert.equal(scene.candidates[0].match.grade,"strong");
+  assert.ok(scene.candidates[0].match.reasons.some(x=>/subject/i.test(x)));
+  assert.doesNotMatch(JSON.stringify(result),/private-key|portrait\.mp4/);
+});
+
+test("invalid destination and timing override reject before any provider requests",async()=>{
+  let calls=0;
+  const fetchImpl=async()=>{calls++;return response({photos:[],videos:[]});};
+  await assert.rejects(discoverShotAssets({bundle,providers:["pexels"],allowExternalSearch:true,
+    destination:"4K-or-ignore",sceneDurationsSeconds:{}},{fetchImpl,pexelsKey:"key"}),/destination/i);
+  await assert.rejects(discoverShotAssets({bundle,providers:["pexels"],allowExternalSearch:true,
+    destination:"landscape",sceneDurationsSeconds:{"shot-house":-8}},{fetchImpl,pexelsKey:"key"}),/duration/i);
+  assert.equal(calls,0);
 });
