@@ -354,6 +354,19 @@ pub fn used_search_calls(db: &Connection, now: i64) -> Result<i64, MarketError> 
     )?)
 }
 
+/// Reserve a one-shot Explore request without creating a watchlist or a run.
+/// A single conditional INSERT atomically shares the existing daily budget with
+/// scheduled and manually triggered watchlist collection.
+pub fn reserve_explore_search(db: &Connection, now: i64) -> Result<bool, MarketError> {
+    let inserted = db.execute(
+        "INSERT INTO market_search_budget(run_id,reserved_at)
+         SELECT 'explore_' || lower(hex(randomblob(16))), ?1
+         WHERE (SELECT COUNT(*) FROM market_search_budget WHERE reserved_at > ?2) < ?3",
+        params![now, now - DAILY_SECONDS, MAX_SEARCH_CALLS],
+    )?;
+    Ok(inserted == 1)
+}
+
 /// Atomic per-watchlist lease and conservative project-level API budget reservation.
 /// Returns None when disabled, not due, active, backing off, or at quota.
 pub fn claim_watchlist(
