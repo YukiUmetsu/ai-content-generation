@@ -278,3 +278,81 @@ test("completed job writes an artifact readable by the existing Studio research 
     assert.equal(restored.searchArtifactId,brief.searchArtifactId);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test("truncated visual phase leaves smaller checkpoints and resume does not repeat accepted inference",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-chunks-"));
+  const called={structure:[],visual:[],narration:[]};
+  let failures=0;
+  const manager=fixture(root,{
+    scene:null,
+    sceneStructure:async(_story,index)=>{called.structure.push(index);return {subject:"Heat pump"};},
+    sceneVisual:async(_story,index,phase,_structure,_previous,_d,_q,_settings,options)=>{
+      called.visual.push([index,phase,options.feedback]);
+      if(index===0&&phase===1&&failures++<3)throw Object.assign(Error("secret source passage"),
+        {code:"output_truncated",field:"response"});
+      return {visualAction:`action ${index} ${phase}`};
+    },
+    sceneNarration:async(_story,index,phase)=>{called.narration.push([index,phase]);return {narration:`narration ${phase}`};},
+    combineScene:(structure,phases)=>({structure,phases}),
+  });
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const failed=await settled(manager,jobId);
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.error.detailCode,"output_truncated");
+    assert.equal(failed.currentStep,"visual:2");
+    assert.equal(failed.completedScenes,0);
+    const saved=join(root,"jobs",jobId);
+    assert.deepEqual(JSON.parse(await readFile(join(saved,"structure_0_0_0.json"),"utf8")),{subject:"Heat pump"});
+    assert.deepEqual(JSON.parse(await readFile(join(saved,"visual_0_0_0_0.json"),"utf8")),{visualAction:"action 0 0"});
+    assert.deepEqual(JSON.parse(await readFile(join(saved,"narration_0_0_0_0.json"),"utf8")),{narration:"narration 0"});
+    assert.ok(called.visual.filter(([,phase])=>phase===1).slice(1).every(([,phase,feedback])=>phase===1&&/shorter|compact/i.test(feedback)));
+    await manager.resume(jobId,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(called.structure.filter(index=>index===0).length,1);
+    assert.equal(called.visual.filter(([index,phase])=>index===0&&phase===0).length,1);
+    assert.equal(called.narration.filter(([index,phase])=>index===0&&phase===0).length,1);
+    assert.equal(called.visual.filter(([index,phase])=>index===0&&phase===1).length,4);
+    assert.equal((await manager.get(jobId)).completedScenes,2);
+    assert.doesNotMatch(JSON.stringify(await manager.get(jobId)),/secret source passage/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("older completed scene checkpoints bypass the new split scene generator",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-chunks-old-"));
+  let structureCalls=0;
+  const manager=fixture(root,{scene:null,sceneStructure:async()=>{structureCalls++;return {};},
+    sceneVisual:async(_story,index)=>{if(index===0)throw Error("Old scene must be reused");return {};},
+    sceneNarration:async()=>({narration:"safe"}),combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const stopped=await settled(manager,jobId);
+    assert.equal(stopped.status,"failed");
+    const file=join(root,"jobs",jobId,"scene_0_0_0.json");
+    await writeFile(file,JSON.stringify({legacyScene:true}));
+    await manager.resume(jobId,{primary:model});
+    const done=await settled(manager,jobId);
+    assert.equal(done.status,"completed");
+    assert.equal(structureCalls,2);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("manually regenerating one scene invalidates its partial pieces without rerunning a different scene",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-chunks-revision-"));
+  const seen=[];
+  const manager=fixture(root,{scene:null,
+    sceneStructure:async(_story,index)=>{seen.push(["structure",index]);return {};},
+    sceneVisual:async(_story,index,phase)=>{seen.push(["visual",index,phase]);return {};},
+    sceneNarration:async(_story,index,phase)=>{seen.push(["narration",index,phase]);return {};},
+    combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(seen.filter(([,index])=>index===0).length,7);
+    assert.equal(seen.filter(([,index])=>index===1).length,7);
+    await manager.retryScene(jobId,0,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(seen.filter(([,index])=>index===0).length,14);
+    assert.equal(seen.filter(([,index])=>index===1).length,7);
+  }finally{await rm(root,{recursive:true,force:true});}
+});

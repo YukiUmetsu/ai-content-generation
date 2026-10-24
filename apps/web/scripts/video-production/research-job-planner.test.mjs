@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateOutline,generateSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
+import {generateOutline,generateSceneUnit,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
@@ -128,4 +128,97 @@ test("schema errors identify the invalid field with no source text",async()=>{
     assert.doesNotMatch(error.message,/Installation requires equipment/);
     return true;
   });
+});
+
+test("small model generates scene structure, independent visuals and narrations without a full-scene response",async()=>{
+  const original=unit("Installation cost components");
+  const {phases,...structure}=original;
+  const requests=[];
+  const responses=[structure,...phases.flatMap(phase=>{
+    const {narration,...visual}=phase;
+    return [visual,{narration}];
+  })];
+  let index=0;
+  const customSettings={...settings,generation:{outlineTokens:1024,sceneTokens:1536,timeoutSeconds:360}};
+  const transport=async(_url,options)=>{
+    const payload=JSON.parse(options.body);
+    requests.push(payload);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{finish_reason:"stop",message:{content:JSON.stringify(responses[index++])}}]})};
+  };
+  const main=await generateSceneStructure(outline,0,dossier,quotes,customSettings,{transport});
+  const results=[];
+  for(let phase=0;phase<3;phase++){
+    const visual=await generateSceneVisual(outline,0,phase,main,results.map(p=>p.visual),dossier,quotes,customSettings,{transport});
+    const narration=await generateSceneNarration(outline,0,phase,main,visual,dossier,quotes,customSettings,{transport});
+    results.push({visual,narration});
+  }
+  const rebuilt=assembleSceneUnit(main,results);
+  assert.deepEqual(rebuilt,original);
+  assert.equal(assembleResumablePlan(dossier,outline,[rebuilt,rebuilt]).shots.length,6);
+  assert.equal(requests.length,7);
+  assert.ok(requests.every(request=>request.max_tokens===1536));
+  assert.ok(requests.every(request=>request.messages[1].content.length<5000));
+  assert.ok(requests.slice(2).filter((_request,i)=>i%2===0).every(request=>/narration/i.test(request.messages[0].content)&&!/visualElements:\[/i.test(request.messages[0].content)));
+});
+
+test("independent visual generation reports truncation and rejects repeated phase actions",async()=>{
+  const original=unit("Complete bill");
+  const {phases,...structure}=original;
+  const visual={...phases[0]};delete visual.narration;
+  const truncated=async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{finish_reason:"length",message:{content:'{"untrusted":"secret"'}}]})});
+  await assert.rejects(generateSceneVisual(outline,0,0,structure,[],dossier,quotes,settings,{transport:truncated}),error=>{
+    assert.equal(error.code,"output_truncated");
+    assert.doesNotMatch(error.message,/secret/);
+    return true;
+  });
+  await assert.rejects(generateSceneVisual(outline,0,1,structure,[visual],dossier,quotes,settings,{transport:transportFor(visual)}),error=>{
+    assert.equal(error.code,"schema_invalid");
+    assert.equal(error.field,"visualAction");
+    return true;
+  });
+});
+
+test("a truncated subtask is retried with a stricter, smaller JSON text budget",async()=>{
+  const original=unit("Full cost");
+  const {phases,...structure}=original;
+  const answer={...phases[0]};delete answer.narration;
+  const systems=[];
+  const transport=async(_url,options)=>{
+    systems.push(JSON.parse(options.body).messages[0].content);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(answer)}}]})};
+  };
+  await generateSceneVisual(outline,0,0,structure,[],dossier,quotes,settings,{transport});
+  await generateSceneVisual(outline,0,0,structure,[],dossier,quotes,settings,{
+    transport,feedback:"The previous JSON was cut off at the output limit. Keep every required field but use shorter text."});
+  assert.notEqual(systems[0],systems[1]);
+  assert.match(systems[1],/compact|shorter|minimum/i);
+  assert.match(systems[1],/visualElements/i);
+});
+
+test("Qwen-specific no-thinking hint is not sent to unrelated local models",async()=>{
+  const original=unit("Full cost");
+  const {phases,...structure}=original;
+  const systems=[];
+  const transport=async(_url,options)=>{
+    systems.push(JSON.parse(options.body).messages[0].content);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(structure)}}]})};
+  };
+  await generateSceneStructure(outline,0,dossier,quotes,settings,{transport});
+  await generateSceneStructure(outline,0,dossier,quotes,{...settings,model:"qwen3.5:9b"},{transport});
+  assert.doesNotMatch(systems[0],/\/no_think/u);
+  assert.match(systems[1],/\/no_think/u);
+});
+
+test("outline truncation retry narrows output to two short beats and discourages Qwen thinking",async()=>{
+  const prompts=[];
+  const transport=async(_url,options)=>{
+    prompts.push(JSON.parse(options.body).messages[0].content);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(outline)}}]})};
+  };
+  const qwen={...settings,model:"Qwen3.5 9B (Q4)"};
+  await generateOutline(dossier,quotes,qwen,{transport});
+  await generateOutline(dossier,quotes,qwen,{transport,feedback:"The previous JSON was cut off at the output limit. Keep every required field but use shorter text."});
+  assert.match(prompts[0],/\/no_think/u);
+  assert.match(prompts[1],/exactly (?:2|two) (?:short|concise) beats/i);
+  assert.doesNotMatch(prompts[0],/exactly (?:2|two) (?:short|concise) beats/i);
 });

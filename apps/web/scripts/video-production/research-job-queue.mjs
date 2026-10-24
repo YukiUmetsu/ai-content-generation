@@ -6,15 +6,15 @@ import {fileURLToPath} from "node:url";
 import {validateStudioBrief} from "./studio-research.mjs";
 import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
-import {generateOutline,generateSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
+import {generateOutline,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
 const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|scene_\d+_\d+_\d+)\.json$/u.test(name);
-const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
+const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
+const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const errorInfo=error=>{
   const raw=String(error?.message??error??"Unknown job failure");
   const detailCode=["schema_invalid","json_invalid","output_truncated","output_missing","provider_envelope_invalid"].includes(error?.code)?error.code:null;
@@ -49,6 +49,7 @@ async function optionalJson(file,limit){
 function publicState(job){
   return {jobId:job.id,status:job.status,stage:job.stage,createdAt:job.createdAt,updatedAt:job.updatedAt,
     completedScenes:job.completedScenes??0,totalScenes:job.totalScenes??0,
+    ...(job.currentStep?{currentStep:job.currentStep}:{}),
     ...(job.retry?{retry:job.retry}:{}),
     ...(job.error?{error:job.error}:{}),...(job.artifactId?{artifactId:job.artifactId}:{})};
 }
@@ -70,7 +71,9 @@ async function saveCompleted(root,job,data,plan){
 /** Instances allow isolated tests; the real Vite process uses exactly one shared manager. */
 export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudioSearch,
   capture=captureSavedSources,evidence=buildDeterministicDossier,outline=generateOutline,
-  scene=generateSceneUnit,assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause}={}){
+  scene=null,sceneStructure=generateSceneStructure,sceneVisual=generateSceneVisual,
+  sceneNarration=generateSceneNarration,combineScene=assembleSceneUnit,
+  assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause}={}){
   const active=new Map();
   let inferenceTail=Promise.resolve();
   const rootJobs=join(root,"jobs");
@@ -92,7 +95,8 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     return job;
   };
   const stageFile=async(job,name)=>optionalJson(pathFor(job.id,name),name==="captures.json"?256*1024:512*1024);
-  const setStage=async(job,stage)=>{job.status="running";job.stage=stage;job.error=null;job.retry=null;await save(job);};
+  const setStage=async(job,stage,currentStep=null)=>{job.status="running";job.stage=stage;
+    job.currentStep=currentStep;job.error=null;job.retry=null;await save(job);};
   const guard=signal=>{if(signal.aborted)throw signal.reason??Error("Job cancelled.");};
   const inference=async(action,signal)=>{
     const previous=inferenceTail;
@@ -184,14 +188,39 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       const units=[];
       for(let index=0;index<story.beats.length;index++){
         guard(signal);
-        const file=`scene_${job.generation}_${index}_${job.sceneRevisions[index]??0}.json`;
+        const prefix=`${job.generation}_${index}_${job.sceneRevisions[index]??0}`;
+        const file=`scene_${prefix}.json`;
         let unit=await stageFile(job,file);
         if(!unit){
           await setStage(job,`scene:${index+1}`);
-          unit=await attempt(job,(settings,feedback)=>scene(story,index,data.dossier,data.quotes,settings,{signal,feedback}),signal);
+          if(scene){
+            // Preserve the original injectable whole-scene producer for existing integrations/tests.
+            unit=await attempt(job,(settings,feedback)=>scene(story,index,data.dossier,data.quotes,settings,{signal,feedback}),signal);
+          }else{
+            const substep=async(filename,label,action)=>{
+              const saved=await stageFile(job,filename);
+              if(saved)return saved;
+              await setStage(job,`scene:${index+1}`,label);
+              const result=await attempt(job,(settings,feedback)=>action(settings,feedback),signal);
+              guard(signal);await write(job,filename,result);
+              return result;
+            };
+            const structure=await substep(`structure_${prefix}.json`,"structure",(settings,feedback)=>
+              sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback}));
+            const phases=[];
+            for(let phase=0;phase<3;phase++){
+              const previous=phases.map(part=>part.visual);
+              const visual=await substep(`visual_${prefix}_${phase}.json`,`visual:${phase+1}`,(settings,feedback)=>
+                sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}));
+              const narration=await substep(`narration_${prefix}_${phase}.json`,`narration:${phase+1}`,(settings,feedback)=>
+                sceneNarration(story,index,phase,structure,visual,data.dossier,data.quotes,settings,{signal,feedback}));
+              phases.push({visual,narration});
+            }
+            unit=combineScene(structure,phases);
+          }
           guard(signal);await write(job,file,unit);
         }
-        units.push(unit);job.completedScenes=index+1;await save(job);
+        units.push(unit);job.completedScenes=index+1;job.currentStep=null;await save(job);
       }
       await setStage(job,"assemble");
       const plan=assemble(data.dossier,story,units);
@@ -199,7 +228,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       const artifactId=await persist(root,job,data,plan);
       guard(signal);
       job.artifactId=artifactId;
-      job.status="completed";job.stage="completed";job.error=null;await save(job);
+      job.status="completed";job.stage="completed";job.currentStep=null;job.error=null;await save(job);
     }catch(error){
       if(job){job.status=signal.aborted?"cancelled":"failed";job.retry=null;
         job.error=signal.aborted?null:errorInfo(error);await save(job);
@@ -225,7 +254,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     validateStudioSearchMatch(saved,brief);
     const job={version:1,id:"job_"+randomBytes(12).toString("hex"),brief,searchArtifactId,
       models:{primary,secondary},status:"queued",stage:"queued",generation:0,
-      completedScenes:0,totalScenes:0,sceneRevisions:{},createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
+      completedScenes:0,totalScenes:0,sceneRevisions:{},currentStep:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
       error:null,retry:null,artifactId:null};
     await save(job);start(job);
     return publicState(job);
@@ -257,14 +286,14 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
         job.models=next;job.generation++;job.sceneRevisions={};job.completedScenes=0;job.totalScenes=0;
       }
     }
-    job.status="queued";job.stage="queued";job.error=null;job.retry=null;job.artifactId=null;
+    job.status="queued";job.stage="queued";job.currentStep=null;job.error=null;job.retry=null;job.artifactId=null;
     await save(job);start(job);return publicState(job);
   }
   async function cancel(id){
     const job=await read(id);
     if(job.status==="completed")throw Error("Research job already completed; its snapshot cannot be cancelled.");
     active.get(id)?.abort(Error("Job cancelled."));
-    job.status="cancelled";job.stage="cancelled";job.error=null;job.retry=null;
+    job.status="cancelled";job.stage="cancelled";job.currentStep=null;job.error=null;job.retry=null;
     await save(job);return publicState(job);
   }
   async function retryScene(id,sceneId,models){
