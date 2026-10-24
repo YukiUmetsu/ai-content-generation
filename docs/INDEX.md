@@ -19,6 +19,7 @@
 | [16-creative-pattern-library](16-creative-pattern-library.md) | Title/thumbnail compositions, hooks, story engines, palette and semantic animation patterns | Coding agent video composition recipes and QA |
 | [15-video-performance-system](15-video-performance-system.md) | Trend/opportunity evidence, distinct title+thumbnail hypotheses, hook/short/long story grammar, analytics feedback | Creative strategy, high-retention explainers |
 | [2026-10-21 market scan](research/2026-10-21-video-market-scan.md) | Dated performance examples, surveys, platform trend evidence, topic opportunities | Refreshing current topic hypotheses |
+| [21-scene-asset-discovery](21-scene-asset-discovery.md) | Approved per-scene stock/3D discovery, provider restrictions, local import manifests and current renderer gap | Scene asset suggestions and third-party media imports |
 | [14-kumiki-integration](14-kumiki-integration.md) | Implemented Kumiki registry/video handshake and unimplemented boundary | Visual scenes, motion, renderer adapters |
 | [11-tools](11-tools.md) | Swappable tool candidates, benchmarks and primary references | New dependencies |
 
