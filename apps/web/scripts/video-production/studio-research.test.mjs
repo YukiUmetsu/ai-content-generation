@@ -47,6 +47,16 @@ test("explicit Studio research stores immutable source text and matching quotes 
     assert.equal(versions.length,2,"a different creative plan must get a new immutable snapshot");
   }finally{await rm(root,{recursive:true,force:true});}
 });
+test("Studio consumes quotePreviews from the real research function when claimSupport is absent",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-studio-real-quotes-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const output={...research};
+  delete output.claimSupport;
+  const result=await createStudioResearchDraft(brief,settings,{root,
+    searchEndpoint:"http://127.0.0.1:58023/search",research:async()=>output,generate:async()=>plan});
+  assert.deepEqual(result.quotes,output.quotePreviews);
+  assert.deepEqual((await loadStudioResearchDraft(result.artifactId,{root})).quotes,output.quotePreviews);
+});
 test("restoring a snapshot rejects unsafe artifact identifiers and missing files",async()=>{
   await assert.rejects(loadStudioResearchDraft("../../etc/passwd"),/artifact ID/i);
   const root=await mkdtemp(join(tmpdir(),"cg-studio-research-"));

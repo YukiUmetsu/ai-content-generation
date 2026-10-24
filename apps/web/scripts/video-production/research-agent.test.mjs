@@ -119,10 +119,28 @@ test("unknown passage references are excluded while valid claims survive with a 
   assert.equal(validateExtractedClaims(result, [capture()]).claims.length, 1);
 });
 
-test("no valid passage references fails closed without creating a fabricated citation", async () => {
-  await assert.rejects(analyzeCapturedResearch([capture()], topic, options, {
+test("all-invalid model references fall back to exact relevant excerpts, never to invented claims", async () => {
+  const result = await analyzeCapturedResearch([capture()], topic, options, {
     transport: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
       claims: [{ text: "Invented financial claim.", support: [{ passageId: "p9999" }] }], gaps: [],
+    }) } }] }), { status: 200 }),
+  });
+  assert.equal(result.claims.length, 1);
+  assert.equal(result.claims[0].text,
+    "Insulation is a material that resists the flow of heat through walls, floors, and ceilings.");
+  assert.deepEqual(result.claims[0].support, [{ sourceId: "source_01",
+    quote: "Insulation is a material that resists the flow of heat through walls, floors, and ceilings." }]);
+  assert.ok(!JSON.stringify(result).includes("Invented financial claim"));
+  assert.ok(result.gaps.some(gap => /model.*references.*invalid.*excerpts/iu.test(gap)));
+  assert.equal(validateExtractedClaims(result, [capture()]).claims[0].status, "unverified");
+});
+
+test("irrelevant captured text still fails closed if the model supplies only invented passage IDs", async () => {
+  const unrelated = { ...capture(), text: "Weather updates are available every day. " +
+    "The latest forecast includes warm temperatures and sunny skies throughout the weekend." };
+  await assert.rejects(analyzeCapturedResearch([unrelated], topic, options, {
+    transport: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      claims: [{ text: "Invented claim about insulation.", support: [{ passageId: "p9999" }] }], gaps: [],
     }) } }] }), { status: 200 }),
   }), /no claims with valid captured passages/i);
 });

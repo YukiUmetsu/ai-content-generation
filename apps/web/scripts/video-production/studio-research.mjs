@@ -27,14 +27,15 @@ export function validateStudioBrief(candidate){
 function checkedQuotes(output){
   const claims=new Map(output.dossier.claims.map(x=>[x.id,x]));
   const captures=new Map(output.captures.map(x=>[x.id,x]));
-  if(!Array.isArray(output.claimSupport)||!output.claimSupport.length)
+  const claimSupport=output.claimSupport??output.quotePreviews;
+  if(!Array.isArray(claimSupport)||!claimSupport.length)
     throw Error("Research returned no claim-specific source quotes.");
   for(const source of output.dossier.evidence){
     const capture=captures.get(source.id);
     if(!capture||sha(capture.text)!==source.snapshotSha256||capture.url!==source.sourceUri)
       throw Error("Source capture does not match its immutable citation hash.");
   }
-  const quotes=output.claimSupport.map(support=>{
+  const quotes=claimSupport.map(support=>{
     const claim=claims.get(support.claimId),capture=captures.get(support.sourceId);
     if(!claim||!capture||!claim.sourceRefs.includes(support.sourceId)||
       typeof support.quote!=="string"||support.quote.length<10||support.quote.length>400||
