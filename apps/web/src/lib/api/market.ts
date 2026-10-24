@@ -149,7 +149,7 @@ export function parseVideos(raw: unknown): MarketVideo[] {
   });
 }
 
-async function send(path: string, method = "GET", payload?: unknown, options?: {signal?: AbortSignal}): Promise<unknown> {
+async function send(path: string, method = "GET", payload?: unknown, options?: {signal?: AbortSignal; timeoutMs?: number}): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${PREFIX}${path}`, {
@@ -160,7 +160,7 @@ async function send(path: string, method = "GET", payload?: unknown, options?: {
         ...(payload === undefined ? {} : {"Content-Type": "application/json"}),
       },
       body: payload === undefined ? undefined : JSON.stringify(payload),
-      signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+      signal: options?.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options?.timeoutMs ?? 15_000)]) : AbortSignal.timeout(options?.timeoutMs ?? 15_000),
     });
   } catch (error) {
     if (options?.signal?.aborted) throw error;
@@ -177,6 +177,15 @@ async function send(path: string, method = "GET", payload?: unknown, options?: {
     throw Error(typeof error.message === "string" ? error.message : `Market API request failed (HTTP ${response.status}).`);
   }
   return raw;
+}
+
+/** One explicit YouTube search; no saved watchlist or local AI request. */
+export async function searchMarketVideos(query: string, options?: {signal?: AbortSignal}): Promise<MarketVideo[]> {
+  const value = query.trim();
+  if ([...value].length < 3 || [...value].length > 160 || /[\\x00-\\x1F\\x7F]/.test(value)) {
+    throw Error("YouTube search must be 3–160 safe characters.");
+  }
+  return parseVideos(await send("/explore", "POST", {query:value}, {signal:options?.signal, timeoutMs:50_000}));
 }
 
 export async function loadMarketStatus(): Promise<MarketStatus> {
