@@ -123,7 +123,12 @@ export async function handleDirectorRequest(req,res,deps={}){
          Object.keys(input).some(key=>!["artifactId","projectId","storyboard"].includes(key))||
          typeof input.artifactId!=="string"||
          !/^research_[a-z0-9_-]{1,78}-[a-f0-9]{12}$/iu.test(input.artifactId)||
-         ((input.projectId===undefined)!==(input.storyboard===undefined)))
+         ((input.projectId===undefined)!==(input.storyboard===undefined))||
+         (input.projectId!==undefined&&(
+           typeof input.projectId!=="string"||
+           !/^[a-z0-9][a-z0-9-]{1,79}$/iu.test(input.projectId)||
+           !input.storyboard||typeof input.storyboard!=="object"||
+           Array.isArray(input.storyboard))))
         throw Error("Select one saved research artifact and an optional matching project storyboard.");
       const saved=await (deps.loadResearch??loadStudioResearchDraft)(input.artifactId);
       if(saved.artifactId!==input.artifactId||saved.snapshotId!==saved.dossier?.id||
