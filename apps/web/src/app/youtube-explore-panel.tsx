@@ -43,6 +43,7 @@ export function YoutubeExplorePanel({locale, onUseVideo, onWatchlistSaved}: Prop
   const [status, setStatus] = useState<MarketStatus | null>(null);
   const [query, setQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState("");
+  const [searchedAt, setSearchedAt] = useState(0);
   const [videos, setVideos] = useState<MarketVideo[]>([]);
   const [dateRange, setDateRange] = useState<DateRange>("all");
   const [minimumViews, setMinimumViews] = useState(0);
@@ -65,8 +66,8 @@ export function YoutubeExplorePanel({locale, onUseVideo, onWatchlistSaved}: Prop
   }, []);
 
   const visible = useMemo(
-    () => filteredVideos(videos, dateRange, minimumViews, minimumSubscribers, sortOrder, Date.now()),
-    [videos, dateRange, minimumViews, minimumSubscribers, sortOrder],
+    () => filteredVideos(videos, dateRange, minimumViews, minimumSubscribers, sortOrder, searchedAt),
+    [videos, dateRange, minimumViews, minimumSubscribers, sortOrder, searchedAt],
   );
   const count = (value: number | null) => value === null ? tr("Unknown", "不明")
     : new Intl.NumberFormat(ja ? "ja-JP" : "en-US", {notation:"compact", maximumFractionDigits:1}).format(value);
@@ -82,7 +83,7 @@ export function YoutubeExplorePanel({locale, onUseVideo, onWatchlistSaved}: Prop
       const result = await searchMarketVideos(query, {signal: controller.signal});
       if (controller.signal.aborted) return;
       setVideos(result);
-      setSearchedQuery(query.trim());
+      setSearchedQuery(query.trim()); setSearchedAt(Date.now());
       setDateRange("all"); setMinimumViews(0); setMinimumSubscribers(0); setSortOrder("date");
     } catch (err) {
       if (!controller.signal.aborted) setError(errorMessage(err));
@@ -144,17 +145,16 @@ export function YoutubeExplorePanel({locale, onUseVideo, onWatchlistSaved}: Prop
 
     <Surface>
       <form className="flex flex-col gap-3" onSubmit={event=>{event.preventDefault();void search();}}>
-        <label className={labelClass}>{tr("Search YouTube", "YouTubeを検索")}
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input className={inputClass+" flex-1"} type="search" aria-label="Search YouTube"
-              value={query} onChange={event=>setQuery(event.target.value)} maxLength={160}
-              placeholder={tr("e.g. cost of replacing a roof", "例：屋根の交換費用")}/>
-            <Button type="submit" icon={<Search className="size-4"/>} isLoading={busy}
-              disabled={!validQuery || busy || status?.apiKeyConfigured===false}>
-              {tr("Search YouTube videos", "YouTube動画を検索")}
-            </Button>
-          </div>
-        </label>
+        <label className={labelClass} htmlFor="youtube-explore-query">{tr("Search YouTube", "YouTubeを検索")}</label>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input id="youtube-explore-query" className={inputClass+" flex-1"} type="search"
+            value={query} onChange={event=>setQuery(event.target.value)} maxLength={160}
+            placeholder={tr("e.g. cost of replacing a roof", "例：屋根の交換費用")}/>
+          <Button type="submit" icon={<Search className="size-4"/>} isLoading={busy}
+            disabled={!validQuery || busy || status?.apiKeyConfigured===false}>
+            {tr("Search YouTube videos", "YouTube動画を検索")}
+          </Button>
+        </div>
         <p className="text-xs text-muted-foreground">{tr(
           "United States · English results · one explicit YouTube API search per click (shared daily budget).",
           "対象：米国・英語。クリックごとにYouTube APIを1回検索（1日の上限は共有）。",
