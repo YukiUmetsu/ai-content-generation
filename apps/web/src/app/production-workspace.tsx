@@ -44,7 +44,7 @@ const stageLabels:Record<ProductionStageId,{en:string;ja:string;enDetail:string;
 };
 const lastJobKey="contentgen:studio-research-job:latest:v1";
 const lastResearchKey="contentgen:studio-research:latest:v1";
-const stagesKey=projectId=>"contentgen:production-step:v1:"+projectId;
+const stagesKey=(projectId:string)=>"contentgen:production-step:v1:"+projectId;
 function storedForTopic(key:string,topic:string,field:string):string|null{
   if(typeof localStorage==="undefined"||!topic.trim())return null;
   try{
