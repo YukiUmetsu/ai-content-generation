@@ -13,6 +13,20 @@ import type { ResearchDraftResult } from "./researched-storyboard";
 
 const LATEST_RESEARCH_KEY="contentgen:studio-research:latest:v1";
 interface RecentResearch {topic:string;artifactId:string}
+type ReadinessState = "not_configured" | "unavailable" | "unverified" | "model_missing" | "ready";
+interface ServiceReadiness { state: ReadinessState; model?: string; detail?: string }
+interface ResearchReadiness {
+  version: 1;
+  search: ServiceReadiness;
+  researchModel: ServiceReadiness;
+  storyModel: ServiceReadiness;
+  ready: boolean;
+}
+const storyApproaches = [
+  { id: "direct", en: "Answer the question", ja: "疑問に答える", detail: "Lead with the viewer's biggest question.", detailJa: "視聴者の一番の疑問から始めます。" },
+  { id: "process", en: "Reveal the mechanism", ja: "仕組みを見せる", detail: "Show how it works, step by step.", detailJa: "仕組みを段階的に見せます。" },
+  { id: "comparison", en: "Compare the options", ja: "選択肢を比べる", detail: "Make tradeoffs easy to see.", detailJa: "選択肢の違いを明確にします。" },
+] as const;
 function savedResearchFor(projectTopic:string):RecentResearch|null {
   if(!projectTopic.trim())return null;
   try{
@@ -48,8 +62,61 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   const [restoring, setRestoring] = useState(Boolean(recentResearch));
   const [researchResult, setResearchResult] = useState<ResearchDraftResult | null>(null);
   const [researchError, setResearchError] = useState("");
+  const [readiness, setReadiness] = useState<ResearchReadiness | null>(null);
+  const [readinessError, setReadinessError] = useState(false);
+  const [checkingReadiness, setCheckingReadiness] = useState(true);
+  const [readinessAttempt, setReadinessAttempt] = useState(0);
   const pending = useRef<AbortController | null>(null);
   const revision = useRef(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCheckingReadiness(true);
+    setReadinessError(false);
+    void fetch("/api/local-research-model/readiness", { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw Error("Readiness check unavailable.");
+        const result = await response.json() as ResearchReadiness;
+        if (result.version !== 1 || !result.search || !result.researchModel || !result.storyModel)
+          throw Error("Unexpected readiness response.");
+        if (!controller.signal.aborted) setReadiness(result);
+      })
+      .catch(() => { if (!controller.signal.aborted) { setReadiness(null); setReadinessError(true); } })
+      .finally(() => { if (!controller.signal.aborted) setCheckingReadiness(false); });
+    return () => controller.abort();
+  }, [readinessAttempt]);
+
+  const blockedForReadiness = checkingReadiness || (readiness !== null && (
+    readiness.search.state !== "ready" ||
+    [readiness.researchModel, readiness.storyModel].some(service =>
+      service.state === "not_configured" || service.state === "model_missing" || service.state === "unavailable")));
+
+  function readinessInstruction() {
+    if (checkingReadiness) return tr("Checking SearXNG and local AI before you start.", "開始前に SearXNG とローカル AI を確認しています。");
+    if (readinessError || !readiness) return tr("Couldn't verify local services. You can retry or continue with caution.", "ローカルサービスを確認できませんでした。再確認するか、注意して続行できます。");
+    if (readiness.search.state === "not_configured") return tr("Set up local search: pnpm --dir apps/web research:up, then pnpm --dir apps/web research:check.",
+      "ローカル検索を設定してください：pnpm --dir apps/web research:up、続けて pnpm --dir apps/web research:check。");
+    if (readiness.search.state !== "ready") return tr("SearXNG is not responding. Run pnpm --dir apps/web research:status, then research:check.",
+      "SearXNG に接続できません。pnpm --dir apps/web research:status と research:check を実行してください。");
+    if ([readiness.researchModel, readiness.storyModel].some(service => service.state === "not_configured" || service.state === "model_missing"))
+      return tr("Select installed models for Research and Story in Settings → Local AI, then check again.",
+        "設定 → ローカル AI で調査用と構成用のモデルを選択し、再確認してください。");
+    if ([readiness.researchModel, readiness.storyModel].some(service => service.state !== "ready"))
+      return tr("SearXNG responds, but the model list could not be verified. Research may still work; check your local model server.",
+        "SearXNG は応答していますが、モデル一覧を確認できませんでした。モデルサーバーを確認してください。");
+    return tr("Local services respond. For a real JSON engine search, run pnpm --dir apps/web research:check.",
+      "ローカルサービスは応答しています。実際の JSON 検索は pnpm --dir apps/web research:check で確認できます。");
+  }
+
+  function readinessLabel(service: ServiceReadiness) {
+    switch (service.state) {
+      case "ready": return tr("Connected", "接続済み");
+      case "not_configured": return tr("Not configured", "未設定");
+      case "unavailable": return tr("Not responding", "応答なし");
+      case "model_missing": return tr("Model not found", "モデルがありません");
+      default: return tr("Unverified", "未確認");
+    }
+  }
 
   useEffect(()=>{
     if(!recentResearch||recentResearch.topic!==projectTopic.trim())return;
@@ -105,7 +172,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   }
 
   async function researchAndGenerate(){
-    if(researchBusy||topic.trim().length<3||topic.trim().length>160)return;
+    if(researchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160)return;
     setResearchBusy(true);setResearchError("");setResearchResult(null);
     const current=++revision.current;
     const controller=new AbortController();pending.current=controller;
@@ -192,6 +259,30 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 {tr("Capture public sources, review what they actually support, and turn the research into an editable visual story.",
                   "公開情報を集め、出典が裏付ける内容を確認し、編集できる映像ストーリーにまとめます。")}
               </p>
+              <div className="mt-6 rounded-surface border border-border bg-surface p-4 sm:p-5" aria-label={tr("Local research readiness", "ローカル調査の準備状況")}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">{tr("Local research readiness", "ローカル調査の準備状況")}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">{tr("Checked on page open · no search or AI generation triggered", "ページ表示時に確認・検索と AI 生成は実行しません")}</p>
+                  </div>
+                  <Button variant="outline" size="sm" disabled={checkingReadiness} onClick={()=>setReadinessAttempt(attempt=>attempt+1)}>
+                    {tr("Check again", "再確認")}
+                  </Button>
+                </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  {([
+                    {label:tr("SearXNG search", "SearXNG 検索"),value:readiness?.search},
+                    {label:tr("Research AI", "調査 AI"),value:readiness?.researchModel},
+                    {label:tr("Story AI", "構成 AI"),value:readiness?.storyModel},
+                  ] as const).map(item=><div key={item.label} className="flex items-center justify-between gap-3 rounded-control bg-surface-subtle px-3 py-2.5 sm:flex-col sm:items-start sm:gap-1">
+                    <span className="text-xs font-medium text-muted-foreground">{item.label}</span>
+                    <span className={`text-sm font-semibold ${checkingReadiness?"text-muted-foreground":item.value?.state==="ready"?"text-foreground":"text-status-warning"}`}>
+                      {checkingReadiness?tr("Checking…", "確認中…"):item.value?readinessLabel(item.value):tr("Unknown", "不明")}
+                    </span>
+                  </div>)}
+                </div>
+                <p role="status" className={`mt-3 text-xs leading-5 ${blockedForReadiness||readinessError?"text-status-warning":"text-muted-foreground"}`}>{readinessInstruction()}</p>
+              </div>
               <label htmlFor="research-topic" className="mt-6 block text-sm font-semibold text-foreground">
                 {tr("Research topic", "リサーチするトピック")}
               </label>
@@ -208,48 +299,65 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                   "調査の下書きは、索引機能が追加されるまで根拠ライブラリとは別に保存されます。")}
               </p>
             </header>
-            <Surface variant="solid" className="gap-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                {tr("01 / STORY BRIEF", "01 / 構成の概要")}
-              </p>
-              <h3 className="text-lg font-semibold">{tr("Shape the explanation", "解説の構成を整える")}</h3>
-              <p className="text-sm text-muted-foreground">{tr(
-                "One click captures public sources, checks exact quotes and drafts explanatory shots with your local model. You review the evidence before saving a video project; YouTube links remain inspiration, not evidence.",
-                "公開情報を取得し、引用を照合してローカルモデルで解説ショット案を作ります。保存前に根拠を確認できます。YouTube リンクは参考用で、事実の証拠ではありません。"
-              )}</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1 text-sm">{tr("Audience (optional)", "対象視聴者（任意）")}
-                  <input value={audience} maxLength={120} onChange={e=>{invalidateResearch();setAudience(e.target.value);}}
-                    placeholder="Homeowners comparing heating quotes"
-                    className="rounded-control border border-input bg-surface px-3 py-2"/>
-                </label>
-                <label className="grid gap-1 text-sm">{tr("Story approach", "構成パターン")}
-                  <select value={approach} onChange={e=>{invalidateResearch();setApproach(e.target.value as EditorialDraft["selectedId"]);}}
-                    className="rounded-control border border-input bg-surface px-3 py-2">
-                    <option value="direct">{tr("Audience-first question", "視聴者の疑問から")}</option>
-                    <option value="process">{tr("Mechanism reveal", "仕組みを段階的に説明")}</option>
-                    <option value="comparison">{tr("Decision comparison", "選択肢を比較")}</option>
-                  </select>
-                </label>
-                <label className="grid gap-1 text-sm">{tr("Question to answer (optional)", "答える疑問（任意）")}
-                  <input value={viewerQuestion} maxLength={200} onChange={e=>{invalidateResearch();setViewerQuestion(e.target.value);}}
-                    className="rounded-control border border-input bg-surface px-3 py-2"/>
-                </label>
-                <label className="grid gap-1 text-sm">{tr("What viewers will learn (optional)", "視聴者が学ぶこと（任意）")}
-                  <input value={payoff} maxLength={320} onChange={e=>{invalidateResearch();setPayoff(e.target.value);}}
-                    className="rounded-control border border-input bg-surface px-3 py-2"/>
-                </label>
+            <Surface variant="solid" className="gap-0 [&>div]:!p-0">
+              <div className="border-b border-border px-5 py-6 sm:px-8 sm:py-7">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {tr("01 / STORY BRIEF", "01 / 構成の概要")}
+                </p>
+                <h3 className="mt-2 font-serif text-2xl font-semibold tracking-tight text-foreground">{tr("Choose how the story unfolds", "伝え方を選ぶ")}</h3>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{tr(
+                  "Pick an explanation style. We'll collect sources and build a storyboard you can review before creating a video.",
+                  "解説のスタイルを選択してください。出典を集め、動画制作前に確認できるストーリーボードを作成します。")}</p>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <Button onClick={()=>void researchAndGenerate()} disabled={!onCreateStoryboard||researchBusy||topic.trim().length<3||topic.trim().length>160}>
+              <div className="px-5 py-6 sm:px-8 sm:py-7">
+                <fieldset>
+                  <legend className="mb-3 text-sm font-semibold text-foreground">{tr("Story direction", "ストーリーの方向性")}</legend>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {storyApproaches.map((choice,index)=><label key={choice.id} className="relative cursor-pointer">
+                      <input type="radio" name="story-approach" value={choice.id} checked={approach===choice.id}
+                        onChange={()=>{invalidateResearch();setApproach(choice.id);}}
+                        className="peer sr-only" />
+                      <span className="flex h-full flex-col rounded-surface border border-border bg-surface-subtle px-4 py-4 transition-colors hover:border-primary/50 peer-checked:border-primary peer-checked:bg-primary/5 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-ring">
+                        <span className="text-xs font-semibold tracking-wide text-muted-foreground">0{index+1}</span>
+                        <span className="mt-3 text-sm font-semibold text-foreground">{tr(choice.en,choice.ja)}</span>
+                        <span className="mt-1 text-xs leading-5 text-muted-foreground">{tr(choice.detail,choice.detailJa)}</span>
+                      </span>
+                    </label>)}
+                  </div>
+                </fieldset>
+                <details className="mt-5 rounded-control border border-border bg-surface">
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {tr("Fine-tune your brief", "構成の詳細を調整する")}
+                    <span className="ms-2 text-xs font-normal text-muted-foreground">{tr("Optional", "任意")}</span>
+                  </summary>
+                  <div className="grid gap-4 border-t border-border p-4 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-sm">{tr("Audience (optional)", "対象視聴者（任意）")}
+                      <input value={audience} maxLength={120} onChange={e=>{invalidateResearch();setAudience(e.target.value);}}
+                        placeholder={tr("e.g. Homeowners comparing heating quotes", "例：暖房の見積りを比べる住宅所有者")}
+                        className="min-w-0 rounded-control border border-input bg-surface px-3 py-2.5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"/>
+                    </label>
+                    <label className="grid gap-1.5 text-sm">{tr("Question to answer (optional)", "答える疑問（任意）")}
+                      <input value={viewerQuestion} maxLength={200} onChange={e=>{invalidateResearch();setViewerQuestion(e.target.value);}}
+                        className="min-w-0 rounded-control border border-input bg-surface px-3 py-2.5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"/>
+                    </label>
+                    <label className="grid gap-1.5 text-sm sm:col-span-2">{tr("What viewers will learn (optional)", "視聴者が学ぶこと（任意）")}
+                      <input value={payoff} maxLength={320} onChange={e=>{invalidateResearch();setPayoff(e.target.value);}}
+                        className="min-w-0 rounded-control border border-input bg-surface px-3 py-2.5 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"/>
+                    </label>
+                  </div>
+                </details>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface-subtle px-5 py-5 sm:px-8">
+                <Button size="lg" onClick={()=>void researchAndGenerate()} disabled={!onCreateStoryboard||researchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160}>
                   {researchBusy?tr("Researching…","調査中…"):tr("Research & generate storyboard","調査して構成案を生成")}
                 </Button>
                 {researchBusy&&<Button variant="outline" onClick={cancelResearch}>{tr("Cancel","中止")}</Button>}
-                <Button variant="outline" onClick={createFromResearch} disabled={!onCreateStoryboard||researchBusy||topic.trim().length<3||topic.trim().length>160}>
+                <Button variant="subtle" onClick={createFromResearch} disabled={!onCreateStoryboard||researchBusy||topic.trim().length<3||topic.trim().length>160}>
                   {tr("Create unresearched outline","未調査の構成案を作成")}
                 </Button>
-                <span className="text-xs text-muted-foreground">{tr(`${selectedUrls.length} inspiration links selected`, `参考リンク ${selectedUrls.length} 件`)}</span>
+                {selectedUrls.length>0&&<span className="text-xs text-muted-foreground">{tr(`${selectedUrls.length} inspiration links`, `参考リンク ${selectedUrls.length} 件`)}</span>}
               </div>
+              <div className="px-5 pb-6 pt-4 sm:px-8">
               {researchBusy&&<p role="status" className="text-sm text-muted-foreground">{restoring?tr("Restoring saved research…","保存済みの調査を読み込み中…"):tr("Capturing public sources and drafting teaching shots. This may take a few minutes; no media is rendered yet.","公開情報を取得し、解説ショットを生成しています。数分かかる場合があります。動画はまだ生成されません。")}</p>}
               {researchError&&<p role="alert" className="rounded-control border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{researchError}</p>}
               {researchResult&&researchResult.dossier.topic.title===topic.trim()&&<div className="grid gap-4 border-t border-border pt-5">
@@ -297,6 +405,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
               {projectError && <p role="alert" className="text-sm text-danger">{projectError}</p>}
               <p className="text-xs text-muted-foreground">{tr("No video/audio is rendered yet. Independent factual research and approval are still required before publishing.",
                 "映像・音声の生成はまだ行いません。公開前に独立した事実確認と承認が必要です。")}</p>
+              </div>
             </Surface>
             <details className="rounded-surface border border-border bg-surface" onToggle={event=>setShowInspiration(event.currentTarget.open)}>
               <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-6">

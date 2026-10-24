@@ -5,6 +5,17 @@ import { ResearchWorkspace } from "./research-workspace";
 import type { EditorialDraft } from "./editorial-brief";
 import { researchedFixture } from "./researched-storyboard.test";
 
+const readinessPath = "/api/local-research-model/readiness";
+const readyServices = { version: 1, ready: true,
+  search: { state: "ready" }, researchModel: { state: "ready", model: "local-model" },
+  storyModel: { state: "ready", model: "local-model" } };
+function readinessResponse(url: string) {
+  return url === readinessPath ? new Response(JSON.stringify(readyServices), { status: 200 }) : null;
+}
+async function expectResearchEnabled() {
+  await waitFor(() => expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled());
+}
+
 vi.mock("./packaging-panel", () => ({ PackagingPanel: () => null }));
 vi.mock("./youtube-intelligence-panel", () => ({ YoutubeIntelligencePanel: () => null }));
 
@@ -12,6 +23,8 @@ afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe("Research workspace navigation", () => {
   it("has separate Research, Evidence Library, Packaging and YouTube tabs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ??
+      new Response(JSON.stringify({ status: "empty", results: [], records: [] }), { status: 200 })));
     const user = userEvent.setup();
     render(<ResearchWorkspace locale="en" onUseVideo={() => true} onCreateStoryboard={() => true} />);
 
@@ -20,6 +33,7 @@ describe("Research workspace navigation", () => {
     expect(screen.getByRole("tab", { name: "Research" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Packaging" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "YouTube Intelligence" })).toBeInTheDocument();
+    expect(screen.getByText("Local research readiness")).toBeInTheDocument();
 
     await user.type(screen.getByRole("textbox", { name: "Research topic" }), "heat pump cost");
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
@@ -38,6 +52,7 @@ describe("automatic local video context in Studio Research", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       requests.push(url);
+      if (readinessResponse(url)) return readinessResponse(url)!;
       if (url.startsWith("/api/research/market/related")) return new Response(JSON.stringify({ videos: [{
         videoId: "abcABC12345", title: "Cost to Install a Heat Pump", channelId: "UCsample", channelTitle: "Explainer",
         publishedAt: "2026-10-01T00:00:00Z", durationSeconds: 400, viewCount: 1200,
@@ -50,7 +65,8 @@ describe("automatic local video context in Studio Research", () => {
     const onCreateStoryboard = vi.fn((draft: EditorialDraft) => Boolean(draft));
     const user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="heat pump installation" onUseVideo={vi.fn(() => true)} onCreateStoryboard={onCreateStoryboard} />);
-    expect(requests).toHaveLength(0);
+    await waitFor(() => expect(requests).toContain(readinessPath));
+    expect(requests.every(url => url === readinessPath)).toBe(true);
     await user.click(screen.getByText("YouTube inspiration (optional)"));
     expect(await screen.findByText("Cost to Install a Heat Pump")).toBeInTheDocument();
     expect(requests.some(x => x.includes("topic=heat%20pump%20installation"))).toBe(true);
@@ -67,6 +83,7 @@ describe("automatic local video context in Studio Research", () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input); requests.push(url);
+      if (readinessResponse(url)) return readinessResponse(url)!;
       return new Response(JSON.stringify({ videos: [] }), { status: 200 });
     }));
     const user = userEvent.setup();
@@ -78,7 +95,7 @@ describe("automatic local video context in Studio Research", () => {
     await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "home insurance");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByRole("textbox", { name: "Research topic" })).toHaveValue("foundation repair costs");
-    expect(requests.every(url => url.startsWith("/api/research/market/related"))).toBe(true);
+    expect(requests.every(url => url === readinessPath || url.startsWith("/api/research/market/related"))).toBe(true);
     expect(requests.some(url => url.includes("home%20insurance"))).toBe(false);
   });
 });
@@ -88,12 +105,14 @@ describe("Studio Research to source-backed story", () => {
     const requests: { url: string; options?: RequestInit }[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
       requests.push({ url: String(url), options });
+      if (readinessResponse(String(url))) return readinessResponse(String(url))!;
       if (String(url).startsWith("/api/research/market/related")) return new Response(JSON.stringify({ videos: [] }), { status: 200 });
       if (String(url) === "/api/contentgen-director/research-draft") return new Response(JSON.stringify(researchedFixture), { status: 200 });
       throw Error("Unexpected request");
     }));
     const create = vi.fn(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
+    await expectResearchEnabled();
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     expect(screen.getByText(/Insulation resists the flow of heat/)).toBeInTheDocument();
@@ -106,11 +125,12 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("reports research errors and never invents a source-backed storyboard", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify({ error: "Local SearXNG unavailable" }), { status: 422 })
-      : new Response(JSON.stringify({ videos: [] }), { status: 200 })));
+      : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const create = vi.fn(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="heat pump costs" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
+    await expectResearchEnabled();
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent(/Local SearXNG unavailable/);
     expect(create).not.toHaveBeenCalled();
@@ -118,11 +138,12 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("clears stale research as soon as the Research topic changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
-      : new Response(JSON.stringify({ videos: [] }), { status: 200 })));
+      : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const create = vi.fn(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
+    await expectResearchEnabled();
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     const topic = screen.getByRole("textbox", { name: "Research topic" });
@@ -132,11 +153,12 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("does not invalidate reviewed research when only the Evidence Library query changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
-      : new Response(JSON.stringify({ videos: [] }), { status: 200 })));
+      : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
+    await expectResearchEnabled();
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
@@ -147,13 +169,15 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("invalidates reviewed evidence if the intended viewer question or audience changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
-      : new Response(JSON.stringify({ videos: [] }), { status: 200 })));
+      : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
+    await expectResearchEnabled();
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
+    await user.click(screen.getByText("Fine-tune your brief"));
     await user.type(screen.getByRole("textbox", { name: /question to answer/i }), "But how?");
     expect(screen.queryByRole("button", { name: /create editable sourced storyboard/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
@@ -167,6 +191,7 @@ describe("Studio Research to source-backed story", () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
       requests.push(String(url));
+      if (readinessResponse(String(url))) return readinessResponse(String(url))!;
       if (String(url) === "/api/contentgen-director/research-draft/research_home-123456789abc")
         return new Response(JSON.stringify(researchedFixture), { status: 200 });
       return new Response(JSON.stringify({ videos: [] }), { status: 200 });
@@ -175,5 +200,57 @@ describe("Studio Research to source-backed story", () => {
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     expect(requests).toContain("/api/contentgen-director/research-draft/research_home-123456789abc");
     expect(requests.every(x => !x.endsWith("/research-draft"))).toBe(true);
+  });
+
+  it("shows missing local search on page open, blocks only source-backed generation, and recovers on recheck", async () => {
+    let checkCount = 0, researchPosts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === readinessPath) {
+        checkCount++;
+        return new Response(JSON.stringify(checkCount === 1
+          ? { ...readyServices, ready: false, search: { state: "not_configured" } }
+          : readyServices), { status: 200 });
+      }
+      if (String(url) === "/api/contentgen-director/research-draft") {
+        researchPosts++;
+        return new Response(JSON.stringify(researchedFixture), { status: 200 });
+      }
+      throw Error(`Unexpected URL ${String(url)}`);
+    }));
+    const create = vi.fn(() => true), user = userEvent.setup();
+    render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
+    expect(await screen.findByText(/Set up local search:/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeDisabled();
+    expect(researchPosts).toBe(0);
+    await user.click(screen.getByRole("button", { name: /create unresearched outline/i }));
+    expect(create).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: /check again/i }));
+    await expectResearchEnabled();
+    await user.click(screen.getByRole("button", { name: /research.*generate/i }));
+    expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
+    expect(researchPosts).toBe(1);
+  });
+
+  it("selects a story direction with native radios and hides optional inputs until expanded", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? new Response("{}", { status: 200 })));
+    const create = vi.fn(() => true), user = userEvent.setup();
+    render(<ResearchWorkspace locale="en" projectTopic="Rent vs buy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
+    await user.click(screen.getByRole("radio", { name: /compare the options/i }));
+    expect(screen.getByRole("radio", { name: /compare the options/i })).toBeChecked();
+    await user.click(screen.getByText("Fine-tune your brief"));
+    await user.type(screen.getByRole("textbox", { name: /audience/i }), "First-time buyers");
+    await user.click(screen.getByRole("button", { name: /create unresearched outline/i }));
+    expect(create.mock.calls[0][0].selectedId).toBe("comparison");
+    expect(create.mock.calls[0][0].input.audience).toBe("First-time buyers");
+  });
+
+  it("does not falsely block generation when a local model cannot list IDs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url) === readinessPath
+      ? new Response(JSON.stringify({ ...readyServices, ready: false,
+          researchModel: { state: "unverified" }, storyModel: { state: "unverified" } }), { status: 200 })
+      : new Response(JSON.stringify(researchedFixture), { status: 200 })));
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pumps" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
+    expect(await screen.findByText(/model list could not be verified/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
   });
 });
