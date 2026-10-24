@@ -73,6 +73,20 @@ test("failed planning or inconsistent quote produces no successful persisted dra
     assert.deepEqual(await readdir(root),[]);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test("saved-search timeouts identify which local model stage failed and keep the source snapshot",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-studio-timeouts-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const search=await searchStudioSources(brief,{root,searchEndpoint:"http://127.0.0.1:58023/search",
+    search:async()=>[{title:"Energy department",url:"https://www.energy.gov/",snippet:"Source text"}]});
+  const request={...brief,searchArtifactId:search.artifactId};
+  const timeout=()=>new DOMException("The operation was aborted due to timeout","TimeoutError");
+  await assert.rejects(createStudioResearchDraft(request,settings,{root,searchEndpoint:"",
+    research:async()=>{throw timeout();}}),/Research AI timed out/i);
+  await assert.rejects(createStudioResearchDraft(request,settings,{root,searchEndpoint:"",
+    research:async()=>research,generate:async()=>{throw timeout();}}),/Storyboard planning AI timed out/i);
+  assert.deepEqual(await loadStudioSearch(search.artifactId,{root}),search);
+});
 test("research-to-story Studio pipeline uses separate selected text models",async t=>{
   const root=await mkdtemp(join(tmpdir(),"cg-two-models-"));t.after(()=>rm(root,{recursive:true,force:true}));
   const calls=[];
