@@ -231,6 +231,20 @@ describe("saved research to Video Director handoff",()=>{
     expect(screen.getByText(/Heat pump installation · 1 scenes/)).toBeInTheDocument();
     expect(calls).toEqual(["/api/contentgen-director/compile-saved-research"]);
   });
+  it("resumes saved shot edits only for the matching snapshot",async()=>{
+    const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
+    const revised=structuredClone(bundle);
+    revised.plan.shots[0].onScreenText="Approved local draft edit";
+    const sourceBundle={...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)};
+    const savedBundle={...revised,researchSha256:"b".repeat(64),planSha256:"c".repeat(64)};
+    sessionStorage.setItem(sessionKey,JSON.stringify({version:1,artifactId,dossier,bundle:savedBundle}));
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
+      artifactId,dossier,bundle:sourceBundle,
+    }),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Approved local draft edit");
+    sessionStorage.removeItem(sessionKey);
+  });
   it("rejects a result from a different saved artifact",async()=>{
     vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
       artifactId:"research_other-123456789abc",dossier,bundle,
