@@ -380,12 +380,41 @@ test("tiny scene states reject placeholders before accepting a checkpoint",async
     error=>error.code==="schema_invalid"&&error.field==="before");
 });
 
+test("storyboard state descriptions remain valid past the suggested 48/90-character lengths",async()=>{
+  const full=unit("Installation cost breakdown");
+  const longStates={
+    before:"An older home heating system appears beside an estimate showing the price of the equipment alone.",
+    action:"Animate the installation estimate separating into equipment, skilled labor, and the work required to install the heat pump.",
+    after:"The new heat pump stands beside a completed installation estimate showing equipment and skilled labor together.",
+  };
+  const {phases,...core}=full;
+  const {before,action,after,...actors}=core;
+  let instruction="";
+  const transport=async(_endpoint,options)=>{
+    instruction=JSON.parse(options.body).messages[0].content;
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(longStates)},
+    }]})};
+  };
+  const generated=await generateSceneStates(outline,0,actors,dossier,quotes,settings,{transport});
+  assert.deepEqual(generated,longStates);
+  assert.match(instruction,/Before\/after: 8–48 characters/);
+  const structure=assembleSceneStructure(actors,generated);
+  const rebuilt=assembleSceneUnit(structure,phases.map(phase=>({
+    visual:{visualAction:phase.visualAction,learningChange:phase.learningChange,
+      onScreenText:phase.onScreenText,visualElements:phase.visualElements},
+    narration:{narration:phase.narration},
+  })));
+  const plan=assembleResumablePlan(dossier,outline,[rebuilt,rebuilt]);
+  assert.equal(parsePreproductionPlan(plan,dossier).ok,true);
+  assert.deepEqual(plan.teachingSequences[0].visualStates,longStates);
+});
+
 test("scene state validation categorizes an invalid before without exposing its contents",()=>{
   const valid={before:"Previously worn roof surface",action:"Reveal the damaged roofing layers",after:"New layers cover the roof"};
   const invalid=[
     [{...valid,before:"Before"},"placeholder"],
     [{...valid,before:"Roof"},"too_short"],
-    [{...valid,before:"An overly elaborate starting state that exceeds the field length limit"},"too_long"],
     [{...valid,before:123},"wrong_type"],
     [{...valid,before:undefined},"missing"],
   ];
