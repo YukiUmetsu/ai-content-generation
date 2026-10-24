@@ -18,10 +18,6 @@ export interface ClaimEvidenceIssue {
   sourceRefs: string[];
 }
 
-const categories: readonly ClaimEvidenceKind[] = [
-  "source_missing", "source_mismatch", "needs_factual_review", "source_unchecked",
-];
-
 export function countClaimIssues(issues: readonly ClaimEvidenceIssue[]): Record<ClaimEvidenceKind, number> {
   const counts = { source_missing: 0, source_mismatch: 0, needs_factual_review: 0, source_unchecked: 0 };
   for (const issue of issues) counts[issue.kind]++;
