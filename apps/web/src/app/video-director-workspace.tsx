@@ -85,6 +85,7 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
   const [status,setStatus]=useState("");
   const [sampleMode,setSampleMode]=useState(false);
   const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId));
+  const [loadError,setLoadError]=useState("");
   const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
   const [sourceStoryboardSha,setSourceStoryboardSha]=useState<string|null>(null);
   const [syncReport,setSyncReport]=useState<StoryboardSync|null>(null);
@@ -102,7 +103,7 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
   useEffect(()=>{
     if(!researchArtifactId){setLoadingSaved(false);return;}
     let active=true;
-    setLoadingSaved(true);
+    setLoadingSaved(true);setLoadError("");
     setStatus("Opening saved research and checking for Storyboard Planner edits…");
     // Re-read on entry so source-bound edits made since Production was last shown are included.
     const loaded=projectId?loadProjectStoryboard(projectId):null;
@@ -128,7 +129,10 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
       setStatus((resumed?"Resumed applied edits from this storyboard version. ":
         sync?"Opened the saved storyboard with compatible changes applied. ":"Opened the original research plan. ")+
         "Claims, unsynchronized semantic details, and media rights still need review.");
-    }).catch(error=>{if(active)setStatus(error instanceof Error?error.message:"Saved research could not be opened.");})
+    }).catch(error=>{if(active){
+      const message=error instanceof Error?error.message:"Saved research could not be opened.";
+      setStatus(message);setLoadError(message);
+    }})
       .finally(()=>{if(active)setLoadingSaved(false);});
     return ()=>{active=false;};
   },[researchArtifactId,projectId,acceptProject]);
@@ -263,6 +267,7 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
         <h1 className="font-serif text-xl font-semibold">Video Director · Segment Lab</h1>
         <p className="mt-1 text-sm text-muted-foreground">Edit just one scene, generate different hook and storytelling combinations, and create a precise audio/visual regeneration plan. The source bundle is never overwritten.</p>
       </div>
+      {loadError&&<p role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm">{loadError} Review the storyboard or open a saved project manually; no source was overwritten.</p>}
       {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening saved research for Video Director…</p>}
       {!usable&&!loadingSaved&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
       {usable&&syncReport&&<div role="status" className="rounded-surface border border-primary/30 bg-surface-subtle p-4 text-sm">
@@ -284,7 +289,7 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
                if(projectId&&researchArtifactId&&sourceArtifactId===researchArtifactId){
                  try{sessionStorage.removeItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha));}catch{/* In-memory reset still works. */}
                }
-               setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setSourceArtifactId(null);setSourceStoryboardSha(null);setSyncReport(null);setStatus("");
+               setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setSourceArtifactId(null);setSourceStoryboardSha(null);setSyncReport(null);setLoadError("");setStatus("");
              }}>
             Start another project
           </Button>
