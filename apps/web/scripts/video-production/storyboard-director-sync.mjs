@@ -25,7 +25,7 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     reject("storyboard must belong to the selected project.");
   if(!Array.isArray(storyboard.assumptions)||
     !storyboard.assumptions.includes("Research artifact: "+artifactId)||
-    !storyboard.assumptions.includes("Immutable research snapshot: "+dossier.id+"."))
+    !storyboard.assumptions.some(value=>typeof value==="string"&&value.startsWith("Immutable research snapshot: "+dossier.id+".")))
     reject("storyboard lacks the matching immutable research artifact.");
   if(!Array.isArray(storyboard.beats)||!Array.isArray(plan.shots)||
     storyboard.beats.length!==plan.shots.length||storyboard.beats.length===0||
