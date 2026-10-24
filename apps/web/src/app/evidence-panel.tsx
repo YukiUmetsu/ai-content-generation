@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, BookOpen, Database, ExternalLink, Info, Scale, Search, X } from "lucide-react";
 import { ApiErrorNotice } from "./api-error-notice";
 import { Button } from "@/components/ui/button";
-import { Field } from "@/components/ui/input";
+import { SearchField } from "@/components/ui/search-field";
 import { Surface } from "@/components/ui/surface-card";
 import { translate, formatDateTimeUTC, formatNumber, formatBytes, shortHash } from "@/i18n/messages";
 import { searchEvidence, ApiError } from "@/lib/api/client";
@@ -354,13 +354,12 @@ export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }:
     setSlow(false);
   }
 
-  function handleSubmit(event?: React.FormEvent) {
-    event?.preventDefault();
+  function handleSubmit(searchQuery = query) {
     setValidation(null);
     setError(null);
     setResponse(null);
 
-    const trimmed = query.trim();
+    const trimmed = searchQuery.trim();
     if (!trimmed) {
       setValidation(translate(locale, "evidenceEnterQuery"));
       return;
@@ -426,28 +425,30 @@ export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }:
         </p>
       </header>
 
-      <Surface variant="solid" className="gap-3 shadow-sm">
-        <form onSubmit={handleSubmit} role="search" className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <Field
+      <Surface variant="solid" className="gap-4 p-5 shadow-sm sm:p-6">
+        <div role="search">
+          <SearchField
             label={translate(locale, "evidenceQueryLabel")}
             placeholder={translate(locale, "evidenceQueryPlaceholder")}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            query={query}
+            onQueryChange={(value) => {
+              setQuery(value);
+              if (validation) setValidation(null);
+            }}
+            onSearch={handleSubmit}
+            onClear={() => {
+              handleCancel();
+              setResponse(null);
+              setError(null);
+              setValidation(null);
+            }}
             error={validation ?? undefined}
-            className="flex-1"
-            containerClassName="min-w-0 flex-1"
+            hint={translate(locale, "evidenceSearchHelp")}
+            loading={loading}
+            showSubmit
+            submitLabel={translate(locale, "evidenceSearch")}
           />
-          <Button
-            type="submit"
-            isLoading={loading}
-            loadingLabel={translate(locale, "evidenceSearching")}
-            icon={<Search aria-hidden className="size-4" />}
-            className="w-full sm:w-auto"
-          >
-            {translate(locale, "evidenceSearch")}
-          </Button>
-        </form>
-        <p className="text-xs leading-5 text-muted-foreground">{translate(locale, "evidenceSearchHelp")}</p>
+        </div>
       </Surface>
 
       {loading && (

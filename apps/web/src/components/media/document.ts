@@ -271,6 +271,19 @@ export type BlendMode =
 
 export type LayerKind = "text" | "media" | "shape" | "group";
 
+/** Portable drop shadow shared by the editable DOM preview and SVG/PNG export. */
+export interface LayerAppearance {
+  dropShadow?: {
+    dx: number;
+    dy: number;
+    /** SVG standard deviation / CSS shadow blur in design pixels. */
+    blur: number;
+    /** Literal hex color to avoid environment-dependent CSS tokens. */
+    color: string;
+    opacity: number;
+  };
+}
+
 /**
  * Layer placement. `x`/`y` locate the (unrotated) local origin in parent space;
  * `width`/`height` are unrotated local bounds. Rotation is applied about the
@@ -297,6 +310,7 @@ export interface LayerBase {
   locked: boolean;
   opacity: number;
   blend: BlendMode;
+  appearance?: LayerAppearance;
   /** Clip children (group) or self (media/text) to the local bounds. */
   clip: boolean;
   /** Accessible semantic description; required for non-decorative meaning. */
@@ -1150,6 +1164,20 @@ export function validateDocument(document: MediaDocument): Diagnostic[] {
         layerId: layer.id,
         path: `${path}.opacity`,
       });
+    }
+    const shadow = layer.appearance?.dropShadow;
+    if (shadow) {
+      const validNumbers = [shadow.dx, shadow.dy, shadow.blur, shadow.opacity].every(isFiniteNumber);
+      if (!validNumbers || shadow.blur < 0 || shadow.blur > 128 || shadow.opacity < 0 || shadow.opacity > 1 ||
+        typeof shadow.color !== "string" || !/^#[\da-f]{6}$/i.test(shadow.color)) {
+        push({
+          code: "layer-appearance-invalid",
+          severity: "error",
+          message: "Drop shadow needs finite offsets, 0–128px blur, hex color and 0–1 opacity.",
+          layerId: layer.id,
+          path: `${path}.appearance.dropShadow`,
+        });
+      }
     }
     if (!isFiniteNumber(layer.z)) {
       push({

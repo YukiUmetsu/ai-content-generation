@@ -50,13 +50,50 @@ const passage: EvidenceSearchResult = {
 async function runSearch() {
   const user = userEvent.setup();
   render(<EvidencePanel locale="en" />);
-  await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "house cost");
+  await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "house cost");
   await user.click(screen.getByRole("button", { name: "Search evidence" }));
   return user;
 }
 
 describe("Evidence Library", () => {
   afterEach(() => { search.mockReset(); });
+
+  it("uses an accessible Kumiki searchbox with help attached to the field", () => {
+    render(<EvidencePanel locale="en" />);
+    const field = screen.getByRole("searchbox", { name: "Search stored evidence" });
+    expect(field).toHaveAttribute("type", "search");
+    const describedBy = field.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent(/searches saved passages by keywords/i);
+  });
+
+  it("submits once on Enter and clears both the query and stale results while preserving focus", async () => {
+    search.mockResolvedValue(response());
+    const user = userEvent.setup();
+    render(<EvidencePanel locale="en" />);
+    const field = screen.getByRole("searchbox", { name: "Search stored evidence" });
+    await user.type(field, "  house cost{Enter}");
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(search).toHaveBeenCalledWith("house cost", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(await screen.findByText("No passages saved yet")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(field).toHaveValue("");
+    expect(field).toHaveFocus();
+    expect(screen.queryByText("No passages saved yet")).not.toBeInTheDocument();
+  });
+
+  it("cancels an in-flight lookup when the search is cleared", async () => {
+    search.mockImplementation(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<EvidencePanel locale="en" />);
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "house cost{Enter}");
+    expect(search).toHaveBeenCalledOnce();
+    const signal = search.mock.calls[0][1]?.signal;
+    expect(signal?.aborted).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(signal?.aborted).toBe(true);
+    expect(screen.getByRole("searchbox", { name: "Search stored evidence" })).toHaveValue("");
+  });
 
   it("treats a fresh empty index as expected, not degraded or broken", async () => {
     search.mockResolvedValue(response());
