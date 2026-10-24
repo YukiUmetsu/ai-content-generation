@@ -6,6 +6,8 @@ export type ProjectKeyword = { id: string; text: string; kind: KeywordKind; orig
 export type KeywordDraft = { text: string; kind: KeywordKind; origin: KeywordOrigin };
 export type KeywordPatch = { add?: KeywordDraft[]; remove?: string[]; disable?: string[] };
 export type KeywordSuggestion = { text: string; kind: KeywordKind; rationale: string };
+export type KeywordSuggestionQuality = {modelRequests:number;batches:number;proposed:number;rejected:number;
+  partial:boolean;evidence:"unverified"};
 export type ProjectSummary = { id: string; name: string; notes: string; snapshotRevision: number; contentCount: number };
 export type GraphNode = { id: string; kind: string; label: string };
 export type GraphAlias = { nodeId: string; alias: string };
@@ -97,15 +99,17 @@ export async function setProjectWatchlists(projectId: string, ids: string[]): Pr
   const response = await request<{ watchlistIds: string[] }>(`/projects/${encodeURIComponent(projectId)}/watchlists`, "PUT", { watchlistIds: ids });
   return response.watchlistIds;
 }
-export async function suggestProjectKeywords(project: LocalProject, activeKeywords: string[]): Promise<KeywordSuggestion[]> {
+export async function suggestProjectKeywords(project: LocalProject, activeKeywords: string[]):
+  Promise<{suggestions:KeywordSuggestion[];quality?:KeywordSuggestionQuality}> {
   const response = await fetch("/api/contentgen-director/project-keyword-suggestions", {
     method: "POST", credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-Contentgen-Director": "local-only" },
     body: JSON.stringify({ name: project.name, description: project.notes, keywords: activeKeywords }),
   });
-  const data = await response.json() as { suggestions?: KeywordSuggestion[]; error?: string };
+  const data = await response.json() as { suggestions?: KeywordSuggestion[];quality?:KeywordSuggestionQuality; error?: string };
   if (!response.ok) throw Error(data.error ?? `Local keyword model returned ${response.status}.`);
-  return data.suggestions ?? [];
+  if(!Array.isArray(data.suggestions))throw Error("Invalid local keyword suggestion response.");
+  return {suggestions:data.suggestions,quality:data.quality};
 }
 
 export function loadProjectGraphOverview(projectId: string): Promise<GraphOverview> {
