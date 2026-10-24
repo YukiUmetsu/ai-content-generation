@@ -125,6 +125,20 @@
       "bytes": 22958
     },
     {
+      "item": "layer-stack",
+      "source": "registry/media/layer-stack.tsx",
+      "target": "src/components/media/layer-stack.tsx",
+      "sha256": "b5abe31fc22eb66e2acfa74be6bc0b7bbe3c46ce8ae68d54d1ae41ef338b966a",
+      "bytes": 41434
+    },
+    {
+      "item": "alignment-guides",
+      "source": "registry/media/alignment-guides.tsx",
+      "target": "src/components/media/alignment-guides.tsx",
+      "sha256": "aea353cec2ab063a8293dcb1006464971856d73f336f342e13041c3e305417d0",
+      "bytes": 16774
+    },
+    {
       "item": "export-preview",
       "source": "registry/media/export-preview.tsx",
       "target": "src/components/media/export-preview.tsx",
@@ -144,20 +158,6 @@
       "target": "src/components/media/export-preview-utils.ts",
       "sha256": "719d4790e3ad13924fe97201e61c90600fec624a055d379d697c00cfc1405e9c",
       "bytes": 1733
-    },
-    {
-      "item": "layer-stack",
-      "source": "registry/media/layer-stack.tsx",
-      "target": "src/components/media/layer-stack.tsx",
-      "sha256": "b5abe31fc22eb66e2acfa74be6bc0b7bbe3c46ce8ae68d54d1ae41ef338b966a",
-      "bytes": 41434
-    },
-    {
-      "item": "alignment-guides",
-      "source": "registry/media/alignment-guides.tsx",
-      "target": "src/components/media/alignment-guides.tsx",
-      "sha256": "aea353cec2ab063a8293dcb1006464971856d73f336f342e13041c3e305417d0",
-      "bytes": 16774
     },
     {
       "item": "infographic-economic-charts",
