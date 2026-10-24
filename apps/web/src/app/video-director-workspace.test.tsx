@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PromptStudio } from "./prompt-studio";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import * as projectStorage from "@/features/storyboard-planner/model/project-storage";
 
 vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
   <div data-testid="demo-real-scene">Actual exporter at frame {frame}</div>}));
@@ -255,6 +256,31 @@ describe("saved research to Video Director handoff",()=>{
     }),{status:200}));
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
     expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+    sessionStorage.removeItem(sessionKey);
+  });
+  it("passes saved storyboard into Director and does not resume an older storyboard revision",async()=>{
+    const digest="c".repeat(64),oldDigest="d".repeat(64);
+    const board={assumptions:["Research artifact: "+artifactId]};
+    vi.spyOn(projectStorage,"loadProjectStoryboard").mockReturnValue({
+      board:board as unknown as NonNullable<ReturnType<typeof projectStorage.loadProjectStoryboard>["board"]>,
+      warning:null,
+    });
+    const sessionKey="contentgen:director-session:v2:project-demo:"+artifactId+":"+oldDigest;
+    const older={...structuredClone(bundle),researchSha256:"b".repeat(64),planSha256:"d".repeat(64)};
+    older.plan.shots[0].onScreenText="Outdated storyboard shot";
+    sessionStorage.setItem(sessionKey,JSON.stringify({version:1,artifactId,dossier,bundle:older}));
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(_url,init)=>{
+      expect(JSON.parse(String(init?.body))).toEqual({artifactId,projectId:"project-demo",storyboard:board});
+      return new Response(JSON.stringify({artifactId,dossier,
+        bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)},
+        synchronization:{storyboardSha256:digest,applied:["shot_1:narration"],
+          manualReview:["Storyboard camera edits are not yet imported into Director."]},
+      }),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByText("Saved storyboard → Director")).toBeInTheDocument();
+    expect(screen.getByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+    expect(screen.getByText(/Storyboard camera edits are not yet imported/)).toBeInTheDocument();
     sessionStorage.removeItem(sessionKey);
   });
   it("rejects a result from a different saved artifact",async()=>{
