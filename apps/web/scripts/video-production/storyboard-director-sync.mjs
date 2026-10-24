@@ -156,9 +156,9 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     manualReview.add("Storyboard semantic-object catalog edits are not yet imported into Director.");
   const originalEvents=[
     {id:"research-question-opens",label:"Show the motivating question",
-      objectId:plan.shots[0].subjectIds[0]},
+      objectId:plan.shots[0].subjectIds?.[0]},
     {id:"research-payoff-reveals",label:"Demonstrate the researched takeaway",
-      objectId:plan.shots.at(-1).subjectIds[0]},
+      objectId:plan.shots.at(-1)?.subjectIds?.[0]},
   ];
   if(!equivalent(storyboard.semanticEvents,originalEvents))
     manualReview.add("Storyboard semantic-event catalog edits are not yet imported into Director.");
