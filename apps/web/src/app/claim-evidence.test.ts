@@ -55,6 +55,18 @@ describe("claim evidence inspection", () => {
     expect(withoutDraft.every(issue => issue.kind === "source_unchecked")).toBe(true);
   });
 
+  it("requires a valid saved quotation for every cited source, not just one", () => {
+    const value=populated();
+    value.claims[0].sourceRefs=["source_01","source_02"];
+    const second={id:"source_02",title:"Another captured source",sourceUri:"https://example.org/2",
+      retrievedAt:"2026-10-24T00:00:00Z",passageLocator:"p2",snapshotSha256:"b".repeat(64)};
+    const twoSources={...draft,dossier:{...draft.dossier,evidence:[...draft.dossier.evidence,second]}} as ResearchDraftResult;
+    expect(inspectClaimEvidence(value,twoSources)[0].kind).toBe("source_mismatch");
+    const twoQuotes={...twoSources,quotes:[...twoSources.quotes,
+      {claimId:"claim_02",sourceId:"source_02",quote:"A second independently saved excerpt."}]};
+    expect(inspectClaimEvidence(value,twoQuotes)[0].kind).toBe("needs_factual_review");
+  });
+
   it("requires a stored per-claim quotation, not merely a source ID", () => {
     const withoutQuote = { ...draft, quotes: draft.quotes.filter(quote => quote.claimId !== "claim_02") };
     expect(inspectClaimEvidence(populated(), withoutQuote)[0].kind).toBe("source_mismatch");
