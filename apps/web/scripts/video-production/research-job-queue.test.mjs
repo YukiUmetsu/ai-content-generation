@@ -356,3 +356,123 @@ test("manually regenerating one scene invalidates its partial pieces without rer
     assert.equal(seen.filter(([,index])=>index===1).length,7);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test("a truncated second outline beat resumes from saved skeleton and first beat",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-outline-pieces-"));
+  let skeletonCalls=0,firstCalls=0,secondCalls=0;
+  const chunks={outline:null,
+    outlineSkeleton:async()=>{skeletonCalls++;return {beatCount:2};},
+    outlineBeat:async(_skeleton,index)=>{
+      if(index===0){firstCalls++;return {index};}
+      secondCalls++;
+      if(secondCalls<=3)throw Object.assign(Error("private raw answer"),{code:"output_truncated",field:"response"});
+      return {index};
+    },combineOutline:(_d,_skeleton,beats)=>({...outline,beats:beats.map((_beat,index)=>outline.beats[index])})};
+  const manager=fixture(root,chunks);
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const failed=await settled(manager,jobId);
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.stage,"outline");
+    assert.equal(failed.currentStep,"beat:2");
+    assert.equal(failed.error.detailCode,"output_truncated");
+    const folder=join(root,"jobs",jobId);
+    assert.deepEqual(JSON.parse(await readFile(join(folder,"outline_skeleton_0.json"),"utf8")),{beatCount:2});
+    assert.deepEqual(JSON.parse(await readFile(join(folder,"outline_beat_0_0.json"),"utf8")),{index:0});
+    // A newly constructed manager simulates a server restart; only missing work should run.
+    const restarted=fixture(root,chunks);
+    await restarted.resume(jobId,{primary:model});
+    assert.equal((await settled(restarted,jobId)).status,"completed");
+    assert.equal(skeletonCalls,1);
+    assert.equal(firstCalls,1);
+    assert.equal(secondCalls,4);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("provider failure after truncation does not erase the compact retry instruction",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-outline-retry-"));
+  const feedback=[];
+  const manager=fixture(root,{outline:null,
+    outlineSkeleton:async(_d,_q,_settings,opts)=>{
+      feedback.push(opts.feedback);
+      if(feedback.length===1)throw Object.assign(Error("partial private response"),{code:"output_truncated",field:"response"});
+      if(feedback.length===2)throw Error("fetch failed");
+      return {beatCount:2};
+    },outlineBeat:async(_skeleton,index)=>({index}),combineOutline:()=>outline});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(feedback.length,3);
+    assert.equal(feedback[0],null);
+    assert.match(feedback[1],/cut off|truncat/i);
+    assert.match(feedback[2],/cut off|truncat/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("safe provider error categories identify unavailable HTTP service without leaking URLs",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-outline-provider-"));
+  const manager=fixture(root,{outline:async()=>{throw Error("Local model returned HTTP 503 at https://private.invalid/token=secret");}});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const state=await settled(manager,jobId);
+    assert.equal(state.status,"failed");
+    assert.equal(state.error.code,"provider_unavailable");
+    assert.equal(state.error.providerDetail,"http_5xx");
+    assert.doesNotMatch(JSON.stringify(state),/secret|private\.invalid/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("truncation is remembered when switching to the configured secondary local model",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-outline-fallback-"));
+  const fallbackFeedback=[];
+  const manager=fixture(root,{outline:null,
+    outlineSkeleton:async(_d,_q,settings,options)=>{
+      if(settings.model==="local-small")throw Object.assign(Error("truncated private data"),{code:"output_truncated",field:"response"});
+      fallbackFeedback.push(options.feedback);
+      return {beatCount:2};
+    },outlineBeat:async(_skeleton,index)=>({index}),combineOutline:()=>outline});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model,secondary:{...model,model:"local-backup"}});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(fallbackFeedback.length,1);
+    assert.match(fallbackFeedback[0],/truncat|cut off/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("existing whole outline artifact skips the new skeleton and beat jobs",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-outline-legacy-"));
+  let calls=0;
+  const manager=fixture(root,{outline:null,
+    outlineSkeleton:async()=>{calls++;throw Error("new outline path must be bypassed");},
+    outlineBeat:async()=>{throw Error("must not generate a beat");}});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    await writeFile(join(root,"jobs",jobId,"outline_0.json"),JSON.stringify(outline));
+    await manager.resume(jobId,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(calls,1);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("changing model identity rebuilds partial outline using a new checkpoint generation",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-outline-model-"));
+  const calls=[];
+  const manager=fixture(root,{outline:null,
+    outlineSkeleton:async(_d,_q,settings)=>{calls.push(["skeleton",settings.model]);return {beatCount:2};},
+    outlineBeat:async(_skeleton,index,_previous,_d,_q,settings)=>{
+      calls.push([`beat:${index}`,settings.model]);
+      if(index===1&&settings.model==="local-small")throw Object.assign(Error("model cut off"),{code:"output_truncated",field:"response"});
+      return {index};
+    },combineOutline:()=>outline});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    await manager.resume(jobId,{primary:{...model,model:"new-local-model"}});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.deepEqual(calls.filter(([step])=>step==="skeleton"),[["skeleton","local-small"],["skeleton","new-local-model"]]);
+    assert.deepEqual(calls.filter(([step])=>step==="beat:0"),[["beat:0","local-small"],["beat:0","new-local-model"]]);
+    const manifest=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
+    assert.equal(manifest.generation,1);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
