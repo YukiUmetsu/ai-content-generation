@@ -119,6 +119,7 @@ describe("ThumbnailComposer", () => {
   it("appears inside the existing Create workspace tab", async () => {
     const user = userEvent.setup();
     render(<App />);
+    await user.click(screen.getByRole("link", { name: "Create" }));
     await user.click(screen.getByRole("tab", { name: /thumbnail composer/i }));
     const editor = screen.getByTestId("thumbnail-composer");
     expect(within(editor).getByRole("heading", { name: "Thumbnail composer" })).toBeInTheDocument();
