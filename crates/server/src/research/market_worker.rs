@@ -45,9 +45,9 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
 }
 
 pub async fn run_claim(state: AppState, run: MarketRun, client: YoutubeClient) {
-    run_claim_with(state, run, move |watchlist| async move {
+    run_claim_with(state, run, move |watchlist, effective_query| async move {
         client
-            .collect(&watchlist.query, &watchlist.region, &watchlist.language)
+            .collect(&effective_query, &watchlist.region, &watchlist.language)
             .await
     })
     .await;
@@ -55,7 +55,7 @@ pub async fn run_claim(state: AppState, run: MarketRun, client: YoutubeClient) {
 
 async fn run_claim_with<F, Fut>(state: AppState, run: MarketRun, fetch: F)
 where
-    F: FnOnce(MarketWatchlist) -> Fut,
+    F: FnOnce(MarketWatchlist, String) -> Fut,
     Fut: Future<Output = Result<Vec<VideoObservation>, YoutubeError>>,
 {
     let Ok(_permit) = state.market_semaphore().acquire_owned().await else {
@@ -71,7 +71,7 @@ where
         return;
     }
     drop(db);
-    let result = fetch(watchlist).await;
+    let result = fetch(watchlist, run.effective_query.clone()).await;
     if let Ok(db) = state.connect() {
         match result {
             Ok(observations) => {
@@ -109,11 +109,44 @@ mod tests {
                 region: "US".into(),
                 language: "en".into(),
                 enabled: true,
+                query_mode: "manual".into(),
+                query_plan: vec![],
+                query_plan_source: "user-edited".into(),
             },
             epoch_now(),
         )
         .unwrap();
         (dir, AppState::new(path), watch.id)
+    }
+
+    #[tokio::test]
+    async fn automatic_search_uses_the_phrase_frozen_when_the_run_was_claimed() {
+        let (_dir, state, id) = setup();
+        let db = state.connect().unwrap();
+        let previous = market_store::get_watchlist(&db, &id).unwrap();
+        market_store::update_watchlist(&db, &id, MarketWatchlistDraft {
+            name: previous.name, query: "".into(), region: previous.region,
+            language: previous.language, enabled: true, query_mode: "auto".into(),
+            query_plan: vec!["roof installation cost".into(), "home insurance rates".into()],
+            query_plan_source: "user-edited".into(),
+        }, epoch_now()).unwrap();
+        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true).unwrap().unwrap();
+        assert_eq!(run.effective_query, "roof installation cost");
+        let watch = market_store::get_watchlist(&db, &id).unwrap();
+        market_store::update_watchlist(&db, &id, MarketWatchlistDraft {
+            name: watch.name, query: "".into(),region:watch.region,language:watch.language,
+            enabled:true,query_mode:"auto".into(),
+            query_plan:vec!["different phrase".into()],query_plan_source:"user-edited".into(),
+        },epoch_now()).unwrap();
+        drop(db);
+        run_claim_with(state.clone(),run,|_,query| async move {
+            assert_eq!(query,"roof installation cost");
+            Ok(vec![])
+        }).await;
+        let db = state.connect().unwrap();
+        let updated = market_store::get_watchlist(&db, &id).unwrap();
+        assert_eq!(updated.next_search_query,"different phrase");
+        assert_eq!(updated.query_index,0);
     }
 
     #[tokio::test]
@@ -124,7 +157,7 @@ mod tests {
             .unwrap()
             .unwrap();
         drop(db);
-        run_claim_with(state.clone(), run, |_| async {
+        run_claim_with(state.clone(), run, |_, _| async {
             Ok(vec![VideoObservation {
                 video_id: "abcABC12345".into(),
                 title: "Realistic fixture".into(),
@@ -159,7 +192,7 @@ mod tests {
         drop(db);
         let calls = Arc::new(AtomicUsize::new(0));
         let capture = calls.clone();
-        run_claim_with(state, run, move |_| async move {
+        run_claim_with(state, run, move |_, _| async move {
             capture.fetch_add(1, Ordering::SeqCst);
             Ok(Vec::new())
         })

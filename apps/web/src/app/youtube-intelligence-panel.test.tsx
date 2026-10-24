@@ -9,6 +9,7 @@ afterEach(() => vi.unstubAllGlobals());
 function fakeApi(withVideo: boolean) {
   let watchlists: Array<Record<string, unknown>> = withVideo ? [{
     id: "watch-demo", name: "House Math", query: "heat pump cost",
+    queryMode:"manual", queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump cost",
     region: "US", language: "en", enabled: true,
     createdAt: 123, updatedAt: 123, nextDueAt: 456,
     lastFinishedAt: 789, backoffUntil: 0, errorCode: null,
@@ -23,9 +24,12 @@ function fakeApi(withVideo: boolean) {
     else if (url.endsWith("/watchlists") && (init?.method ?? "GET") === "GET") data = {watchlists};
     else if (url.endsWith("/watchlists") && init?.method === "POST") {
       const input = JSON.parse(String(init.body)) as Record<string,unknown>;
-      const item = {id:"watch-new",createdAt:123,updatedAt:123,nextDueAt:123,lastFinishedAt:null,backoffUntil:0,errorCode:null,...input};
+      const item = {id:"watch-new",createdAt:123,updatedAt:123,nextDueAt:123,lastFinishedAt:null,backoffUntil:0,errorCode:null,queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:input.query || input.name,...input};
       watchlists = [...watchlists,item];
       data = item;status=201;
+    }
+    else if (url.endsWith("/market-queries") && init?.method === "POST") {
+      data={queries:["mortgage closing costs","roof replacement price","heat pump ownership cost","property tax assessment"],source:"local-model-generated"};
     }
     else if (url.endsWith("/videos")) data = {videos: withVideo ? [{
       videoId:"abcABC12345",title:"Heating systems compared",channelId:"UCdemo",
@@ -41,6 +45,30 @@ function fakeApi(withVideo: boolean) {
 }
 
 describe("YouTube Intelligence", () => {
+  it("saves a niche-only watchlist without a phrase and marks automatic exploration", async () => {
+    fakeApi(false);
+    const user=userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.type(await screen.findByRole("textbox",{name:/niche name/i}),"House Math");
+    expect(screen.getByRole("button",{name:/add watchlist/i})).toBeEnabled();
+    await user.click(screen.getByRole("button",{name:/add watchlist/i}));
+    expect((await screen.findAllByText(/Explore niche automatically/i)).length).toBeGreaterThan(0);
+    const posts=(fetch as ReturnType<typeof vi.fn>).mock.calls.filter((call:unknown[])=>String(call[0]).endsWith("/watchlists") && (call[1] as RequestInit)?.method==="POST");
+    const body=JSON.parse(String((posts[0][1] as RequestInit).body));
+    expect(body).toMatchObject({name:"House Math",query:"",queryMode:"auto",queryPlan:[]});
+  });
+
+  it("generates an editable local research query plan before saving",async()=>{
+    fakeApi(false);
+    const user=userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.type(await screen.findByRole("textbox",{name:/niche name/i}),"House Math");
+    await user.click(screen.getByRole("button",{name:/suggest searches with local ai/i}));
+    expect((await screen.findByRole("textbox",{name:/proposed searches/i}) as HTMLTextAreaElement).value).toContain("mortgage closing costs");
+    await user.click(screen.getByRole("button",{name:/add watchlist/i}));
+    const posts=(fetch as ReturnType<typeof vi.fn>).mock.calls.filter((call:unknown[])=>String(call[0]).endsWith("/watchlists") && (call[1] as RequestInit)?.method==="POST");
+    expect(JSON.parse(String((posts[0][1] as RequestInit).body)).queryPlan).toContain("roof replacement price");
+  });
   it("creates a user-controlled watchlist through the local server", async () => {
     const requests = fakeApi(false);
     const user = userEvent.setup();

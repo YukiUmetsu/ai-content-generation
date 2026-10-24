@@ -104,6 +104,28 @@ async fn watchlists_roundtrip_and_expose_source_aware_empty_results() {
 }
 
 #[tokio::test]
+async fn niche_only_api_supports_optional_phrase_and_switching_to_exact_tracking() {
+    let (_dir, router) = setup();
+    let auto = json!({"name":"House Math","query":"","region":"US","language":"en","enabled":false,
+        "queryMode":"auto","queryPlan":["roof replacement costs","mortgage closing fees"],
+        "queryPlanSource":"user-edited"});
+    let (status, created) = call(&router, Method::POST, "/api/research/market/watchlists", Some(auto), true).await;
+    assert_eq!(status, StatusCode::CREATED, "{created:?}");
+    assert_eq!(created["query"], "");
+    assert_eq!(created["queryMode"], "auto");
+    assert_eq!(created["nextSearchQuery"], "roof replacement costs");
+    let id = created["id"].as_str().unwrap();
+    let exact = json!({"name":"House Math","query":"property tax increase","region":"US","language":"en","enabled":false,
+        "queryMode":"manual","queryPlan":[],"queryPlanSource":"user-edited"});
+    let (status, changed) = call(&router, Method::PATCH,
+        &format!("/api/research/market/watchlists/{id}"), Some(exact), true).await;
+    assert_eq!(status, StatusCode::OK, "{changed:?}");
+    assert_eq!(changed["nextSearchQuery"], "property tax increase");
+    assert_eq!(changed["queryMode"], "manual");
+    assert!(changed["queryPlan"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn mutations_require_local_header_and_missing_key_never_consumes_budget() {
     let (_dir, router) = setup();
     let draft = json!({"name":"House Math","query":"HVAC cost","region":"US","language":"en","enabled":true});
@@ -160,6 +182,9 @@ async fn related_is_read_only_local_cache_and_validates_the_topic() {
             region: "US".into(),
             language: "en".into(),
             enabled: true,
+            query_mode: "manual".into(),
+            query_plan: vec![],
+            query_plan_source: "user-edited".into(),
         },
         now,
     )

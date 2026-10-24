@@ -5,6 +5,7 @@ import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
+import { generateMarketQueries } from "./video-production/market-query-generator.mjs";
 
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
@@ -52,6 +53,16 @@ export async function handleDirectorRequest(req,res,deps={}){
       const settings=await (deps.model??resolveModelForTask)("hooks");
       const approaches=await (deps.editorial??generateEditorialVariants)(request,{modelSettings:settings});
       send(res,200,{approaches,editorialStatus:"unverified-draft"});
+    }else if(req.method==="POST"&&route==="/market-queries"){
+      const request=await readBody(req);
+      if(!request || typeof request!=="object" || Array.isArray(request) ||
+         Object.keys(request).some(key=>!["niche","description","region","language"].includes(key)))
+        throw Error("Only niche, description, region and language are accepted.");
+      const settings=await (deps.model??resolveModelForTask)("research");
+      if(!settings?.model)throw Error("Choose an installed local research model in Studio Settings.");
+      const queries=await (deps.marketQueries??generateMarketQueries)({name:request.niche,description:request.description},
+        {modelSettings:settings});
+      send(res,200,{queries,source:"local-model-generated"});
     }else if(req.method==="POST"&&route==="/research-draft"){
       if(researchDraftRunning){send(res,409,{error:"Research is already running. Wait for the current draft or cancel it."});return;}
       researchDraftRunning=true;

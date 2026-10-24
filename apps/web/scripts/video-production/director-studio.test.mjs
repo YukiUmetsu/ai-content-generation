@@ -90,6 +90,26 @@ test("original brief alternatives require explicit local action and exclude YouT
   assert.equal(rejected.result().status,403);
   assert.equal(called,1);
 });
+test("YouTube niche query planning is same-origin, optional, and uses the research model",async()=>{
+  const p=request("POST","/market-queries",{niche:"House Math",region:"US",language:"en"});
+  let called=0;
+  await handleDirectorRequest(p.req,p.res,{
+    model:async role=>{assert.equal(role,"research");return {model:"local-research"};},
+    marketQueries:async(payload,options)=>{
+      called++;assert.equal(payload.name,"House Math");assert.equal(options.modelSettings.model,"local-research");
+      return ["mortgage closing costs","roof replacement cost","heat pump installation cost","property tax increases"];
+    }
+  });
+  assert.equal(p.result().status,200);
+  assert.equal(p.result().data.queries.length,4);
+  const blocked=request("POST","/market-queries",{niche:"House Math"},{origin:"https://elsewhere.test"});
+  await handleDirectorRequest(blocked.req,blocked.res,{marketQueries:async()=>{called++;}});
+  assert.equal(blocked.result().status,403);
+  const noModel=request("POST","/market-queries",{niche:"House Math"});
+  await handleDirectorRequest(noModel.req,noModel.res,{model:async()=>null,marketQueries:async()=>{called++;}});
+  assert.equal(noModel.result().status,422);
+  assert.equal(called,1);
+});
 test("Studio research draft requires deliberate same-origin POST and an installed local model",async()=>{
   const body={title:"Heat pump lifecycle cost",viewerQuestion:"Which parts change the total cost?",audience:"Homeowners",locale:"en-US"};
   let called=0;

@@ -9,6 +9,15 @@ const RETENTION_SECONDS: i64 = 30 * DAILY_SECONDS;
 const MAX_SEARCH_CALLS: i64 = 20;
 const MAX_ENABLED: i64 = 10;
 
+fn manual_mode() -> String { "manual".into() }
+fn default_plan_source() -> String { "user-edited".into() }
+
+fn fallback_query(name: &str) -> String {
+    let name = name.trim();
+    if name.chars().count() >= 3 { name.to_string() }
+    else { format!("{name} YouTube videos") }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum MarketError {
     #[error("database error: {0}")]
@@ -29,6 +38,12 @@ pub struct MarketWatchlistDraft {
     pub region: String,
     pub language: String,
     pub enabled: bool,
+    #[serde(default = "manual_mode")]
+    pub query_mode: String,
+    #[serde(default)]
+    pub query_plan: Vec<String>,
+    #[serde(default = "default_plan_source")]
+    pub query_plan_source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,6 +61,13 @@ pub struct MarketWatchlist {
     pub last_finished_at: Option<i64>,
     pub backoff_until: i64,
     pub error_code: Option<String>,
+    pub query_mode: String,
+    pub query_plan: Vec<String>,
+    pub query_plan_source: String,
+    pub query_index: i64,
+    pub query_plan_revision: i64,
+    pub last_search_query: Option<String>,
+    pub next_search_query: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +77,8 @@ pub struct MarketRun {
     pub watchlist_id: String,
     pub state: String,
     pub started_at: i64,
+    pub effective_query: String,
+    pub query_plan_revision: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,10 +124,35 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
     if !(1..=80).contains(&name.chars().count()) {
         return Err(MarketError::Invalid("name must be 1–80 characters".into()));
     }
-    if !(3..=160).contains(&query.chars().count()) {
+    if !matches!(draft.query_mode.as_str(), "auto" | "manual") {
+        return Err(MarketError::Invalid("queryMode must be manual or auto".into()));
+    }
+    if draft.query_mode == "manual" && !(3..=160).contains(&query.chars().count()) {
         return Err(MarketError::Invalid(
             "query must be 3–160 characters".into(),
         ));
+    }
+    if draft.query_mode == "auto" && !query.is_empty() {
+        return Err(MarketError::Invalid("automatic mode does not accept a manual search phrase".into()));
+    }
+    if draft.query_plan.len() > 8 {
+        return Err(MarketError::Invalid("queryPlan cannot exceed eight phrases".into()));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for phrase in &draft.query_plan {
+        let text = phrase.trim();
+        if !(3..=160).contains(&text.chars().count())
+            || text.chars().any(char::is_control)
+            || !seen.insert(text.to_lowercase())
+        {
+            return Err(MarketError::Invalid("queryPlan requires unique phrases of 3–160 characters".into()));
+        }
+    }
+    if draft.query_mode == "manual" && !draft.query_plan.is_empty() {
+        return Err(MarketError::Invalid("manual mode cannot have a rotating queryPlan".into()));
+    }
+    if !matches!(draft.query_plan_source.as_str(), "user-edited" | "local-model-generated" | "niche-name fallback") {
+        return Err(MarketError::Invalid("invalid queryPlanSource".into()));
     }
     if draft.region.len() != 2 || !draft.region.bytes().all(|b| b.is_ascii_uppercase()) {
         return Err(MarketError::Invalid(
@@ -129,10 +178,22 @@ fn fresh_id(db: &Connection, prefix: &str) -> Result<String, MarketError> {
 }
 
 fn read_watchlist(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketWatchlist> {
+    let query_mode: String = row.get(12)?;
+    let plan_json: String = row.get(13)?;
+    let query_plan: Vec<String> = serde_json::from_str(&plan_json).map_err(|err|
+        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err)))?;
+    let stored_query: String = row.get(2)?;
+    let name: String = row.get(1)?;
+    let query_index: i64 = row.get(15)?;
+    let next_search_query = if query_mode == "auto" && !query_plan.is_empty() {
+        query_plan[(query_index as usize) % query_plan.len()].clone()
+    } else if query_mode == "auto" {
+        fallback_query(&name)
+    } else { stored_query.clone() };
     Ok(MarketWatchlist {
         id: row.get(0)?,
-        name: row.get(1)?,
-        query: row.get(2)?,
+        name,
+        query: if query_mode == "auto" { String::new() } else { stored_query },
         region: row.get(3)?,
         language: row.get(4)?,
         enabled: row.get::<_, i64>(5)? == 1,
@@ -142,10 +203,17 @@ fn read_watchlist(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketWatchlist> 
         last_finished_at: row.get(9)?,
         backoff_until: row.get(10)?,
         error_code: row.get(11)?,
+        query_mode,
+        query_plan,
+        query_plan_source: row.get(14)?,
+        query_index,
+        query_plan_revision: row.get(16)?,
+        last_search_query: row.get(17)?,
+        next_search_query,
     })
 }
 
-const WATCHLIST_COLUMNS: &str = "id, name, query, region, language, enabled, created_at, updated_at, next_due_at, last_finished_at, backoff_until, error_code";
+const WATCHLIST_COLUMNS: &str = "id, name, query, region, language, enabled, created_at, updated_at, next_due_at, last_finished_at, backoff_until, error_code, query_mode, query_plan_json, query_plan_source, query_index, query_plan_revision, last_search_query";
 
 pub fn create_watchlist(
     db: &Connection,
@@ -165,10 +233,15 @@ pub fn create_watchlist(
         }
     }
     let id = fresh_id(&txn, "watch")?;
+    let stored_query = if draft.query_mode == "auto" { fallback_query(&draft.name) } else { draft.query.trim().to_string() };
+    let plan = serde_json::to_string(&draft.query_plan.iter().map(|q| q.trim()).collect::<Vec<_>>())
+        .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
     txn.execute(
-        "INSERT INTO market_watchlists(id,name,query,region,language,enabled,created_at,updated_at,next_due_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?7)",
-        params![id, draft.name.trim(), draft.query.trim(), draft.region, draft.language, i64::from(draft.enabled), now]
+        "INSERT INTO market_watchlists(id,name,query,region,language,enabled,created_at,updated_at,next_due_at,
+         query_mode,query_plan_json,query_plan_source)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?7,?8,?9,?10)",
+        params![id, draft.name.trim(), stored_query, draft.region, draft.language,
+                i64::from(draft.enabled), now, draft.query_mode, plan, draft.query_plan_source]
     )?;
     txn.commit()?;
     get_watchlist(db, &id)
@@ -212,13 +285,24 @@ pub fn update_watchlist(
             return Err(MarketError::Limit);
         }
     }
+    let stored_query = if draft.query_mode == "auto" { fallback_query(&draft.name) } else { draft.query.trim().to_string() };
+    let plan = serde_json::to_string(&draft.query_plan.iter().map(|q| q.trim()).collect::<Vec<_>>())
+        .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
+    let plan_changed = previous.query_mode != draft.query_mode
+        || previous.query_plan != draft.query_plan
+        || previous.name != draft.name.trim()
+        || (draft.query_mode == "manual" && previous.query != draft.query.trim());
     txn.execute(
         "UPDATE market_watchlists
          SET name=?2, query=?3, region=?4, language=?5, enabled=?6, updated_at=?7,
-             next_due_at=CASE WHEN query!=?3 OR region!=?4 OR language!=?5 OR enabled=0 THEN ?7 ELSE next_due_at END,
-             backoff_until=CASE WHEN query!=?3 OR region!=?4 OR language!=?5 THEN 0 ELSE backoff_until END
+             query_mode=?8, query_plan_json=?9, query_plan_source=?10,
+             query_index=CASE WHEN ?11 THEN 0 ELSE query_index END,
+             query_plan_revision=CASE WHEN ?11 THEN query_plan_revision+1 ELSE query_plan_revision END,
+             next_due_at=CASE WHEN ?11 OR region!=?4 OR language!=?5 OR enabled=0 THEN ?7 ELSE next_due_at END,
+             backoff_until=CASE WHEN ?11 OR region!=?4 OR language!=?5 THEN 0 ELSE backoff_until END
          WHERE id=?1",
-        params![id, draft.name.trim(), draft.query.trim(), draft.region, draft.language, i64::from(draft.enabled), now]
+        params![id, draft.name.trim(), stored_query, draft.region, draft.language,
+                i64::from(draft.enabled), now, draft.query_mode, plan, draft.query_plan_source, plan_changed]
     )?;
     txn.commit()?;
     get_watchlist(db, id)
@@ -235,6 +319,9 @@ pub fn set_enabled(db: &Connection, id: &str, enabled: bool, now: i64) -> Result
             region: prior.region,
             language: prior.language,
             enabled,
+            query_mode: prior.query_mode,
+            query_plan: prior.query_plan,
+            query_plan_source: prior.query_plan_source,
         },
         now,
     )?;
@@ -290,9 +377,11 @@ pub fn claim_watchlist(
         return Ok(None);
     }
     let id = fresh_id(&txn, "run")?;
+    let effective_query = w.next_search_query.clone();
     txn.execute(
-        "INSERT INTO market_runs(id,watchlist_id,state,started_at) VALUES (?1,?2,'running',?3)",
-        params![id, watchlist_id, now],
+        "INSERT INTO market_runs(id,watchlist_id,state,started_at,effective_query,query_plan_revision)
+         VALUES (?1,?2,'running',?3,?4,?5)",
+        params![id, watchlist_id, now, effective_query, w.query_plan_revision],
     )?;
     txn.execute(
         "INSERT INTO market_search_budget(run_id,reserved_at) VALUES (?1,?2)",
@@ -308,6 +397,8 @@ pub fn claim_watchlist(
         watchlist_id: watchlist_id.into(),
         state: "running".into(),
         started_at: now,
+        effective_query,
+        query_plan_revision: w.query_plan_revision,
     }))
 }
 
@@ -318,11 +409,11 @@ pub fn complete_run(
     now: i64,
 ) -> Result<(), MarketError> {
     let txn = db.unchecked_transaction()?;
-    let watchlist_id: String = txn
+    let (watchlist_id, effective_query, plan_revision): (String, String, i64) = txn
         .query_row(
-            "SELECT watchlist_id FROM market_runs WHERE id=?1 AND state='running'",
+            "SELECT watchlist_id,effective_query,query_plan_revision FROM market_runs WHERE id=?1 AND state='running'",
             [run_id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
         .ok_or(MarketError::NotFound)?;
@@ -346,8 +437,12 @@ pub fn complete_run(
         "UPDATE market_runs SET state='succeeded', finished_at=?2, video_count=?3 WHERE id=?1",
         params![run_id, now, observations.len() as i64],
     )?;
-    txn.execute("UPDATE market_watchlists SET last_finished_at=?2, backoff_until=0, error_code=NULL WHERE id=?1",
-        params![watchlist_id, now])?;
+    txn.execute("UPDATE market_watchlists
+        SET last_finished_at=?2, backoff_until=0, error_code=NULL,
+            last_search_query=?3,
+            query_index=CASE WHEN query_mode='auto' AND query_plan_json!='[]'
+                   AND query_plan_revision=?4 THEN query_index+1 ELSE query_index END
+        WHERE id=?1", params![watchlist_id, now, effective_query, plan_revision])?;
     txn.commit()?;
     Ok(())
 }

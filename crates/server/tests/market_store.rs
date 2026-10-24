@@ -4,7 +4,7 @@ use contentgen_server::research::market_store::{self, MarketWatchlistDraft, Vide
 fn db_ready() -> rusqlite::Connection {
     let mut db = db::open_in_memory().unwrap();
     let report = db::migrate(&mut db).unwrap();
-    assert_eq!(report.to_version, 2);
+    assert_eq!(report.to_version, 4);
     db
 }
 
@@ -15,7 +15,53 @@ fn draft(enabled: bool) -> MarketWatchlistDraft {
         region: "US".into(),
         language: "en".into(),
         enabled,
+        query_mode: "manual".into(),
+        query_plan: vec![],
+        query_plan_source: "user-edited".into(),
     }
+}
+
+#[test]
+fn name_only_auto_watchlist_persists_without_an_explicit_search_phrase() {
+    let db = db_ready();
+    let watch = market_store::create_watchlist(&db, MarketWatchlistDraft {
+        name: "House Math".into(), query: "".into(),
+        query_mode: "auto".into(), query_plan: vec![],
+        query_plan_source: "niche-name fallback".into(),
+        region: "US".into(), language: "en".into(), enabled: true,
+    }, 1_000_000).unwrap();
+    assert_eq!(watch.query, "");
+    assert_eq!(watch.query_mode, "auto");
+    assert_eq!(watch.next_search_query, "House Math");
+    let run = market_store::claim_watchlist(&db, &watch.id, 1_000_000, true).unwrap().unwrap();
+    assert_eq!(run.effective_query, "House Math");
+    let reloaded = market_store::get_watchlist(&db, &watch.id).unwrap();
+    assert_eq!(reloaded.query, "");
+}
+
+#[test]
+fn successful_auto_runs_rotate_queries_and_failed_runs_do_not() {
+    let db = db_ready();
+    let watch = market_store::create_watchlist(&db, MarketWatchlistDraft {
+        name: "House Math".into(), query: "".into(),
+        query_mode: "auto".into(),
+        query_plan: vec!["roof replacement cost".into(), "home insurance premiums".into()],
+        query_plan_source: "user-edited".into(),
+        region: "US".into(), language: "en".into(), enabled: true,
+    }, 1_000_000).unwrap();
+    let first = market_store::claim_watchlist(&db, &watch.id, 1_000_000, true).unwrap().unwrap();
+    assert_eq!(first.effective_query, "roof replacement cost");
+    market_store::complete_run(&db, &first.id, &[], 1_000_001).unwrap();
+    let second = market_store::claim_watchlist(&db, &watch.id, 1_000_002, true).unwrap().unwrap();
+    assert_eq!(second.effective_query, "home insurance premiums");
+    market_store::fail_run(&db, &second.id, "provider_unavailable", 1_000_003).unwrap();
+    let third = market_store::claim_watchlist(&db, &watch.id, 1_001_000, true).unwrap().unwrap();
+    assert_eq!(third.effective_query, "home insurance premiums");
+    market_store::complete_run(&db, &third.id, &[], 1_001_001).unwrap();
+    let next = market_store::get_watchlist(&db, &watch.id).unwrap();
+    assert_eq!(next.next_search_query, "roof replacement cost");
+    assert_eq!(next.last_search_query.as_deref(), Some("home insurance premiums"));
+    assert_eq!(market_store::used_search_calls(&db, 1_001_002).unwrap(), 3);
 }
 
 #[test]
