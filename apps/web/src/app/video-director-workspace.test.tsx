@@ -283,6 +283,23 @@ describe("saved research to Video Director handoff",()=>{
     expect(screen.getByText(/Storyboard camera edits are not yet imported/)).toBeInTheDocument();
     sessionStorage.removeItem(sessionKey);
   });
+  it("shows a warning and compiles only saved research when the local storyboard belongs to another artifact",async()=>{
+    const older={assumptions:["Research artifact: research_old-123456789abc"]};
+    vi.spyOn(projectStorage,"loadProjectStoryboard").mockReturnValue({
+      board:older as unknown as NonNullable<ReturnType<typeof projectStorage.loadProjectStoryboard>["board"]>,
+      warning:null,
+    });
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(_url,init)=>{
+      expect(JSON.parse(String(init?.body))).toEqual({artifactId});
+      return new Response(JSON.stringify({artifactId,dossier,
+        bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)},
+        synchronization:null,
+      }),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/different research artifact/);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+  });
   it("rejects a result from a different saved artifact",async()=>{
     vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
       artifactId:"research_other-123456789abc",dossier,bundle,
