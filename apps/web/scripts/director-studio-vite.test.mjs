@@ -58,3 +58,36 @@ test("storyboard route forwards saved search artifact ID without altering separa
   assert.equal(forwarded.searchArtifactId,request.searchArtifactId);
 });
 
+test("research job routes start immediately and support durable progress, resume and targeted retry",async()=>{
+  const calls=[];
+  const jobId="job_"+"a".repeat(24);
+  const snapshot={jobId,status:"queued",stage:"queued",completedScenes:0,totalScenes:3};
+  const manager={
+    create:async (brief,models)=>{calls.push(["create",brief.searchArtifactId,models.primary.model]);return snapshot;},
+    get:async id=>{calls.push(["get",id]);return {...snapshot,status:"failed",stage:"scene:2"};},
+    resume:async(id)=>{calls.push(["resume",id]);return snapshot;},
+    retryScene:async(id,sceneId)=>{calls.push(["retry",id,sceneId]);return snapshot;},
+    cancel:async id=>{calls.push(["cancel",id]);return {...snapshot,status:"cancelled"};},
+  };
+  const deps={jobs:manager,model:async task=>({model:task+"-model",endpoint:"http://127.0.0.1:11434/v1/chat/completions"})};
+  assert.equal((await post("/research-jobs",{title:"Heat pumps",viewerQuestion:"Why costly?",audience:"Homeowners",locale:"en-US",searchArtifactId:"search_test"},deps)).status,202);
+  assert.equal((await get("/research-jobs/"+jobId,deps)).result.status,"failed");
+  assert.equal((await post("/research-jobs/"+jobId+"/resume",{},deps)).status,202);
+  assert.equal((await post("/research-jobs/"+jobId+"/scenes/1/retry",{},deps)).status,202);
+  assert.equal((await post("/research-jobs/"+jobId+"/cancel",{},deps)).result.status,"cancelled");
+  assert.deepEqual(calls,[
+    ["create","search_test","story-model"],["get",jobId],["resume",jobId],["retry",jobId,"1"],["cancel",jobId],
+  ]);
+});
+
+test("research job only receives a secondary local model when fallback was explicitly configured",async()=>{
+  let seen;
+  const deps={model:async()=>({model:"primary",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
+    fallback:async()=>({model:"backup",endpoint:"http://127.0.0.1:10100/inference/v1/chat/completions"}),
+    jobs:{create:async (_input,models)=>{seen=models;return {jobId:"job_"+"a".repeat(24),status:"queued"};}}};
+  const result=await post("/research-jobs",{title:"Heat pumps",viewerQuestion:"Why costly?",audience:"Homeowners",locale:"en-US",searchArtifactId:"search_test"},deps);
+  assert.equal(result.status,202);
+  assert.equal(seen.primary.model,"primary");
+  assert.equal(seen.secondary.model,"backup");
+});
+
