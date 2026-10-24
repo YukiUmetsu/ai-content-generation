@@ -78,6 +78,23 @@ describe("research to editable semantic storyboard",()=>{
     expect(shown).toContain("wall");
     expect(shown).not.toContain("$12,400");
   });
+  it("accepts descriptive source-backed visual states beyond the former 48/90-character targets",()=>{
+    const fixture=structuredClone(researchedFixture);
+    fixture.plan.teachingSequences[0].visualStates={
+      before:"A house with older insulation loses heat through visible gaps in its exterior walls.",
+      action:"Add insulation into each wall cavity as animated heat-flow arrows slow down and fewer arrows pass through.",
+      after:"The same house now has insulated walls with visibly fewer heat-flow arrows escaping outside.",
+    };
+    const board=researchToStoryboard(fixture,"project-long-states","en");
+    expect(board.beats.map(beat=>beat.teachingState?.before)).toEqual(Array(3).fill(fixture.plan.teachingSequences[0].visualStates.before));
+    expect(countBySeverity(validateStoryboard(board)).errors).toBe(0);
+  });
+  it("still rejects pathological visual-state descriptions rather than truncating them",()=>{
+    const fixture=structuredClone(researchedFixture);
+    fixture.plan.teachingSequences[0].visualStates!.before="x".repeat(501);
+    expect(()=>researchToStoryboard(fixture,"project-oversized-states","en"))
+      .toThrow(/storyboard-teaching-state-invalid/);
+  });
   it("rejects plans referencing unsupported claims or unrelated dossiers",()=>{
     const unrelated=structuredClone(researchedFixture);unrelated.plan.researchId="wrong";
     expect(()=>researchToStoryboard(unrelated,"project-new","en")).toThrow(/research/i);
