@@ -82,12 +82,23 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
       const rect = group.querySelector<SVGRectElement>("rect");
       if (!rect) throw new Error("Diagram node is missing a visible frame");
       const bounds = rect.getBBox();
-      for (const label of group.querySelectorAll<SVGTextElement>("text")) {
-        const box = label.getBBox();
+      const glyphBoxes = Array.from(group.querySelectorAll<SVGTextElement>("text"), (label) => label.getBBox());
+      for (const box of glyphBoxes) {
         if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width <= 0 || box.height <= 0 ||
           box.x < bounds.x + 20 || box.x + box.width > bounds.x + bounds.width - 15 ||
           box.y < bounds.y + 12 || box.y + box.height > bounds.y + bounds.height - 10) {
           throw new Error(`Diagram label is clipped at frame ${target}`);
+        }
+      }
+      // Renderer math is only a preflight estimate. Chromium's measured glyph
+      // boxes must also be disjoint on every captured frame.
+      for (let i = 0; i < glyphBoxes.length; i++) {
+        for (let j = i + 1; j < glyphBoxes.length; j++) {
+          const a = glyphBoxes[i], b = glyphBoxes[j];
+          if (a.x < b.x + b.width - 2 && b.x < a.x + a.width - 2 &&
+              a.y < b.y + b.height - 2 && b.y < a.y + a.height - 2) {
+            throw new Error(`Diagram title and explanation overlap at frame ${target}`);
+          }
         }
       }
     }
