@@ -183,4 +183,23 @@ describe("Project discovery author controls",()=>{
     expect(localStorage.length).toBe(0);
     mock.mockRestore();
   });
+
+  it("keeps Projects visible and explains a malformed discovery start response",async()=>{
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
+      const path=String(input);
+      const body=path.endsWith("/keywords")?{keywords:[]}
+        :path.endsWith("/graph")?{nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+          :path.endsWith("/watchlists")?{watchlists:[],watchlistIds:[]}
+            :path.endsWith("/runs")?{runs:[]}
+              :path.endsWith("/project-discovery")?{id:"discover_"+"b".repeat(24),status:"queued",stage:"queued",createdAt:1760000000}
+                :null;
+      if(!body)throw Error(`Unexpected route: ${path}`);
+      return new Response(JSON.stringify(body),{status:200});
+    });
+    render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Housing costs",createdAt:"2026-10-20T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
+    await userEvent.setup().click(await screen.findByRole("button",{name:"Discover 5 Ideas"}));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invalid discovery run response/i);
+    expect(screen.getByRole("heading",{name:"Discover 5 Ideas"})).toBeInTheDocument();
+  });
 });

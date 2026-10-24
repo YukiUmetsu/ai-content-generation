@@ -26,6 +26,28 @@ export type DiscoveryRun = { id: string; projectId: string; inputRevision: strin
   candidates: DiscoveryCandidate[] };
 const PREFIX = "/api/research/discovery";
 
+/** A local server version mismatch or partial reply must not crash the entire React view. */
+function requireDiscoveryRun(value: unknown): DiscoveryRun {
+  const data = value as Partial<DiscoveryRun> | null;
+  const object = (item: unknown): item is Record<string, unknown> =>
+    !!item && typeof item === "object" && !Array.isArray(item);
+  const candidate = (item: unknown): boolean => object(item) &&
+    typeof item.id === "string" && Number.isFinite(item.rank) &&
+    ["title", "hook", "premise", "whyNow", "angleKey", "confidence"].every(key => typeof item[key] === "string") &&
+    (item.decision === null || ["saved", "dismissed", "storyboard"].includes(String(item.decision))) &&
+    Array.isArray(item.sourceIds) && item.sourceIds.every(id => typeof id === "string");
+  if (!object(data) || typeof data.id !== "string" || typeof data.projectId !== "string" ||
+    typeof data.inputRevision !== "string" ||
+    !["queued", "running", "paused", "completed", "insufficient_evidence", "failed", "cancelled"].includes(String(data.status)) ||
+    typeof data.stage !== "string" || !Number.isFinite(data.createdAt) || !Number.isFinite(data.updatedAt) ||
+    !Array.isArray(data.candidates) || !data.candidates.every(candidate) ||
+    (data.providerHealth !== undefined && (!object(data.providerHealth) ||
+      Object.values(data.providerHealth).some(item => typeof item !== "string")))) {
+    throw Error("Invalid discovery run response. Restart or rebuild the local server, then retry.");
+  }
+  return { ...data, providerHealth: data.providerHealth ?? {} } as DiscoveryRun;
+}
+
 async function request<T>(path: string, method = "GET", data?: object, signal?: AbortSignal): Promise<T> {
   const response = await fetch(PREFIX + path, {
     method, credentials: "same-origin", signal,
@@ -114,27 +136,29 @@ async function directorRequest<T>(route: string, body: object): Promise<T> {
   return json;
 }
 
-export function discoverFiveIdeas(project: LocalProject, content: LocalContent[]): Promise<DiscoveryRun> {
-  return directorRequest("project-discovery",{projectId:project.id,projectName:project.name,
-    description:project.notes,content:content.filter(item=>item.projectId===project.id)});
+export async function discoverFiveIdeas(project: LocalProject, content: LocalContent[]): Promise<DiscoveryRun> {
+  return requireDiscoveryRun(await directorRequest("project-discovery",{projectId:project.id,projectName:project.name,
+    description:project.notes,content:content.filter(item=>item.projectId===project.id)}));
 }
 
 export async function listDiscoveryRuns(projectId: string): Promise<DiscoveryRun[]> {
   const response=await fetch(`/api/contentgen-director/project-discovery/${encodeURIComponent(projectId)}/runs`);
   if(!response.ok)throw Error("Could not load saved discovery history.");
-  return (await response.json() as {runs: DiscoveryRun[]}).runs;
+  const result=await response.json() as {runs?:unknown};
+  if(!Array.isArray(result?.runs))throw Error("Invalid discovery run history. Restart or rebuild the local server.");
+  return result.runs.map(requireDiscoveryRun);
 }
 export async function loadDiscoveryRun(projectId: string,runId: string): Promise<DiscoveryRun> {
   const response=await fetch(`/api/contentgen-director/project-discovery/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}`);
   if(!response.ok)throw Error("Could not reload discovery run.");
-  return response.json() as Promise<DiscoveryRun>;
+  return requireDiscoveryRun(await response.json());
 }
-export function resumeDiscoveryRun(project: LocalProject,content: LocalContent[],runId: string): Promise<DiscoveryRun> {
-  return directorRequest(`project-discovery/${runId}/resume`,{projectId:project.id,projectName:project.name,
-    description:project.notes,content:content.filter(item=>item.projectId===project.id)});
+export async function resumeDiscoveryRun(project: LocalProject,content: LocalContent[],runId: string): Promise<DiscoveryRun> {
+  return requireDiscoveryRun(await directorRequest(`project-discovery/${runId}/resume`,{projectId:project.id,projectName:project.name,
+    description:project.notes,content:content.filter(item=>item.projectId===project.id)}));
 }
-export function cancelDiscoveryRun(projectId:string,runId:string):Promise<DiscoveryRun> {
-  return directorRequest(`project-discovery/${runId}/cancel`,{projectId});
+export async function cancelDiscoveryRun(projectId:string,runId:string):Promise<DiscoveryRun> {
+  return requireDiscoveryRun(await directorRequest(`project-discovery/${runId}/cancel`,{projectId}));
 }
 export function decideDiscoveryIdea(projectId: string,candidateId: string,decision: "saved" | "dismissed" | "storyboard",reason?: string) {
   return request(`/projects/${encodeURIComponent(projectId)}/ideas/${encodeURIComponent(candidateId)}/decision`,"POST",{decision,reason:reason??null});
