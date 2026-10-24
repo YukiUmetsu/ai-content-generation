@@ -79,3 +79,27 @@ test("reports unsupported narrative and semantic edits explicitly without mutati
   assert.deepEqual(result.bundle.plan,plan);
   assert.equal(plan.shots[0].visualChange,"Reveal parts");
 });
+
+test("preserves semicolons inside authored visuals instead of moving text between fields",()=>{
+  const source=structuredClone(plan);
+  source.shots[0].visualChange="Reveal parts; hold the camera";
+  source.teachingSequences[0].phases[0].visualAction="Show labor; fade the totals";
+  const edited=board();
+  edited.beats[0].visualObjective="Reveal parts; hold the camera; Show labor; fade the totals faster";
+  const result=reconcileStoryboardPlan({artifactId,projectId:"project-demo",dossier,
+    plan:source,storyboard:edited,compile});
+  assert.equal(result.bundle.plan.shots[0].visualChange,"Reveal parts; hold the camera");
+  assert.equal(result.bundle.plan.teachingSequences[0].phases[0].visualAction,
+    "Show labor; fade the totals faster");
+  assert.equal(source.teachingSequences[0].phases[0].visualAction,"Show labor; fade the totals");
+});
+
+test("rejects multi-delimiter visual edits when both original fields changed ambiguously",()=>{
+  const source=structuredClone(plan);
+  source.shots[0].visualChange="Reveal parts; hold the camera";
+  source.teachingSequences[0].phases[0].visualAction="Show labor; fade the totals";
+  const edited=board();
+  edited.beats[0].visualObjective="Reveal machine; rotate slowly; Show labor; fade to black";
+  assert.throws(()=>reconcileStoryboardPlan({artifactId,projectId:"project-demo",
+    dossier,plan:source,storyboard:edited,compile}),/ambiguous visual objective/iu);
+});
