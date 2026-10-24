@@ -32,12 +32,15 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean}){
+export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,focusStage}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;focusStage?:"visuals"|"audio"|"export"}){
   const [settings,setSettings]=useState<Settings>(defaults);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
   const [previewFocus,setPreviewFocus]=useState<string|undefined>();
   const [sampleAutoLoaded,setSampleAutoLoaded]=useState(false);
+  const autoFocusHandled=useRef(false);
+  const audioAnchor=useRef<HTMLDivElement>(null);
+  const exportAnchor=useRef<HTMLDivElement>(null);
   const previewAnchor=useRef<HTMLDivElement>(null);
   const demoScrolled=useRef(false);
   const lastBundle=useRef(bundle);
@@ -132,6 +135,33 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
     catch(error){setNotice(error instanceof Error?error.message:"Could not cancel.");}
   }
   useEffect(()=>{
+    if(!focusStage||autoFocusHandled.current)return;
+    autoFocusHandled.current=true;
+    let active=true;
+    const path=focusStage==="visuals"?"live-preview":"plan";
+    setWorking(path);setNotice("");
+    void request(path,{dossier,bundle}).then(data=>{
+      if(!active)return;
+      if(focusStage==="visuals"){
+        const visual=data as unknown as LiveVisualPreviewData;
+        if(visual.kind!=="live-renderer-preview/v1"||visual.sourcePlanSha256?.length!==64)
+          throw Error("The saved storyboard did not produce a valid scene preview.");
+        setActualPreview(visual);setPreviewFocus(bundle.plan.shots[0]?.id);
+      }else{
+        const compiled=data as unknown as Preview;
+        if(!Array.isArray(compiled.job?.beats)||!compiled.job.beats.length)
+          throw Error("The saved storyboard did not produce a renderable plan.");
+        setPreview(compiled);
+      }
+    }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Unable to open the selected production stage.");})
+      .finally(()=>{if(active)setWorking("");});
+    return ()=>{active=false;};
+  },[focusStage,dossier,bundle]);
+  useEffect(()=>{
+    if(!preview||!focusStage||focusStage==="visuals")return;
+    requestAnimationFrame(()=>(focusStage==="audio"?audioAnchor:exportAnchor).current?.scrollIntoView?.({block:"start"}));
+  },[preview,focusStage]);
+  useEffect(()=>{
     if(!autoOpenSample||sampleAutoLoaded)return;
     let active=true;
     async function loadSampleVisuals(){
@@ -214,7 +244,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
             {preview.warnings.map((warning,i)=><li key={i}>{warning}</li>)}
           </ul>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div ref={audioAnchor} className="grid scroll-mt-5 gap-3 sm:grid-cols-2">
           <label className={inputLabel}>Voice provider
             <select className={field} aria-label="Production voice provider" value={settings.provider}
               onChange={e=>change({provider:e.target.value as "local"|"fish",localVoiceAuthorized:false,voiceConsent:false,transmitText:false})}>
@@ -247,7 +277,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
           <label className="flex items-center gap-2"><input type="checkbox" checked={settings.transmitText}
             onChange={e=>change({transmitText:e.target.checked})}/> I approve sending script text to Fish Audio.</label>
         </div>}
-        <div className="flex flex-wrap items-center gap-2">
+        <div ref={exportAnchor} className="flex scroll-mt-5 flex-wrap items-center gap-2">
           <Button variant="outline" disabled={!!working||state.state==="rendering"} onClick={()=>void check()}>
             <RefreshCw className="mr-2 size-4"/>{working==="check"?"Checking tools…":"Check readiness"}
           </Button>
