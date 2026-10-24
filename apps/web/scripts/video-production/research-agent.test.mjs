@@ -50,12 +50,12 @@ test("search provider treats results as untrusted leads and never includes priva
     assert.ok(new URL(requestUrl).searchParams.get("q")?.includes("heat"));
     return new Response(JSON.stringify({ results: [
       { title: "Private", url: "http://localhost:9999/internal" },
-      { title: "Public", url },
+      { title: "Public", url, content: "<strong>Insulation</strong> reduces heat transfer." },
       { title: "Repeated", url },
     ] }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
   const found = await searchCandidates("heat flow", options, { transport });
-  assert.deepEqual(found, [{ url, title: "Public" }]);
+  assert.deepEqual(found, [{ url, title: "Public", snippet: "Insulation reduces heat transfer." }]);
   await assert.rejects(searchCandidates("heat flow", { ...options, provider: "brave" },
     { transport }), /BRAVE_SEARCH_API_KEY/);
   const brave = await searchCandidates("heat flow", {
@@ -170,3 +170,4 @@ test("CLI writes captures and dossier to a NEW restricted folder, never replaces
   await assert.rejects(runResearchCli(params, { research: fake, log: () => {} }), /exists/);
   assert.equal(calls, 2);
 });
+
