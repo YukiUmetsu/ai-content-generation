@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clapperboard, ExternalLink, Plus, RefreshCw, Sparkles, Trash2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
+import { YoutubeExplorePanel } from "./youtube-explore-panel";
 import type { Locale } from "@/features/registry";
 import {
   createMarketWatchlist, deleteMarketWatchlist, loadMarketStatus,
@@ -32,7 +33,29 @@ interface Props {
   onCreateStoryboard?: (draft: EditorialDraft) => boolean;
 }
 
-export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard}: Props) {
+export function YoutubeIntelligencePanel(props: Props) {
+  const [mode, setMode] = useState<"explore" | "monitor">("explore");
+  const ja = props.locale === "ja";
+  return <section className="w-full min-w-0">
+    <div role="tablist" aria-label={ja ? "YouTubeリサーチモード" : "YouTube research mode"}
+      className="mx-auto flex w-full max-w-6xl gap-2 border-b border-border pt-2 pb-3">
+      <Button type="button" role="tab" id="youtube-explore-tab" aria-controls="youtube-mode-panel"
+        aria-selected={mode === "explore"} variant={mode === "explore" ? "primary" : "outline"}
+        onClick={()=>setMode("explore")}>{ja ? "探索" : "Explore"}</Button>
+      <Button type="button" role="tab" id="youtube-monitor-tab" aria-controls="youtube-mode-panel"
+        aria-selected={mode === "monitor"} variant={mode === "monitor" ? "primary" : "outline"}
+        onClick={()=>setMode("monitor")}>{ja ? "監視" : "Monitor"}</Button>
+    </div>
+    <div role="tabpanel" id="youtube-mode-panel" aria-labelledby={mode === "explore" ? "youtube-explore-tab" : "youtube-monitor-tab"}>
+      {mode === "explore"
+        ? <YoutubeExplorePanel locale={props.locale} onUseVideo={props.onUseVideo}
+            onWatchlistSaved={()=>setMode("monitor")}/>
+        : <MonitorPanel {...props}/>}
+    </div>
+  </section>;
+}
+
+function MonitorPanel({locale, onUseVideo, onCreateStoryboard}: Props) {
   const ja = locale === "ja";
   const tr = (english: string, japanese: string) => ja ? japanese : english;
   const [status, setStatus] = useState<MarketStatus | null>(null);
