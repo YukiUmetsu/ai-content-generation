@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import { ProductionPanel } from "./video-production-panel";
+import { loadProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { NewVideoSetup } from "./new-video-setup";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
@@ -19,6 +20,7 @@ type Variant={id:string;strategy:string;audienceSignal:string;curiosityQuestion:
 type Impact={changedFields:string[];speechRegenerate:string[];visualRerender:string[];
   sfxRemix:string[];downstreamRetiming:string[];timelineRecalculate:boolean;externalActionsPerformed:string[]};
 type Revision={kind:string;bundle:Bundle;impacts:Impact;reviewRequired:boolean};
+type StoryboardSync={storyboardSha256:string;applied:string[];manualReview:string[]};
 const field="w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const header="text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 async function request(path:string,data:unknown){
@@ -39,13 +41,15 @@ function downloadJson(name:string,data:unknown){
   document.body.append(anchor);anchor.click();anchor.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
-const directorSessionKey=(projectId:string,artifactId:string)=>
-  "contentgen:director-session:v1:"+projectId+":"+artifactId;
-function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle):
+const directorSessionKey=(projectId:string,artifactId:string,storyboardSha256:string|null=null)=>
+  storyboardSha256?"contentgen:director-session:v2:"+projectId+":"+artifactId+":"+storyboardSha256:
+    "contentgen:director-session:v1:"+projectId+":"+artifactId;
+function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle,
+  storyboardSha256:string|null=null):
   {dossier:Dossier;bundle:Bundle}|null {
   if(!projectId||typeof sessionStorage==="undefined"||!source.researchSha256)return null;
   try{
-    const raw=sessionStorage.getItem(directorSessionKey(projectId,artifactId));
+    const raw=sessionStorage.getItem(directorSessionKey(projectId,artifactId,storyboardSha256));
     if(!raw||raw.length>900000)return null;
     const data=JSON.parse(raw) as {version?:number;artifactId?:string;dossier?:Dossier;bundle?:Bundle};
     if(data.version!==1||data.artifactId!==artifactId||data.dossier?.kind!=="research-dossier"||
@@ -82,11 +86,14 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
   const [sampleMode,setSampleMode]=useState(false);
   const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId));
   const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
+  const [sourceStoryboardSha,setSourceStoryboardSha]=useState<string|null>(null);
+  const [syncReport,setSyncReport]=useState<StoryboardSync|null>(null);
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null)=>{
+  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null)=>{
     setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");setSourceArtifactId(artifactId);
+    setSourceStoryboardSha(storyboardSha);setSyncReport(null);
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
@@ -96,18 +103,31 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
     if(!researchArtifactId){setLoadingSaved(false);return;}
     let active=true;
     setLoadingSaved(true);
-    setStatus("Opening the saved research snapshot without regenerating it…");
-    void request("compile-saved-research",{artifactId:researchArtifactId}).then(result=>{
+    setStatus("Opening saved research and checking for Storyboard Planner edits…");
+    // Re-read on entry so source-bound edits made since Production was last shown are included.
+    const loaded=projectId?loadProjectStoryboard(projectId):null;
+    const board=loaded?.board?.assumptions.includes("Research artifact: "+researchArtifactId)
+      ?loaded.board:null;
+    const payload={artifactId:researchArtifactId,
+      ...(board&&projectId?{projectId,storyboard:board}:{})};
+    void request("compile-saved-research",payload).then(result=>{
       if(!active)return;
-      const saved=result as {artifactId?:string;dossier?:Dossier;bundle?:Bundle};
+      const saved=result as {artifactId?:string;dossier?:Dossier;bundle?:Bundle;synchronization?:StoryboardSync|null};
       if(saved.artifactId!==researchArtifactId || saved.dossier?.kind!=="research-dossier" ||
         saved.bundle?.kind!=="preproduction-bundle" || !saved.dossier.id ||
-        saved.bundle.researchId!==saved.dossier.id || !saved.bundle.plan?.shots?.length)
-        throw Error("The returned project did not match the selected research artifact.");
-      const resumed=readDirectorSession(projectId,researchArtifactId,saved.bundle);
-      acceptProject(resumed?.dossier??saved.dossier,resumed?.bundle??saved.bundle,"topic",researchArtifactId);
-      setStatus((resumed?"Resumed applied shot edits from this browser session. ":"Opened the original saved research plan. ")+
-        "Changes made later in Storyboard Planner are not yet imported; compare the shots before rendering. Claims and media rights still need review.");
+        saved.bundle.researchId!==saved.dossier.id || !saved.bundle.plan?.shots?.length ||
+        (board&&(!saved.synchronization||
+          !/^[a-f0-9]{64}$/u.test(saved.synchronization.storyboardSha256))))
+        throw Error("The returned project did not match the selected storyboard and research artifact.");
+      const sync=saved.synchronization??null;
+      const revision=sync?.storyboardSha256??null;
+      const resumed=readDirectorSession(projectId,researchArtifactId,saved.bundle,revision);
+      acceptProject(resumed?.dossier??saved.dossier,resumed?.bundle??saved.bundle,
+        "topic",researchArtifactId,revision);
+      setSyncReport(sync);
+      setStatus((resumed?"Resumed applied edits from this storyboard version. ":
+        sync?"Opened the saved storyboard with compatible changes applied. ":"Opened the original research plan. ")+
+        "Claims, unsynchronized semantic details, and media rights still need review.");
     }).catch(error=>{if(active)setStatus(error instanceof Error?error.message:"Saved research could not be opened.");})
       .finally(()=>{if(active)setLoadingSaved(false);});
     return ()=>{active=false;};
@@ -119,11 +139,11 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
       // Only applied shot edits are saved here. Never store provider keys or voice permissions.
       const data=JSON.stringify({version:1,artifactId:researchArtifactId,dossier,bundle});
       if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
-      sessionStorage.setItem(directorSessionKey(projectId,researchArtifactId),data);
+      sessionStorage.setItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha),data);
     }catch{
       setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director.");
     }
-  },[projectId,researchArtifactId,sourceArtifactId,dossier,bundle]);
+  },[projectId,researchArtifactId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
   async function importProject(file:File|undefined){
     if(!file)return;
     try{
@@ -245,6 +265,13 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
       </div>
       {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening saved research for Video Director…</p>}
       {!usable&&!loadingSaved&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
+      {usable&&syncReport&&<div role="status" className="rounded-surface border border-primary/30 bg-surface-subtle p-4 text-sm">
+        <p className="font-semibold">Saved storyboard → Director</p>
+        <p className="mt-1">{syncReport.applied.length} narration, screen-text, or visual-action change(s) applied to a new draft bundle. Immutable research remains unchanged.</p>
+        {syncReport.manualReview.length>0&&<ul className="mt-2 list-disc space-y-1 pl-5 text-status-warning">
+          {syncReport.manualReview.map((warning,i)=><li key={i}>{warning}</li>)}</ul>}
+        <p className="mt-2 text-xs text-muted-foreground">Other storyboard-only timing, camera, and semantic design fields need manual comparison. This is not publishing approval.</p>
+      </div>}
       {usable&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle p-4">
         <div>
           <p className="font-semibold">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
@@ -255,9 +282,9 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
             onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
           <Button variant="outline" onClick={()=>{
                if(projectId&&researchArtifactId&&sourceArtifactId===researchArtifactId){
-                 try{sessionStorage.removeItem(directorSessionKey(projectId,researchArtifactId));}catch{/* In-memory reset still works. */}
+                 try{sessionStorage.removeItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha));}catch{/* In-memory reset still works. */}
                }
-               setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setSourceArtifactId(null);setStatus("");
+               setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setSourceArtifactId(null);setSourceStoryboardSha(null);setSyncReport(null);setStatus("");
              }}>
             Start another project
           </Button>
