@@ -79,6 +79,9 @@ pub struct MarketRun {
     pub started_at: i64,
     pub effective_query: String,
     pub query_plan_revision: i64,
+    /// Explicit one-off collection may use a watchlist without enabling its scheduler.
+    /// False if the user disabled an enabled list after its collection was queued.
+    pub allowed_while_disabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -354,27 +357,79 @@ pub fn used_search_calls(db: &Connection, now: i64) -> Result<i64, MarketError> 
     )?)
 }
 
+/// Explain why an explicit or scheduled collection could not reserve a search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimBlocked {
+    Disabled,
+    Backoff { seconds: i64, last_error: Option<String> },
+    NotDue { seconds: i64 },
+    InProgress,
+    DailyBudget { seconds: i64 },
+}
+
+impl ClaimBlocked {
+    pub fn message(&self) -> String {
+        fn minutes(seconds: i64) -> i64 { ((seconds.max(1) + 59) / 60).max(1) }
+        match self {
+            Self::Disabled => "Daily collection is disabled for this watchlist.".into(),
+            Self::Backoff { seconds, last_error } => format!(
+                "Collection is temporarily paused after {}. Try again in about {} minute(s).",
+                last_error.as_deref().unwrap_or("a previous error"), minutes(*seconds)
+            ),
+            Self::NotDue { seconds } => format!(
+                "Next scheduled collection is due in about {} minute(s).",
+                minutes(*seconds)
+            ),
+            Self::InProgress => "This watchlist is already collecting. Results refresh automatically.".into(),
+            Self::DailyBudget { seconds } => format!(
+                "The rolling 24-hour YouTube search budget (20 searches) is exhausted. Try again in about {} minute(s).",
+                minutes(*seconds)
+            ),
+        }
+    }
+}
+
 /// Atomic per-watchlist lease and conservative project-level API budget reservation.
-/// Returns None when disabled, not due, active, backing off, or at quota.
-pub fn claim_watchlist(
+/// Scheduled collections require an enabled watchlist. Explicit one-off actions
+/// work even if the daily schedule is off, but obey backoff, lease and budget.
+pub fn claim_watchlist_detailed(
     db: &Connection,
     watchlist_id: &str,
     now: i64,
     manual: bool,
-) -> Result<Option<MarketRun>, MarketError> {
+) -> Result<Result<MarketRun, ClaimBlocked>, MarketError> {
     let txn = db.unchecked_transaction()?;
     let w = get_watchlist(&txn, watchlist_id)?;
-    if !w.enabled || w.backoff_until > now || (!manual && w.next_due_at > now) {
-        return Ok(None);
+    if !manual && !w.enabled {
+        return Ok(Err(ClaimBlocked::Disabled));
+    }
+    if w.backoff_until > now {
+        return Ok(Err(ClaimBlocked::Backoff {
+            seconds: w.backoff_until - now,
+            last_error: w.error_code,
+        }));
+    }
+    if !manual && w.next_due_at > now {
+        return Ok(Err(ClaimBlocked::NotDue { seconds: w.next_due_at - now }));
     }
     let active: i64 = txn.query_row(
         "SELECT COUNT(*) FROM market_runs WHERE watchlist_id=?1 AND state='running'",
         [watchlist_id],
         |r| r.get(0),
     )?;
+    if active > 0 {
+        return Ok(Err(ClaimBlocked::InProgress));
+    }
     let usage = used_search_calls(&txn, now)?;
-    if active > 0 || usage >= MAX_SEARCH_CALLS {
-        return Ok(None);
+    if usage >= MAX_SEARCH_CALLS {
+        let earliest: Option<i64> = txn.query_row(
+            "SELECT MIN(reserved_at) FROM market_search_budget WHERE reserved_at > ?1",
+            [now - DAILY_SECONDS],
+            |r| r.get(0),
+        )?;
+        return Ok(Err(ClaimBlocked::DailyBudget {
+            seconds: (earliest.unwrap_or(now) + DAILY_SECONDS - now).max(1),
+        }));
     }
     let id = fresh_id(&txn, "run")?;
     let effective_query = w.next_search_query.clone();
@@ -392,14 +447,25 @@ pub fn claim_watchlist(
         params![watchlist_id, now + DAILY_SECONDS],
     )?;
     txn.commit()?;
-    Ok(Some(MarketRun {
+    Ok(Ok(MarketRun {
         id,
         watchlist_id: watchlist_id.into(),
         state: "running".into(),
         started_at: now,
         effective_query,
         query_plan_revision: w.query_plan_revision,
+        allowed_while_disabled: manual && !w.enabled,
     }))
+}
+
+/// Preserve the optional-claim interface used by the automatic worker.
+pub fn claim_watchlist(
+    db: &Connection,
+    watchlist_id: &str,
+    now: i64,
+    manual: bool,
+) -> Result<Option<MarketRun>, MarketError> {
+    Ok(claim_watchlist_detailed(db, watchlist_id, now, manual)?.ok())
 }
 
 pub fn complete_run(

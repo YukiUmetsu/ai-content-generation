@@ -301,3 +301,59 @@ fn related_videos_reject_invalid_and_vague_topics() {
             .is_empty()
     );
 }
+
+#[test]
+fn explicit_collect_runs_with_scheduler_off_and_explains_running_and_backoff() {
+    use contentgen_server::research::market_store::ClaimBlocked;
+    let db = db_ready();
+    let now = 1_000_000;
+    let watch = market_store::create_watchlist(&db, draft(false), now).unwrap();
+
+    assert!(matches!(
+        market_store::claim_watchlist_detailed(&db, &watch.id, now, false).unwrap(),
+        Err(ClaimBlocked::Disabled)
+    ));
+    let run = market_store::claim_watchlist_detailed(&db, &watch.id, now, true)
+        .unwrap().unwrap();
+    assert!(run.allowed_while_disabled);
+    assert!(!market_store::get_watchlist(&db, &watch.id).unwrap().enabled);
+    assert!(matches!(
+        market_store::claim_watchlist_detailed(&db, &watch.id, now, true).unwrap(),
+        Err(ClaimBlocked::InProgress)
+    ));
+    assert_eq!(market_store::used_search_calls(&db, now).unwrap(), 1);
+
+    market_store::fail_run(&db, &run.id, "provider_unavailable", now + 1).unwrap();
+    let rejected = market_store::claim_watchlist_detailed(&db, &watch.id, now + 2, true)
+        .unwrap().unwrap_err();
+    assert!(matches!(
+        rejected,
+        ClaimBlocked::Backoff { seconds: 899, last_error: Some(_) }
+    ));
+    assert!(rejected.message().contains("provider_unavailable"));
+    let retried = market_store::claim_watchlist_detailed(&db, &watch.id, now + 902, true)
+        .unwrap().unwrap();
+    assert!(retried.allowed_while_disabled);
+    market_store::complete_run(&db, &retried.id, &[], now + 903).unwrap();
+    assert!(!market_store::get_watchlist(&db, &watch.id).unwrap().enabled);
+}
+
+#[test]
+fn manual_collect_is_bound_by_rolling_budget_even_when_scheduler_is_off() {
+    use contentgen_server::research::market_store::ClaimBlocked;
+    let db = db_ready();
+    let now = 1_000_000;
+    let watch = market_store::create_watchlist(&db, draft(false), now).unwrap();
+    for i in 0..20 {
+        let run = market_store::claim_watchlist_detailed(&db, &watch.id, now + i, true)
+            .unwrap().unwrap();
+        market_store::complete_run(&db, &run.id, &[], now + i).unwrap();
+    }
+    let limit = market_store::claim_watchlist_detailed(&db, &watch.id, now + 20, true)
+        .unwrap().unwrap_err();
+    assert!(matches!(limit, ClaimBlocked::DailyBudget { seconds: 86_380 }));
+    assert!(limit.message().contains("20 searches"));
+    let run = market_store::claim_watchlist_detailed(&db, &watch.id, now + 86_400, true)
+        .unwrap().unwrap();
+    market_store::complete_run(&db, &run.id, &[], now + 86_400).unwrap();
+}
