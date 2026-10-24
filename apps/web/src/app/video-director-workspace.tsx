@@ -12,7 +12,7 @@ type Shot={id:string;visualChange:string;onScreenText:string;purpose:string;visu
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
-type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string};
+type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string;researchSha256?:string};
 type Dossier={kind:string;id:string;topic:{title:string;audience:string}};
 type Variant={id:string;strategy:string;audienceSignal:string;curiosityQuestion:string;
   narration:string;firstVisual:string;onScreenText:string;payoffConnection:string;sfxIntent:string|null};
@@ -39,6 +39,24 @@ function downloadJson(name:string,data:unknown){
   document.body.append(anchor);anchor.click();anchor.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
+const directorSessionKey=(projectId:string,artifactId:string)=>
+  "contentgen:director-session:v1:"+projectId+":"+artifactId;
+function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle):
+  {dossier:Dossier;bundle:Bundle}|null {
+  if(!projectId||typeof sessionStorage==="undefined"||!source.researchSha256)return null;
+  try{
+    const raw=sessionStorage.getItem(directorSessionKey(projectId,artifactId));
+    if(!raw||raw.length>900000)return null;
+    const data=JSON.parse(raw) as {version?:number;artifactId?:string;dossier?:Dossier;bundle?:Bundle};
+    if(data.version!==1||data.artifactId!==artifactId||data.dossier?.kind!=="research-dossier"||
+      data.dossier.id!==source.researchId||data.bundle?.kind!=="preproduction-bundle"||
+      data.bundle.researchId!==source.researchId||data.bundle.researchSha256!==source.researchSha256||
+      !Array.isArray(data.bundle.plan?.shots)||!data.bundle.plan.shots.length||
+      !Array.isArray(data.bundle.plan?.sound)||!Array.isArray(data.bundle.plan?.teachingSequences)||
+      !/^[a-f0-9]{64}$/u.test(data.bundle.planSha256??""))return null;
+    return {dossier:data.dossier,bundle:data.bundle};
+  }catch{return null;}
+}
 function shotDraft(bundle:Bundle,id:string){
   const shot=bundle.plan.shots.find(x=>x.id===id);
   const audio=bundle.plan.sound.find(x=>x.shotId===id);
@@ -63,11 +81,12 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
   const [status,setStatus]=useState("");
   const [sampleMode,setSampleMode]=useState(false);
   const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId));
+  const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic")=>{
-    setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");
+  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null)=>{
+    setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");setSourceArtifactId(artifactId);
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
@@ -85,12 +104,26 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
         saved.bundle?.kind!=="preproduction-bundle" || !saved.dossier.id ||
         saved.bundle.researchId!==saved.dossier.id || !saved.bundle.plan?.shots?.length)
         throw Error("The returned project did not match the selected research artifact.");
-      acceptProject(saved.dossier,saved.bundle);
-      setStatus("Opened the saved research plan. Changes made later in Storyboard Planner are not yet imported; compare the shots before rendering. Claims and media rights still need review.");
+      const resumed=readDirectorSession(projectId,researchArtifactId,saved.bundle);
+      acceptProject(resumed?.dossier??saved.dossier,resumed?.bundle??saved.bundle,"topic",researchArtifactId);
+      setStatus((resumed?"Resumed applied shot edits from this browser session. ":"Opened the original saved research plan. ")+
+        "Changes made later in Storyboard Planner are not yet imported; compare the shots before rendering. Claims and media rights still need review.");
     }).catch(error=>{if(active)setStatus(error instanceof Error?error.message:"Saved research could not be opened.");})
       .finally(()=>{if(active)setLoadingSaved(false);});
     return ()=>{active=false;};
   },[researchArtifactId,projectId,acceptProject]);
+  useEffect(()=>{
+    if(!projectId||!researchArtifactId||sourceArtifactId!==researchArtifactId||!dossier||!bundle||
+      typeof sessionStorage==="undefined")return;
+    try{
+      // Only applied shot edits are saved here. Never store provider keys or voice permissions.
+      const data=JSON.stringify({version:1,artifactId:researchArtifactId,dossier,bundle});
+      if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
+      sessionStorage.setItem(directorSessionKey(projectId,researchArtifactId),data);
+    }catch{
+      setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director.");
+    }
+  },[projectId,researchArtifactId,sourceArtifactId,dossier,bundle]);
   async function importProject(file:File|undefined){
     if(!file)return;
     try{
@@ -220,7 +253,12 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" icon={<Download className="size-4"/>}
             onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
-          <Button variant="outline" onClick={()=>{setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setStatus("");}}>
+          <Button variant="outline" onClick={()=>{
+               if(projectId&&researchArtifactId&&sourceArtifactId===researchArtifactId){
+                 try{sessionStorage.removeItem(directorSessionKey(projectId,researchArtifactId));}catch{/* In-memory reset still works. */}
+               }
+               setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setSourceArtifactId(null);setStatus("");
+             }}>
             Start another project
           </Button>
         </div>
