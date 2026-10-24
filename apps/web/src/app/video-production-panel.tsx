@@ -155,12 +155,16 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
       }
     }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Unable to open the selected production stage.");})
       .finally(()=>{if(active)setWorking("");});
-    return ()=>{active=false;};
+    return ()=>{active=false;autoFocusHandled.current=false;};
   },[focusStage,dossier,bundle]);
   useEffect(()=>{
-    if(!preview||!focusStage||focusStage==="visuals")return;
+    if(!preview||!focusStage||focusStage==="visuals"||typeof requestAnimationFrame!=="function")return;
     requestAnimationFrame(()=>(focusStage==="audio"?audioAnchor:exportAnchor).current?.scrollIntoView?.({block:"start"}));
   },[preview,focusStage]);
+  useEffect(()=>{
+    if(!actualPreview||focusStage!=="visuals"||typeof requestAnimationFrame!=="function")return;
+    requestAnimationFrame(()=>previewAnchor.current?.scrollIntoView?.({block:"start"}));
+  },[actualPreview,focusStage]);
   useEffect(()=>{
     if(!autoOpenSample||sampleAutoLoaded)return;
     let active=true;
