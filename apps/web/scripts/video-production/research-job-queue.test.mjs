@@ -74,6 +74,42 @@ test("malformed output is retried twice with repair feedback before completing t
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test("retry uses the validated field path and reports it without private model output",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  const feedback=[];
+  const manager=fixture(root,{scene:async(_outline,index,_d,_q,_settings,options)=>{
+    if(index===1){
+      feedback.push(options.feedback);
+      if(feedback.length===1)throw Object.assign(Error("Private text should not be forwarded"),
+        {code:"schema_invalid",field:"phases[1].visualElements"});
+    }
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.match(feedback[1],/phases\[1\]\.visualElements/);
+    assert.doesNotMatch(feedback[1],/Private text/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("exhausted schema retries retain safe failure detail for Studio",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  const manager=fixture(root,{scene:async(_outline,index)=>{
+    if(index===1)throw Object.assign(Error("private passage: do not disclose"),
+      {code:"schema_invalid",field:"phases[2].narration"});
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const state=await settled(manager,jobId);
+    assert.equal(state.status,"failed");
+    assert.equal(state.error.detailCode,"schema_invalid");
+    assert.equal(state.error.field,"phases[2].narration");
+    assert.doesNotMatch(JSON.stringify(state),/private passage/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("retry progress is public, checkpointed, and cleared after final failure",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   let release=()=>{};

@@ -14,9 +14,11 @@ const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|scene_\d+_\d+_\d+)\.json$/u.test(name);
+const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const errorInfo=error=>{
   const raw=String(error?.message??error??"Unknown job failure");
-  const code=/memory|out.of.memory|allocat|oom/iu.test(raw)?"model_memory":
+  const detailCode=["schema_invalid","json_invalid","output_truncated","output_missing","provider_envelope_invalid"].includes(error?.code)?error.code:null;
+  const code=detailCode?"invalid_output":/memory|out.of.memory|allocat|oom/iu.test(raw)?"model_memory":
     /timeout|timed out|aborted due to timeout/iu.test(raw)?"model_timeout":
     /json|schema|rejected|invalid|claim|visual|teaching/i.test(raw)?"invalid_output":
     /storage|ENOSPC|EACCES|EPERM/iu.test(raw)?"storage":
@@ -25,7 +27,7 @@ const errorInfo=error=>{
   const message=({model_memory:"Local model ran out of available memory.",model_timeout:"Local model request timed out.",
     invalid_output:"Local model returned invalid structured data.",storage:"Cannot write local job checkpoints.",
     provider_unavailable:"Local model or network provider is unavailable.",stage_failed:"This job stage failed; review server diagnostics."})[code];
-  return {code,message};
+  return {code,message,...(detailCode?{detailCode}:{}),...(safeField(error?.field)?{field:safeField(error.field)}:{})};
 };
 
 async function atomicJson(file,value,limit=512*1024){
@@ -111,8 +113,13 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       for(let n=0;n<maxAttempts;n++){
         guard(signal);
         try{
-          const result=await inference(()=>call(settings,n>0?
-            "The previous response was invalid. Return ONLY a complete JSON object with exactly the required fields and types; correct missing or malformed fields without inventing facts.":null),signal);
+          const failure=last?errorInfo(last):null;
+          const feedback=n>0?failure?.field&&failure.detailCode==="schema_invalid"?
+            `The previous JSON failed validation at ${failure.field}. Correct that field to meet the required type and length; return the COMPLETE JSON object with all required fields, without inventing facts.`:
+            failure?.detailCode==="output_truncated"?
+              "The previous JSON was cut off at the output limit. Keep every required field but use shorter text; return one complete JSON object.":
+              "The previous response was invalid. Return ONLY a complete JSON object with exactly the required fields and types; correct missing or malformed fields without inventing facts.":null;
+          const result=await inference(()=>call(settings,feedback),signal);
           job.retry=null;
           await save(job);
           return result;
@@ -123,16 +130,20 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           const info=errorInfo(error);
           const retryable=["model_timeout","provider_unavailable","invalid_output"].includes(info.code);
           if(retryable&&n<maxAttempts-1){
-            job.retry={stage:job.stage,attempt:n+2,maxAttempts,reason:info.code,modelIndex:modelIndex+1,totalModels:models.length};
+            job.retry={stage:job.stage,attempt:n+2,maxAttempts,reason:info.code,modelIndex:modelIndex+1,totalModels:models.length,
+              ...(info.detailCode?{detailCode:info.detailCode}:{}),...(info.field?{field:info.field}:{})};
             await save(job);
             console.warn("[contentgen-research-retry]",JSON.stringify({jobId:job.id,stage:job.stage,
-              errorCode:info.code,nextAttempt:n+2,maxAttempts,modelIndex:modelIndex+1}));
+              errorCode:info.code,detailCode:info.detailCode??null,field:info.field??null,
+              nextAttempt:n+2,maxAttempts,modelIndex:modelIndex+1}));
             await sleep(1000*(n+1));
           }else break;
         }
       }
       if(modelIndex<models.length-1){
         job.retry={stage:job.stage,attempt:1,maxAttempts,reason:errorInfo(last).code,
+          ...(errorInfo(last).detailCode?{detailCode:errorInfo(last).detailCode}:{}),
+          ...(errorInfo(last).field?{field:errorInfo(last).field}:{}),
           modelIndex:modelIndex+2,totalModels:models.length};
         await save(job);
         await sleep(2500);

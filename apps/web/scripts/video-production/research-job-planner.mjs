@@ -7,6 +7,42 @@ import { selectEvidenceForScene } from "./research-job-evidence.mjs";
 const txt=(v,min,max)=>typeof v==="string"&&v.trim().length>=min&&v.length<=max&&!/[\u0000-\u001f]/u.test(v);
 const noQuantity=v=>txt(v,2,42)&&!/[$€£¥%\p{N}<>`{}\\]/u.test(v);
 const patterns=new Set(["investigation","misconception","mechanism","cost-dissection","decision","failure","scale"]);
+const outputError=(code,field,message)=>Object.assign(new Error(message),{code,field});
+const requireField=(valid,field,expected)=>{
+  if(!valid)throw outputError("schema_invalid",field,`Invalid ${field}: ${expected}.`);
+};
+
+function parseLocalResponse(content){
+  let envelope;
+  try{envelope=JSON.parse(content);}catch{throw outputError("provider_envelope_invalid","response","Local model provider returned an invalid JSON envelope.");}
+  const choice=envelope?.choices?.[0];
+  if(choice?.finish_reason==="length")throw outputError("output_truncated","response","Local model response was truncated by its output token limit.");
+  const raw=choice?.message?.content;
+  if(typeof raw!=="string"||raw.length===0)throw outputError("output_missing","response","Local model did not return a JSON message.");
+  const cleaned=raw.trim().replace(/^```(?:json)?\s*\n/iu,"").replace(/\n\s*```$/u,"").trim();
+  try{return JSON.parse(cleaned);}catch{
+    // A syntax-only recovery: drop commas immediately before closing braces/brackets,
+    // but never edit a quoted string or synthesize missing content.
+    let quoted=false,escaped=false,repaired="",changed=false;
+    for(let i=0;i<cleaned.length;i++){
+      const char=cleaned[i];
+      if(quoted){
+        repaired+=char;
+        if(escaped)escaped=false;
+        else if(char==="\\")escaped=true;
+        else if(char==='"')quoted=false;
+      }else if(char==='"'){quoted=true;repaired+=char;}
+      else if(char===","){
+        let next=i+1;
+        while(/\s/u.test(cleaned[next]??"")&&next<cleaned.length)next++;
+        if(cleaned[next]==="}"||cleaned[next]==="]")changed=true;
+        else repaired+=char;
+      }else repaired+=char;
+    }
+    if(changed)try{return JSON.parse(repaired);}catch{/* No speculative repair beyond trailing commas. */}
+    throw outputError("json_invalid","response","Local model returned malformed JSON.");
+  }
+}
 
 async function localJson(settings,system,input,{transport=fetch,signal,maxTokens=1100}={}){
   if(!txt(settings?.model,1,120))throw Error("An installed local model is required for this job.");
@@ -35,19 +71,24 @@ async function localJson(settings,system,input,{transport=fetch,signal,maxTokens
     content=Buffer.concat(parts).toString("utf8");
   }else content=await response.text();
   if(Buffer.byteLength(content)>128*1024)throw Error("Local model answer exceeds 128 KiB.");
-  try{return JSON.parse(JSON.parse(content).choices[0].message.content);}catch{throw Error("Local model returned invalid structured JSON.");}
+  return parseLocalResponse(content);
 }
 
 function validateOutline(outline,dossier){
   const known=new Set(dossier.claims.map(claim=>claim.id));
-  if(!outline||!patterns.has(outline.pattern)||!txt(outline.premise,8,300)||
-    !txt(outline.hook,8,200)||!Array.isArray(outline.beats)||outline.beats.length<2||outline.beats.length>6)
-    throw Error("Outline must provide 2–6 focused teaching beats.");
-  for(const beat of outline.beats){
-    if(!txt(beat?.question,8,180)||!txt(beat?.purpose,8,240)||!txt(beat?.payoff,8,240)||
-      !Array.isArray(beat.claimIds)||beat.claimIds.length<1||beat.claimIds.length>3||
-      new Set(beat.claimIds).size!==beat.claimIds.length||beat.claimIds.some(id=>!known.has(id)))
-      throw Error("Outline refers to an unknown claim or invalid teaching beat.");
+  requireField(patterns.has(outline?.pattern),"pattern","use an allowed story pattern");
+  requireField(txt(outline.premise,8,300),"premise","write 8–300 characters");
+  requireField(txt(outline.hook,8,200),"hook","write 8–200 characters");
+  requireField(Array.isArray(outline.beats)&&outline.beats.length>=2&&outline.beats.length<=6,
+    "beats","provide 2–6 beats");
+  for(const [index,beat] of outline.beats.entries()){
+    const field=`beats[${index}]`;
+    requireField(txt(beat?.question,8,180),field+".question","write 8–180 characters");
+    requireField(txt(beat?.purpose,8,240),field+".purpose","write 8–240 characters");
+    requireField(txt(beat?.payoff,8,240),field+".payoff","write 8–240 characters");
+    requireField(Array.isArray(beat?.claimIds)&&beat.claimIds.length>=1&&beat.claimIds.length<=3&&
+      new Set(beat.claimIds).size===beat.claimIds.length&&beat.claimIds.every(id=>known.has(id)),
+      field+".claimIds","use 1–3 distinct provided claim IDs");
   }
   return outline;
 }
@@ -66,21 +107,30 @@ export async function generateOutline(dossier,quotes,settings,deps={}){
 }
 
 function validateUnit(unit){
-  if(!unit||!noQuantity(unit.subject)||!noQuantity(unit.parts?.[0])||!noQuantity(unit.parts?.[1])||
-    unit.parts.length!==2||unit.parts[0]===unit.parts[1]||
-    !["compare","split"].includes(unit.operator)||
-    !txt(unit.before,8,48)||!txt(unit.action,8,90)||!txt(unit.after,8,48)||
-    new Set([unit.before,unit.action,unit.after].map(s=>s.toLowerCase())).size!==3||
-    !Array.isArray(unit.phases)||unit.phases.length!==3)
-    throw Error("Scene unit needs concrete qualitative subject, two parts, and before/action/after states; quantities are forbidden.");
-  for(const phase of unit.phases){
-    if(!txt(phase?.visualAction,8,300)||!txt(phase?.learningChange,8,220)||
-      !txt(phase?.onScreenText,3,120)||!txt(phase?.narration,10,500)||
-      !isVisualElements(phase?.visualElements))throw Error("Scene unit lacks meaningful visible teaching elements or narration.");
+  requireField(noQuantity(unit?.subject),"subject","use a short concrete noun without quantities");
+  requireField(Array.isArray(unit?.parts)&&unit.parts.length===2,"parts","provide exactly two parts");
+  for(let i=0;i<2;i++)requireField(noQuantity(unit.parts[i]),`parts[${i}]`,"use a concrete noun without quantities");
+  requireField(unit.parts[0]!==unit.parts[1],"parts","use two distinct parts");
+  requireField(["compare","split"].includes(unit.operator),"operator","use split or compare");
+  requireField(txt(unit.before,8,48),"before","write 8–48 characters");
+  requireField(txt(unit.action,8,90),"action","write 8–90 characters");
+  requireField(txt(unit.after,8,48),"after","write 8–48 characters");
+  requireField(new Set([unit.before,unit.action,unit.after].map(s=>s.toLowerCase())).size===3,
+    "before/action/after","describe three different states");
+  requireField(Array.isArray(unit.phases)&&unit.phases.length===3,"phases","provide exactly three phases");
+  for(const [index,phase] of unit.phases.entries()){
+    const field=`phases[${index}]`;
+    requireField(txt(phase?.visualAction,8,300),field+".visualAction","write 8–300 characters");
+    requireField(txt(phase?.learningChange,8,220),field+".learningChange","write 8–220 characters");
+    requireField(txt(phase?.onScreenText,3,120),field+".onScreenText","write 3–120 characters");
+    requireField(txt(phase?.narration,10,500),field+".narration","write 10–500 characters");
+    requireField(isVisualElements(phase?.visualElements),field+".visualElements",
+      "provide 2–5 distinct visible elements with short labels and details");
   }
-  if(new Set(unit.phases.map(p=>p.visualAction.toLowerCase())).size!==3||
-    new Set(unit.phases.map(p=>p.learningChange.toLowerCase())).size!==3)
-    throw Error("Scene phases must visibly change the subject and teach distinct insights.");
+  requireField(new Set(unit.phases.map(p=>p.visualAction.toLowerCase())).size===3,
+    "phases.visualAction","describe three distinct visual actions");
+  requireField(new Set(unit.phases.map(p=>p.learningChange.toLowerCase())).size===3,
+    "phases.learningChange","teach three distinct insights");
   return unit;
 }
 
