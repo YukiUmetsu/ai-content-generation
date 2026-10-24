@@ -51,6 +51,47 @@ impl YoutubeError {
     }
 }
 
+/// Diagnostics are composed exclusively from fixed, reviewed strings.
+/// Never include the request URL, query, headers, credential, or Google response.
+fn safe_failure_log(
+    endpoint: &str,
+    status: Option<reqwest::StatusCode>,
+    error: YoutubeError,
+) -> String {
+    let stage = match endpoint {
+        "search" => "search",
+        "videos" => "videos",
+        "channels" => "channels",
+        _ => "unknown",
+    };
+    let http_status = status.map(|s| s.as_u16().to_string()).unwrap_or_else(|| "network".into());
+    let advice = match error {
+        YoutubeError::MissingKey => "configure_youtube_key",
+        YoutubeError::Permission => "check_google_cloud_api_and_key_permissions",
+        YoutubeError::ApiNotEnabled => "enable_youtube_data_api_v3",
+        YoutubeError::InvalidKey => "replace_youtube_api_key",
+        YoutubeError::KeyRestricted => "check_key_application_restrictions",
+        YoutubeError::InvalidRequest => "check_request_parameters",
+        YoutubeError::Quota => "check_google_cloud_youtube_quota",
+        YoutubeError::RateLimited => "wait_for_provider_backoff",
+        YoutubeError::Unavailable => "retry_provider_connection",
+        YoutubeError::InvalidPayload => "check_provider_response_contract",
+    };
+    format!(
+        "contentgen-server: youtube_api_failure endpoint={stage} http_status={http_status} reason={} action={advice}",
+        error.code()
+    )
+}
+
+fn log_failure(
+    endpoint: &str,
+    status: Option<reqwest::StatusCode>,
+    error: YoutubeError,
+) -> YoutubeError {
+    eprintln!("{}", safe_failure_log(endpoint, status, error));
+    error
+}
+
 #[derive(Clone)]
 pub struct YoutubeClient {
     base: String,
@@ -99,10 +140,10 @@ impl YoutubeClient {
             .query(params)
             .send()
             .await
-            .map_err(|_| YoutubeError::Unavailable)?;
+            .map_err(|_| log_failure(endpoint, None, YoutubeError::Unavailable))?;
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(YoutubeError::RateLimited);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::RateLimited));
         }
         if matches!(
             status,
@@ -112,26 +153,28 @@ impl YoutubeClient {
         ) {
             // Only classify known Google error codes locally. Never log or
             // persist the provider's raw message, URL or credential.
-            let bytes = response.bytes().await.map_err(|_| YoutubeError::Permission)?;
-            return Err(classify_youtube_error(status, &bytes));
+            let bytes = response.bytes().await
+                .map_err(|_| log_failure(endpoint, Some(status), YoutubeError::Permission))?;
+            return Err(log_failure(endpoint, Some(status), classify_youtube_error(status, &bytes)));
         }
         if !status.is_success() {
-            return Err(YoutubeError::Unavailable);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::Unavailable));
         }
         if response
             .content_length()
             .is_some_and(|size| size > 1_000_000)
         {
-            return Err(YoutubeError::InvalidPayload);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::InvalidPayload));
         }
         let bytes = response
             .bytes()
             .await
-            .map_err(|_| YoutubeError::Unavailable)?;
+            .map_err(|_| log_failure(endpoint, Some(status), YoutubeError::Unavailable))?;
         if bytes.len() > 1_000_000 {
-            return Err(YoutubeError::InvalidPayload);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::InvalidPayload));
         }
-        serde_json::from_slice(&bytes).map_err(|_| YoutubeError::InvalidPayload)
+        serde_json::from_slice(&bytes)
+            .map_err(|_| log_failure(endpoint, Some(status), YoutubeError::InvalidPayload))
     }
 
     pub async fn collect(
@@ -470,6 +513,35 @@ mod tests {
             assert!(!format!("{err:?}").contains("secret"));
             assert!(!format!("{err:?}").contains("private provider"));
         }
+    }
+
+    #[test]
+    fn safe_diagnostics_include_action_and_stage_but_never_untrusted_values() {
+        use reqwest::StatusCode;
+        let redacted = safe_failure_log(
+            "search?key=AIza_private-secret&q=my-private-research",
+            Some(StatusCode::FORBIDDEN),
+            YoutubeError::KeyRestricted,
+        );
+        assert_eq!(
+            redacted,
+            "contentgen-server: youtube_api_failure endpoint=unknown http_status=403 reason=api_key_restricted action=check_key_application_restrictions"
+        );
+        assert!(!redacted.contains("AIza"));
+        assert!(!redacted.contains("my-private-research"));
+        for (stage, error, expected) in [
+            ("search", YoutubeError::ApiNotEnabled, "enable_youtube_data_api_v3"),
+            ("videos", YoutubeError::InvalidKey, "replace_youtube_api_key"),
+            ("channels", YoutubeError::Quota, "check_google_cloud_youtube_quota"),
+        ] {
+            let line = safe_failure_log(stage, Some(StatusCode::FORBIDDEN), error);
+            assert!(line.contains(&format!("endpoint={stage}")));
+            assert!(line.contains(&format!("reason={}", error.code())));
+            assert!(line.contains(&format!("action={expected}")));
+        }
+        let network = safe_failure_log("search", None, YoutubeError::Unavailable);
+        assert!(network.contains("http_status=network"));
+        assert!(!network.contains("https://"));
     }
 
     #[tokio::test]

@@ -81,6 +81,12 @@ where
                 }
             }
             Err(err) => {
+                // Correlate provider diagnostics with an opaque generated run ID.
+                // Do not log watchlist names, search phrases or raw provider errors.
+                eprintln!(
+                    "contentgen-server: youtube_collection_failed run_id={} reason={}",
+                    run.id, err.code()
+                );
                 let _ = market_store::fail_run(&db, &run.id, err.code(), epoch_now());
             }
         }
