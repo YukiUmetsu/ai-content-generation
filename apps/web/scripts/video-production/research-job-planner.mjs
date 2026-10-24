@@ -12,6 +12,7 @@ const noQuantity=v=>txt(v,2,42)&&v.trim()===v&&
 const visibleState=(value,min,max)=>txt(value,min,max)&&
   !/^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu.test(value.trim());
 const patterns=new Set(["investigation","misconception","mechanism","cost-dissection","decision","failure","scale"]);
+const qwen35Model=model=>/qwen3[._-]5\b/iu.test(model);
 export const RESEARCH_MODEL_LIMITS=Object.freeze({...DEFAULT_RESEARCH_GENERATION,timeoutMs:DEFAULT_RESEARCH_GENERATION.timeoutSeconds*1000});
 const outputError=(code,field,message)=>Object.assign(new Error(message),{code,field});
 const requireField=(valid,field,expected)=>{
@@ -56,7 +57,8 @@ async function localJson(settings,system,input,{transport=fetch,signal,maxTokens
   const timeout=AbortSignal.timeout(timeoutMs);
   const body={model:settings.model,temperature:0.3,stream:false,max_tokens:maxTokens,
     response_format:{type:"json_object"},messages:[{role:"system",content:system},
-      {role:"user",content:JSON.stringify(input)}]};
+      {role:"user",content:JSON.stringify(input)}],
+    ...(qwen35Model(settings.model)?{chat_template_kwargs:{enable_thinking:false}}:{})};
   if(JSON.stringify(body).length>11500)throw Error("Local AI input exceeds its safe context budget.");
   const response=await transport(url,{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},
     body:JSON.stringify(body),signal:signal?AbortSignal.any([signal,timeout]):timeout});
@@ -220,7 +222,7 @@ function sceneOptions(settings,deps){
   return {...deps,maxTokens:generation.sceneTokens,timeoutMs:generation.timeoutSeconds*1000};
 }
 const compactRetry=feedback=>typeof feedback==="string"&&/truncat|cut off|output limit/iu.test(feedback);
-const generationPrefix=settings=>/qwen3/iu.test(settings.model)?"/no_think\n":"";
+const generationPrefix=settings=>/qwen3/iu.test(settings.model)&&!qwen35Model(settings.model)?"/no_think\n":"";
 function validateSceneStructure(structure){
   requireField(noQuantity(structure?.subject),"subject","use a short concrete noun without quantities");
   requireField(Array.isArray(structure?.parts)&&structure.parts.length===2,"parts","provide exactly two parts");
