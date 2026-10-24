@@ -18,6 +18,14 @@ export interface ClaimEvidenceIssue {
   sourceRefs: string[];
 }
 
+/** Never display a citation from another project's cached research just because source IDs overlap. */
+export function matchesStoryboardResearch(board:SemanticStoryboard,draft:ResearchDraftResult):boolean {
+  const explicit=board.assumptions.find(value=>value.startsWith("Research artifact: "));
+  if(explicit)return Boolean(draft.artifactId)&&explicit==="Research artifact: "+draft.artifactId;
+  return Boolean(draft.snapshotId)&&board.assumptions.some(value=>
+    value.startsWith("Immutable research snapshot: "+draft.snapshotId+". "));
+}
+
 export function countClaimIssues(issues: readonly ClaimEvidenceIssue[]): Record<ClaimEvidenceKind, number> {
   const counts = { source_missing: 0, source_mismatch: 0, needs_factual_review: 0, source_unchecked: 0 };
   for (const issue of issues) counts[issue.kind]++;
