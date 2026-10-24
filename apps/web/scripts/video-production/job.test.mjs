@@ -43,6 +43,18 @@ test("generic scene transformations accept bounded state copy and reject injecte
   job.beats[0].visual.direction.transformation.after="Danger\nInjected";
   assert.ok(errorCodes(parseVideoProductionJob(job)).includes("invalid-teaching-transformation"));
 });
+test("production transformations treat the 48/90-character targets as guidance",()=>{
+  const job=structuredClone(general);
+  job.beats[0].visual.direction={phase:"problem",subjectIds:["house"],
+    visualAction:"Reveal the real installation components",
+    learningChange:"Equipment and skilled labor both matter",
+    transformation:{subjectId:"house",
+      before:"A heating system and its equipment-only estimate appear before the installation work is explained.",
+      action:"The estimate expands into separate categories for equipment, skilled labor, and the work needed to install the system.",
+      after:"The finished system appears beside an estimate that now shows the equipment and installation labor together."}};
+  const result=parseVideoProductionJob(job);
+  assert.equal(result.ok,true,JSON.stringify(result.findings));
+});
 test("semantic animation mechanic validates within the job trust boundary",()=>{
   const j=structuredClone(general),claim=j.beats[0].claimRefs[0];
   j.beats[0].visual.direction={phase:"problem",subjectIds:["packet"],visualAction:"Move a packet between nodes",
