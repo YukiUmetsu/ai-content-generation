@@ -198,7 +198,7 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
         });
         continue;
       }
-      if (claim.status === "unverified" || (claim.status === "sourced" && claim.sourceRefs.length === 0)) {
+      if ((claim.status === "unverified" || claim.status === "sourced") && claim.sourceRefs.length === 0) {
         addForBeat(beat, "storyboard-claim-unresolved", "warning", `${path}.claimRefs`, {
           id: beat.id,
           claimId,
