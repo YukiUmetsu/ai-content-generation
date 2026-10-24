@@ -59,7 +59,8 @@ test("no fabricated timing accuracy or unsupported malformed source is accepted"
  const {dossier,bundle}=original();
  assert.ok(estimateNarrationSamples("A very small phrase.")>=3*48000);
  assert.ok(estimateNarrationSamples("日本語の説明です", "ja-JP")>=3*48000);
- assert.ok(estimateNarrationSamples("A sentence.", "en-US",95)>estimateNarrationSamples("A sentence.", "en-US",210));
+ const longer="A carefully paced explanation uses enough spoken words for the narration duration to vary with delivery speed.";
+  assert.ok(estimateNarrationSamples(longer, "en-US",95)>estimateNarrationSamples(longer, "en-US",210));
  assert.throws(()=>compileLiveVisualPreview(dossier,bundle,{spokenWpm:2}),/pace/);
  const changed=structuredClone(bundle);
  changed.plan.shots[0].onScreenText="Tampered unsourced claim";
