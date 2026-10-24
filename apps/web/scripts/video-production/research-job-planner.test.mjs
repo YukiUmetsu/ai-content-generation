@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateOutline,generateSceneUnit,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
+import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
@@ -221,4 +221,37 @@ test("outline truncation retry narrows output to two short beats and discourages
   assert.match(prompts[0],/\/no_think/u);
   assert.match(prompts[1],/exactly (?:2|two) (?:short|concise) beats/i);
   assert.doesNotMatch(prompts[0],/exactly (?:2|two) (?:short|concise) beats/i);
+});
+
+test("small local outline jobs assemble source-backed story without any full outline response",async()=>{
+  const {beats,...skeletonFields}=outline;
+  const responses=[{...skeletonFields,beatCount:2},...beats];
+  const requests=[];
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    requests.push(request);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(responses[requests.length-1])}}]})};
+  };
+  const limits={outlineTokens:1280,sceneTokens:2048,timeoutSeconds:360};
+  const withLimits={...settings,generation:limits};
+  const skeleton=await generateOutlineSkeleton(dossier,quotes,withLimits,{transport});
+  const results=[];
+  for(let index=0;index<skeleton.beatCount;index++){
+    results.push(await generateOutlineBeat(skeleton,index,results,dossier,quotes,withLimits,{transport}));
+  }
+  assert.deepEqual(assembleOutline(dossier,skeleton,results),outline);
+  assert.equal(requests.length,3);
+  assert.ok(requests.every(request=>request.max_tokens===1280));
+  assert.ok(requests.every(request=>request.messages[1].content.length<4500));
+});
+
+test("one-at-a-time outline beats reject invented claims and repeated questions",async()=>{
+  const skeleton={pattern:outline.pattern,premise:outline.premise,hook:outline.hook,beatCount:2};
+  await assert.rejects(generateOutlineBeat(skeleton,0,[],dossier,quotes,settings,{
+    transport:transportFor({...outline.beats[0],claimIds:["invented_claim"]})
+  }),error=>error.code==="schema_invalid"&&error.field==="claimIds");
+  await assert.rejects(generateOutlineBeat(skeleton,1,[outline.beats[0]],dossier,quotes,settings,{
+    transport:transportFor({...outline.beats[1],question:outline.beats[0].question})
+  }),error=>error.code==="schema_invalid"&&error.field==="question");
 });
