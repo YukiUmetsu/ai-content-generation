@@ -40,14 +40,14 @@ test("the shared inference slot stays locked until the first model response body
   const modelSettings={endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"test-local"};
   const input={name:"House Math",description:"Cost of maintaining and insuring a home",keywords:[]};
   const response=JSON.stringify({choices:[{message:{content:JSON.stringify({suggestions:[
-    {text:"Roof replacement economics",kind:"topic",rationale:"Home maintenance cost"}
+    {text:"How roof replacement estimates change with materials",kind:"topic",rationale:"Home maintenance cost"}
   ]})}}]});
   let releaseBody,secondStarted=false;
-  const first=generateProjectKeywords(input,{modelSettings,transport:async()=>({ok:true,
+  const first=generateProjectKeywords(input,{modelSettings,targetCount:1,transport:async()=>({ok:true,
     headers:{get:()=>null},text:()=>new Promise(resolve=>{releaseBody=resolve;})})});
   for(let i=0;i<20&&!releaseBody;i++)await new Promise(resolve=>setTimeout(resolve,1));
   assert.equal(typeof releaseBody,"function","first producer must have started reading the response");
-  const second=generateProjectKeywords(input,{modelSettings,transport:async()=>{
+  const second=generateProjectKeywords(input,{modelSettings,targetCount:1,transport:async()=>{
     secondStarted=true;return {ok:true,headers:{get:()=>null},text:async()=>response};
   }});
   await new Promise(resolve=>setTimeout(resolve,5));

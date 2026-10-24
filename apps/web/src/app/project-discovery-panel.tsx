@@ -4,7 +4,8 @@ import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import type { LocalContent, LocalProject } from "./catalog-model";
 import { loadProjectKeywords, patchProjectKeywords, suggestProjectKeywords,
-  type KeywordKind, type KeywordSuggestion, type ProjectKeyword, type GraphOverview, type DiscoveryCandidate } from "@/lib/api/discovery";
+  type KeywordKind, type KeywordSuggestion, type KeywordSuggestionQuality, type ProjectKeyword, type GraphOverview,
+  type DiscoveryCandidate } from "@/lib/api/discovery";
 import { ProjectKnowledgePanel } from "./project-knowledge-panel";
 import { DiscoveryIdeasPanel } from "./discovery-ideas-panel";
 
@@ -20,6 +21,7 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
   const onRunFinished = useCallback(()=>setGraphRevision(value=>value+1),[]);
   const [keywords, setKeywords] = useState<ProjectKeyword[]>([]);
   const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
+  const [suggestionQuality,setSuggestionQuality]=useState<KeywordSuggestionQuality|null>(null);
   const [text, setText] = useState("");
   const [kind, setKind] = useState<KeywordKind>("topic");
   const [editingId,setEditingId] = useState<string|null>(null);
@@ -67,7 +69,8 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">{keywords.filter(item=>item.active).length} {msg(locale,"active keywords","有効なキーワード")}</p>
         <Button variant="outline" size="sm" disabled={busy || syncStatus!=="synced"} onClick={()=>void perform(async()=>{
-          setSuggestions(await suggestProjectKeywords(project,keywords.filter(item=>item.active).map(item=>item.text)));
+          const result=await suggestProjectKeywords(project,keywords.filter(item=>item.active).map(item=>item.text));
+          setSuggestions(result.suggestions);setSuggestionQuality(result.quality??null);
           setNotice(msg(locale,"Review suggestions before adding them.","追加前に提案を確認してください。"));
         })}>{msg(locale,busy?"Working…":"Suggest Keywords with Local AI",busy?"生成中…":"ローカル AI で提案")}</Button>
       </div>
@@ -84,6 +87,15 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
       </div>
       {suggestions.length>0&&<div className="mt-4 space-y-2 border-t border-border pt-4">
         <h3 className="text-sm font-semibold">{msg(locale,"Review AI suggestions","AI の提案を確認")}</h3>
+        <p className="text-xs text-muted-foreground">{msg(locale,
+          "Unverified AI-generated hypotheses. Search volume and trend strength have not been measured.",
+          "AI による未検証の提案です。検索数・トレンドの強さは測定されていません。")}</p>
+        {suggestionQuality&&<p className="text-xs text-muted-foreground">{msg(locale,
+          `${suggestionQuality.modelRequests} local AI requests · ${suggestionQuality.rejected} suggestions filtered by quality checks.`,
+          `ローカル AI ${suggestionQuality.modelRequests} 回 · 品質チェックで ${suggestionQuality.rejected} 件除外。`)}</p>}
+        {suggestionQuality?.partial&&<p className="text-xs text-muted-foreground">{msg(locale,
+          "Partial results: no fabricated suggestions were added to reach the target.",
+          "一部の提案のみ利用可能です。件数を満たすための架空の提案は追加していません。")}</p>}
         {suggestions.map(item=><div key={`${item.kind}:${item.text}`} className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border p-3">
           <div className="min-w-0 flex-1"><p className="text-sm font-medium">{item.text} <span className="text-xs text-muted-foreground">· {item.kind}</span></p>
             <p className="text-xs text-muted-foreground">{item.rationale}</p></div>

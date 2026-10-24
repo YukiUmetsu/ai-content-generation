@@ -184,6 +184,28 @@ describe("Project discovery author controls",()=>{
     mock.mockRestore();
   });
 
+  it("marks locally generated keyword suggestions as unverified and explains quality filtering",async()=>{
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
+      const path=String(input);
+      const body=path.endsWith("/keywords")?{keywords:[]}
+        :path.endsWith("project-keyword-suggestions")?{
+          suggestions:[{text:"Why homeowner insurance premiums increase",kind:"query",rationale:"Explains renewal costs"}],
+          quality:{modelRequests:5,batches:3,proposed:9,rejected:8,partial:true,evidence:"unverified"}}
+          :path.endsWith("/graph")?{nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+            :path.endsWith("/watchlists")?{watchlists:[],watchlistIds:[]}
+              :path.endsWith("/runs")?{runs:[]}:null;
+      if(!body)throw Error(`Unexpected route ${path}`);
+      return new Response(JSON.stringify(body),{status:200});
+    });
+    render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Homeowner costs",createdAt:"2026-10-20T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
+    await userEvent.setup().click(await screen.findByRole("button",{name:"Suggest Keywords with Local AI"}));
+    expect(await screen.findByText("Why homeowner insurance premiums increase")).toBeInTheDocument();
+    expect(screen.getByText(/unverified.*search volume/i)).toBeInTheDocument();
+    expect(screen.getByText(/5 local AI requests.*8.*filtered/i)).toBeInTheDocument();
+    expect(screen.getByText(/partial.*no fabricated/i)).toBeInTheDocument();
+  });
+
   it("keeps Projects visible and explains a malformed discovery start response",async()=>{
     vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
       const path=String(input);
