@@ -48,6 +48,12 @@ Sound categories (not filenames): input.click, data.transfer, number.reveal, tra
 
 **Licenses:** Freesound may contain CC0, CC BY and other rights; ingestion must record license per asset rather than treating the whole website as free commercial stock. For tracks, record source/license snapshot, attribution text, platform/monetization restriction, user approval and checksum. Block export for unresolved rights. Online provider "free" pricing is not proof of commercial output rights.
 
+### Current Studio SFX bank (implemented)
+
+Video Director reads each shot's optional `sfxIntent`; shots with no intent remain silent. On **Find CC0 sound effects**, Studio searches Openverse for short sound effects and shows source, license and previews. It does not download anything during discovery. Openverse's third-party license metadata is not independently verified: on first import the editor must check the original page, affirm CC0 and explicitly authorize a download. Server-side import rechecks metadata, rejects untrusted hosts/redirects, bounds input size, and uses FFmpeg to normalize to 48 kHz mono PCM WAV. The reusable local bank records provenance, license, approval and hashes; damaged files cannot be selected. Approved effects are automatically suggested across projects, with per-shot pin, mute and auto overrides. Searches are opt-in, bounded and do not use a language model.
+
+The bank also exports verified clip references through `exportSfxForTimeline`; this **does not** infer cue times. A production caller must supply real shot-to-event IDs and a compiled `eventSamples` timeline before the existing audio mixer can place effects in the final video. Sound selections in Video Director alone are not yet an audible MP4 mix; that binding is the remaining integration step. Other free-audio licenses and music are outside this CC0-only implementation.
+
 ## QA and fixtures
 
 Use offline provider mocks in CI and opt-in integration tests for cloud/local voices. Fixtures:
@@ -60,3 +66,4 @@ Use offline provider mocks in CI and opt-in integration tests for cloud/local vo
 - compare reference narration/Mix QA with a short **human listening check**; never equate measured LUFS with premium sound
 
 **Milestone done when:** a local deterministic fixture plus one approved real-provider sample generate a repeatable mastered WAV, timed SFX and captions and a Kumiki MP4 without requiring any specific speech model in domain types.
+

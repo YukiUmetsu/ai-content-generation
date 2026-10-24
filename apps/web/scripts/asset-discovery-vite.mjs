@@ -1,6 +1,7 @@
 /** Loopback-only, explicit-action bridge for per-scene asset search and approval. */
 import {approveAsset, clearSelectedSceneAsset, discoverShotAssets, listApprovedAssets,
   listSelectedSceneAssets, selectApprovedSceneAsset} from "./video-production/asset-discovery.mjs";
+import {handleSfxDiscoveryRequest} from "./sfx-discovery-vite.mjs";
 
 const PREFIX="/api/contentgen-assets";
 function send(res,status,payload){res.writeHead(status,{"Content-Type":"application/json; charset=utf-8",
@@ -51,5 +52,7 @@ export async function handleAssetDiscoveryRequest(req,res,deps={}){
   }
 }
 export function assetDiscoveryPlugin(){return {name:"contentgen-scene-asset-discovery",
-  configureServer(server){server.middlewares.use(PREFIX,(req,res)=>{void handleAssetDiscoveryRequest(req,res);});},
-  configurePreviewServer(server){server.middlewares.use(PREFIX,(req,res)=>{void handleAssetDiscoveryRequest(req,res);});}};}
+  configureServer(server){server.middlewares.use(PREFIX,(req,res)=>{void handleAssetDiscoveryRequest(req,res);});
+    server.middlewares.use("/api/contentgen-sfx",(req,res)=>{void handleSfxDiscoveryRequest(req,res);});},
+  configurePreviewServer(server){server.middlewares.use(PREFIX,(req,res)=>{void handleAssetDiscoveryRequest(req,res);});
+    server.middlewares.use("/api/contentgen-sfx",(req,res)=>{void handleSfxDiscoveryRequest(req,res);});}};}
