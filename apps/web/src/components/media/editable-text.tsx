@@ -388,8 +388,9 @@ const EditableText = forwardRef<HTMLDivElement, EditableTextProps>(function Edit
 
   const resolvedSize = layout.size;
   const resolvedLineHeight = text.lineHeight * resolvedSize;
-  const lineStyle = blockStyle(text, resolvedSize, resolvedLineHeight);
-  const editableStyle: CSSProperties = { ...lineStyle, whiteSpace: "pre-wrap" };
+  const lineStyle: CSSProperties = { ...blockStyle(text, resolvedSize, resolvedLineHeight),
+    ...(text.lineBreak === "explicit-only" ? { whiteSpace: "pre" as const } : {}) };
+  const editableStyle: CSSProperties = { ...lineStyle, whiteSpace: text.lineBreak === "explicit-only" ? "pre" : "pre-wrap" };
 
   const plainText = textSpecToString(text);
   const showPlaceholder = editable && placeholder != null && plainText.trim().length === 0;

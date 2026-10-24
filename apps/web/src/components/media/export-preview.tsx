@@ -1,22 +1,12 @@
-import { forwardRef, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { HTMLAttributes } from "react";
 import { Button } from "../ui/button";
 import type { Diagnostic, ExportProfile, Layer, MediaDocument, Size, TextSpec } from "./document";
-import {
-  ASPECT_PRESETS,
-  countBySeverity,
-  presetForDimensions,
-  round,
-} from "./document";
+import { countBySeverity, round } from "./document";
 import { Artboard } from "./artboard";
 import { LayerStack } from "./layer-stack";
-import type { PngExportResult } from "./svg-export";
-import {
-  documentToPng,
-  documentToSvg,
-  EXPORT_PROFILES,
-  preflightExport,
-} from "./svg-export";
+import { aspectParts, downloadBlob, exportFilename } from "./export-preview-utils";
+import { useExportPreview } from "./use-export-preview";
 
 /** Default small-format widths. */
 const DEFAULT_INSPECTION_SIZES: readonly number[] = [320, 160, 96];
@@ -123,49 +113,6 @@ function withoutHeadingSemantics(layers: readonly Layer[]): Layer[] {
   );
 }
 
-/** Replace unsafe filename characters so a document id cannot inject a path. */
-function sanitizeFilename(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-/** Human-readable aspect label and a compact suffix for filenames. */
-function aspectParts(size: Size): { label: string; suffix: string } {
-  const preset = presetForDimensions(size.width, size.height);
-  if (preset === "custom") {
-    return {
-      label: `${size.width}×${size.height}`,
-      suffix: `${size.width}x${size.height}`,
-    };
-  }
-  return {
-    label: ASPECT_PRESETS[preset].label,
-    suffix: preset.replace(":", "x"),
-  };
-}
-
-/** Build a download filename from the document id, size aspect and profile. */
-function exportFilename(documentId: string, size: Size, profile: ExportProfile): string {
-  const safeId = sanitizeFilename(documentId) || "export";
-  const extension = EXPORT_PROFILES[profile].extension;
-  return `${safeId}-${aspectParts(size).suffix}.${extension}`;
-}
-
-/** Trigger a browser download for a blob and clean up the object URL. */
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.style.display = "none";
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
 export interface ExportPreviewProps extends Omit<HTMLAttributes<HTMLDivElement>, "onChange" | "title"> {
   /** Document to inspect and export. */
   document: MediaDocument;
@@ -221,113 +168,7 @@ export interface ExportPreviewProps extends Omit<HTMLAttributes<HTMLDivElement>,
   scopedPreviewHeadings?: boolean;
 }
 
-/**
- * Reactive view of the exporter for a document, so consumers can drive their own UI.
- *
- * The returned `svg` and `diagnostics` are memoised by value-stable inputs:
- * `document` identity, `outputSize` width/height, `resolveAssetHref` identity,
- * `fontCss`, `scale`, and a sorted copy of `availableFontFamilies`. Callers should
- * treat the document as immutable data and replace it as a whole rather than
- * mutating nested fields, otherwise the export will rerun on every render.
- */
-export function useExportPreview(
-  document: MediaDocument,
-  options?: Pick<
-    ExportPreviewProps,
-    "outputSize" | "availableFontFamilies" | "resolveAssetHref" | "fontCss" | "scale"
-  >
-): {
-  size: Size;
-  svg: string;
-  diagnostics: Diagnostic[];
-  blocking: readonly Diagnostic[];
-  canExport: boolean;
-  exportPng: () => Promise<PngExportResult>;
-  downloadSvg: () => void;
-  downloadPng: () => Promise<void>;
-} {
-  const {
-    outputSize,
-    availableFontFamilies = EMPTY_FAMILIES,
-    resolveAssetHref,
-    fontCss,
-    scale = 1,
-  } = options ?? {};
 
-  const sortedFamilies = useMemo(
-    () => [...availableFontFamilies].sort(),
-    [availableFontFamilies]
-  );
-
-  /**
-   * The export scale is the caller's preview scale multiplied by the ratio
-   * between the requested output width and the artboard width. Height follows
-   * automatically so the artwork is never stretched.
-   */
-  const exportScale = useMemo(() => {
-    const base = scale ?? 1;
-    if (!outputSize || document.artboard.width <= 0) return base;
-    return base * (outputSize.width / document.artboard.width);
-  }, [scale, outputSize, document.artboard.width]);
-
-  /**
-   * The small-format strip and the download both use this exact SVG string.
-   * `documentToSvg` is pure and deterministic: the same inputs always produce
-   * the same bytes, so the preview and the deliverable cannot drift.
-   */
-  const { svg, size } = useMemo(() => {
-    return documentToSvg(document, {
-      scale: exportScale,
-      resolveAssetHref,
-      fontCss,
-    });
-  }, [document, exportScale, resolveAssetHref, fontCss]);
-
-  const diagnostics = useMemo(() => {
-    return preflightExport(document, {
-      scale: exportScale,
-      resolveAssetHref,
-      fontCss,
-      availableFontFamilies: sortedFamilies,
-    });
-  }, [document, exportScale, resolveAssetHref, fontCss, sortedFamilies]);
-
-  const blocking = useMemo(
-    () => diagnostics.filter((diagnostic) => diagnostic.severity === "error"),
-    [diagnostics]
-  );
-
-  const canExport = blocking.length === 0;
-
-  const exportPng = useCallback(() => {
-    return documentToPng(document, {
-      scale: exportScale,
-      resolveAssetHref,
-      fontCss,
-    });
-  }, [document, exportScale, resolveAssetHref, fontCss]);
-
-  const downloadSvg = useCallback(() => {
-    const blob = new Blob([svg], { type: EXPORT_PROFILES["still-svg"].mimeType });
-    downloadBlob(blob, exportFilename(document.id, size, "still-svg"));
-  }, [svg, size, document.id]);
-
-  const downloadPng = useCallback(async () => {
-    const result = await exportPng();
-    downloadBlob(result.blob, exportFilename(document.id, result.size, "still-png"));
-  }, [exportPng, document.id]);
-
-  return {
-    size,
-    svg,
-    diagnostics,
-    blocking,
-    canExport,
-    exportPng,
-    downloadSvg,
-    downloadPng,
-  };
-}
 
 /**
  * "Check before you ship" surface for M0 still exports.
