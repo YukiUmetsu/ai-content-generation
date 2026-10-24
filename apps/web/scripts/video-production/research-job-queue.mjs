@@ -6,28 +6,33 @@ import {fileURLToPath} from "node:url";
 import {validateStudioBrief} from "./studio-research.mjs";
 import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
-import {generateOutline,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
+import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
 const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
-const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
+const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
+const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const errorInfo=error=>{
   const raw=String(error?.message??error??"Unknown job failure");
   const detailCode=["schema_invalid","json_invalid","output_truncated","output_missing","provider_envelope_invalid"].includes(error?.code)?error.code:null;
+  const providerUnavailable=/http (?:429|5\d\d)|fetch failed|ECONN|network/iu.test(raw);
   const code=detailCode?"invalid_output":/memory|out.of.memory|allocat|oom/iu.test(raw)?"model_memory":
     /timeout|timed out|aborted due to timeout/iu.test(raw)?"model_timeout":
-    /json|schema|rejected|invalid|claim|visual|teaching/i.test(raw)?"invalid_output":
+    providerUnavailable?"provider_unavailable":
     /storage|ENOSPC|EACCES|EPERM/iu.test(raw)?"storage":
-    /http 429|http 5\d\d|fetch failed|ECONN|network/iu.test(raw)?"provider_unavailable":"stage_failed";
+    /json|schema|rejected|invalid|claim|visual|teaching/i.test(raw)?"invalid_output":"stage_failed";
+  const providerDetail=code==="provider_unavailable"?
+    /http 429/iu.test(raw)?"rate_limited":/http 5\d\d/iu.test(raw)?"http_5xx":
+      /ECONNREFUSED/iu.test(raw)?"connection_refused":/ECONNRESET/iu.test(raw)?"connection_reset":"transport_failure":null;
   // Never leak prompts, captured text, request credentials, or network URLs into status/logs.
   const message=({model_memory:"Local model ran out of available memory.",model_timeout:"Local model request timed out.",
     invalid_output:"Local model returned invalid structured data.",storage:"Cannot write local job checkpoints.",
     provider_unavailable:"Local model or network provider is unavailable.",stage_failed:"This job stage failed; review server diagnostics."})[code];
-  return {code,message,...(detailCode?{detailCode}:{}),...(safeField(error?.field)?{field:safeField(error.field)}:{})};
+  return {code,message,...(detailCode?{detailCode}:{}),...(providerDetail?{providerDetail}:{}),
+    ...(safeField(error?.field)?{field:safeField(error.field)}:{})};
 };
 
 async function atomicJson(file,value,limit=512*1024){
@@ -70,7 +75,8 @@ async function saveCompleted(root,job,data,plan){
 
 /** Instances allow isolated tests; the real Vite process uses exactly one shared manager. */
 export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudioSearch,
-  capture=captureSavedSources,evidence=buildDeterministicDossier,outline=generateOutline,
+  capture=captureSavedSources,evidence=buildDeterministicDossier,outline=null,
+  outlineSkeleton=generateOutlineSkeleton,outlineBeat=generateOutlineBeat,combineOutline=assembleOutline,
   scene=null,sceneStructure=generateSceneStructure,sceneVisual=generateSceneVisual,
   sceneNarration=generateSceneNarration,combineScene=assembleSceneUnit,
   assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause}={}){
@@ -108,6 +114,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   const attempt=async(job,call,signal)=>{
     const models=[job.models.primary,...(job.models.secondary?[job.models.secondary]:[])];
     let last;
+    let sawTruncation=false;
     const maxAttempts=3;
     for(let modelIndex=0;modelIndex<models.length;modelIndex++){
       const settings=models[modelIndex];
@@ -118,11 +125,11 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
         guard(signal);
         try{
           const failure=last?errorInfo(last):null;
-          const feedback=n>0?failure?.field&&failure.detailCode==="schema_invalid"?
-            `The previous JSON failed validation at ${failure.field}. Correct that field to meet the required type and length; return the COMPLETE JSON object with all required fields, without inventing facts.`:
-            failure?.detailCode==="output_truncated"?
-              "The previous JSON was cut off at the output limit. Keep every required field but use shorter text; return one complete JSON object.":
-              "The previous response was invalid. Return ONLY a complete JSON object with exactly the required fields and types; correct missing or malformed fields without inventing facts.":null;
+          const compact=sawTruncation?" The previous JSON was cut off at the output limit. Keep all required fields but use shorter text in one complete JSON object.":"";
+          const feedback=n>0||sawTruncation?failure?.field&&failure.detailCode==="schema_invalid"?
+            `The previous JSON failed validation at ${failure.field}. Correct that field and return the complete JSON without inventing facts.`+compact:
+            sawTruncation?compact.trim():
+              "Return ONLY a complete JSON object with exactly the required fields and types; correct any malformed fields without inventing facts.":null;
           const result=await inference(()=>call(settings,feedback),signal);
           job.retry=null;
           await save(job);
@@ -132,13 +139,15 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           if(signal.aborted)throw error;
           last=error;
           const info=errorInfo(error);
+          if(info.detailCode==="output_truncated")sawTruncation=true;
           const retryable=["model_timeout","provider_unavailable","invalid_output"].includes(info.code);
           if(retryable&&n<maxAttempts-1){
             job.retry={stage:job.stage,attempt:n+2,maxAttempts,reason:info.code,modelIndex:modelIndex+1,totalModels:models.length,
-              ...(info.detailCode?{detailCode:info.detailCode}:{}),...(info.field?{field:info.field}:{})};
+              ...(info.detailCode?{detailCode:info.detailCode}:{}),...(info.providerDetail?{providerDetail:info.providerDetail}:{}),
+              ...(info.field?{field:info.field}:{})};
             await save(job);
             console.warn("[contentgen-research-retry]",JSON.stringify({jobId:job.id,stage:job.stage,
-              errorCode:info.code,detailCode:info.detailCode??null,field:info.field??null,
+              errorCode:info.code,detailCode:info.detailCode??null,providerDetail:info.providerDetail??null,field:info.field??null,
               nextAttempt:n+2,maxAttempts,modelIndex:modelIndex+1}));
             await sleep(1000*(n+1));
           }else break;
@@ -147,6 +156,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       if(modelIndex<models.length-1){
         job.retry={stage:job.stage,attempt:1,maxAttempts,reason:errorInfo(last).code,
           ...(errorInfo(last).detailCode?{detailCode:errorInfo(last).detailCode}:{}),
+          ...(errorInfo(last).providerDetail?{providerDetail:errorInfo(last).providerDetail}:{}),
           ...(errorInfo(last).field?{field:errorInfo(last).field}:{}),
           modelIndex:modelIndex+2,totalModels:models.length};
         await save(job);
@@ -179,9 +189,31 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       let story=await stageFile(job,`outline_${job.generation}.json`);
       if(!story){
         await setStage(job,"outline");
-        story=await attempt(job,(settings,feedback)=>outline(data.dossier,data.quotes,settings,{signal,feedback}),signal);
+        if(outline){
+          // Keep the older injectable full-outline provider for existing integrations.
+          story=await attempt(job,(settings,feedback)=>outline(data.dossier,data.quotes,settings,{signal,feedback}),signal);
+        }else{
+          const outlineStep=async(filename,label,action)=>{
+            const saved=await stageFile(job,filename);
+            if(saved)return saved;
+            await setStage(job,"outline",label);
+            const result=await attempt(job,(settings,feedback)=>action(settings,feedback),signal);
+            guard(signal);await write(job,filename,result);
+            return result;
+          };
+          const skeleton=await outlineStep(`outline_skeleton_${job.generation}.json`,"skeleton",(settings,feedback)=>
+            outlineSkeleton(data.dossier,data.quotes,settings,{signal,feedback}));
+          const beats=[];
+          for(let index=0;index<skeleton.beatCount;index++){
+            const beat=await outlineStep(`outline_beat_${job.generation}_${index}.json`,`beat:${index+1}`,(settings,feedback)=>
+              outlineBeat(skeleton,index,beats,data.dossier,data.quotes,settings,{signal,feedback}));
+            beats.push(beat);
+          }
+          story=combineOutline(data.dossier,skeleton,beats);
+        }
         guard(signal);await write(job,`outline_${job.generation}.json`,story);
       }
+      job.currentStep=null;
       job.totalScenes=story.beats.length;
       job.sceneRevisions??={};
       await save(job);
@@ -233,7 +265,8 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       if(job){job.status=signal.aborted?"cancelled":"failed";job.retry=null;
         job.error=signal.aborted?null:errorInfo(error);await save(job);
         if(job.error)console.warn("[contentgen-research-job]",JSON.stringify({
-          jobId:job.id,stage:job.stage,errorCode:job.error.code,attempt:"stopped",
+          jobId:job.id,stage:job.stage,errorCode:job.error.code,detailCode:job.error.detailCode??null,
+          providerDetail:job.error.providerDetail??null,attempt:"stopped",
         }));
       }
     }
