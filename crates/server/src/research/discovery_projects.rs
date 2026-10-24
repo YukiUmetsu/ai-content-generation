@@ -170,6 +170,24 @@ pub fn sync_project(
     })
 }
 
+/// Only the browser's explicitly deleted project is removed. Retried deletes
+/// are idempotent, and the manual FTS cleanup prevents orphaned virtual rows.
+pub fn delete_project(db: &mut Connection, project_id: &str) -> Result<(), DiscoveryError> {
+    if !valid_id(project_id) {
+        return Err(DiscoveryError::Invalid(
+            "Invalid project deletion target".into(),
+        ));
+    }
+    let tx = db.transaction()?;
+    tx.execute(
+        "DELETE FROM kg_node_search WHERE project_id=?1",
+        [project_id],
+    )?;
+    tx.execute("DELETE FROM discovery_projects WHERE id=?1", [project_id])?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn list_keywords(
     db: &Connection,
     project_id: &str,

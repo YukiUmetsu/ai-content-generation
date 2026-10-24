@@ -109,7 +109,14 @@ async fn niche_only_api_supports_optional_phrase_and_switching_to_exact_tracking
     let auto = json!({"name":"House Math","query":"","region":"US","language":"en","enabled":false,
         "queryMode":"auto","queryPlan":["roof replacement costs","mortgage closing fees"],
         "queryPlanSource":"user-edited"});
-    let (status, created) = call(&router, Method::POST, "/api/research/market/watchlists", Some(auto), true).await;
+    let (status, created) = call(
+        &router,
+        Method::POST,
+        "/api/research/market/watchlists",
+        Some(auto),
+        true,
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{created:?}");
     assert_eq!(created["query"], "");
     assert_eq!(created["queryMode"], "auto");
@@ -117,8 +124,14 @@ async fn niche_only_api_supports_optional_phrase_and_switching_to_exact_tracking
     let id = created["id"].as_str().unwrap();
     let exact = json!({"name":"House Math","query":"property tax increase","region":"US","language":"en","enabled":false,
         "queryMode":"manual","queryPlan":[],"queryPlanSource":"user-edited"});
-    let (status, changed) = call(&router, Method::PATCH,
-        &format!("/api/research/market/watchlists/{id}"), Some(exact), true).await;
+    let (status, changed) = call(
+        &router,
+        Method::PATCH,
+        &format!("/api/research/market/watchlists/{id}"),
+        Some(exact),
+        true,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{changed:?}");
     assert_eq!(changed["nextSearchQuery"], "property tax increase");
     assert_eq!(changed["queryMode"], "manual");
@@ -250,15 +263,35 @@ async fn rejected_watchlist_json_is_a_structured_422_with_actionable_details() {
         "region": "US", "enabled": false
     });
     let (status, body) = call(
-        &router, Method::POST, "/api/research/market/watchlists", Some(invalid), true
-    ).await;
+        &router,
+        Method::POST,
+        "/api/research/market/watchlists",
+        Some(invalid),
+        true,
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(body["error"]["code"], "invalid_request_json");
-    assert!(body["error"]["message"].as_str().unwrap().contains("language"));
-    assert!(body["error"]["message"].as_str().unwrap().contains("same build"));
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("language")
+    );
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("same build")
+    );
     let (status, listed) = call(
-        &router, Method::GET, "/api/research/market/watchlists", None, false
-    ).await;
+        &router,
+        Method::GET,
+        "/api/research/market/watchlists",
+        None,
+        false,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(listed["watchlists"].as_array().unwrap().len(), 0);
 }

@@ -21,9 +21,15 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time", "sync"] }
 tower = { version = "0.5", features = ["util"] }
 
-# Small workstation: keep our own code fast to rebuild, dependencies optimized.
+# Keep local Rust build artifacts small on developer machines. Enable debug info
+# temporarily via CARGO_PROFILE_DEV_DEBUG=1 when a debugger is needed.
 [profile.dev]
-debug = 1
+debug = 0
+incremental = false
 
 [profile.dev.package."*"]
 opt-level = 2
+
+[profile.test]
+debug = 0
+incremental = false

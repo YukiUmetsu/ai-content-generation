@@ -14,8 +14,8 @@ import { discoveryJobManager } from "./video-production/discovery-job-queue.mjs"
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
 let researchDraftRunning=false;
-async function configuredStoryFallback(){
-  const id=process.env.CONTENTGEN_STORY_FALLBACK_PROFILE_ID;
+async function configuredLocalFallback(variable){
+  const id=process.env[variable];
   if(!id)return null;
   if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$/u.test(id))throw Error("Invalid local fallback profile ID.");
   const profiles=await readModelProfiles();
@@ -23,10 +23,19 @@ async function configuredStoryFallback(){
   if(!selected?.model)throw Error("Configured local fallback model profile is missing or has no model.");
   return {endpoint:selected.endpoint,model:selected.model,generation:profiles.generation};
 }
+const configuredStoryFallback=()=>configuredLocalFallback("CONTENTGEN_STORY_FALLBACK_PROFILE_ID");
 async function storyJobModels(deps){
   const primary=await (deps.model??resolveModelForTask)("story");
   if(!primary?.model)throw Error("Choose an installed local story model in Studio Settings.");
   const secondary=await (deps.fallback??configuredStoryFallback)();
+  return {primary,...(secondary?.model&&
+    (secondary.model!==primary.model||secondary.endpoint!==primary.endpoint)?
+      {secondary:{...secondary,generation:primary.generation??secondary.generation}}:{})};
+}
+async function discoveryJobModels(deps){
+  const primary=await (deps.model??resolveModelForTask)("research");
+  if(!primary?.model)throw Error("Choose an installed local research model in Studio Settings.");
+  const secondary=await (deps.discoveryFallback??(()=>configuredLocalFallback("CONTENTGEN_DISCOVERY_FALLBACK_PROFILE_ID")))();
   return {primary,...(secondary?.model&&
     (secondary.model!==primary.model||secondary.endpoint!==primary.endpoint)?
       {secondary:{...secondary,generation:primary.generation??secondary.generation}}:{})};
@@ -91,7 +100,7 @@ export async function handleDirectorRequest(req,res,deps={}){
       send(res,200,generated);
     }else if(req.method==="POST"&&route==="/project-discovery"){
       const input=await readBody(req);
-      const model=await (deps.model??resolveModelForTask)("research");
+      const model=await discoveryJobModels(deps);
       const run=await (deps.discovery??discoveryJobManager).create(input,model);
       send(res,202,run);
     }else if(req.method==="GET"&&/^\/project-discovery\/[a-z0-9-]{2,80}\/runs$/iu.test(route)){
@@ -101,8 +110,13 @@ export async function handleDirectorRequest(req,res,deps={}){
       send(res,200,await (deps.discovery??discoveryJobManager).get(parts[2],parts[4]));
     }else if(req.method==="POST"&&/^\/project-discovery\/discover_[a-f0-9]{24}\/resume$/iu.test(route)){
       const input=await readBody(req);
-      const model=await (deps.model??resolveModelForTask)("research");
+      const model=await discoveryJobModels(deps);
       send(res,202,await (deps.discovery??discoveryJobManager).resume(input,route.split("/")[2],model));
+    }else if(req.method==="POST"&&/^\/project-discovery\/discover_[a-f0-9]{24}\/cancel$/iu.test(route)){
+      const input=await readBody(req);
+      if(!input||typeof input!=="object"||Array.isArray(input)||Object.keys(input).some(key=>key!=="projectId")||
+        !/^[a-z0-9][a-z0-9-]{1,79}$/iu.test(input.projectId))throw Error("Invalid discovery cancellation target.");
+      send(res,200,await (deps.discovery??discoveryJobManager).cancel(input.projectId,route.split("/")[2]));
     }else if(req.method==="GET"&&route==="/research-search"){
       send(res,200,{items:await (deps.listSearch??listStudioSearches)()});
     }else if(req.method==="GET"&&/^\/research-search\/[^/]+$/u.test(route)){

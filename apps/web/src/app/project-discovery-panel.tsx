@@ -13,9 +13,11 @@ const msg = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : e
 
 export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveIdea}: {
   project: LocalProject; content: LocalContent[]; locale: Locale; syncStatus: "syncing" | "synced" | "offline";
-  onSaveIdea:(idea:DiscoveryCandidate,openCreate:boolean)=>boolean;
+  onSaveIdea:(idea:DiscoveryCandidate,openResearch:boolean,sources?:GraphOverview["sources"])=>boolean;
 }) {
   const [graph,setGraph] = useState<GraphOverview|null>(null);
+  const [graphRevision,setGraphRevision] = useState(0);
+  const onRunFinished = useCallback(()=>setGraphRevision(value=>value+1),[]);
   const [keywords, setKeywords] = useState<ProjectKeyword[]>([]);
   const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
   const [text, setText] = useState("");
@@ -94,8 +96,9 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
       {notice&&<p role="status" className="mt-3 text-xs text-muted-foreground">{notice}</p>}
       {error&&<p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
     </Surface>
-    <ProjectKnowledgePanel projectId={project.id} locale={locale} syncStatus={syncStatus} onGraph={setGraph}/>
+    <ProjectKnowledgePanel projectId={project.id} locale={locale} syncStatus={syncStatus} revision={graphRevision} onGraph={setGraph}/>
     <DiscoveryIdeasPanel project={project} content={content} locale={locale} syncStatus={syncStatus}
-      sources={graph?.sources??[]} onSaveIdea={onSaveIdea}/>
+      sources={graph?.sources??[]} onSaveIdea={(idea,openResearch)=>onSaveIdea(idea,openResearch,
+        (graph?.sources??[]).filter(source=>idea.sourceIds.includes(source.id)))} onRunFinished={onRunFinished}/>
   </section>;
 }

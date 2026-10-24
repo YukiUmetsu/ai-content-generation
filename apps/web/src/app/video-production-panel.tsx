@@ -67,7 +67,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
       }
     });
     return ()=>{cancelled=true;};
-  },[bundle,dossier]);
+  },[bundle,dossier,actualPreview]);
   async function prepare(){
     setWorking("plan");setNotice("");setReady(false);setAnimaticUrl("");
     try{setPreview(await request("plan",payload) as unknown as Preview);}

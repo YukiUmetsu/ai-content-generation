@@ -7,6 +7,26 @@ import { CATALOG_KEY, parseCatalog } from "./catalog-model";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Studio shell", () => {
+  it("enables the real Projects discovery controls after the browser catalog syncs", async () => {
+    localStorage.removeItem(CATALOG_KEY);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      const data = path.endsWith("/sync") ? {id:"server-project",snapshotRevision:1,contentCount:0}
+        : path.endsWith("/keywords") ? {keywords:[]}
+          : path.endsWith("/graph") ? {nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+            : path.endsWith("/watchlists") ? {watchlists:[],watchlistIds:[]}
+              : path.endsWith("/runs") ? {runs:[]} : null;
+      if (!data) throw Error(`Unexpected discovery request: ${path}`);
+      return new Response(JSON.stringify(data),{status:200,headers:{"content-type":"application/json"}});
+    }));
+    const user=userEvent.setup();
+    render(<App/>);
+    await user.click(screen.getByRole("link",{name:"Projects"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Discover 5 Ideas"})).toBeEnabled());
+    await user.type(screen.getByRole("textbox",{name:"Keyword or search phrase"}),"Home insurance premiums");
+    expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled();
+  });
+
   it("opens directly into a focused create workspace with a real preview and a tool guide", async () => {
     render(<App />);
 

@@ -8,6 +8,12 @@ const model=plan=>async()=>new Response(JSON.stringify({choices:[{message:{conte
 const options={model:"installed-local",endpoint:"http://127.0.0.1:11500/v1/chat/completions"};
 test("new local-model plans require visual states so actions have something concrete to render",async()=>{
   const dossier=fixture("preproduction-research-smoke.json"),plan=fixture("preproduction-plan-smoke.json");
+  // Isolate the visualStates contract: every shot already satisfies the
+  // independently required local-model visualElements contract.
+  for(const shot of plan.shots)shot.visualElements=[
+    {label:"Purchase price",detail:"Starting price for the home"},
+    {label:"Ownership costs",detail:"Expenses beyond the listed price"},
+  ];
   await assert.rejects(generatePreproductionPlan(dossier,options,{transport:model(plan)}),/visualStates/);
   plan.teachingSequences[0].visualStates={before:"Only the asking price is visible",
     action:"Reveal financing and ongoing costs",after:"The budget includes more than the price"};

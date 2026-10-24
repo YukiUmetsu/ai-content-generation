@@ -18,6 +18,7 @@ import { ResearchModelSettings } from "./research-model-settings";
 import { PromptStudio } from "./prompt-studio";
 import { ProviderConnections } from "./provider-connections";
 import { ProjectDiscoveryPanel } from "./project-discovery-panel";
+import type {DiscoveryCandidate,GraphSource} from "@/lib/api/discovery";
 
 interface Props {
   section: SectionId;
@@ -25,6 +26,8 @@ interface Props {
   catalog: StudioCatalog;
   save: (next: StudioCatalog) => boolean;
   onCreate: () => void;
+  onResearchIdea?: (idea:DiscoveryCandidate,sources:GraphSource[])=>void;
+  onDeleteProject?: (projectId:string)=>boolean;
   discoverySync?: "syncing" | "synced" | "offline";
 }
 const inputClass = "min-w-0 w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -66,7 +69,7 @@ function Dropdown<T extends string>({name,selected,choices,onSelect}: {
     </select>
   </label>;
 }
-function ProjectWorkspace({locale,catalog,save,onCreate,discoverySync}: Omit<Props,"section">) {
+function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteProject,discoverySync}: Omit<Props,"section">) {
   const [name,setName] = useState("");
   const [notes,setNotes] = useState("");
   const [editName,setEditName] = useState(catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "");
@@ -103,7 +106,10 @@ function ProjectWorkspace({locale,catalog,save,onCreate,discoverySync}: Omit<Pro
                 {selected?localMessage(locale,"Selected","選択中"):localMessage(locale,"Select","選択")}
               </Button>
               <Button variant="subtle" size="icon" aria-label={"Delete "+project.name} disabled={catalog.projects.length<=1}
-                onClick={()=>{if(window.confirm("Delete project "+project.name+" and all its local content, assets and product entries?"))save(withoutProject(catalog,project.id));}}>
+                onClick={()=>{if(window.confirm("Delete project "+project.name+" and its content, assets, products, and local research history?")){
+                  if(onDeleteProject&&!onDeleteProject(project.id))return;
+                  save(withoutProject(catalog,project.id));
+                }}}>
                 <Trash2 aria-hidden className="size-4"/>
               </Button>
             </div>
@@ -136,7 +142,7 @@ function ProjectWorkspace({locale,catalog,save,onCreate,discoverySync}: Omit<Pro
     </div>
     <ProjectDiscoveryPanel key={current.id} project={current} content={catalog.content.filter(item=>item.projectId===current.id)}
       locale={locale} syncStatus={discoverySync??"offline"}
-      onSaveIdea={(idea,openCreate)=>{
+      onSaveIdea={(idea,openResearch,sources=[])=>{
         const exists=catalog.content.some(item=>item.projectId===current.id&&item.name.toLowerCase()===idea.title.toLowerCase());
         if(!exists){
           const item:LocalContent={id:makeCatalogId("item"),projectId:current.id,name:idea.title.slice(0,120),
@@ -144,7 +150,7 @@ function ProjectWorkspace({locale,catalog,save,onCreate,discoverySync}: Omit<Pro
             createdAt:new Date().toISOString(),kind:"video",stage:"idea"};
           if(!save({...catalog,content:[...catalog.content,item]}))return false;
         }
-        if(openCreate)onCreate();
+        if(openResearch)onResearchIdea?.(idea,sources);
         return true;
       }}/>
   </>;
@@ -343,7 +349,8 @@ export function CatalogWorkspace(props:Props) {
   const {section,locale,catalog,save,onCreate}=props;
   return <main id="workspace" className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6" aria-label={sectionLabel(section,locale)}>
     <div className="mx-auto w-full max-w-6xl">
-      {section==="projects"?<ProjectWorkspace locale={locale} catalog={catalog} save={save} onCreate={onCreate}/>:
+      {section==="projects"?<ProjectWorkspace locale={locale} catalog={catalog} save={save} onCreate={onCreate}
+        onResearchIdea={props.onResearchIdea} onDeleteProject={props.onDeleteProject} discoverySync={props.discoverySync}/>:
        section==="content"||section==="assets"||section==="products"?<InventoryWorkspace {...props}/>:
        section==="insights"?<InsightsWorkspace catalog={catalog} locale={locale}/>:
        section==="settings"?<SettingsWorkspace catalog={catalog} save={save} locale={locale}/>:

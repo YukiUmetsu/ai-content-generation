@@ -3,15 +3,15 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import type { LocalContent, LocalProject } from "./catalog-model";
-import { decideDiscoveryIdea, discoverFiveIdeas, listDiscoveryRuns, loadDiscoveryRun, resumeDiscoveryRun,
+import { cancelDiscoveryRun, decideDiscoveryIdea, discoverFiveIdeas, listDiscoveryRuns, loadDiscoveryRun, resumeDiscoveryRun,
   type DiscoveryCandidate, type DiscoveryRun, type GraphSource } from "@/lib/api/discovery";
 
 const say=(locale:Locale,en:string,ja:string)=>locale==="ja"?ja:en;
 const active=(run:DiscoveryRun|null)=>run&&["queued","running"].includes(run.status);
 
-export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,onSaveIdea}: {
+export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,onSaveIdea,onRunFinished}: {
   project:LocalProject;content:LocalContent[];locale:Locale;syncStatus:"syncing"|"synced"|"offline";
-  sources:GraphSource[];onSaveIdea:(idea:DiscoveryCandidate,openCreate:boolean)=>boolean;
+  sources:GraphSource[];onSaveIdea:(idea:DiscoveryCandidate,openCreate:boolean)=>boolean;onRunFinished:()=>void;
 }) {
   const [run,setRun]=useState<DiscoveryRun|null>(null);
   const [history,setHistory]=useState<DiscoveryRun[]>([]);
@@ -28,14 +28,18 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
     const interval=window.setInterval(()=>{
       void loadDiscoveryRun(project.id,run!.id).then(next=>{
         setRun(next);
-        if(!active(next))void listDiscoveryRuns(project.id).then(setHistory).catch(()=>{});
+        if(!active(next)){
+          onRunFinished();
+          void listDiscoveryRuns(project.id).then(setHistory).catch(()=>{});
+        }
       }).catch(()=>setMessage(say(locale,"Local discovery server is unavailable.","ローカルサーバーに接続できません。")));
     },1800);
     return ()=>clearInterval(interval);
-  },[run,project.id,locale]);
+  },[run,project.id,locale,onRunFinished]);
   const start=async()=>{
     setBusy(true);setMessage(null);
     try {const next=await discoverFiveIdeas(project,content);setRun(next);
+      if(!active(next))onRunFinished();
       setHistory(old=>[next,...old.filter(item=>item.id!==next.id)]);}
     catch(err){setMessage(err instanceof Error?err.message:"Could not start discovery.");}
     finally{setBusy(false);}
@@ -47,9 +51,17 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
     catch(err){setMessage(err instanceof Error?err.message:"Could not resume discovery.");}
     finally{setBusy(false);}
   };
-  const decide=async(idea:DiscoveryCandidate,decision:"saved"|"dismissed"|"storyboard")=>{
+  const cancel=async()=>{
+    if(!run)return;
+    setBusy(true);setMessage(null);
+    try{const next=await cancelDiscoveryRun(project.id,run.id);setRun(next);
+      setHistory(old=>old.map(item=>item.id===next.id?next:item));}
+    catch(err){setMessage(err instanceof Error?err.message:"Could not cancel discovery.");}
+    finally{setBusy(false);}
+  };
+  const decide=async(idea:DiscoveryCandidate,decision:"saved"|"dismissed",openResearch=false)=>{
     setMessage(null);
-    if(decision!=="dismissed"&&!onSaveIdea(idea,decision==="storyboard"))return;
+    if(decision!=="dismissed"&&!onSaveIdea(idea,openResearch))return;
     try {
       await decideDiscoveryIdea(project.id,idea.id,decision);
       if(run)setRun({...run,candidates:run.candidates.map(item=>item.id===idea.id?{...item,decision}:item)});
@@ -66,6 +78,7 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
         <p className="text-xs text-muted-foreground">{say(locale,"Stage","段階")}: {run.stage.replaceAll("_"," ")} · {new Date(run.createdAt*1000).toLocaleString()}</p>
       </div>
       {(["paused","failed"].includes(run.status))&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void resume()}>{say(locale,"Resume","再開")}</Button>}
+      {(active(run)||run.status==="paused")&&<Button size="sm" variant="subtle" disabled={busy||syncStatus!=="synced"} onClick={()=>void cancel()}>{say(locale,"Cancel run","実行を中止")}</Button>}
     </div>}
     {run?.providerHealth&&Object.keys(run.providerHealth).length>0&&<details className="mb-4 text-xs text-muted-foreground">
       <summary className="cursor-pointer font-medium">{say(locale,"Provider availability and evidence gaps","データ提供元の状態")}</summary>
@@ -85,9 +98,13 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
       {idea.sourceIds.length>0&&<div className="mt-3 space-y-1"><p className="text-xs font-medium">{say(locale,"Related source leads (not verified claims)","関連情報源（事実確認は別途必要）")}</p>
         {idea.sourceIds.map(id=>{const source=sourceById.get(id);return source?<a key={id} href={source.url} target="_blank" rel="noopener noreferrer"
           className="block max-w-2xl break-words text-xs text-primary underline underline-offset-2">{source.title} · {source.provider} · {source.publishedAt??say(locale,"date unknown","日付不明")}</a>:<span key={id} className="text-xs text-muted-foreground">Source {id.slice(0,9)} unavailable in preview</span>;})}</div>}
-      <div className="mt-4 flex flex-wrap gap-2">{idea.decision?<span className="text-xs text-muted-foreground">{say(locale,"Marked","記録済み")}: {idea.decision}</span>:<>
+      <div className="mt-4 flex flex-wrap items-center gap-2">{idea.decision?<>
+        <span className="text-xs text-muted-foreground">{say(locale,"Marked","記録済み")}: {idea.decision}</span>
+        {(idea.decision==="saved"||idea.decision==="storyboard")&&<Button size="sm" variant="outline" onClick={()=>onSaveIdea(idea,true)}>
+          {say(locale,"Open in Research","調査画面へ")}</Button>}
+      </>:<>
         <Button size="sm" onClick={()=>void decide(idea,"saved")}>{say(locale,"Save idea","保存")}</Button>
-        <Button size="sm" variant="outline" onClick={()=>void decide(idea,"storyboard")}>{say(locale,"Save & open Create","保存して作成へ")}</Button>
+        <Button size="sm" variant="outline" onClick={()=>void decide(idea,"saved",true)}>{say(locale,"Save & research","保存して調査へ")}</Button>
         <Button size="sm" variant="subtle" onClick={()=>void decide(idea,"dismissed")}>{say(locale,"Dismiss","却下")}</Button>
       </>}</div>
     </article>)}</div>

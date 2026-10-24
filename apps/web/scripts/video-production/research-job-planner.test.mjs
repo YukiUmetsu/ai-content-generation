@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateOutline,generateSceneUnit,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
+import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneVisual,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedSceneStates,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
+import {withModelDebugContext} from "./research-ai-debug.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
 const quotes=[{claimId:"claim_01",sourceId:"source_01",quote:"Installation requires equipment and labor."}];
@@ -130,6 +131,23 @@ test("schema errors identify the invalid field with no source text",async()=>{
   });
 });
 
+test("real model parser captures invalid visualElements for opt-in schema diagnostics",async()=>{
+  const {phases,...structure}=unit("Installed system");
+  const direction=phases[0];
+  const raw='{"visualElements":[{"label":"Only one part","detail":"Visible but incomplete"}]}';
+  const entries=[];
+  const transport=async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({
+    choices:[{finish_reason:"stop",message:{content:raw}}],
+  })});
+  await assert.rejects(withModelDebugContext({
+    jobId:"job_"+"a".repeat(24),stage:"scene:2",currentStep:"visual:2:elements",model:settings.model,attempt:2,
+  },()=>generateSceneElements(outline,0,0,structure,direction,dossier,quotes,settings,{transport}),{
+    enabled:true,log:(...args)=>entries.push(args),
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  assert.equal(entries.length,1);
+  assert.equal(JSON.parse(entries[0][1]).output,raw);
+});
+
 test("small model generates scene structure, independent visuals and narrations without a full-scene response",async()=>{
   const original=unit("Installation cost components");
   const {phases,...structure}=original;
@@ -204,21 +222,189 @@ test("Qwen-specific no-thinking hint is not sent to unrelated local models",asyn
     return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(structure)}}]})};
   };
   await generateSceneStructure(outline,0,dossier,quotes,settings,{transport});
-  await generateSceneStructure(outline,0,dossier,quotes,{...settings,model:"qwen3.5:9b"},{transport});
+  await generateSceneStructure(outline,0,dossier,quotes,{...settings,model:"qwen3:8b"},{transport});
   assert.doesNotMatch(systems[0],/\/no_think/u);
   assert.match(systems[1],/\/no_think/u);
 });
 
-test("outline truncation retry narrows output to two short beats and discourages Qwen thinking",async()=>{
-  const prompts=[];
+test("Qwen3.5 outline and scene microjobs disable thinking through the provider template",async()=>{
+  const configured={...settings,model:"qwen3.5-9b:gguf:q4"};
+  const {phases,before,action,after,...core}=unit("Complete installed cost");
+  const replies=[{pattern:outline.pattern,premise:outline.premise,hook:outline.hook,beatCount:2},core];
+  const requests=[];
+  const transport=async(_endpoint,options)=>{
+    requests.push(JSON.parse(options.body));
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(replies[requests.length-1])}}]})};
+  };
+  await generateOutlineSkeleton(dossier,quotes,configured,{transport});
+  await generateSceneCore(outline,0,dossier,quotes,configured,{transport});
+  assert.equal(requests.length,2);
+  for(const request of requests){
+    assert.deepEqual(request.chat_template_kwargs,{enable_thinking:false});
+    assert.doesNotMatch(request.messages[0].content,/\/no_think/u);
+  }
+});
+
+test("outline truncation retry narrows output while Qwen3.5 thinking is disabled",async()=>{
+  const requests=[];
   const transport=async(_url,options)=>{
-    prompts.push(JSON.parse(options.body).messages[0].content);
+    requests.push(JSON.parse(options.body));
     return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(outline)}}]})};
   };
   const qwen={...settings,model:"Qwen3.5 9B (Q4)"};
   await generateOutline(dossier,quotes,qwen,{transport});
   await generateOutline(dossier,quotes,qwen,{transport,feedback:"The previous JSON was cut off at the output limit. Keep every required field but use shorter text."});
-  assert.match(prompts[0],/\/no_think/u);
-  assert.match(prompts[1],/exactly (?:2|two) (?:short|concise) beats/i);
-  assert.doesNotMatch(prompts[0],/exactly (?:2|two) (?:short|concise) beats/i);
+  assert.deepEqual(requests[0].chat_template_kwargs,{enable_thinking:false});
+  assert.deepEqual(requests[1].chat_template_kwargs,{enable_thinking:false});
+  assert.doesNotMatch(requests[0].messages[0].content,/\/no_think/u);
+  assert.match(requests[1].messages[0].content,/exactly (?:2|two) (?:short|concise) beats/i);
+  assert.doesNotMatch(requests[0].messages[0].content,/exactly (?:2|two) (?:short|concise) beats/i);
+});
+
+test("small local outline jobs assemble source-backed story without any full outline response",async()=>{
+  const {beats,...skeletonFields}=outline;
+  const responses=[{...skeletonFields,beatCount:2},...beats];
+  const requests=[];
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    requests.push(request);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(responses[requests.length-1])}}]})};
+  };
+  const limits={outlineTokens:1280,sceneTokens:2048,timeoutSeconds:360};
+  const withLimits={...settings,generation:limits};
+  const skeleton=await generateOutlineSkeleton(dossier,quotes,withLimits,{transport});
+  const results=[];
+  for(let index=0;index<skeleton.beatCount;index++){
+    results.push(await generateOutlineBeat(skeleton,index,results,dossier,quotes,withLimits,{transport}));
+  }
+  assert.deepEqual(assembleOutline(dossier,skeleton,results),outline);
+  assert.equal(requests.length,3);
+  assert.ok(requests.every(request=>request.max_tokens===1280));
+  assert.ok(requests.every(request=>request.messages[1].content.length<4500));
+});
+
+test("one-at-a-time outline beats reject invented claims and repeated questions",async()=>{
+  const skeleton={pattern:outline.pattern,premise:outline.premise,hook:outline.hook,beatCount:2};
+  await assert.rejects(generateOutlineBeat(skeleton,0,[],dossier,quotes,settings,{
+    transport:transportFor({...outline.beats[0],claimIds:["invented_claim"]})
+  }),error=>error.code==="schema_invalid"&&error.field==="claimIds");
+  await assert.rejects(generateOutlineBeat(skeleton,1,[outline.beats[0]],dossier,quotes,settings,{
+    transport:transportFor({...outline.beats[1],question:outline.beats[0].question})
+  }),error=>error.code==="schema_invalid"&&error.field==="question");
+});
+
+test("scene structure is assembled from two tiny, independently sourced JSON answers",async()=>{
+  const {phases,...expected}=unit("Complete installed cost");
+  const {before,action,after,...coreExpected}=expected;
+  const replies=[coreExpected,{before,action,after}];
+  const prompts=[];
+  let count=0;
+  const transport=async(_url,options)=>{
+    const body=JSON.parse(options.body);
+    prompts.push(body);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(replies[count++])}}]})};
+  };
+  const configured={...settings,generation:{outlineTokens:1024,sceneTokens:1800,timeoutSeconds:420}};
+  const core=await generateSceneCore(outline,0,dossier,quotes,configured,{transport});
+  const states=await generateSceneStates(outline,0,core,dossier,quotes,configured,{transport});
+  assert.deepEqual(assembleSceneStructure(core,states),expected);
+  assert.equal(prompts.length,2);
+  assert.ok(prompts.every(prompt=>prompt.max_tokens===1800));
+  assert.ok(prompts.every(prompt=>!prompt.messages[0].content.includes("narration")));
+  assert.ok(prompts.every(prompt=>/untrusted/iu.test(prompt.messages[0].content)));
+  assert.ok(prompts.every(prompt=>prompt.messages[1].content.length<4500));
+});
+
+test("each scene visual assembles direction and two visible elements without a multi-phase reply",async()=>{
+  const {phases,...structure}=unit("Complete installed cost");
+  const expected=phases[0];
+  const {narration,visualElements,...directionExpected}=expected;
+  const replies=[directionExpected,{visualElements}];
+  let count=0;
+  const prompts=[];
+  const transport=async(_url,options)=>{
+    const payload=JSON.parse(options.body);
+    prompts.push(payload);
+    assert.equal(payload.max_tokens,2300);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(replies[count++])}}]})};
+  };
+  const configured={...settings,generation:{outlineTokens:1024,sceneTokens:2300,timeoutSeconds:420}};
+  const direction=await generateSceneDirection(outline,0,0,structure,[],dossier,quotes,configured,{transport});
+  const elements=await generateSceneElements(outline,0,0,structure,direction,dossier,quotes,configured,{transport});
+  assert.deepEqual(assembleSceneVisual(direction,elements,[]),{
+    visualAction:expected.visualAction,learningChange:expected.learningChange,
+    onScreenText:expected.onScreenText,visualElements:expected.visualElements});
+  assert.equal(count,2);
+  assert.ok(prompts.every(prompt=>/untrusted/iu.test(prompt.messages[0].content)));
+});
+
+test("invalid split scene fragments never assemble into an accepted visual or structure",async()=>{
+  const {phases,...structure}=unit("Complete installed cost");
+  const {before,action,after,...core}=structure;
+  await assert.rejects(generateSceneStates(outline,0,core,dossier,quotes,settings,{
+    transport:transportFor({before:"Identical state",action:"Identical state",after:"Identical state"})
+  }),error=>error.code==="schema_invalid"&&error.field==="before/action/after");
+  await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
+    transport:transportFor({visualElements:[]})
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
+    transport:transportFor({visualElements:[...phases[0].visualElements,{label:"Labor meter",detail:"Tracks installation work"}]})
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  const previous=[phases[0]];
+  const {narration,visualElements,...direction}=phases[0];
+  assert.throws(()=>assembleSceneVisual(direction,{visualElements},previous),
+    error=>error.code==="schema_invalid"&&error.field==="visualAction");
+});
+
+test("tiny scene core rejects labels that final visual mechanic forbids",async()=>{
+  for(const subject of [" Heat pump ","https://example.com/unit","Heat // pump"]){
+    await assert.rejects(generateSceneCore(outline,0,dossier,quotes,settings,{
+      transport:transportFor({subject,parts:["Equipment","Labor"],operator:"split"})
+    }),error=>error.code==="schema_invalid"&&error.field==="subject");
+  }
+  await assert.rejects(generateSceneCore(outline,0,dossier,quotes,settings,{
+    transport:transportFor({subject:"Heat pump",parts:["Equipment ","Labor"],operator:"split"})
+  }),error=>error.code==="schema_invalid"&&error.field==="parts[0]");
+});
+
+test("tiny scene states reject placeholders before accepting a checkpoint",async()=>{
+  const core={subject:"Heat pump",parts:["Equipment","Labor"],operator:"split"};
+  await assert.rejects(generateSceneStates(outline,0,core,dossier,quotes,settings,{
+    transport:transportFor({before:"The problem",action:"Split the bill into parts",after:"The answer"})
+  }),error=>error.code==="schema_invalid"&&error.field==="before");
+  assert.throws(()=>assembleSceneStructure(core,{before:"Main idea",action:"Split the bill into parts",after:"Both parts are visible"}),
+    error=>error.code==="schema_invalid"&&error.field==="before");
+});
+
+test("scene state validation categorizes an invalid before without exposing its contents",()=>{
+  const valid={before:"Previously worn roof surface",action:"Reveal the damaged roofing layers",after:"New layers cover the roof"};
+  const invalid=[
+    [{...valid,before:"Before"},"placeholder"],
+    [{...valid,before:"Roof"},"too_short"],
+    [{...valid,before:"An overly elaborate starting state that exceeds the field length limit"},"too_long"],
+    [{...valid,before:123},"wrong_type"],
+    [{...valid,before:undefined},"missing"],
+  ];
+  for(const [value,schemaIssue] of invalid){
+    assert.throws(()=>validateSavedSceneStates(value),error=>{
+      assert.equal(error.code,"schema_invalid");
+      assert.equal(error.field,"before");
+      assert.equal(error.schemaIssue,schemaIssue);
+      assert.doesNotMatch(error.message,/overly elaborate|Previously worn/i);
+      return true;
+    });
+  }
+});
+
+test("whole-scene acceptance catches downstream mechanic and state violations",async()=>{
+  assert.throws(()=>assembleResumablePlan(dossier,outline,[unit("Complete cost"),{
+    ...unit("Complete cost"),subject:" Heat pump "
+  }]),error=>error.sceneIndex===1&&/subject|mechanic-label/i.test(error.message));
+  assert.throws(()=>assembleResumablePlan(dossier,outline,[unit("Complete cost"),{
+    ...unit("Complete cost"),before:"The problem"
+  }]),/before|teaching-state-placeholder/i);
 });

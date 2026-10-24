@@ -130,6 +130,16 @@ fn trusted_origin(headers: &HeaderMap, operation: &'static str) -> Result<String
     validate_host_origin(headers).map_err(|reason| reject(operation, reason))
 }
 
+/// Reuse the same DNS-rebinding Host/Origin boundary for read/write local APIs.
+/// Non-browser loopback workers legitimately omit Origin, so callers retain
+/// their independent mutation header checks while every Host is validated.
+pub(crate) fn require_local_host(
+    headers: &HeaderMap,
+    operation: &'static str,
+) -> Result<(), ApiError> {
+    trusted_origin(headers, operation).map(|_| ())
+}
+
 fn validate_mutation_origin(headers: &HeaderMap, origin: &str) -> Result<(), AuthRejectionReason> {
     if headers.get(header::ORIGIN).is_none() {
         return Err(AuthRejectionReason::OriginMissing);
@@ -365,6 +375,9 @@ mod tests {
         assert_eq!(keychain_reason(CredentialError::Denied), "access_denied");
         assert_eq!(keychain_reason(CredentialError::Unavailable), "unavailable");
         assert_eq!(keychain_reason(CredentialError::Other), "operation_failed");
-        assert_eq!(keychain_reason(CredentialError::Missing), "operation_failed");
+        assert_eq!(
+            keychain_reason(CredentialError::Missing),
+            "operation_failed"
+        );
     }
 }

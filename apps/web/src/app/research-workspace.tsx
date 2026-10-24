@@ -80,17 +80,21 @@ interface ResearchWorkspaceProps {
   onUseVideo: (idea: {title: string; sourceUrl: string}) => boolean;
   onCreateStoryboard?: (draft: EditorialDraft, research?: ResearchDraftResult) => boolean;
   projectTopic?: string;
+  handoff?: ResearchIdeaHandoff | null;
 }
 
-export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, projectTopic = "" }: ResearchWorkspaceProps) {
+export type ResearchIdeaHandoff = {title:string;hook:string;premise:string;
+  sourceLeads:{title:string;url:string;evidenceState:"captured"|"lead_only"}[]};
+
+export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, projectTopic = "",handoff }: ResearchWorkspaceProps) {
   const ja = locale === "ja";
   const tr = (en: string, jp: string) => ja ? jp : en;
-  const [topic, setTopic] = useState(projectTopic);
+  const [topic, setTopic] = useState(handoff?.title??projectTopic);
   const [evidenceQuery, setEvidenceQuery] = useState("");
   const [showInspiration, setShowInspiration] = useState(false);
   const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
   const [audience, setAudience] = useState("");
-  const [viewerQuestion, setViewerQuestion] = useState("");
+  const [viewerQuestion, setViewerQuestion] = useState(handoff?.title??"");
   const [payoff, setPayoff] = useState("");
   const [approach, setApproach] = useState<EditorialDraft["selectedId"]>("direct");
   const [projectError, setProjectError] = useState("");
@@ -470,6 +474,17 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 {tr("Capture public sources, review what they actually support, and turn the research into an editable visual story.",
                   "公開情報を集め、出典が裏付ける内容を確認し、編集できる映像ストーリーにまとめます。")}
               </p>
+              {handoff&&<aside className="mt-5 rounded-control border border-border bg-surface p-4 text-sm" aria-label={tr("Selected discovery idea","発見したアイデア")}>
+                <p className="text-xs font-semibold text-muted-foreground">{tr("Selected discovery idea","発見したアイデア")}</p>
+                <p className="mt-2 font-semibold">{handoff.hook}</p>
+                <p className="mt-1 text-muted-foreground">{handoff.premise}</p>
+                {handoff.sourceLeads.length>0&&<div className="mt-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">{tr("Unverified source leads — capture and check passages before using factual claims.",
+                    "未検証の情報源 — 事実の根拠として使用する前に本文を取得・確認してください。")}</p>
+                  {handoff.sourceLeads.map(lead=><a className="block break-words text-xs text-primary underline" key={lead.url}
+                    href={lead.url} target="_blank" rel="noopener noreferrer">{lead.title}</a>)}
+                </div>}
+              </aside>}
               <div className="mt-6 rounded-surface border border-border bg-surface p-4 sm:p-5" aria-label={tr("Local research readiness", "ローカル調査の準備状況")}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>

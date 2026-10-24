@@ -29,3 +29,19 @@ test("local model retries incomplete JSON, accepts distinct home-cost phrases wi
   assert.equal(result.suggestions.length,2);
   assert.equal(result.suggestions[0].kind,"topic");
 });
+
+test("keyword generation retries temporary local model transport and 503 errors",async()=>{
+  let calls=0;
+  const transport=async()=>{
+    calls++;
+    if(calls===1)throw new TypeError("fetch failed");
+    if(calls===2)return {ok:false,status:503,headers:{get:()=>null}};
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify({
+      suggestions:[{text:"Home insurance coverage costs",kind:"topic",rationale:"Core insurance question"}]
+    })}}]})};
+  };
+  const response=await generateProjectKeywords({name:"House Math",description:"Homeowner costs",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:11434/v1/chat/completions",model:"mock"},transport,sleep:async()=>{}});
+  assert.equal(calls,3);
+  assert.equal(response.suggestions.length,1);
+});

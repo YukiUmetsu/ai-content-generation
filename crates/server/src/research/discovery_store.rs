@@ -1,6 +1,6 @@
 //! Idempotent click-initiated discovery runs, review decisions and novelty checks.
-use super::discovery_projects::DiscoveryError;
-use rusqlite::{Connection, OptionalExtension, params};
+use super::discovery_projects::{self, DiscoveryError};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -36,6 +36,7 @@ pub struct DiscoveryRun {
     pub id: String,
     pub project_id: String,
     pub input_revision: String,
+    pub input_snapshot: serde_json::Value,
     pub status: String,
     pub stage: String,
     pub created_at: i64,
@@ -67,15 +68,54 @@ pub fn start_or_get_active(
     input_revision: &str,
     now: i64,
 ) -> Result<DiscoveryRun, DiscoveryError> {
-    exists(db, project_id)?;
     if input_revision.len() > 180 {
         return Err(DiscoveryError::Invalid("Invalid snapshot revision".into()));
     }
-    let active:Option<String>=db.query_row("SELECT id FROM discovery_runs WHERE project_id=?1 AND status IN ('queued','running','paused')",
+    // BEGIN IMMEDIATE serializes the check and insert across server connections.
+    // The partial unique index is a second line of defense against double-clicks.
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    exists(&tx, project_id)?;
+    let active:Option<String>=tx.query_row("SELECT id FROM discovery_runs WHERE project_id=?1 AND status IN ('queued','running','paused')",
         [project_id],|r|r.get(0)).optional()?;
     if let Some(active) = active {
-        return get_run(db, project_id, &active);
+        return get_run(&tx, project_id, &active);
     }
+    // The browser's project catalog is mirrored here before the creator clicks.
+    // Freeze the *server-side* current values transactionally: Resume may not
+    // replace these with a different browser's latest description/keywords.
+    let (name, description, revision): (String, String, i64) = tx.query_row(
+        "SELECT name,notes,snapshot_revision FROM discovery_projects WHERE id=?1",
+        [project_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let content: Vec<serde_json::Value> = {
+        let mut statement = tx.prepare(
+            "SELECT name,stage FROM discovery_project_content
+            WHERE project_id=?1 AND active=1 ORDER BY id",
+        )?;
+        statement
+            .query_map([project_id], |row| {
+                Ok(serde_json::json!({
+                    "name":row.get::<_,String>(0)?,"stage":row.get::<_,String>(1)?
+                }))
+            })?
+            .collect::<Result<_, _>>()?
+    };
+    let keywords = discovery_projects::list_keywords(&tx, project_id)?;
+    let graph_revision: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(updated_at),0) FROM kg_nodes WHERE project_id=?1",
+        [project_id],
+        |row| row.get(0),
+    )?;
+    let research_freshness: i64 = tx.query_row(
+        "SELECT COALESCE(MAX(observed_at),0) FROM kg_sources WHERE project_id=?1",
+        [project_id],
+        |row| row.get(0),
+    )?;
+    let snapshot = serde_json::json!({"version":1,"projectName":name,"description":description,
+        "content":content,"keywords":keywords,"projectRevision":revision,
+        "graphRevision":graph_revision,"researchFreshness":research_freshness,
+        "providerAvailability":{"googleTrends":"unavailable"}});
     let mut randomness = [0u8; 12];
     getrandom::getrandom(&mut randomness)
         .map_err(|_| DiscoveryError::Invalid("Unable to create secure run ID".into()))?;
@@ -86,9 +126,88 @@ pub fn start_or_get_active(
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     );
-    db.execute("INSERT INTO discovery_runs(id,project_id,input_revision,status,stage,created_at,updated_at)
-        VALUES (?1,?2,?3,'queued','queued',?4,?4)",params![id,project_id,input_revision,now])?;
+    tx.execute("INSERT INTO discovery_runs(id,project_id,input_revision,input_snapshot_json,status,stage,created_at,updated_at)
+        VALUES (?1,?2,?3,?4,'queued','queued',?5,?5)",params![id,project_id,input_revision,snapshot.to_string(),now])?;
+    tx.commit()?;
     get_run(db, project_id, &id)
+}
+
+fn valid_stage_key(key: &str) -> bool {
+    (2..=80).contains(&key.len())
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'))
+}
+
+/// Append-only, project-scoped stage checkpoint. Replaying a completed stage
+/// cannot overwrite the original evidence/candidate payload.
+pub fn save_stage_artifact(
+    db: &Connection,
+    project_id: &str,
+    run_id: &str,
+    key: &str,
+    value: &serde_json::Value,
+    now: i64,
+) -> Result<serde_json::Value, DiscoveryError> {
+    let serialized = value.to_string();
+    if !valid_stage_key(key) || serialized.len() > 80_000 {
+        return Err(DiscoveryError::Invalid(
+            "Invalid discovery artifact key or size".into(),
+        ));
+    }
+    let status: Option<String> = db
+        .query_row(
+            "SELECT status FROM discovery_runs WHERE project_id=?1 AND id=?2",
+            params![project_id, run_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if !matches!(status.as_deref(), Some("queued" | "running" | "paused")) {
+        return Err(DiscoveryError::NotFound);
+    }
+    db.execute(
+        "INSERT INTO discovery_run_artifacts(project_id,run_id,stage_key,payload_json,created_at)
+        SELECT project_id,id,?3,?4,?5 FROM discovery_runs
+        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running','paused')
+        ON CONFLICT(run_id,stage_key) DO NOTHING",
+        params![project_id, run_id, key, serialized, now],
+    )?;
+    load_stage_artifact(db, project_id, run_id, key)?.ok_or(DiscoveryError::NotFound)
+}
+
+pub fn load_stage_artifact(
+    db: &Connection,
+    project_id: &str,
+    run_id: &str,
+    key: &str,
+) -> Result<Option<serde_json::Value>, DiscoveryError> {
+    if !valid_stage_key(key) {
+        return Err(DiscoveryError::Invalid(
+            "Invalid discovery artifact key".into(),
+        ));
+    }
+    let belongs: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM discovery_runs WHERE project_id=?1 AND id=?2)",
+        params![project_id, run_id],
+        |row| row.get(0),
+    )?;
+    if belongs == 0 {
+        return Err(DiscoveryError::NotFound);
+    }
+    let stored: Option<String> = db
+        .query_row(
+            "SELECT payload_json FROM discovery_run_artifacts
+        WHERE project_id=?1 AND run_id=?2 AND stage_key=?3",
+            params![project_id, run_id, key],
+            |row| row.get(0),
+        )
+        .optional()?;
+    stored
+        .map(|raw| {
+            serde_json::from_str(&raw)
+                .map_err(|_| DiscoveryError::Invalid("Invalid saved discovery artifact".into()))
+        })
+        .transpose()
 }
 
 pub fn checkpoint(
@@ -185,6 +304,81 @@ fn similar(a: &str, b: &str) -> bool {
     common >= 2 && (common as f64 / a.len().min(b.len()) as f64 >= 0.67)
 }
 
+/// Only creator-approved graph aliases may unify different names for a topic.
+/// This is deterministic, local and reversible; it never lets a model silently
+/// declare that unrelated videos cover the same subject.
+type TopicAlias = (Vec<String>, Vec<String>);
+
+fn canonical_topic_text(aliases: &[TopicAlias], value: &str) -> String {
+    let mut words: Vec<String> = value
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect();
+    for (phrase, replacement) in aliases {
+        let mut normalized = Vec::with_capacity(words.len());
+        let mut position = 0;
+        while position < words.len() {
+            if words[position..].starts_with(phrase.as_slice()) {
+                normalized.extend(replacement.iter().cloned());
+                position += phrase.len();
+            } else {
+                normalized.push(words[position].clone());
+                position += 1;
+            }
+        }
+        words = normalized;
+    }
+    // Narrow, context-sensitive equivalences for homeowner insurance videos.
+    if words.iter().any(|word| word == "insurance") {
+        for word in &mut words {
+            if matches!(word.as_str(), "rate" | "rates") {
+                *word = "premium".into();
+            } else if matches!(
+                word.as_str(),
+                "increase" | "increases" | "increased" | "increasing"
+            ) {
+                *word = "rise".into();
+            }
+        }
+    }
+    words.join(" ")
+}
+
+fn topic_aliases(db: &Connection, project_id: &str) -> Result<Vec<TopicAlias>, DiscoveryError> {
+    let mut statement = db.prepare(
+        "SELECT a.normalized,n.label FROM kg_node_aliases a
+        JOIN kg_nodes n ON n.project_id=a.project_id AND n.id=a.node_id
+        WHERE a.project_id=?1",
+    )?;
+    let mut aliases = statement
+        .query_map([project_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|(alias, label)| {
+            (
+                alias
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+                label
+                    .to_lowercase()
+                    .split(|c: char| !c.is_alphanumeric())
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .filter(|(alias, canonical)| !alias.is_empty() && !canonical.is_empty())
+        .collect::<Vec<_>>();
+    aliases.sort_by_key(|alias| std::cmp::Reverse(alias.0.len()));
+    Ok(aliases)
+}
+
 pub fn is_duplicate(
     db: &Connection,
     project_id: &str,
@@ -192,16 +386,23 @@ pub fn is_duplicate(
     angle_key: &str,
 ) -> Result<bool, DiscoveryError> {
     exists(db, project_id)?;
+    let aliases = topic_aliases(db, project_id)?;
+    let title = canonical_topic_text(&aliases, title);
+    let angle_key = canonical_topic_text(&aliases, angle_key);
     let mut content = db.prepare(
-        "SELECT name,notes FROM discovery_project_content WHERE project_id=?1 AND active=1",
+        // Previously indexed content remains an already-covered angle even when
+        // it is no longer in the browser's current catalog snapshot.
+        "SELECT name,notes FROM discovery_project_content WHERE project_id=?1",
     )?;
     for row in content.query_map([project_id], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
     })? {
         let (name, notes) = row?;
-        if similar(title, &name)
-            || similar(angle_key, &name)
-            || (!notes.is_empty() && similar(angle_key, &notes))
+        let name = canonical_topic_text(&aliases, &name);
+        let notes = canonical_topic_text(&aliases, &notes);
+        if similar(&title, &name)
+            || similar(&angle_key, &name)
+            || (!notes.is_empty() && similar(&angle_key, &notes))
         {
             return Ok(true);
         }
@@ -214,7 +415,9 @@ pub fn is_duplicate(
         Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
     })? {
         let (name, angle) = row?;
-        if similar(title, &name) || similar(angle_key, &angle) || similar(title, &angle) {
+        let name = canonical_topic_text(&aliases, &name);
+        let angle = canonical_topic_text(&aliases, &angle);
+        if similar(&title, &name) || similar(&angle_key, &angle) || similar(&title, &angle) {
             return Ok(true);
         }
     }
@@ -240,49 +443,10 @@ pub fn finish_run(
     let tx = db.transaction()?;
     let project_id:String=tx.query_row("SELECT project_id FROM discovery_runs WHERE id=?1 AND status IN ('queued','running','paused')",
         [run_id],|r|r.get(0)).optional()?.ok_or(DiscoveryError::NotFound)?;
-    // Ranking uses source quality/freshness observations, never guessed view growth.
+    // Validate *before* persisting any candidate. A search lead is not evidence,
+    // and observed_at is only the import time (not a video's publishing date).
     let mut ranked = Vec::new();
     for draft in candidates {
-        let mut score = match draft.confidence.as_str() {
-            "high" => 2,
-            "medium" => 1,
-            _ => 0,
-        };
-        for source_id in &draft.source_ids {
-            let evidence: Option<(String, i64)> = tx
-                .query_row(
-                    "SELECT evidence_state,observed_at FROM kg_sources
-                WHERE project_id=?1 AND id=?2",
-                    params![project_id, source_id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            if let Some((state, observed)) = evidence {
-                score += 4;
-                if state == "captured" {
-                    score += 3;
-                }
-                if now.saturating_sub(observed) < 14 * 86400 {
-                    score += 3;
-                }
-            }
-        }
-        ranked.push((score, draft));
-    }
-    ranked.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| a.1.angle_key.cmp(&b.1.angle_key))
-    });
-    let mut selected: Vec<(String, String)> = vec![];
-    let mut rank = 0;
-    for (_, draft) in ranked {
-        if rank >= 5 {
-            break;
-        }
-        // An idea with no source cannot be presented as an evidence-backed discovery.
-        if draft.source_ids.is_empty() {
-            continue;
-        }
         if draft.title.trim().len() < 6
             || draft.title.len() > 160
             || draft.hook.len() > 400
@@ -296,21 +460,105 @@ pub fn finish_run(
                 "Candidate content exceeds bounded schema".into(),
             ));
         }
-        let mut sources = std::collections::HashSet::new();
+        let mut score = match draft.confidence.as_str() {
+            "high" => 2,
+            "medium" => 1,
+            _ => 0,
+        };
+        let mut unique_sources = std::collections::HashSet::new();
         for source_id in &draft.source_ids {
-            if !sources.insert(source_id) {
+            if !unique_sources.insert(source_id) {
                 continue;
             }
-            let count: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM kg_sources WHERE project_id=?1 AND id=?2",
-                params![project_id, source_id],
-                |r| r.get(0),
-            )?;
-            if count == 0 {
+            let evidence: Option<(String, String, Option<i64>)> = tx
+                .query_row(
+                    "SELECT evidence_state,provider,CAST(strftime('%s',published_at) AS INTEGER) FROM kg_sources
+                WHERE project_id=?1 AND id=?2",
+                    params![project_id, source_id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .optional()?;
+            let (state, provider, published_at) = evidence.ok_or_else(|| {
+                DiscoveryError::Invalid("Candidate cites a missing or foreign source".into())
+            })?;
+            let measured = if provider == "youtube-data-api" {
+                tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM kg_trend_observations
+                    WHERE project_id=?1 AND source_id=?2 AND provider='youtube-data-api'
+                    AND value IS NOT NULL)",
+                    params![project_id, source_id],
+                    |r| r.get::<_, i64>(0),
+                )? != 0
+            } else {
+                false
+            };
+            if state != "captured" && !measured {
                 return Err(DiscoveryError::Invalid(
-                    "Candidate cites a missing or foreign source".into(),
-                ));
+                    "Candidate needs a captured source passage or measured public video observation".into()));
             }
+            if unique_sources.len() <= 3 {
+                score += if state == "captured" { 3 } else { 2 };
+                if published_at.is_some_and(|published| {
+                    published <= now && now.saturating_sub(published) <= 45 * 86400
+                }) {
+                    score += 2;
+                }
+            }
+        }
+        ranked.push((score, draft));
+    }
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.angle_key.cmp(&b.1.angle_key))
+    });
+    // Reserve breadth across specific, already-known project topics before
+    // filling the remaining five slots from a dominant topic. This never
+    // invents trending velocity, and low-confidence entries still retain
+    // their honest confidence labels.
+    let aliases = topic_aliases(&tx, &project_id)?;
+    let topic_families: Vec<std::collections::HashSet<String>> = {
+        let mut query = tx.prepare(
+            "SELECT label FROM kg_nodes WHERE project_id=?1 AND kind='topic' ORDER BY id",
+        )?;
+        query
+            .query_map([&project_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .map(|label| tokens(&canonical_topic_text(&aliases, label)))
+            .filter(|family| family.len() >= 2)
+            .collect()
+    };
+    let mut family_counts = std::collections::HashMap::<usize, usize>::new();
+    let mut prioritized = Vec::new();
+    let mut deferred = Vec::new();
+    for item in ranked {
+        let idea_tokens = tokens(&canonical_topic_text(&aliases, &item.1.title));
+        let family = topic_families
+            .iter()
+            .enumerate()
+            .filter(|(_, topics)| topics.is_subset(&idea_tokens))
+            .max_by_key(|(_, topics)| topics.len())
+            .map(|(index, _)| index);
+        if let Some(family) = family {
+            let count = family_counts.entry(family).or_default();
+            *count += 1;
+            if *count > 2 {
+                deferred.push(item);
+                continue;
+            }
+        }
+        prioritized.push(item);
+    }
+    prioritized.extend(deferred);
+    let mut selected: Vec<(String, String)> = vec![];
+    let mut rank = 0;
+    for (_, draft) in prioritized {
+        if rank >= 5 {
+            break;
+        }
+        // An idea with no source cannot be presented as an evidence-backed discovery.
+        if draft.source_ids.is_empty() {
+            continue;
         }
         if is_duplicate(&tx, &project_id, &draft.title, &draft.angle_key)?
             || selected
@@ -379,6 +627,22 @@ pub fn pause_run(
     Ok(())
 }
 
+pub fn cancel_run(
+    db: &Connection,
+    project_id: &str,
+    run_id: &str,
+    now: i64,
+) -> Result<(), DiscoveryError> {
+    if db.execute(
+        "UPDATE discovery_runs SET status='cancelled',stage='cancelled',updated_at=?3,finished_at=?3
+        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running','paused')",
+        params![project_id,run_id,now],
+    )? == 0 {
+        return Err(DiscoveryError::NotFound);
+    }
+    Ok(())
+}
+
 pub fn resume_run(
     db: &Connection,
     project_id: &str,
@@ -426,11 +690,11 @@ pub fn get_run(
     run_id: &str,
 ) -> Result<DiscoveryRun, DiscoveryError> {
     exists(db, project_id)?;
-    let base=db.query_row("SELECT id,project_id,input_revision,status,stage,created_at,updated_at,error_code,provider_health_json
+    let base=db.query_row("SELECT id,project_id,input_revision,status,stage,created_at,updated_at,error_code,provider_health_json,input_snapshot_json
         FROM discovery_runs WHERE project_id=?1 AND id=?2",params![project_id,run_id],|r|Ok((
             r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,
             r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,i64>(6)?,r.get::<_,Option<String>>(7)?,
-            r.get::<_,String>(8)?))).optional()?.ok_or(DiscoveryError::NotFound)?;
+            r.get::<_,String>(8)?,r.get::<_,String>(9)?))).optional()?.ok_or(DiscoveryError::NotFound)?;
     let mut stmt = db.prepare(
         "SELECT id,rank,title,hook,premise,why_now,angle_key,source_ids_json,confidence,decision
         FROM discovery_candidates WHERE run_id=?1 AND project_id=?2 ORDER BY rank",
@@ -456,6 +720,8 @@ pub fn get_run(
         id: base.0,
         project_id: base.1,
         input_revision: base.2,
+        input_snapshot: serde_json::from_str(&base.9)
+            .unwrap_or_else(|_| serde_json::json!({"version":0})),
         status: base.3,
         stage: base.4,
         created_at: base.5,

@@ -8,15 +8,19 @@ export type KeywordPatch = { add?: KeywordDraft[]; remove?: string[]; disable?: 
 export type KeywordSuggestion = { text: string; kind: KeywordKind; rationale: string };
 export type ProjectSummary = { id: string; name: string; notes: string; snapshotRevision: number; contentCount: number };
 export type GraphNode = { id: string; kind: string; label: string };
+export type GraphAlias = { nodeId: string; alias: string };
 export type GraphEdge = { id: string; fromNodeId: string; toNodeId: string; relation: string; status: string };
+export type GraphEdgeEvidence = {edgeId:string;sourceId:string;assessment:"supports"|"contradicts"|"unknown";quote:string|null};
 export type GraphSource = { id: string; provider: string; title: string; url: string; publishedAt: string | null;
   observedAt: number; evidenceState: "captured" | "lead_only" };
-export type GraphOverview = {nodes: GraphNode[]; edges: GraphEdge[]; sources: GraphSource[];
+export type GraphOverview = {nodes: GraphNode[]; aliases?: GraphAlias[]; edges: GraphEdge[]; edgeEvidence:GraphEdgeEvidence[];sources: GraphSource[];
   signals: {sourceId:string|null;metric:string;value:number|null;unit:string;collectedAt:number}[];
   topicCount: number; sourceCount: number; supportedEdgeCount: number};
 export type DiscoveryCandidate = {id: string; rank: number; title: string; hook: string; premise: string;
   whyNow: string; angleKey: string; sourceIds: string[]; confidence: string; decision: "saved" | "dismissed" | "storyboard" | null};
 export type DiscoveryRun = { id: string; projectId: string; inputRevision: string;
+  inputSnapshot?: {version:number;projectName:string;description:string;content:{name:string;stage:string}[];
+    keywords:ProjectKeyword[];projectRevision:number;graphRevision:number;researchFreshness:number};
   status: "queued" | "running" | "paused" | "completed" | "insufficient_evidence" | "failed" | "cancelled";
   stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: Record<string,string>;
   candidates: DiscoveryCandidate[] };
@@ -51,6 +55,9 @@ export function syncDiscoveryProject(project: LocalProject, content: LocalConten
     id: project.id, name: project.name, notes: project.notes, updatedAt, content: items,
   }, signal);
 }
+export function deleteDiscoveryProject(projectId:string):Promise<{deleted:boolean}> {
+  return request(`/projects/${encodeURIComponent(projectId)}`,"DELETE");
+}
 
 export async function loadProjectKeywords(projectId: string, signal?: AbortSignal): Promise<ProjectKeyword[]> {
   const response = await request<{ keywords: ProjectKeyword[] }>(`/projects/${encodeURIComponent(projectId)}/keywords`, "GET", undefined, signal);
@@ -82,6 +89,19 @@ export async function suggestProjectKeywords(project: LocalProject, activeKeywor
 export function loadProjectGraphOverview(projectId: string): Promise<GraphOverview> {
   return request(`/projects/${encodeURIComponent(projectId)}/graph`);
 }
+export async function searchProjectGraphNodes(projectId:string,query:string):Promise<GraphNode[]> {
+  const response=await request<{nodes:GraphNode[]}>(`/projects/${encodeURIComponent(projectId)}/graph/search?q=${encodeURIComponent(query)}`);
+  return response.nodes;
+}
+export function addProjectGraphAlias(projectId:string,nodeId:string,alias:string):Promise<{saved:boolean}> {
+  return request(`/projects/${encodeURIComponent(projectId)}/graph/nodes/${encodeURIComponent(nodeId)}/aliases`,"POST",{alias});
+}
+export function removeProjectGraphAlias(projectId:string,nodeId:string,alias:string):Promise<{saved:boolean}> {
+  return request(`/projects/${encodeURIComponent(projectId)}/graph/nodes/${encodeURIComponent(nodeId)}/aliases`,"DELETE",{alias});
+}
+export function correctProjectGraphEdge(projectId:string,edgeId:string,status:"rejected"|"hypothesized"|"supported"):Promise<{saved:boolean}> {
+  return request(`/projects/${encodeURIComponent(projectId)}/graph/edges/${encodeURIComponent(edgeId)}/correction`,"PATCH",{status});
+}
 
 async function directorRequest<T>(route: string, body: object): Promise<T> {
   const response = await fetch(`/api/contentgen-director/${route}`, {
@@ -112,6 +132,9 @@ export async function loadDiscoveryRun(projectId: string,runId: string): Promise
 export function resumeDiscoveryRun(project: LocalProject,content: LocalContent[],runId: string): Promise<DiscoveryRun> {
   return directorRequest(`project-discovery/${runId}/resume`,{projectId:project.id,projectName:project.name,
     description:project.notes,content:content.filter(item=>item.projectId===project.id)});
+}
+export function cancelDiscoveryRun(projectId:string,runId:string):Promise<DiscoveryRun> {
+  return directorRequest(`project-discovery/${runId}/cancel`,{projectId});
 }
 export function decideDiscoveryIdea(projectId: string,candidateId: string,decision: "saved" | "dismissed" | "storyboard",reason?: string) {
   return request(`/projects/${encodeURIComponent(projectId)}/ideas/${encodeURIComponent(candidateId)}/decision`,"POST",{decision,reason:reason??null});

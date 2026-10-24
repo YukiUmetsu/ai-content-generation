@@ -43,6 +43,22 @@ vi.mock("./youtube-intelligence-panel", () => ({ YoutubeIntelligencePanel: () =>
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe("Research workspace navigation", () => {
+  it("prefills a selected discovery angle and visibly labels its sources as unverified leads",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL)=>readinessResponse(String(url))??
+      new Response(JSON.stringify({status:"empty",results:[],records:[]}),{status:200})));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" onUseVideo={()=>true} handoff={{
+      title:"Why Home Insurance Premiums Keep Rising",hook:"The surprising drivers of your monthly premium",
+      premise:"Explain replacement cost, climate risk and coverage exclusions",
+      sourceLeads:[{title:"Insurance policy overview",url:"https://example.com/policy",evidenceState:"lead_only"}]}}/>);
+    expect(screen.getByRole("textbox",{name:"Research topic"})).toHaveValue("Why Home Insurance Premiums Keep Rising");
+    expect(screen.getByText("The surprising drivers of your monthly premium")).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:"Insurance policy overview"})).toHaveAttribute("href","https://example.com/policy");
+    expect(screen.getByText(/unverified source leads/i)).toBeInTheDocument();
+    await user.click(screen.getByText("Fine-tune your brief"));
+    expect(screen.getByRole("textbox",{name:/Question to answer/i})).toHaveValue("Why Home Insurance Premiums Keep Rising");
+  });
+
   it("has separate Research, Evidence Library, Packaging and YouTube tabs", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ??
       new Response(JSON.stringify({ status: "empty", results: [], records: [] }), { status: 200 })));

@@ -1,6 +1,6 @@
 /** Small, review-only local-AI keyword task. Nothing is written or activated here. */
 import { localChatEndpoint } from "./topic-generator.mjs";
-import { withLocalInference } from "./local-inference-gate.mjs";
+import { withLocalInferenceResponse } from "./local-inference-gate.mjs";
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 function safe(value, label, min, max) {
@@ -48,24 +48,35 @@ export async function generateProjectKeywords(candidate,{modelSettings,transport
   let last = Error("Local model did not return valid structured keywords.");
   for(let attempt=0;attempt<3;attempt++) {
     if (signal?.aborted) throw signal.reason ?? Error("Keyword generation cancelled.");
-    const response = await withLocalInference(()=>transport(endpoint,{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({model:modelSettings.model,temperature:0.45,stream:false,response_format:{type:"json_object"},
-        max_tokens:1300,messages:[{role:"system",content:system},
-          {role:"user",content:JSON.stringify({name,description,existingKeywords:keywords,
-            ...(attempt?{feedback:"Previous response was invalid. Return only a complete, much shorter JSON object."}:{})})}]}),
-      signal:signal?AbortSignal.any([signal,AbortSignal.timeout(90000)]):AbortSignal.timeout(90000)}),signal);
-    if (!response.ok) throw Error(`Local keyword model returned HTTP ${response.status}.`);
-    if (Number(response.headers?.get?.("content-length") || 0) > 100000) throw Error("Local model response exceeds limit.");
-    const raw=await response.text();
-    if (Buffer.byteLength(raw)>100000) throw Error("Local model response exceeds limit.");
     try {
+      const {response,raw} = await withLocalInferenceResponse(()=>transport(endpoint,{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({model:modelSettings.model,temperature:0.45,stream:false,response_format:{type:"json_object"},
+          max_tokens:1300,messages:[{role:"system",content:system},
+            {role:"user",content:JSON.stringify({name,description,existingKeywords:keywords,
+              ...(attempt?{feedback:"Previous response was invalid. Return only a complete, much shorter JSON object."}:{})})}]}),
+        signal:signal?AbortSignal.any([signal,AbortSignal.timeout(90000)]):AbortSignal.timeout(90000)}),signal);
+      if (!response.ok) {
+        if(![408,429,500,502,503,504].includes(response.status))throw Error(`Local keyword model returned HTTP ${response.status}.`);
+        last=Error(`Temporary local keyword model HTTP ${response.status}.`);
+        if(attempt<2)await sleep((attempt+1)*400);
+        continue;
+      }
+      if (Number(response.headers?.get?.("content-length") || 0) > 100000) throw Error("Local model response exceeds limit.");
+      if (Buffer.byteLength(raw)>100000) throw Error("Local model response exceeds limit.");
       const envelope=JSON.parse(raw), parsed=JSON.parse(envelope.choices?.[0]?.message?.content);
       if (!parsed || Array.isArray(parsed) || Object.keys(parsed).some(key=>key!=="suggestions"))
         throw Error("Unexpected model schema.");
       const suggestions=validateKeywordSuggestions(parsed.suggestions);
       const known=new Set(keywords.map(x=>x.toLowerCase()));
       return {suggestions:suggestions.filter(item=>!known.has(item.text.toLowerCase()))};
-    }catch { last=Error("Local model returned invalid structured keyword data after retries."); }
+    }catch(error) {
+      if(signal?.aborted)throw signal.reason??error;
+      if(error instanceof Error&&/returned HTTP (?!408|429|500|502|503|504)\d+/u.test(error.message))throw error;
+      if(error instanceof Error&&error.message==="Local model response exceeds limit.")throw error;
+      last=error instanceof TypeError||error?.name==="TimeoutError"||error?.name==="AbortError"
+        ?Error("Local keyword model temporarily unavailable after retries.")
+        :Error("Local model returned invalid structured keyword data after retries.");
+    }
     if(attempt<2)await sleep((attempt+1)*400);
   }
   throw last;

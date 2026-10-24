@@ -4,12 +4,58 @@ use contentgen_server::{
     research::discovery_projects::{
         self, KeywordDraft, KeywordPatch, ProjectContentSnapshot, ProjectSnapshot,
     },
+    research::graph_store,
 };
 
 fn ready() -> rusqlite::Connection {
     let mut db = db::open_in_memory().unwrap();
     db::migrate(&mut db).unwrap();
     db
+}
+
+#[test]
+fn deleting_a_project_removes_its_graph_sources_and_search_index_without_touching_other_projects() {
+    let mut db = ready();
+    discovery_projects::sync_project(&mut db, &snapshot(1), 100).unwrap();
+    let mut second = snapshot(1);
+    second.id = "project_other".into();
+    discovery_projects::sync_project(&mut db, &second, 100).unwrap();
+    graph_store::upsert_node(&db, "project_house", "topic", "Roof materials", 101).unwrap();
+    graph_store::upsert_node(&db, "project_other", "topic", "Home insurance", 101).unwrap();
+    graph_store::import_source(
+        &db,
+        "project_house",
+        graph_store::SourceDraft {
+            url: "https://example.org/roof".into(),
+            title: "Roof materials".into(),
+            provider: "searxng".into(),
+            published_at: None,
+            observed_at: 101,
+            passage: Some(
+                "Roof repairs involve materials and trained labor that contribute to cost.".into(),
+            ),
+        },
+    )
+    .unwrap();
+    discovery_projects::delete_project(&mut db, "project_house").unwrap();
+    assert!(graph_store::overview(&db, "project_house").is_err());
+    assert_eq!(
+        graph_store::overview(&db, "project_other")
+            .unwrap()
+            .nodes
+            .len(),
+        1
+    );
+    let indexed: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM kg_node_search WHERE project_id='project_house'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(indexed, 0);
+    // A retried offline deletion is idempotent.
+    discovery_projects::delete_project(&mut db, "project_house").unwrap();
 }
 
 fn snapshot(revision: i64) -> ProjectSnapshot {
@@ -125,8 +171,12 @@ fn watchlist_mapping_is_explicit_and_projects_are_isolated() {
             .unwrap()
             .is_empty()
     );
-    discovery_projects::set_bound_watchlists(&mut db, "project_house", std::slice::from_ref(&watch.id))
-        .unwrap();
+    discovery_projects::set_bound_watchlists(
+        &mut db,
+        "project_house",
+        std::slice::from_ref(&watch.id),
+    )
+    .unwrap();
     assert_eq!(
         discovery_projects::get_bound_watchlists(&db, "project_house").unwrap(),
         vec![watch.id]

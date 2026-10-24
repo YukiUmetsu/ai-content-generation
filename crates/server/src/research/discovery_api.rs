@@ -1,8 +1,10 @@
 //! Local-only project discovery API. Mutations require a non-simple header.
 
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::HeaderMap;
-use axum::routing::{get, post};
+use axum::middleware::{self, Next};
+use axum::response::Response;
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +17,7 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/projects/{id}", delete(delete_project))
         .route("/projects/{id}/sync", post(sync_project))
         .route(
             "/projects/{id}/keywords",
@@ -25,22 +28,43 @@ pub fn router() -> Router<AppState> {
             get(watchlists).put(put_watchlists),
         )
         .route("/projects/{id}/graph", get(graph))
+        .route("/projects/{id}/graph/search", get(graph_search))
+        .route(
+            "/projects/{id}/graph/nodes/{node_id}/aliases",
+            post(add_graph_alias).delete(remove_graph_alias),
+        )
+        .route(
+            "/projects/{id}/graph/edges/{edge_id}/correction",
+            axum::routing::patch(correct_graph_edge),
+        )
         .route("/projects/{id}/sources/import", post(import_sources))
+        .route("/projects/{id}/sources/captured", post(captured_sources))
         .route("/projects/{id}/graph/batches", post(graph_batch))
         .route("/projects/{id}/graph/import-market", post(import_market))
         .route("/projects/{id}/discover", post(discover))
         .route("/projects/{id}/runs", get(runs))
         .route("/projects/{id}/runs/{run_id}", get(run))
         .route("/projects/{id}/runs/{run_id}/checkpoint", post(checkpoint))
+        .route(
+            "/projects/{id}/runs/{run_id}/artifacts/{key}",
+            get(stage_artifact).post(save_artifact),
+        )
         .route("/projects/{id}/runs/{run_id}/finish", post(finish))
         .route("/projects/{id}/runs/{run_id}/fail", post(fail))
         .route("/projects/{id}/runs/{run_id}/pause", post(pause))
         .route("/projects/{id}/runs/{run_id}/resume", post(resume))
+        .route("/projects/{id}/runs/{run_id}/cancel", post(cancel))
         .route(
             "/projects/{id}/ideas/{candidate_id}/decision",
             post(idea_decision),
         )
         .layer(DefaultBodyLimit::max(320_000))
+        .layer(middleware::from_fn(require_local_host))
+}
+
+async fn require_local_host(request: Request, next: Next) -> Result<Response, ApiError> {
+    crate::settings::require_local_host(request.headers(), "discovery")?;
+    Ok(next.run(request).await)
 }
 
 fn editor_header(headers: &HeaderMap) -> Result<(), ApiError> {
@@ -70,6 +94,19 @@ fn map_error(error: DiscoveryError) -> ApiError {
             message: "Project discovery database operation failed".into(),
         },
     }
+}
+
+async fn delete_project(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    editor_header(&headers)?;
+    let mut db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Project database unavailable".into(),
+    })?;
+    discovery_projects::delete_project(&mut db, &id).map_err(map_error)?;
+    Ok(Json(serde_json::json!({"deleted":true})))
 }
 
 async fn sync_project(
@@ -169,6 +206,71 @@ async fn graph(
     })?;
     Ok(Json(graph_store::overview(&db, &id).map_err(map_error)?))
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GraphSearch {
+    q: String,
+}
+async fn graph_search(
+    Path(id): Path<String>,
+    Query(query): Query<GraphSearch>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Graph database unavailable".into(),
+    })?;
+    let nodes = graph_store::search_nodes(&db, &id, &query.q, 30).map_err(map_error)?;
+    Ok(Json(serde_json::json!({"nodes":nodes})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AliasInput {
+    alias: String,
+}
+async fn add_graph_alias(
+    Path((id, node_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AliasInput>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    editor_header(&headers)?;
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Graph database unavailable".into(),
+    })?;
+    graph_store::add_alias(&db, &id, &node_id, &body.alias).map_err(map_error)?;
+    Ok(Json(serde_json::json!({"saved":true})))
+}
+async fn remove_graph_alias(
+    Path((id, node_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<AliasInput>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    editor_header(&headers)?;
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Graph database unavailable".into(),
+    })?;
+    graph_store::remove_alias(&db, &id, &node_id, &body.alias).map_err(map_error)?;
+    Ok(Json(serde_json::json!({"saved":true})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelationCorrection {
+    status: String,
+}
+async fn correct_graph_edge(
+    Path((id, edge_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RelationCorrection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    editor_header(&headers)?;
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Graph database unavailable".into(),
+    })?;
+    graph_store::correct_edge(&db, &id, &edge_id, &body.status).map_err(map_error)?;
+    Ok(Json(serde_json::json!({"saved":true})))
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -201,6 +303,25 @@ async fn import_sources(
     }
     Ok(Json(ImportResult {
         imported: input.sources.len(),
+    }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapturedSources {
+    sources: Vec<graph_store::CapturedSource>,
+}
+async fn captured_sources(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<CapturedSources>, ApiError> {
+    editor_header(&headers)?;
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Graph database unavailable".into(),
+    })?;
+    Ok(Json(CapturedSources {
+        sources: graph_store::captured_sources(&db, &id).map_err(map_error)?,
     }))
 }
 
@@ -368,6 +489,37 @@ async fn checkpoint(
         discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?,
     ))
 }
+async fn stage_artifact(
+    Path((id, run_id, key)): Path<(String, String, String)>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Discovery database unavailable".into(),
+    })?;
+    let artifact =
+        discovery_store::load_stage_artifact(&db, &id, &run_id, &key).map_err(map_error)?;
+    Ok(Json(serde_json::json!({"artifact":artifact})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveArtifact {
+    artifact: serde_json::Value,
+}
+async fn save_artifact(
+    Path((id, run_id, key)): Path<(String, String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<SaveArtifact>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    editor_header(&headers)?;
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Discovery database unavailable".into(),
+    })?;
+    let artifact =
+        discovery_store::save_stage_artifact(&db, &id, &run_id, &key, &body.artifact, epoch_now())
+            .map_err(map_error)?;
+    Ok(Json(serde_json::json!({"artifact":artifact})))
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Finish {
@@ -438,6 +590,20 @@ async fn resume(
         message: "Discovery database unavailable".into(),
     })?;
     discovery_store::resume_run(&db, &id, &run_id, epoch_now()).map_err(map_error)?;
+    Ok(Json(
+        discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?,
+    ))
+}
+async fn cancel(
+    Path((id, run_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<discovery_store::DiscoveryRun>, ApiError> {
+    editor_header(&headers)?;
+    let db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Discovery database unavailable".into(),
+    })?;
+    discovery_store::cancel_run(&db, &id, &run_id, epoch_now()).map_err(map_error)?;
     Ok(Json(
         discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?,
     ))
