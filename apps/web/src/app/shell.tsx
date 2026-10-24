@@ -11,6 +11,7 @@ import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type Stu
 import { ResearchWorkspace } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import { ProductionWorkspace } from "./production-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
@@ -25,7 +26,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 export function Shell() {
   const { locale } = usePreferences();
-  const [activeSection, setActiveSection] = useState<SectionId>("create");
+  const [activeSection, setActiveSection] = useState<SectionId>("production");
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
@@ -136,12 +137,30 @@ export function Shell() {
             Local catalog: {catalogError}. Existing data has not been overwritten.
           </div>
         )}
-        {activeSection !== "create" && (
+        {activeSection !== "create" && activeSection !== "production" && (
           <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
         )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-          {activeSection === "create" ? (
+          {activeSection === "production" ? (
+            <ProductionWorkspace
+              key={catalog.activeProjectId}
+              locale={locale}
+              catalog={catalog}
+              onSelectProject={(projectId) => {
+                if(catalog.projects.some(project=>project.id===projectId))
+                  saveCatalog({...catalog,activeProjectId:projectId});
+              }}
+              onOpenNav={() => setMobileNavOpen(true)}
+              onOpenResearch={() => setActiveSection("research")}
+              onOpenStoryboard={() => {setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
+              onOpenVisuals={() => setActiveSection("video-director")}
+              onOpenAudio={() => setActiveSection("video-director")}
+              onOpenExport={() => setActiveSection("video-director")}
+              onCreateStoryboard={startEditorialStoryboard}
+              onUseVideo={saveVideoIdea}
+            />
+          ) : activeSection === "create" ? (
             <Workspace
               key={catalog.activeProjectId}
               locale={locale}
