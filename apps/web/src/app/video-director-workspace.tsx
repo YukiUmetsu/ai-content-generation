@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, WandSparkles, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -48,7 +48,7 @@ function shotDraft(bundle:Bundle,id:string){
     sfxIntent:audio?.sfxIntent??"",
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
 }
-export function VideoDirectorWorkspace({locale}:{locale:Locale}){
+export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focusStage}:{locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"export"}){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
@@ -62,16 +62,35 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const [busy,setBusy]=useState(false);
   const [status,setStatus]=useState("");
   const [sampleMode,setSampleMode]=useState(false);
+  const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId));
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  function acceptProject(d:Dossier,b:Bundle,source:"sample"|"topic"="topic"){
+  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic")=>{
     setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
     setStatus("Storyboard ready. Review and edit individual shots, then preview the renderable scenes below.");
-  }
+  },[]);
+  useEffect(()=>{
+    if(!researchArtifactId){setLoadingSaved(false);return;}
+    let active=true;
+    setLoadingSaved(true);
+    setStatus("Opening the saved research snapshot without regenerating it…");
+    void request("compile-saved-research",{artifactId:researchArtifactId}).then(result=>{
+      if(!active)return;
+      const saved=result as {artifactId?:string;dossier?:Dossier;bundle?:Bundle};
+      if(saved.artifactId!==researchArtifactId || saved.dossier?.kind!=="research-dossier" ||
+        saved.bundle?.kind!=="preproduction-bundle" || !saved.dossier.id ||
+        saved.bundle.researchId!==saved.dossier.id || !saved.bundle.plan?.shots?.length)
+        throw Error("The returned project did not match the selected research artifact.");
+      acceptProject(saved.dossier,saved.bundle);
+      setStatus("Opened the saved research draft. Source claims and media rights still require review.");
+    }).catch(error=>{if(active)setStatus(error instanceof Error?error.message:"Saved research could not be opened.");})
+      .finally(()=>{if(active)setLoadingSaved(false);});
+    return ()=>{active=false;};
+  },[researchArtifactId,projectId,acceptProject]);
   async function importProject(file:File|undefined){
     if(!file)return;
     try{
@@ -191,7 +210,8 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
         <h1 className="font-serif text-xl font-semibold">Video Director · Segment Lab</h1>
         <p className="mt-1 text-sm text-muted-foreground">Edit just one scene, generate different hook and storytelling combinations, and create a precise audio/visual regeneration plan. The source bundle is never overwritten.</p>
       </div>
-      {!usable&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
+      {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening saved research for Video Director…</p>}
+      {!usable&&!loadingSaved&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
       {usable&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle p-4">
         <div>
           <p className="font-semibold">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
@@ -205,7 +225,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           </Button>
         </div>
       </div>}
-      {!usable&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
+      {!usable&&!loadingSaved&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <label className={header}>Open saved project (.json)
             <input type="file" className={field+" mt-2"} accept=".json" aria-label="Saved ContentGen project"
@@ -227,7 +247,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
       {usable&&<>
         <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
           selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
-          onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
+          onApplyMotion={applyShotMotion} autoOpenSample={sampleMode} focusStage={focusStage}/>
         <Surface header={<h2 className="font-medium">2 · Choose and edit a shot</h2>}>
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
