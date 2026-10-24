@@ -17,6 +17,12 @@ describe("guided production stage progression", () => {
     expect(stages[1].status).toBe("running");
     expect(stages[2].status).toBe("not_started");
   });
+  it("shows an evidence-repair pause as review needed, not a failed research generation", () => {
+    const stages=getProductionStages({briefReady:true,
+      researchJob:{status:"paused",stage:"evidence-repair"}});
+    expect(stages[1].status).toBe("needs_review");
+    expect(stages[1].primaryAction).toBe("Review source links");
+  });
   it("keeps sourced claims in human review instead of declaring sources missing", () => {
     const stages=getProductionStages({briefReady:true,
       researchJob:{status:"completed",stage:"completed",artifactId:"research_test-0123456789ab"},
