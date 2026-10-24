@@ -55,5 +55,5 @@
 - [x] Add a failing test that source passages for a long captured page total no more than 4,000 characters; then bound the model prompt and verify green.
 - [x] Add failing tests proving research and planning inference timeouts name the correct stage while keeping saved searches; wrap stages and verify green.
 - [x] Run scoped Node tests (27/27 pass); attempt project test/build (`pnpm` cannot initialize its store in this partial sandbox checkout).
-- [ ] Check fresh main, commit files on a separate GitHub branch, and create one PR without merging.
-- [ ] Review the final diff for provenance weakening and regressions.
+- [x] Check fresh main, commit files on a separate GitHub branch, and create one draft PR without merging (#66).
+- [x] Review the final diff for provenance weakening and regressions; frontend/local-model smoke tests remain to be verified.
