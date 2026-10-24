@@ -108,6 +108,9 @@ export async function handleDirectorRequest(req,res,deps={}){
     }else if(req.method==="POST"&&/^\/research-jobs\/job_[a-f0-9]{24}\/cancel$/u.test(route)){
       await readBody(req);
       send(res,200,await (deps.jobs??researchJobManager).cancel(route.split("/")[2]));
+    }else if(req.method==="POST"&&/^\/research-jobs\/job_[a-f0-9]{24}\/repair$/u.test(route)){
+      await readBody(req);
+      send(res,202,await (deps.jobs??researchJobManager).retryEvidence(route.split("/")[2]));
     }else if(req.method==="POST"&&/^\/research-jobs\/job_[a-f0-9]{24}\/scenes\/[0-9]+\/retry$/u.test(route)){
       await readBody(req);
       const parts=route.split("/");
