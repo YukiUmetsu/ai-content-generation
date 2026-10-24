@@ -5,7 +5,7 @@ import type { StudioCatalog } from "./catalog-model";
 import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { repairStoryboardEvidence } from "./storyboard-evidence-repair";
 import { ResearchWorkspace } from "./research-workspace";
-import { inspectClaimEvidence } from "./claim-evidence";
+import { inspectClaimEvidence, matchesStoryboardResearch } from "./claim-evidence";
 import { ProductionClaimIssues } from "./production-claim-issues";
 import { createClaimReviewReceipt, isClaimReviewCurrent, loadClaimReviews,
   saveClaimReviews } from "./production-claim-reviews";
@@ -145,10 +145,12 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
     return ()=>controller.abort();
   },[artifactId]);
 
-  const issues=useMemo(()=>board?inspectClaimEvidence(board,draft??undefined):[],[board,draft]);
+  const matchingDraft=useMemo(()=>board&&draft&&matchesStoryboardResearch(board,draft)?draft:null,
+    [board,draft]);
+  const issues=useMemo(()=>board?inspectClaimEvidence(board,matchingDraft??undefined):[],[board,matchingDraft]);
   const reviewedClaims=useMemo(()=>new Set(issues.filter(issue=>
-    isClaimReviewCurrent(issue,draft,claimReviews[issue.claimId])).map(issue=>issue.claimId)),
-    [issues,draft,claimReviews]);
+    isClaimReviewCurrent(issue,matchingDraft,claimReviews[issue.claimId])).map(issue=>issue.claimId)),
+    [issues,matchingDraft,claimReviews]);
   const unresolved=issues.filter(issue=>issue.kind==="source_missing"||issue.kind==="source_mismatch").length;
   const unreviewed=issues.filter(issue=>issue.kind==="source_unchecked"||
     (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
@@ -176,9 +178,9 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   function markClaimReviewed(claimId:string){
     setError("");
     const issue=issues.find(item=>item.claimId===claimId);
-    if(!issue||!draft){setError("A saved claim and research snapshot are required for review.");return;}
+    if(!issue||!matchingDraft){setError("Load the matching saved research snapshot before reviewing this claim.");return;}
     try{
-      const receipt=createClaimReviewReceipt(issue,draft);
+      const receipt=createClaimReviewReceipt(issue,matchingDraft);
       const next={...claimReviews,[claimId]:receipt};
       saveClaimReviews(projectId,next);
       setClaimReviews(next);
@@ -329,7 +331,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
               <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("research")}>
                 {tr("Go to research","調査へ")}
               </button></div>}
-            {board&&<ProductionClaimIssues issues={issues} draft={draft} locale={locale}
+            {board&&<ProductionClaimIssues issues={issues} draft={matchingDraft} locale={locale}
               reviewedClaims={reviewedClaims} onMarkReviewed={markClaimReviewed} onUndoReviewed={undoClaimReview}
               onOpenBeat={beatId=>{
                 try { sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,beatId); }
