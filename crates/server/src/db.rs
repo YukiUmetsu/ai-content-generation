@@ -37,6 +37,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0003_evidence_fts",
         sql: include_str!("../../../migrations/0003_evidence_fts.sql"),
     },
+    Migration {
+        version: 4,
+        name: "0004_youtube_auto_discovery",
+        sql: include_str!("../../../migrations/0004_youtube_auto_discovery.sql"),
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
