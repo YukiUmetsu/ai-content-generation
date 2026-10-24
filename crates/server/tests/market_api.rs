@@ -238,3 +238,27 @@ async fn related_is_read_only_local_cache_and_validates_the_topic() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn rejected_watchlist_json_is_a_structured_422_with_actionable_details() {
+    let (_dir, router) = setup();
+    // A missing required field previously returned an Axum plain-text 422.
+    // Browser clients must receive a usable error envelope instead.
+    let invalid = json!({
+        "name": "House Math", "query": "", "queryMode": "auto",
+        "queryPlan": [], "queryPlanSource": "niche-name fallback",
+        "region": "US", "enabled": false
+    });
+    let (status, body) = call(
+        &router, Method::POST, "/api/research/market/watchlists", Some(invalid), true
+    ).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "invalid_request_json");
+    assert!(body["error"]["message"].as_str().unwrap().contains("language"));
+    assert!(body["error"]["message"].as_str().unwrap().contains("same build"));
+    let (status, listed) = call(
+        &router, Method::GET, "/api/research/market/watchlists", None, false
+    ).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(listed["watchlists"].as_array().unwrap().len(), 0);
+}
