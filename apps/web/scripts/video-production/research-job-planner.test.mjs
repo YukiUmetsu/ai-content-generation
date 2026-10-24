@@ -14,7 +14,7 @@ const unit=(kind)=>({subject:"Installation work",before:"Unit price shown alone"
 const settings={model:"small-local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};
 const transportFor=body=>async (_endpoint,options)=>{
   const sent=JSON.parse(options.body);
-  assert.ok(sent.max_tokens>0&&sent.max_tokens<=1400);
+  assert.ok(sent.max_tokens>0&&sent.max_tokens<=3000);
   assert.ok(options.signal);
   return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(body)}}]})};
 };
@@ -79,6 +79,33 @@ test("truncated model output exposes safe finish reason without leaking generate
     assert.doesNotMatch(error.message,/secret passage/);
     return true;
   });
+});
+
+test("truncation repair expands the token budget for outlines and scenes",async()=>{
+  const budgets=[];
+  const transport=async(_endpoint,options)=>{
+    const sent=JSON.parse(options.body);budgets.push(sent.max_tokens);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(budgets.length<=2?outline:unit("Complete cost"))}}]})};
+  };
+  await generateOutline(dossier,quotes,settings,{transport});
+  await generateOutline(dossier,quotes,settings,{transport,feedback:"The previous JSON was cut off at the output limit."});
+  await generateSceneUnit(outline,0,dossier,quotes,settings,{transport,feedback:"The previous JSON was cut off at the output limit."});
+  assert.ok(budgets[1]>budgets[0]);
+  assert.ok(budgets[2]>1400);
+  assert.ok(budgets[2]<=3000);
+});
+
+test("scene request asks a small model for concise JSON fields",async()=>{
+  let system="";
+  const transport=async(_endpoint,options)=>{
+    system=JSON.parse(options.body).messages[0].content;
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      message:{content:JSON.stringify(unit("Complete cost"))}}]})};
+  };
+  await generateSceneUnit(outline,0,dossier,quotes,settings,{transport});
+  assert.match(system,/short narration|concise narration/i);
+  assert.match(system,/exactly 2 visual elements/i);
 });
 
 test("schema errors identify the invalid field with no source text",async()=>{
