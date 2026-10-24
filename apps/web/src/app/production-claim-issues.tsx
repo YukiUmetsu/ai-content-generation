@@ -43,6 +43,13 @@ export function ProductionClaimIssues({
       const reviewed=reviewedClaims?.has(issue.claimId)??false;
       const linkedQuotes=(draft?.quotes??[]).filter(quote=>quote.claimId===issue.claimId&&
         issue.sourceRefs.includes(quote.sourceId)&&typeof quote.quote==="string").slice(0,2);
+      const canReview=Boolean(draft)&&issue.kind==="needs_factual_review"&&
+        issue.sourceRefs.length>0&&issue.sourceRefs.every(ref=>{
+          const source=sources.get(ref);
+          return Boolean(source&&/^[a-f0-9]{64}$/iu.test(source.snapshotSha256)&&
+            (draft?.quotes??[]).some(quote=>quote.claimId===issue.claimId&&
+              quote.sourceId===ref&&quote.quote.trim().length>=10));
+        });
       return <article key={issue.claimId} data-testid="claim-issue"
         className="space-y-3 rounded-control border border-border bg-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -82,7 +89,7 @@ export function ProductionClaimIssues({
             className="rounded-control border border-border px-2.5 py-1.5 hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary"
             onClick={()=>onOpenBeat(beatId)}>{beatId}</button>)}
         </div>
-        {issue.kind==="needs_factual_review"&&onMarkReviewed&&draft&&linkedQuotes.length>0&&<div className="flex flex-wrap gap-2">
+        {canReview&&onMarkReviewed&&<div className="flex flex-wrap gap-2">
           {reviewed?(onUndoReviewed?<button type="button" onClick={()=>onUndoReviewed(issue.claimId)}
             className="rounded-control border border-border px-3 py-2 text-xs">
             {ja?"確認を取り消す":"Undo review"}
