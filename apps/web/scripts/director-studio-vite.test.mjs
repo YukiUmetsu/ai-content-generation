@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
+import { EventEmitter } from "node:events";
 import { handleDirectorRequest } from "./director-studio-vite.mjs";
 
 async function post(path,body,deps){
@@ -126,5 +127,59 @@ test("project discovery forwards an explicitly configured secondary research pro
   assert.equal((await post(`/project-discovery/${runId}/resume`,{projectId:"project-house",projectName:"Home Costs",description:""},deps)).status,202);
   assert.equal(selected.length,2);
   assert.ok(selected.every(settings=>settings.primary.model==="research-primary"&&settings.secondary.model==="research-backup"));
+});
+
+test("keyword stream sends accepted suggestions before all local AI batches finish",async()=>{
+  const req=Readable.from([Buffer.from(JSON.stringify({name:"House Math",description:"Homeowner costs",keywords:[]}))]);
+  Object.assign(req,{method:"POST",url:"/project-keyword-suggestions/stream",
+    headers:{host:"127.0.0.1:5173",origin:"http://127.0.0.1:5173","x-contentgen-director":"local-only"}});
+  const writes=[];let status=0,contentType="",ended=false,wakeFirst;
+  const first=new Promise(resolve=>{wakeFirst=resolve;});
+  const res=Object.assign(new EventEmitter(),{
+    writableEnded:false,
+    writeHead(code,headers){status=code;contentType=headers["Content-Type"];},
+    write(chunk){writes.push(String(chunk));wakeFirst();return true;},
+    end(chunk){if(chunk)writes.push(String(chunk));ended=true;this.writableEnded=true;},
+  });
+  let releaseSecond;const gate=new Promise(resolve=>{releaseSecond=resolve;});
+  const quality={modelRequests:1,batches:1,proposed:2,rejected:0,partial:true,evidence:"unverified"};
+  const pending=handleDirectorRequest(req,res,{model:async()=>({model:"local",endpoint:"http://127.0.0.1:1234/v1/chat/completions"}),
+    projectKeywords:async(_input,{onBatch})=>{
+      await onBatch({suggestions:[{text:"Home insurance renewal costs",kind:"topic",rationale:"Explains premiums"}],quality,step:1,totalSteps:6});
+      await gate;
+      return {suggestions:[{text:"Home insurance renewal costs",kind:"topic",rationale:"Explains premiums"}],quality:{...quality,partial:true}};
+    }});
+  try{
+    await Promise.race([first,new Promise((_,reject)=>setTimeout(()=>reject(Error("No progressive response")),250))]);
+    assert.equal(status,200);
+    assert.match(contentType,/x-ndjson/i);
+    assert.equal(ended,false);
+    assert.equal(JSON.parse(writes.join("").split("\n")[0]).type,"batch");
+  }finally{releaseSecond();}
+  await pending;
+  const events=writes.join("").trim().split("\n").map(line=>JSON.parse(line));
+  assert.deepEqual(events.map(event=>event.type),["batch","done"]);
+  assert.equal(ended,true);
+});
+
+test("closing a keyword stream aborts its own running generator",async()=>{
+  const req=Readable.from([Buffer.from(JSON.stringify({name:"House Math",description:"Homeowner costs",keywords:[]}))]);
+  Object.assign(req,{method:"POST",url:"/project-keyword-suggestions/stream",
+    headers:{host:"127.0.0.1:5173",origin:"http://127.0.0.1:5173","x-contentgen-director":"local-only"}});
+  let releaseFirst,signalSeen,wasAborted=false;
+  const first=new Promise(resolve=>{releaseFirst=resolve;});
+  const res=Object.assign(new EventEmitter(),{writableEnded:false,writeHead(){},write(){releaseFirst();return true;},
+    end(){this.writableEnded=true;}});
+  const pending=handleDirectorRequest(req,res,{model:async()=>({model:"local",endpoint:"http://127.0.0.1:1234/v1/chat/completions"}),
+    projectKeywords:async(_input,{onBatch,signal})=>{
+      signalSeen=signal;
+      await onBatch({suggestions:[],quality:{modelRequests:1,batches:0,proposed:0,rejected:2,partial:true,evidence:"unverified"},step:1,totalSteps:6});
+      await new Promise((_,reject)=>signal.addEventListener("abort",()=>{wasAborted=true;reject(signal.reason);},{once:true}));
+    }});
+  await Promise.race([first,new Promise((_,reject)=>setTimeout(()=>reject(Error("No first batch")),250))]);
+  res.emit("close");
+  await pending;
+  assert.equal(signalSeen.aborted,true);
+  assert.equal(wasAborted,true);
 });
 

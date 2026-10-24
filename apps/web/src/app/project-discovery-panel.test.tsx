@@ -164,8 +164,12 @@ describe("Project discovery author controls",()=>{
           kind:"topic",origin:"model",active:true,manualLock:false}]}),{status:200});
       }
       if(path.endsWith("/keywords"))return new Response(JSON.stringify({keywords:[]}),{status:200});
-      if(path.endsWith("project-keyword-suggestions"))return new Response(JSON.stringify({suggestions:[{
-        text:"Home insurance premium growth",kind:"topic",rationale:"Relevant homeowner cost concern"}]}),{status:200});
+      if(path.endsWith("project-keyword-suggestions/stream")){
+        const suggestions=[{text:"Home insurance premium growth",kind:"topic",rationale:"Relevant homeowner cost concern"}];
+        const quality={modelRequests:1,batches:1,proposed:1,rejected:0,partial:true,evidence:"unverified"};
+        return new Response(`${JSON.stringify({type:"batch",suggestions,quality,step:1,totalSteps:6})}\n${JSON.stringify({type:"done",quality})}\n`,
+          {status:200,headers:{"Content-Type":"application/x-ndjson"}});
+      }
       if(path.endsWith("/graph"))return new Response(JSON.stringify({nodes:[],edges:[],sources:[],signals:[],
         topicCount:0,sourceCount:0,supportedEdgeCount:0}),{status:200});
       if(path.endsWith("/watchlists"))return new Response(JSON.stringify({watchlists:[],watchlistIds:[]}),{status:200});
@@ -188,12 +192,15 @@ describe("Project discovery author controls",()=>{
     vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
       const path=String(input);
       const body=path.endsWith("/keywords")?{keywords:[]}
-        :path.endsWith("project-keyword-suggestions")?{
-          suggestions:[{text:"Why homeowner insurance premiums increase",kind:"query",rationale:"Explains renewal costs"}],
-          quality:{modelRequests:5,batches:3,proposed:9,rejected:8,partial:true,evidence:"unverified"}}
-          :path.endsWith("/graph")?{nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+        :path.endsWith("/graph")?{nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
             :path.endsWith("/watchlists")?{watchlists:[],watchlistIds:[]}
               :path.endsWith("/runs")?{runs:[]}:null;
+      if(path.endsWith("project-keyword-suggestions/stream")){
+        const suggestions=[{text:"Why homeowner insurance premiums increase",kind:"query",rationale:"Explains renewal costs"}];
+        const quality={modelRequests:5,batches:3,proposed:9,rejected:8,partial:true,evidence:"unverified"};
+        return new Response(`${JSON.stringify({type:"batch",suggestions,quality,step:3,totalSteps:6})}\n${JSON.stringify({type:"done",quality})}\n`,
+          {status:200,headers:{"Content-Type":"application/x-ndjson"}});
+      }
       if(!body)throw Error(`Unexpected route ${path}`);
       return new Response(JSON.stringify(body),{status:200});
     });
@@ -204,6 +211,47 @@ describe("Project discovery author controls",()=>{
     expect(screen.getByText(/unverified.*search volume/i)).toBeInTheDocument();
     expect(screen.getByText(/5 local AI requests.*8.*filtered/i)).toBeInTheDocument();
     expect(screen.getByText(/partial.*no fabricated/i)).toBeInTheDocument();
+  });
+
+  it("shows the first keyword batch during generation and Stop keeps it available for acceptance",async()=>{
+    const writes:unknown[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(input,options)=>{
+      const path=String(input);
+      if(path.endsWith("/project-keyword-suggestions/stream")){
+        const quality={modelRequests:1,batches:1,proposed:2,rejected:0,partial:true,evidence:"unverified"};
+        const frame=JSON.stringify({type:"batch",suggestions:[{
+          text:"Why home insurance renewal costs rise",kind:"query",rationale:"Explains annual policy changes"}],
+          quality,step:1,totalSteps:6})+"\n";
+        const body=new ReadableStream({start(controller){
+          controller.enqueue(new TextEncoder().encode(frame));
+          options?.signal?.addEventListener("abort",()=>controller.error(Error("cancelled")),{once:true});
+        }});
+        return new Response(body,{status:200,headers:{"Content-Type":"application/x-ndjson"}});
+      }
+      if(path.endsWith("/keywords")&&options?.method==="PATCH"){
+        writes.push(JSON.parse(String(options.body)));
+        return new Response(JSON.stringify({keywords:[{id:"key-new",text:"Why home insurance renewal costs rise",
+          kind:"query",origin:"model",active:true,manualLock:false}]}),{status:200});
+      }
+      const response=path.endsWith("/keywords")?{keywords:[]}
+        :path.endsWith("/graph")?{nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+          :path.endsWith("/watchlists")?{watchlists:[],watchlistIds:[]}
+            :path.endsWith("/runs")?{runs:[]}:null;
+      if(!response)throw Error(`Unexpected route: ${path}`);
+      return new Response(JSON.stringify(response),{status:200});
+    });
+    const user=userEvent.setup();
+    render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Homeowner costs",createdAt:"2026-10-20T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
+    await user.click(await screen.findByRole("button",{name:"Suggest Keywords with Local AI"}));
+    expect(await screen.findByText("Why home insurance renewal costs rise")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Stop keyword generation"})).toBeEnabled();
+    expect(screen.getByRole("button",{name:"Accept"})).toBeEnabled();
+    expect(writes).toHaveLength(0);
+    await user.click(screen.getByRole("button",{name:"Stop keyword generation"}));
+    expect(screen.getByText("Why home insurance renewal costs rise")).toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Accept"}));
+    expect(writes).toHaveLength(1);
   });
 
   it("keeps Projects visible and explains a malformed discovery start response",async()=>{

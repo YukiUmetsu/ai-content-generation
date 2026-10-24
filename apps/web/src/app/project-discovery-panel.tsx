@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import type { LocalContent, LocalProject } from "./catalog-model";
-import { loadProjectKeywords, patchProjectKeywords, suggestProjectKeywords,
+import { loadProjectKeywords, patchProjectKeywords, streamProjectKeywords,
   type KeywordKind, type KeywordSuggestion, type KeywordSuggestionQuality, type ProjectKeyword, type GraphOverview,
   type DiscoveryCandidate } from "@/lib/api/discovery";
 import { ProjectKnowledgePanel } from "./project-knowledge-panel";
@@ -22,6 +22,9 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
   const [keywords, setKeywords] = useState<ProjectKeyword[]>([]);
   const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
   const [suggestionQuality,setSuggestionQuality]=useState<KeywordSuggestionQuality|null>(null);
+  const [keywordBusy,setKeywordBusy]=useState(false);
+  const [keywordProgress,setKeywordProgress]=useState<{step:number;totalSteps:number}|null>(null);
+  const keywordController=useRef<AbortController|null>(null);
   const [text, setText] = useState("");
   const [kind, setKind] = useState<KeywordKind>("topic");
   const [editingId,setEditingId] = useState<string|null>(null);
@@ -37,12 +40,42 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
     const timer=window.setTimeout(()=>{void reload();},0);
     return ()=>window.clearTimeout(timer);
   }, [syncStatus, reload]);
+  useEffect(()=>()=>{keywordController.current?.abort();},[project.id]);
   const perform = async (action: () => Promise<void>) => {
     setBusy(true); setError(null); setNotice("");
     try { await action(); } catch (err) { setError(err instanceof Error ? err.message : "Discovery action failed."); }
     finally { setBusy(false); }
   };
   const patch = async (change: Parameters<typeof patchProjectKeywords>[1]) => setKeywords(await patchProjectKeywords(project.id,change));
+  const startKeywordReview=async()=>{
+    if(keywordController.current)return;
+    const controller=new AbortController();keywordController.current=controller;
+    setKeywordBusy(true);setError(null);setNotice("");setSuggestions([]);
+    setSuggestionQuality(null);setKeywordProgress(null);
+    try{
+      const quality=await streamProjectKeywords(project,keywords.filter(item=>item.active).map(item=>item.text),{
+        signal:controller.signal,onBatch:batch=>{
+          if(controller.signal.aborted)return;
+          setSuggestions(prior=>{
+            const seen=new Set(prior.map(item=>`${item.kind}:${item.text.toLowerCase()}`));
+            return [...prior,...batch.suggestions.filter(item=>{
+              const key=`${item.kind}:${item.text.toLowerCase()}`;
+              if(seen.has(key))return false;seen.add(key);return true;
+            })];
+          });
+          setSuggestionQuality(batch.quality);setKeywordProgress({step:batch.step,totalSteps:batch.totalSteps});
+        },
+      });
+      setSuggestionQuality(quality);
+      setNotice(msg(locale,"Review suggestions before adding them.","追加前に提案を確認してください。"));
+    }catch(err){
+      if(controller.signal.aborted)setNotice(msg(locale,
+        "Stopped. Suggestions already received are kept for review.","停止しました。受け取った提案はそのまま確認できます。"));
+      else setError(err instanceof Error?err.message:"Local keyword streaming failed.");
+    }finally{
+      if(keywordController.current===controller){keywordController.current=null;setKeywordBusy(false);}
+    }
+  };
   return <section className="mt-5 space-y-4" aria-label={msg(locale,"Project discovery","プロジェクトの発見") }>
     <Surface header={<div className="flex flex-wrap items-center justify-between gap-2">
       <h2 className="font-semibold">{msg(locale,"Project topics & search keywords","プロジェクトのトピックと検索語")}</h2>
@@ -68,12 +101,17 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
       </form>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">{keywords.filter(item=>item.active).length} {msg(locale,"active keywords","有効なキーワード")}</p>
-        <Button variant="outline" size="sm" disabled={busy || syncStatus!=="synced"} onClick={()=>void perform(async()=>{
-          const result=await suggestProjectKeywords(project,keywords.filter(item=>item.active).map(item=>item.text));
-          setSuggestions(result.suggestions);setSuggestionQuality(result.quality??null);
-          setNotice(msg(locale,"Review suggestions before adding them.","追加前に提案を確認してください。"));
-        })}>{msg(locale,busy?"Working…":"Suggest Keywords with Local AI",busy?"生成中…":"ローカル AI で提案")}</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" disabled={busy||keywordBusy||syncStatus!=="synced"}
+            onClick={()=>void startKeywordReview()}>{msg(locale,keywordBusy?"Generating in batches…":"Suggest Keywords with Local AI",
+              keywordBusy?"少しずつ生成中…":"ローカル AI で提案")}</Button>
+          {keywordBusy&&<Button size="sm" variant="subtle" onClick={()=>keywordController.current?.abort()}
+            aria-label="Stop keyword generation">{msg(locale,"Stop and keep results","停止して結果を残す")}</Button>}
+        </div>
       </div>
+      {keywordBusy&&<p role="status" className="mt-2 text-xs text-muted-foreground">{msg(locale,
+        `Local AI is working in small batches. ${keywordProgress?`Batch ${keywordProgress.step} of ${keywordProgress.totalSteps} complete.`:"Waiting for the first batch…"} You can review or accept suggestions as they arrive.`,
+        `ローカル AI で少量ずつ生成中。${keywordProgress?`${keywordProgress.totalSteps} 回中 ${keywordProgress.step} 回完了。`:"最初の結果を待機中…"}受け取った提案はすぐに確認・採用できます。`)}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
         {keywords.length===0?<p className="text-sm text-muted-foreground">{msg(locale,"No keywords yet. Add one or request AI suggestions.","キーワードはまだありません。")}</p>:
           keywords.map(item=><div key={item.id} className={`flex max-w-full items-center gap-2 rounded-control border px-3 py-2 text-sm ${item.active?"border-border":"border-border opacity-55"}`}>
