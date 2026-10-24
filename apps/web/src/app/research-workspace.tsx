@@ -395,7 +395,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   async function resumeResearchJob(retryScene=false){
     if(!activeJobId)return;
     const scene=researchJob?.stage.match(/^scene:(\d+)$/u);
+    const evidenceReview=researchJob?.status==="paused"&&researchJob.stage==="evidence-repair";
     const url=retryScene&&scene?`/api/contentgen-director/research-jobs/${activeJobId}/scenes/${Number(scene[1])-1}/retry`:
+      evidenceReview?`/api/contentgen-director/research-jobs/${activeJobId}/repair`:
       `/api/contentgen-director/research-jobs/${activeJobId}/resume`;
     setResearchError("");setResearchBusy(true);
     try{
@@ -566,7 +568,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 </Button>
                 {activeJobId&&researchJob&&["failed","paused","cancelled"].includes(researchJob.status)&&
                   <Button size="lg" variant="outline" onClick={()=>void resumeResearchJob()} disabled={researchBusy||blockedForStory}>
-                    {tr("Resume saved job","保存済みジョブを再開")}
+                    {researchJob.stage==="evidence-repair"&&researchJob.status==="paused"?
+                      tr("Refresh sources and retry evidence","出典を再取得して根拠を再確認"):
+                      tr("Resume saved job","保存済みジョブを再開")}
                   </Button>}
                 {activeJobId&&researchJob?.status==="failed"&&/^scene:\d+$/u.test(researchJob.stage)&&
                   <Button size="md" variant="outline" onClick={()=>void resumeResearchJob(true)} disabled={researchBusy||blockedForStory}>
