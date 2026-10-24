@@ -95,6 +95,18 @@ test("outline and scene requests use generous fixed budgets, including after tru
   assert.equal(RESEARCH_MODEL_LIMITS.timeoutMs,240000);
 });
 
+test("saved generation settings override defaults for each research model request",async()=>{
+  const budgets=[];
+  const generation={outlineTokens:1024,sceneTokens:3072,timeoutSeconds:360};
+  const transport=async(_endpoint,options)=>{
+    budgets.push(JSON.parse(options.body).max_tokens);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(budgets.length===1?outline:unit("Complete cost"))}}]})};
+  };
+  await generateOutline(dossier,quotes,{...settings,generation},{transport});
+  await generateSceneUnit(outline,0,dossier,quotes,{...settings,generation},{transport});
+  assert.deepEqual(budgets,[1024,3072]);
+});
+
 test("scene request asks a small model for concise JSON fields",async()=>{
   let system="";
   const transport=async(_endpoint,options)=>{
