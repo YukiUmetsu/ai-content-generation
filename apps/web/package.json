@@ -19,7 +19,7 @@
     "video:try": "node scripts/video-production/try.mjs",
     "video:topic": "node scripts/video-production/topic-cli.mjs",
     "video:studio": "node scripts/video-production/studio-server.mjs",
-    "test:video:headless": "node --test scripts/video-production/*.test.mjs",
+    "test:video:headless": "node --test scripts/video-production/*.test.mjs scripts/director-studio-vite.test.mjs scripts/director-production-vite.test.mjs scripts/research-readiness.test.mjs scripts/research-model-vite.test.mjs",
     "video:plan": "node scripts/video-production/preproduction-cli.mjs",
     "video:research": "node scripts/video-production/research-cli.mjs",
     "research:up": "node scripts/video-production/searxng-docker.mjs up",
