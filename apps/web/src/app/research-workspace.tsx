@@ -13,7 +13,11 @@ import type { ResearchDraftResult } from "./researched-storyboard";
 
 const LATEST_RESEARCH_KEY="contentgen:studio-research:latest:v1";
 const LATEST_SEARCH_KEY="contentgen:studio-search:latest:v1";
+const LATEST_JOB_KEY="contentgen:studio-research-job:latest:v1";
 interface RecentResearch {topic:string;artifactId:string}
+interface ResearchJobStatus {jobId:string;status:"queued"|"running"|"paused"|"failed"|"cancelled"|"completed";
+  stage:string;completedScenes:number;totalScenes:number;artifactId?:string;error?:{code:string;message:string}}
+type ResearchJobResponse=Omit<ResearchJobStatus,"error">&{error?:string|{code:string;message:string}};
 interface SearchLead {title:string;url:string;snippet:string}
 interface SavedSearch {
   artifactId:string;schemaVersion:1;kind:"studio-search-snapshot";
@@ -58,6 +62,16 @@ function savedSearchFor(projectTopic:string):RecentResearch|null {
     return {topic:stored.topic,artifactId:stored.artifactId};
   }catch{return null;}
 }
+function savedJobFor(projectTopic:string):{topic:string;jobId:string}|null{
+  if(!projectTopic.trim())return null;
+  try{
+    const value:unknown=JSON.parse(localStorage.getItem(LATEST_JOB_KEY)||"null");
+    if(!value||typeof value!=="object"||!("topic" in value)||!("jobId" in value)||
+      value.topic!==projectTopic.trim()||typeof value.jobId!=="string"||
+      !/^job_[a-f0-9]{24}$/u.test(value.jobId))return null;
+    return {topic:projectTopic.trim(),jobId:value.jobId};
+  }catch{return null;}
+}
 
 interface ResearchWorkspaceProps {
   locale: Locale;
@@ -83,6 +97,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   const [restoring, setRestoring] = useState(Boolean(recentResearch));
   const [researchResult, setResearchResult] = useState<ResearchDraftResult | null>(null);
   const [researchError, setResearchError] = useState("");
+  const [activeJobId,setActiveJobId]=useState<string|null>(()=>savedJobFor(projectTopic)?.jobId??null);
+  const [researchJob,setResearchJob]=useState<ResearchJobStatus|null>(null);
+  const [jobPollRevision,setJobPollRevision]=useState(0);
   const [recentSearch] = useState(()=>savedSearchFor(projectTopic));
   const [searchResult, setSearchResult] = useState<SavedSearch|null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -115,8 +132,10 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
 
   const blockedForReadiness = checkingReadiness || (readiness !== null && (
     (!searchResult && readiness.search.state !== "ready") ||
-    [readiness.researchModel, readiness.storyModel].some(service =>
+    [readiness.storyModel].some(service =>
       service.state === "not_configured" || service.state === "model_missing" || service.state === "unavailable")));
+  const blockedForStory = checkingReadiness || (readiness !== null &&
+    ["not_configured","model_missing","unavailable"].includes(readiness.storyModel.state));
   const blockedForSearch = checkingReadiness || (readiness !== null &&
     ["not_configured","unavailable"].includes(readiness.search.state));
 
@@ -130,12 +149,12 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
       "ローカル検索を設定してください：pnpm --dir apps/web research:up、続けて pnpm --dir apps/web research:check。");
     if (readiness.search.state !== "ready") return tr("SearXNG is not responding. Run pnpm --dir apps/web research:status, then research:check.",
       "SearXNG に接続できません。pnpm --dir apps/web research:status と research:check を実行してください。");
-    if ([readiness.researchModel, readiness.storyModel].some(service => service.state === "not_configured" || service.state === "model_missing"))
-      return tr("Select installed models for Research and Story in Settings → Local AI, then check again.",
-        "設定 → ローカル AI で調査用と構成用のモデルを選択し、再確認してください。");
-    if ([readiness.researchModel, readiness.storyModel].some(service => service.state !== "ready"))
-      return tr("SearXNG responds, but the model list could not be verified. Research may still work; check your local model server.",
-        "SearXNG は応答していますが、モデル一覧を確認できませんでした。モデルサーバーを確認してください。");
+    if ([readiness.storyModel].some(service => service.state === "not_configured" || service.state === "model_missing"))
+      return tr("Select an installed Story model in Settings → Local AI, then check again.",
+        "設定 → ローカル AI で構成用モデルを選択し、再確認してください。");
+    if (readiness.storyModel.state !== "ready")
+      return tr("The story model is not responding; deterministic evidence capture can still be saved.",
+        "構成用モデルが応答していませんが、出典情報は保存できます。");
     return tr("Local services respond. For a real JSON engine search, run pnpm --dir apps/web research:check.",
       "ローカルサービスは応答しています。実際の JSON 検索は pnpm --dir apps/web research:check で確認できます。");
   }
@@ -185,12 +204,47 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     return ()=>controller.abort();
   },[projectTopic,recentSearch]);
 
+  useEffect(()=>{
+    if(!activeJobId)return;
+    const controller=new AbortController();
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const expectedTopic=topic.trim();
+    async function refresh(){
+      try{
+        const response=await fetch("/api/contentgen-director/research-jobs/"+activeJobId,{signal:controller.signal});
+        const state=await response.json() as ResearchJobResponse;
+        if(!response.ok)throw Error(typeof state.error==="string"?state.error:"Could not restore research job.");
+        if(controller.signal.aborted)return;
+        setResearchJob({...state,error:typeof state.error==="object"?state.error:undefined});
+        setResearchBusy(["queued","running"].includes(state.status));
+        if(state.status==="completed"&&state.artifactId){
+          const restored=await fetch("/api/contentgen-director/research-draft/"+state.artifactId,{signal:controller.signal});
+          const draft=await restored.json() as ResearchDraftResult&{error?:string};
+          if(!restored.ok)throw Error(draft.error||"Cannot open completed storyboard.");
+          if(!controller.signal.aborted&&draft.dossier?.topic.title===expectedTopic){
+            setResearchResult(draft);setResearchError("");
+            try{localStorage.setItem(LATEST_RESEARCH_KEY,JSON.stringify({topic:expectedTopic,artifactId:state.artifactId}));}catch{/* Server artifact is durable. */}
+          }
+        }else if(state.status==="failed"||state.status==="paused"){
+          setResearchError(state.error&&typeof state.error==="object"?state.error.message:"Research job paused. Resume to continue.");
+        }
+        if(["queued","running"].includes(state.status))timer=setTimeout(()=>void refresh(),1500);
+      }catch(error){
+        if(!controller.signal.aborted){setResearchBusy(false);setResearchError(error instanceof Error?error.message:"Unable to read job status.");}
+      }
+    }
+    void refresh();
+    return ()=>{controller.abort();if(timer)clearTimeout(timer);};
+  },[activeJobId,topic,jobPollRevision]);
+
   function invalidateResearch() {
     pending.current?.abort();
     revision.current++;
     setResearchBusy(false);
     setRestoring(false);
     setResearchResult(null);
+    setResearchJob(null);
+    setActiveJobId(null);
     setResearchError("");
     setSearchBusy(false);
     setSearchResult(null);
@@ -205,6 +259,14 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   }
 
   function cancelResearch() {
+    if(activeJobId&&researchJob&&["queued","running"].includes(researchJob.status)){
+      void fetch("/api/contentgen-director/research-jobs/"+activeJobId+"/cancel",{
+        method:"POST",headers:{"Content-Type":"application/json","x-contentgen-director":"local-only"},body:"{}",
+      }).then(async response=>{const status=await response.json() as ResearchJobStatus;
+        if(!response.ok)throw Error("Could not cancel the job.");setResearchJob(status);setResearchBusy(false);
+      }).catch(error=>setResearchError(error instanceof Error?error.message:"Cancel failed."));
+      return;
+    }
     pending.current?.abort();
     revision.current++;
     pending.current=null;
@@ -304,27 +366,41 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
         if(current===revision.current)setSearchBusy(false);
       }
       if(current!==revision.current||controller.signal.aborted)return;
-      const response=await fetch("/api/contentgen-director/research-draft",{
+      const response=await fetch("/api/contentgen-director/research-jobs",{
         method:"POST",signal:controller.signal,
         headers:{"Content-Type":"application/json","x-contentgen-director":"local-only"},
         body:JSON.stringify({title:editorial.input.topic,viewerQuestion:editorial.input.viewerQuestion,
           audience:editorial.input.audience,locale:locale==="ja"?"ja-JP":"en-US",
           searchArtifactId:saved.artifactId}),
       });
-      const payload=await response.json() as ResearchDraftResult & {error?:string};
-      if(!response.ok)throw Error(payload.error||`Research failed (HTTP ${response.status}).`);
-      if(!payload.dossier?.id||!payload.plan?.shots?.length||!payload.quotes?.length)
-        throw Error("Research returned an incomplete dossier or shot plan.");
+      const payload=await response.json() as ResearchJobResponse;
+      if(!response.ok)throw Error(typeof payload.error==="string"?payload.error:`Research job failed (HTTP ${response.status}).`);
+      if(!/^job_[a-f0-9]{24}$/u.test(payload.jobId))throw Error("Research job did not return a valid ID.");
       if(current===revision.current){
-        setResearchResult(payload);
-        if(payload.artifactId)try{localStorage.setItem(LATEST_RESEARCH_KEY,JSON.stringify({topic:editorial.input.topic,artifactId:payload.artifactId}));}
-        catch{/* The in-memory reviewed result remains usable. */}
+        setResearchJob({...payload,error:typeof payload.error==="object"?payload.error:undefined});setActiveJobId(payload.jobId);
+        try{localStorage.setItem(LATEST_JOB_KEY,JSON.stringify({topic:editorial.input.topic,jobId:payload.jobId}));}
+        catch{/* The server continues the job independently. */}
       }
     }catch(error){
-      if(current===revision.current)setResearchError(error instanceof Error?error.message:"Research failed.");
+      if(current===revision.current){setResearchError(error instanceof Error?error.message:"Research failed.");setResearchBusy(false);}
     }finally{
-       if(current===revision.current){setResearchBusy(false);setSearchBusy(false);pending.current=null;}
+       if(current===revision.current){setSearchBusy(false);pending.current=null;}
     }
+  }
+
+  async function resumeResearchJob(retryScene=false){
+    if(!activeJobId)return;
+    const scene=researchJob?.stage.match(/^scene:(\d+)$/u);
+    const url=retryScene&&scene?`/api/contentgen-director/research-jobs/${activeJobId}/scenes/${Number(scene[1])-1}/retry`:
+      `/api/contentgen-director/research-jobs/${activeJobId}/resume`;
+    setResearchError("");setResearchBusy(true);
+    try{
+      const response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","x-contentgen-director":"local-only"},body:"{}"});
+      const result=await response.json() as ResearchJobResponse;
+      if(!response.ok)throw Error(typeof result.error==="string"?result.error:"Could not resume job.");
+      setResearchJob({...result,error:typeof result.error==="object"?result.error:undefined});
+      setJobPollRevision(value=>value+1);
+    }catch(error){setResearchBusy(false);setResearchError(error instanceof Error?error.message:"Cannot resume job.");}
   }
 
   function createFromResearch() {
@@ -484,6 +560,14 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                     searchResult?tr("Generate storyboard from saved sources","保存済みの出典候補から構成案を生成"):
                       tr("Research & generate storyboard","調査して構成案を生成")}
                 </Button>
+                {activeJobId&&researchJob&&["failed","paused","cancelled"].includes(researchJob.status)&&
+                  <Button size="lg" variant="outline" onClick={()=>void resumeResearchJob()} disabled={researchBusy||blockedForStory}>
+                    {tr("Resume saved job","保存済みジョブを再開")}
+                  </Button>}
+                {activeJobId&&researchJob?.status==="failed"&&/^scene:\d+$/u.test(researchJob.stage)&&
+                  <Button size="md" variant="outline" onClick={()=>void resumeResearchJob(true)} disabled={researchBusy||blockedForStory}>
+                    {tr("Regenerate failed scene only","失敗したシーンのみ再生成")}
+                  </Button>}
                 {(researchBusy||searchBusy)&&<Button variant="outline" onClick={cancelResearch}>{tr("Cancel","中止")}</Button>}
                 <Button variant="subtle" onClick={createFromResearch} disabled={!onCreateStoryboard||researchBusy||searchBusy||topic.trim().length<3||topic.trim().length>160}>
                   {tr("Create unresearched outline","未調査の構成案を作成")}
@@ -492,6 +576,11 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
               </div>
               <div className="px-5 pb-6 pt-4 sm:px-8">
               {researchBusy&&<p role="status" className="text-sm text-muted-foreground">{restoring?tr("Restoring saved research…","保存済みの調査を読み込み中…"):searchBusy?tr("Searching SearXNG and saving sources…","SearXNG を検索して出典候補を保存中…"):tr("Using saved search results to capture public pages and draft teaching shots. No media is rendered yet.","保存済みの検索結果から公開ページを取得し、解説ショットを生成しています。映像はまだ生成されません。")}</p>}
+              {researchJob&&<div role="status" className="mt-3 rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm">
+                <p className="font-semibold text-foreground">{tr("Research production job","調査・構成作成ジョブ")} · {researchJob.status}</p>
+                <p className="mt-1 text-muted-foreground">{researchJob.stage} · {researchJob.totalScenes?`${researchJob.completedScenes}/${researchJob.totalScenes} ${tr("teaching units saved","解説単位を保存")}`:tr("Preparing evidence and outline","出典と構成案を準備中")}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{tr("Progress survives page refreshes. Completed stages are reused on retry.","ページを更新しても進行状況は保存されます。再試行時は完了済みの工程を再利用します。")}</p>
+              </div>}
               {searchBusy&&!researchBusy&&<p role="status" className="text-sm text-muted-foreground">{tr("Searching SearXNG and saving sources locally…","SearXNG を検索して出典候補をローカルに保存中…")}</p>}
               {searchError&&<p role="alert" className="rounded-control border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{searchError}</p>}
               {researchError&&<p role="alert" className="rounded-control border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{researchError}</p>}

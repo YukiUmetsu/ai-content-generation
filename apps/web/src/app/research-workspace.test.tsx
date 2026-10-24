@@ -10,6 +10,17 @@ const readyServices = { version: 1, ready: true,
   search: { state: "ready" }, researchModel: { state: "ready", model: "local-model" },
   storyModel: { state: "ready", model: "local-model" } };
 const savedSearchId = "search_20261024T015250000Z-aaaaaaaaaaaa";
+const savedJobId = "job_aaaaaaaaaaaaaaaaaaaaaaaa";
+const savedDraftId = "research_home-123456789abc";
+function jobResponse(url:string, options?:RequestInit):Response|null{
+  if(url==="/api/contentgen-director/research-jobs"&&options?.method==="POST")
+    return new Response(JSON.stringify({jobId:savedJobId,status:"queued",stage:"queued",completedScenes:0,totalScenes:0}),{status:202});
+  if(url==="/api/contentgen-director/research-jobs/"+savedJobId&&(!options?.method||options.method==="GET"))
+    return new Response(JSON.stringify({jobId:savedJobId,status:"completed",stage:"completed",completedScenes:2,totalScenes:2,artifactId:savedDraftId}),{status:200});
+  if(url==="/api/contentgen-director/research-draft/"+savedDraftId)
+    return new Response(JSON.stringify(researchedFixture),{status:200});
+  return null;
+}
 function searchResponse(url: string, options?: RequestInit): Response | null {
   if (url !== "/api/contentgen-director/research-search" || options?.method !== "POST") return null;
   const brief = JSON.parse(String(options.body)) as {title:string;viewerQuestion:string;audience:string;locale:string};
@@ -118,7 +129,7 @@ describe("Studio Research to source-backed story", () => {
       if (readinessResponse(String(url))) return readinessResponse(String(url))!;
       if (searchResponse(String(url),options)) return searchResponse(String(url),options)!;
       if (String(url).startsWith("/api/research/market/related")) return new Response(JSON.stringify({ videos: [] }), { status: 200 });
-      if (String(url) === "/api/contentgen-director/research-draft") return new Response(JSON.stringify(researchedFixture), { status: 200 });
+      if (jobResponse(String(url),options)) return jobResponse(String(url),options)!;
       throw Error("Unexpected request");
     }));
     const create = vi.fn(() => true), user = userEvent.setup();
@@ -128,7 +139,7 @@ describe("Studio Research to source-backed story", () => {
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     expect(screen.getByText(/Insulation resists the flow of heat/)).toBeInTheDocument();
     expect(screen.getByText(/fewer heat arrows cross/)).toBeInTheDocument();
-    const request = requests.find(x => x.url.endsWith("/research-draft"));
+    const request = requests.find(x => x.url.endsWith("/research-jobs"));
     expect(request?.options?.method).toBe("POST");
     expect(request?.options?.headers).toMatchObject({ "x-contentgen-director": "local-only" });
     await user.click(screen.getByRole("button", { name: /create editable.*storyboard/i }));
@@ -136,7 +147,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("reports research errors and never invents a source-backed storyboard", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).endsWith("/research-jobs")
       ? new Response(JSON.stringify({ error: "Local SearXNG unavailable" }), { status: 422 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const create = vi.fn(() => true), user = userEvent.setup();
@@ -149,7 +160,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("clears stale research as soon as the Research topic changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? jobResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const create = vi.fn(() => true), user = userEvent.setup();
@@ -164,7 +175,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("does not invalidate reviewed research when only the Evidence Library query changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? jobResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const user = userEvent.setup();
@@ -180,7 +191,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("invalidates reviewed evidence if the intended viewer question or audience changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? jobResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const user = userEvent.setup();
@@ -215,17 +226,17 @@ describe("Studio Research to source-backed story", () => {
 
   it("shows missing local search on page open, blocks only source-backed generation, and recovers on recheck", async () => {
     let checkCount = 0, researchPosts = 0;
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL,options?:RequestInit) => {
       if (String(url) === readinessPath) {
         checkCount++;
         return new Response(JSON.stringify(checkCount === 1
           ? { ...readyServices, ready: false, search: { state: "not_configured" } }
           : readyServices), { status: 200 });
       }
-      if (String(url) === "/api/contentgen-director/research-draft") {
+      if (String(url) === "/api/contentgen-director/research-jobs" && options?.method==="POST") {
         researchPosts++;
-        return new Response(JSON.stringify(researchedFixture), { status: 200 });
       }
+      if (jobResponse(String(url),options)) return jobResponse(String(url),options)!;
       if (searchResponse(String(url),options)) return searchResponse(String(url),options)!;
       throw Error(`Unexpected URL ${String(url)}`);
     }));
@@ -262,7 +273,7 @@ describe("Studio Research to source-backed story", () => {
           researchModel: { state: "unverified" }, storyModel: { state: "unverified" } }), { status: 200 })
       : new Response(JSON.stringify(researchedFixture), { status: 200 })));
     render(<ResearchWorkspace locale="en" projectTopic="Heat pumps" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
-    expect(await screen.findByText(/model list could not be verified/i)).toBeInTheDocument();
+    expect(await screen.findByText(/story model is not responding/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
   });
 
@@ -284,37 +295,42 @@ describe("Studio Research to source-backed story", () => {
     expect(screen.getByText(/Insulation reduces the movement of heat/)).toBeInTheDocument();
     expect(screen.getByText(/Search leads are not verified evidence/i)).toBeInTheDocument();
     expect(requests.filter(x=>x==="/api/contentgen-director/research-search")).toHaveLength(1);
-    expect(requests).not.toContain("/api/contentgen-director/research-draft");
+    expect(requests).not.toContain("/api/contentgen-director/research-jobs");
   });
 
-  it("keeps search links after an invalid quote and retries storyboard without searching again", async () => {
-    let searches=0,drafts=0;
+  it("keeps search links after a failed scene and resumes without searching again", async () => {
+    let searches=0,jobs=0,resumed=false;
     vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit) => {
       const path=String(url);
       if(path===readinessPath)return readinessResponse(path)!;
       if(path==="/api/contentgen-director/research-search"){
         searches++;return searchResponse(path,options)!;
       }
-      if(path==="/api/contentgen-director/research-draft"){
-        drafts++;
+      if(path==="/api/contentgen-director/research-jobs"&&options?.method==="POST"){
+        jobs++;
         expect(JSON.parse(String(options?.body)).searchArtifactId).toBe(savedSearchId);
-        return drafts===1
-          ?new Response(JSON.stringify({error:"Claim 3 has an unsupported or non-verbatim source quote."}),{status:422})
-          :new Response(JSON.stringify(researchedFixture),{status:200});
+        return jobResponse(path,options)!;
       }
+      if(path==="/api/contentgen-director/research-jobs/"+savedJobId+"/resume"){
+        resumed=true;return new Response(JSON.stringify({jobId:savedJobId,status:"queued",stage:"queued",completedScenes:1,totalScenes:2}),{status:202});
+      }
+      if(path==="/api/contentgen-director/research-jobs/"+savedJobId){
+        return resumed?jobResponse(path,options)!:new Response(JSON.stringify({jobId:savedJobId,status:"failed",stage:"scene:2",completedScenes:1,totalScenes:2,error:{code:"invalid_output",message:"Local model returned invalid structured data."}}),{status:200});
+      }
+      if(jobResponse(path,options))return jobResponse(path,options)!;
       return new Response(JSON.stringify({items:[]}),{status:200});
     }));
     const user=userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
     await expectResearchEnabled();
     await user.click(screen.getByRole("button",{name:/research.*generate storyboard/i}));
-    expect(await screen.findByRole("alert")).toHaveTextContent(/Claim 3 has an unsupported/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/invalid structured data/i);
     expect(screen.getByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();
     expect(localStorage.getItem("contentgen:studio-search:latest:v1")).toContain(savedSearchId);
-    await user.click(screen.getByRole("button",{name:/retry storyboard generation/i}));
+    await user.click(screen.getByRole("button",{name:/resume saved job/i}));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     expect(searches).toBe(1);
-    expect(drafts).toBe(2);
+    expect(jobs).toBe(1);
   });
 
   it("restores a selected saved search from the local history without running AI", async () => {
@@ -348,7 +364,7 @@ describe("Studio Research to source-backed story", () => {
       const path=String(url);
       if(path===readinessPath)return readinessResponse(path)!;
       if(path==="/api/contentgen-director/research-search")return deferred;
-      if(path==="/api/contentgen-director/research-draft"){drafts++;return new Response(JSON.stringify(researchedFixture),{status:200});}
+      if(path==="/api/contentgen-director/research-jobs"){drafts++;return jobResponse(path,options)!;}
       return searchResponse(path,options)??new Response(JSON.stringify({items:[]}),{status:200});
     }));
     const user=userEvent.setup();
@@ -371,7 +387,7 @@ describe("Studio Research to source-backed story", () => {
     localStorage.setItem("contentgen:studio-search:latest:v1",JSON.stringify({
       topic:"Heat pump costs",artifactId:savedSearchId}));
     const requests:string[]=[];
-    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL)=>{
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit)=>{
       const path=String(url);requests.push(path);
       if(path===readinessPath)return new Response(JSON.stringify({...readyServices,
         search:{state:"unavailable"}}),{status:200});
@@ -382,8 +398,7 @@ describe("Studio Research to source-backed story", () => {
         searchedAt:"2026-10-24T01:52:50.000Z",results:[
           {title:"DOE Energy Saver",url:"https://www.energy.gov/energysaver/insulation",snippet:"Insulation overview."}
         ]}),{status:200});
-      if(path==="/api/contentgen-director/research-draft")
-        return new Response(JSON.stringify(researchedFixture),{status:200});
+      if(jobResponse(path,options))return jobResponse(path,options)!;
       throw Error(`Unexpected URL ${path}`);
     }));
     const user=userEvent.setup();
@@ -393,7 +408,7 @@ describe("Studio Research to source-backed story", () => {
     await waitFor(()=>expect(generate).toBeEnabled());
     await user.click(generate);
     expect(requests).not.toContain("/api/contentgen-director/research-search");
-    expect(requests).toContain("/api/contentgen-director/research-draft");
+    expect(requests).toContain("/api/contentgen-director/research-jobs");
   });
 });
 

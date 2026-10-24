@@ -1,16 +1,33 @@
 /** Local-only Studio bridge for prompt templates and selected-shot variation/editing. */
 import { PROMPT_DEFAULTS, readPromptOverrides, savePromptOverrides } from "./video-production/prompt-profiles.mjs";
-import { resolveModelForTask } from "./video-production/model-profiles.mjs";
+import { resolveModelForTask, readModelProfiles } from "./video-production/model-profiles.mjs";
 import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
 import { searchStudioSources, loadStudioSearch, listStudioSearches } from "./video-production/studio-search.mjs";
 import { generateMarketQueries } from "./video-production/market-query-generator.mjs";
+import { researchJobManager } from "./video-production/research-job-queue.mjs";
 
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
 let researchDraftRunning=false;
+async function configuredStoryFallback(){
+  const id=process.env.CONTENTGEN_STORY_FALLBACK_PROFILE_ID;
+  if(!id)return null;
+  if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,47}$/u.test(id))throw Error("Invalid local fallback profile ID.");
+  const profiles=await readModelProfiles();
+  const selected=profiles.profiles.find(profile=>profile.id===id);
+  if(!selected?.model)throw Error("Configured local fallback model profile is missing or has no model.");
+  return {endpoint:selected.endpoint,model:selected.model};
+}
+async function storyJobModels(deps){
+  const primary=await (deps.model??resolveModelForTask)("story");
+  if(!primary?.model)throw Error("Choose an installed local story model in Studio Settings.");
+  const secondary=await (deps.fallback??configuredStoryFallback)();
+  return {primary,...(secondary?.model&&
+    (secondary.model!==primary.model||secondary.endpoint!==primary.endpoint)?{secondary}:{})};
+}
 function send(res,status,body){
   const data=JSON.stringify(body);
   res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store",
@@ -77,6 +94,23 @@ export async function handleDirectorRequest(req,res,deps={}){
       const result=await (deps.searchSources??searchStudioSources)(request,{signal:controller.signal});
       responded=true;
       send(res,200,result);
+    }else if(req.method==="POST"&&route==="/research-jobs"){
+      const request=await readBody(req);
+      const result=await (deps.jobs??researchJobManager).create(request,await storyJobModels(deps));
+      send(res,202,result);
+    }else if(req.method==="GET"&&/^\/research-jobs\/job_[a-f0-9]{24}$/u.test(route)){
+      send(res,200,await (deps.jobs??researchJobManager).get(route.slice("/research-jobs/".length)));
+    }else if(req.method==="POST"&&/^\/research-jobs\/job_[a-f0-9]{24}\/resume$/u.test(route)){
+      await readBody(req);
+      const id=route.split("/")[2];
+      send(res,202,await (deps.jobs??researchJobManager).resume(id,await storyJobModels(deps)));
+    }else if(req.method==="POST"&&/^\/research-jobs\/job_[a-f0-9]{24}\/cancel$/u.test(route)){
+      await readBody(req);
+      send(res,200,await (deps.jobs??researchJobManager).cancel(route.split("/")[2]));
+    }else if(req.method==="POST"&&/^\/research-jobs\/job_[a-f0-9]{24}\/scenes\/[0-9]+\/retry$/u.test(route)){
+      await readBody(req);
+      const parts=route.split("/");
+      send(res,202,await (deps.jobs??researchJobManager).retryScene(parts[2],parts[4],await storyJobModels(deps)));
     }else if(req.method==="POST"&&route==="/research-draft"){
       if(researchDraftRunning){send(res,409,{error:"Research is already running. Wait for the current draft or cancel it."});return;}
       researchDraftRunning=true;
