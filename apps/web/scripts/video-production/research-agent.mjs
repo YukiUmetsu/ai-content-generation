@@ -241,8 +241,35 @@ function sourcePassages(captures) {
   });
 }
 
+/** Model-independent last resort: only use sentences copied directly from captured evidence. */
+function extractiveClaims(sources, brief) {
+  const stopWords = new Set(["a", "an", "and", "are", "can", "does", "for", "from", "how",
+    "is", "it", "its", "much", "of", "or", "our", "the", "their", "this", "to", "use",
+    "what", "when", "where", "which", "who", "why", "with", "you", "your", "home", "matter"]);
+  const terms = [...new Set((String(brief?.viewerQuestion ?? "") + " " + String(brief?.title ?? ""))
+    .toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)?.filter(word => !stopWords.has(word)) ?? [])];
+  if (!terms.length) return [];
+  const candidates = sources.flatMap(source => source.passages.flatMap(passage =>
+    (passage.text.match(/[^.!?。！？]+[.!?。！？]?/gu) ?? []).flatMap(raw => {
+      const sentence = raw.trim();
+      if (sentence.length < 35 || sentence.length > 300 ||
+        /\b(cookie|privacy policy|subscribe|javascript|advertisement)\b/iu.test(sentence)) return [];
+      const lowered = sentence.toLowerCase();
+      const score = terms.filter(term => lowered.includes(term)).length;
+      return score ? [{ sourceId: source.id, quote: sentence, score }] : [];
+    })));
+  candidates.sort((a, b) => b.score - a.score || b.quote.length - a.quote.length);
+  const usedSources = new Set();
+  return candidates.filter(item => {
+    if (usedSources.has(item.sourceId)) return false;
+    usedSources.add(item.sourceId);
+    return true;
+  }).slice(0, 4).map(item => ({ text: item.quote,
+    support: [{ sourceId: item.sourceId, quote: item.quote }] }));
+}
+
 /** Translate selected opaque IDs into exact quote strings; never trust model-authored quote text. */
-function resolvePassageClaims(candidate, sources) {
+function resolvePassageClaims(candidate, sources, brief) {
   if (!candidate || typeof candidate !== "object" || !Array.isArray(candidate.claims) ||
     candidate.claims.length < 1 || candidate.claims.length > 16 ||
     !Array.isArray(candidate.gaps) || candidate.gaps.length > 20 ||
@@ -269,7 +296,14 @@ function resolvePassageClaims(candidate, sources) {
       if (unrecognized) omitted.push("Claim " + (index + 1) + " included only its valid passage IDs; unknown references were ignored.");
     }
   }
-  if (!claims.length) throw Error("Research model returned no claims with valid captured passages. Keep the saved search and retry with a smaller model context or a different local model.");
+  if (!claims.length) {
+    const excerpts = extractiveClaims(sources, brief);
+    if (!excerpts.length) throw Error("Research model returned no claims with valid captured passages, and no relevant source excerpts were found. Keep the saved search and retry with a different local model or source selection.");
+    return { claims: excerpts, gaps: [
+      "Research model references were invalid; used exact captured source excerpts instead. Review the excerpts for context and relevance.",
+      ...candidate.gaps,
+    ].slice(0, 20) };
+  }
   return { claims, gaps: [...omitted, ...candidate.gaps].slice(0, 20) };
 }
 
@@ -326,7 +360,7 @@ export async function analyzeCapturedResearch(captures, brief, options, { transp
   let candidate;
   try { candidate = JSON.parse(response.choices[0].message.content); }
   catch { throw Error("Local model did not return valid JSON claims."); }
-  const resolved = resolvePassageClaims(candidate, sources);
+  const resolved = resolvePassageClaims(candidate, sources, brief);
   validateExtractedClaims(resolved, captures);
   return resolved;
 }
