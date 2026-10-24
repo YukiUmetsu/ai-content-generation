@@ -58,9 +58,16 @@ export function StoryboardPlanner({
   const [board, setBoard] = useState<SemanticStoryboard>(() =>
     cloneStoryboard(initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE)
   );
-  const [selectedBeatId, setSelectedBeatId] = useState(() =>
-    (initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats[0]?.id ?? ""
-  );
+  const [selectedBeatId, setSelectedBeatId] = useState(() => {
+    const beats=(initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats;
+    if(projectId){
+      try{
+        const requested=sessionStorage.getItem("contentgen:storyboard-focus-beat:v1:"+projectId);
+        if(requested&&beats.some(beat=>beat.id===requested))return requested;
+      }catch{/* Continue with the first beat when storage is unavailable. */}
+    }
+    return beats[0]?.id ?? "";
+  });
   const [loadWarning, setLoadWarning] = useState(restoredDraft.warning);
   const [storageError, setStorageError] = useState<string | null>(restoredDraft.warning);
   const [dialogOpen, setDialogOpen] = useState(false);
