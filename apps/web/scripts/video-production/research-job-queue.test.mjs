@@ -29,7 +29,7 @@ test("retry resumes from completed scene, not source capture or outline",async()
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   let captures=0,outlines=0,sceneOne=0,sceneTwo=0;
   const manager=fixture(root,{capture:async()=>{captures++;return capture;},outline:async()=>{outlines++;return outline;},
-    scene:async (_,index)=>{if(index===0)sceneOne++;else if(++sceneTwo<=2)throw Error("Model invalid JSON");return {index};}});
+    scene:async (_,index)=>{if(index===0)sceneOne++;else if(++sceneTwo<=3)throw Error("Model invalid JSON");return {index};}});
   try{
     const {jobId}=await manager.create(brief,{primary:model});
     assert.equal((await settled(manager,jobId)).status,"failed");
@@ -39,7 +39,7 @@ test("retry resumes from completed scene, not source capture or outline",async()
     assert.equal(done.status,"completed");
     assert.equal(done.completedScenes,2);
     assert.equal(done.artifactId,"research_test-0123456789ab");
-    assert.equal(captures,1);assert.equal(outlines,1);assert.equal(sceneOne,1);assert.equal(sceneTwo,3);
+    assert.equal(captures,1);assert.equal(outlines,1);assert.equal(sceneOne,1);assert.equal(sceneTwo,4);
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
@@ -55,6 +55,51 @@ test("one invalid local scene response gets a bounded repair attempt",async()=>{
     assert.equal((await settled(manager,jobId)).status,"completed");
     assert.equal(retries,2);
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("malformed output is retried twice with repair feedback before completing the scene",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  const feedback=[];
+  const manager=fixture(root,{scene:async (_outline,index,_d,_q,_settings,opts)=>{
+    if(index===1){feedback.push(opts.feedback);if(feedback.length<3)throw Error("Local model returned invalid structured JSON.");}
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(feedback.length,3);
+    assert.equal(feedback[0],null);
+    assert.match(feedback[1],/JSON/i);
+    assert.match(feedback[2],/JSON/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("retry progress is public, checkpointed, and cleared after final failure",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  let release=()=>{};
+  const waiting=new Promise(resolve=>{release=resolve;});
+  const manager=fixture(root,{sleep:async()=>waiting,scene:async(_outline,index)=>{
+    if(index===1)throw Error("Scene invalid schema");
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    let status;
+    for(let n=0;n<200;n++){
+      status=await manager.get(jobId);
+      if(status.retry?.attempt===2)break;
+      await later(5);
+    }
+    assert.equal(status.retry?.stage,"scene:2");
+    assert.equal(status.retry?.attempt,2);
+    assert.equal(status.retry?.maxAttempts,3);
+    assert.equal(status.retry?.reason,"invalid_output");
+    const persisted=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
+    assert.equal(persisted.retry.attempt,2);
+    release();
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    assert.equal((await manager.get(jobId)).retry,undefined);
+  }finally{release();await rm(root,{recursive:true,force:true});}
 });
 
 test("two research jobs never overlap local inference",async()=>{
