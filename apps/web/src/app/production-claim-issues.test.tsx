@@ -25,6 +25,19 @@ describe("Production claim issues",()=>{
     expect(screen.getAllByText(/factual review/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/missing source/i).length).toBeGreaterThan(0);
   });
+  it("lets a person explicitly record and undo review without hiding the claim",()=>{
+    const onMarkReviewed=vi.fn(),onUndoReviewed=vi.fn();
+    const props={issues:[issues[0]],onOpenBeat:()=>{},onFindEvidence:()=>{},
+      onMarkReviewed,onUndoReviewed};
+    const view=render(<ProductionClaimIssues {...props} reviewedClaims={new Set<string>()}/>);
+    fireEvent.click(screen.getByRole("button",{name:/I reviewed this claim and its sources/i}));
+    expect(onMarkReviewed).toHaveBeenCalledWith("claim_02");
+    view.rerender(<ProductionClaimIssues {...props} reviewedClaims={new Set(["claim_02"])}/>);
+    expect(screen.getByText("Reviewed locally")).toBeTruthy();
+    expect(screen.getByText("Permits increase the project cost.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button",{name:/undo review/i}));
+    expect(onUndoReviewed).toHaveBeenCalledWith("claim_02");
+  });
   it("navigates to the affected storyboard beat and offers source search",()=>{
     const onOpenBeat=vi.fn(),onFindEvidence=vi.fn();
     render(<ProductionClaimIssues issues={[issues[2]]} onOpenBeat={onOpenBeat} onFindEvidence={onFindEvidence}/>);
