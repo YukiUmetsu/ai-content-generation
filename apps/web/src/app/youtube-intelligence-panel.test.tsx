@@ -150,7 +150,7 @@ describe("Explore YouTube without a local model or watchlist", () => {
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
     expect(screen.getByRole("tab", {name:"Explore"})).toHaveAttribute("aria-selected", "true");
     expect(requests).not.toContain("POST /api/research/market/explore");
-    await user.type(screen.getByRole("textbox", {name:/search youtube/i}), "heat pump cost");
+    await user.type(screen.getByRole("searchbox", {name:/search youtube/i}), "heat pump cost");
     await user.click(screen.getByRole("button", {name:/search youtube videos/i}));
     expect(await screen.findByText("Heating systems compared")).toBeInTheDocument();
     expect(requests).toContain("POST /api/research/market/explore");
@@ -162,7 +162,7 @@ describe("Explore YouTube without a local model or watchlist", () => {
     const requests = fakeApi(false);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
-    await user.type(screen.getByRole("textbox", {name:/search youtube/i}), "heat pump cost");
+    await user.type(screen.getByRole("searchbox", {name:/search youtube/i}), "heat pump cost");
     await user.click(screen.getByRole("button", {name:/search youtube videos/i}));
     expect(await screen.findByText("Heating systems compared")).toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", {name:/minimum views/i}), "10000");
@@ -174,7 +174,7 @@ describe("Explore YouTube without a local model or watchlist", () => {
     const requests = fakeApi(false);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
-    await user.type(screen.getByRole("textbox", {name:/search youtube/i}), "heat pump cost");
+    await user.type(screen.getByRole("searchbox", {name:/search youtube/i}), "heat pump cost");
     await user.click(screen.getByRole("button", {name:/search youtube videos/i}));
     await screen.findByText("Heating systems compared");
     await user.click(screen.getByRole("button", {name:/save search to monitor/i}));
