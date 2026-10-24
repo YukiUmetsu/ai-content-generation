@@ -249,7 +249,11 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     if(models?.primary){
       const next={primary:validateResearchModelSettings({...models.primary,version:1}),
         secondary:models.secondary?validateResearchModelSettings({...models.secondary,version:1}):null};
-      if(JSON.stringify(next)!==JSON.stringify(job.models)){
+      const identity=group=>JSON.stringify([group.primary.endpoint,group.primary.model,
+        group.secondary?.endpoint??null,group.secondary?.model??null]);
+      // Generation limits belong to the job snapshot. Editing global defaults must
+      // never discard completed checkpoints when resuming the same models.
+      if(identity(next)!==identity(job.models)){
         job.models=next;job.generation++;job.sceneRevisions={};job.completedScenes=0;job.totalScenes=0;
       }
     }
