@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
+import {generateOutline,generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneUnit,generateSceneStructure,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneVisual,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
@@ -254,4 +254,69 @@ test("one-at-a-time outline beats reject invented claims and repeated questions"
   await assert.rejects(generateOutlineBeat(skeleton,1,[outline.beats[0]],dossier,quotes,settings,{
     transport:transportFor({...outline.beats[1],question:outline.beats[0].question})
   }),error=>error.code==="schema_invalid"&&error.field==="question");
+});
+
+test("scene structure is assembled from two tiny, independently sourced JSON answers",async()=>{
+  const {phases,...expected}=unit("Complete installed cost");
+  const {before,action,after,...coreExpected}=expected;
+  const replies=[coreExpected,{before,action,after}];
+  const prompts=[];
+  let count=0;
+  const transport=async(_url,options)=>{
+    const body=JSON.parse(options.body);
+    prompts.push(body);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(replies[count++])}}]})};
+  };
+  const configured={...settings,generation:{outlineTokens:1024,sceneTokens:1800,timeoutSeconds:420}};
+  const core=await generateSceneCore(outline,0,dossier,quotes,configured,{transport});
+  const states=await generateSceneStates(outline,0,core,dossier,quotes,configured,{transport});
+  assert.deepEqual(assembleSceneStructure(core,states),expected);
+  assert.equal(prompts.length,2);
+  assert.ok(prompts.every(prompt=>prompt.max_tokens===1800));
+  assert.ok(prompts.every(prompt=>!prompt.messages[0].content.includes("narration")));
+  assert.ok(prompts.every(prompt=>/untrusted/iu.test(prompt.messages[0].content)));
+  assert.ok(prompts.every(prompt=>prompt.messages[1].content.length<4500));
+});
+
+test("each scene visual assembles direction and two visible elements without a multi-phase reply",async()=>{
+  const {phases,...structure}=unit("Complete installed cost");
+  const expected=phases[0];
+  const {narration,visualElements,...directionExpected}=expected;
+  const replies=[directionExpected,{visualElements}];
+  let count=0;
+  const prompts=[];
+  const transport=async(_url,options)=>{
+    const payload=JSON.parse(options.body);
+    prompts.push(payload);
+    assert.equal(payload.max_tokens,2300);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(replies[count++])}}]})};
+  };
+  const configured={...settings,generation:{outlineTokens:1024,sceneTokens:2300,timeoutSeconds:420}};
+  const direction=await generateSceneDirection(outline,0,0,structure,[],dossier,quotes,configured,{transport});
+  const elements=await generateSceneElements(outline,0,0,structure,direction,dossier,quotes,configured,{transport});
+  assert.deepEqual(assembleSceneVisual(direction,elements,[]),{
+    visualAction:expected.visualAction,learningChange:expected.learningChange,
+    onScreenText:expected.onScreenText,visualElements:expected.visualElements});
+  assert.equal(count,2);
+  assert.ok(prompts.every(prompt=>/untrusted/iu.test(prompt.messages[0].content)));
+});
+
+test("invalid split scene fragments never assemble into an accepted visual or structure",async()=>{
+  const {phases,...structure}=unit("Complete installed cost");
+  const {before,action,after,...core}=structure;
+  await assert.rejects(generateSceneStates(outline,0,core,dossier,quotes,settings,{
+    transport:transportFor({before:"Identical state",action:"Identical state",after:"Identical state"})
+  }),error=>error.code==="schema_invalid"&&error.field==="before/action/after");
+  await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
+    transport:transportFor({visualElements:[]})
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  await assert.rejects(generateSceneElements(outline,0,0,structure,phases[0],dossier,quotes,settings,{
+    transport:transportFor({visualElements:[...phases[0].visualElements,{label:"Labor meter",detail:"Tracks installation work"}]})
+  }),error=>error.code==="schema_invalid"&&error.field==="visualElements");
+  const previous=[phases[0]];
+  const {narration,visualElements,...direction}=phases[0];
+  assert.throws(()=>assembleSceneVisual(direction,{visualElements},previous),
+    error=>error.code==="schema_invalid"&&error.field==="visualAction");
 });
