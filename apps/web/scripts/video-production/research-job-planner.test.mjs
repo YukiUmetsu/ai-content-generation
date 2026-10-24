@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateOutline,generateSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
+import {generateOutline,generateSceneUnit,assembleResumablePlan,RESEARCH_MODEL_LIMITS} from "./research-job-planner.mjs";
 import {parsePreproductionPlan} from "./preproduction.mjs";
 
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_abc123",topic:{title:"Heat pump costs",viewerQuestion:"Why do installations cost so much?",audience:"Homeowners",locale:"en-US"},evidence:[{id:"source_01",title:"Energy guide",sourceUri:"https://energy.example.org/guide",retrievedAt:"2026-10-23T00:00:00.000Z",passageLocator:"captured-text:[0,82)",snapshotSha256:"a".repeat(64)}],claims:[{id:"claim_01",text:"Installation requires equipment and labor.",status:"unverified",sourceRefs:["source_01"]}],assets:[],gaps:[],review:{status:"draft"}};
@@ -14,7 +14,7 @@ const unit=(kind)=>({subject:"Installation work",before:"Unit price shown alone"
 const settings={model:"small-local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};
 const transportFor=body=>async (_endpoint,options)=>{
   const sent=JSON.parse(options.body);
-  assert.ok(sent.max_tokens>0&&sent.max_tokens<=3000);
+  assert.ok(sent.max_tokens>0&&sent.max_tokens<=4096);
   assert.ok(options.signal);
   return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(body)}}]})};
 };
@@ -81,7 +81,7 @@ test("truncated model output exposes safe finish reason without leaking generate
   });
 });
 
-test("truncation repair expands the token budget for outlines and scenes",async()=>{
+test("outline and scene requests use generous fixed budgets, including after truncation",async()=>{
   const budgets=[];
   const transport=async(_endpoint,options)=>{
     const sent=JSON.parse(options.body);budgets.push(sent.max_tokens);
@@ -91,9 +91,8 @@ test("truncation repair expands the token budget for outlines and scenes",async(
   await generateOutline(dossier,quotes,settings,{transport});
   await generateOutline(dossier,quotes,settings,{transport,feedback:"The previous JSON was cut off at the output limit."});
   await generateSceneUnit(outline,0,dossier,quotes,settings,{transport,feedback:"The previous JSON was cut off at the output limit."});
-  assert.ok(budgets[1]>budgets[0]);
-  assert.ok(budgets[2]>1400);
-  assert.ok(budgets[2]<=3000);
+  assert.deepEqual(budgets,[2048,2048,4096]);
+  assert.equal(RESEARCH_MODEL_LIMITS.timeoutMs,240000);
 });
 
 test("scene request asks a small model for concise JSON fields",async()=>{
