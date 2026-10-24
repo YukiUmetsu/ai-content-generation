@@ -134,3 +134,24 @@ test("compile saved research rejects malformed IDs and mismatched saved plans",a
   });
   assert.equal(cross.status,422);
 });
+
+test("passes an explicitly saved storyboard through the deterministic Director synchronizer",async()=>{
+  const artifactId="research_hvac-123456789abc";
+  const dossier={id:"research_hvac"},plan={researchId:"research_hvac",shots:[{id:"shot_one"}]};
+  const storyboard={kind:"contentgen-semantic-storyboard",id:"storyboard-project-demo",beats:[{id:"shot_one"}]};
+  let received;
+  const result=await post("/compile-saved-research",{artifactId,projectId:"project-demo",storyboard},{
+    model:async()=>{throw Error("No AI allowed in storyboard handoff");},
+    loadResearch:async()=>({artifactId,snapshotId:dossier.id,dossier,plan}),
+    compileBundle:()=>{throw Error("Must apply changes through synchronizer");},
+    syncStoryboard:input=>{received=input;return {
+      bundle:{kind:"preproduction-bundle",researchId:dossier.id,plan:{...plan,updated:true}},
+      synchronization:{storyboardSha256:"b".repeat(64),applied:["shot_one:narration"],manualReview:[]},
+    };},
+  });
+  assert.equal(result.status,200);
+  assert.equal(received.projectId,"project-demo");
+  assert.equal(received.artifactId,artifactId);
+  assert.equal(received.storyboard,storyboard);
+  assert.equal(result.result.synchronization.applied[0],"shot_one:narration");
+});
