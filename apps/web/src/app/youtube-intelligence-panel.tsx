@@ -41,7 +41,10 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
   const [videoResult, setVideoResult] = useState<{watchlistId: string; rows: MarketVideo[]} | null>(null);
   const [newName, setNewName] = useState("");
   const [newQuery, setNewQuery] = useState("");
-  const [editDraft, setEditDraft] = useState<{watchlistId: string; name: string; query: string} | null>(null);
+  const [newPlanText, setNewPlanText] = useState("");
+  const [newPlanSource, setNewPlanSource] = useState<"local-model-generated" | "user-edited">("user-edited");
+  const [editDraft, setEditDraft] = useState<{watchlistId: string; name: string; query: string; planText: string; planSource: "local-model-generated" | "user-edited"} | null>(null);
+  const [generatingQueries, setGeneratingQueries] = useState(false);
   const [creatingEnabled, setCreatingEnabled] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<MarketVideo | null>(null);
   const [workingTitle, setWorkingTitle] = useState("");
@@ -77,10 +80,46 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
   const selected = watchlists.find(x => x.id === selectedId) ?? null;
   const editName = editDraft?.watchlistId === selectedId ? editDraft.name : selected?.name ?? "";
   const editQuery = editDraft?.watchlistId === selectedId ? editDraft.query : selected?.query ?? "";
+  const editPlanText = editDraft?.watchlistId === selectedId ? editDraft.planText : selected?.queryPlan.join("\n") ?? "";
+  const editPlanSource = editDraft?.watchlistId === selectedId ? editDraft.planSource : selected?.queryPlanSource === "local-model-generated" ? "local-model-generated" : "user-edited";
+  const editValues = (watch: MarketWatchlist) => ({watchlistId:watch.id,name:editName,query:editQuery,planText:editPlanText,planSource:editPlanSource as "local-model-generated" | "user-edited"});
+  const parsePlan = (source: string) => source.split("\n").map(x=>x.trim()).filter(Boolean);
+  const planIsValid = (source: string) => {
+    const queries=parsePlan(source);
+    return queries.length <= 8 && queries.every(q=>q.length >= 3 && q.length <= 160) && new Set(queries.map(q=>q.toLowerCase())).size === queries.length;
+  };
+  const asWatchDraft = (name: string, query: string, planText: string, source: "local-model-generated" | "user-edited", region="US", language="en", enabled=false) => ({
+    name:name.trim(),query:query.trim(),region,language,enabled,
+    queryMode:query.trim() ? "manual" as const : "auto" as const,
+    queryPlan:query.trim() ? [] : parsePlan(planText),
+    queryPlanSource:query.trim() ? "user-edited" as const : parsePlan(planText).length ? source : "niche-name fallback" as const,
+  });
+
+  async function suggestQueries(target: "new" | "edit") {
+    const niche=target === "new" ? newName.trim() : editName.trim();
+    if (!niche) { setError(tr("Enter a niche name first.", "まずニッチ名を入力してください。")); return; }
+    setGeneratingQueries(true);setError("");
+    try {
+      const response=await fetch("/api/contentgen-director/market-queries",{
+        method:"POST",headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
+        body:JSON.stringify({niche,region:target === "edit" ? selected?.region ?? "US" : "US",language:target === "edit" ? selected?.language ?? "en" : "en"}),
+        signal:AbortSignal.timeout(100_000),
+      });
+      const data=await response.json() as {queries?:unknown;error?:string};
+      if (!response.ok) throw Error(data.error ?? "Could not generate searches with local AI.");
+      if (!Array.isArray(data.queries) || !data.queries.every(q=>typeof q === "string") ||
+          data.queries.length < 4 || !planIsValid(data.queries.join("\n"))) throw Error("Local AI returned an invalid query plan.");
+      const value=data.queries.join("\n");
+      if(target === "new") {setNewPlanText(value);setNewPlanSource("local-model-generated");}
+      else if(selected) setEditDraft({...editValues(selected),query:"",planText:value,planSource:"local-model-generated"});
+      setMessage(tr("Suggested searches are ready to review. Save to use them.","提案された検索語を確認し、保存してください。"));
+    }catch(err){setError(messageOf(err));}
+    finally{setGeneratingQueries(false);}
+  }
   const videos = videoResult?.watchlistId === selectedId ? videoResult.rows : [];
   const loadedDraft = useMemo(() => {
     const watch = watchlists.find(x => x.id === selectedId);
-    return watch ? loadEditorialDraft(watch.id, watch.query) : null;
+    return watch ? loadEditorialDraft(watch.id, watch.query || watch.name) : null;
   }, [selectedId, watchlists]);
   const draft = creative?.watchlistId === selectedId ? creative.draft : loadedDraft?.draft ?? null;
   const selectedApproach = draft?.approaches.find(x=>x.id===draft.selectedId);
@@ -190,13 +229,12 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
         event.preventDefault();
         void perform(async () => {
           const watch = await createMarketWatchlist({
-            name: newName.trim(), query: newQuery.trim(),
-            region: "US", language: "en", enabled: creatingEnabled,
+            ...asWatchDraft(newName,newQuery,newPlanText,newPlanSource,"US","en",creatingEnabled),
           });
           await refresh();
           setSelectedId(watch.id);
           setEditDraft(null); setSelectedVideo(null);
-          setNewName(""); setNewQuery(""); setCreatingEnabled(false);
+          setNewName(""); setNewQuery(""); setNewPlanText("");setNewPlanSource("user-edited");setCreatingEnabled(false);
           setMessage(tr("Watchlist saved. Collection happens only while the local server runs.",
             "リストを保存しました。収集はローカルサーバーの起動中のみ行われます。"));
         });
@@ -205,24 +243,38 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
           <input className={input} aria-label="Niche name" value={newName} onChange={e => setNewName(e.target.value)}
             maxLength={80} placeholder="House Math" required/>
         </label>
-        <label className={label}>{tr("Search phrase", "検索語")}
+        <label className={label}>{tr("Search phrase (optional)", "検索語（任意）")}
           <input className={input} aria-label="Search phrase" value={newQuery} onChange={e => setNewQuery(e.target.value)}
-            maxLength={160} placeholder="heat pump vs gas furnace cost" required/>
+            maxLength={160} placeholder="heat pump vs gas furnace cost"/>
         </label>
-        <Button type="submit" disabled={busy || newName.trim().length===0 || newQuery.trim().length<3}
+        <Button type="submit" disabled={busy || newName.trim().length===0 || Boolean(newQuery.trim() && newQuery.trim().length<3) || !planIsValid(newPlanText)}
           icon={<Plus className="size-4"/>}>{tr("Add watchlist", "リストを追加")}</Button>
+        <p className={note+" md:col-span-3"}>{newQuery.trim() ? tr("Track exact phrase — one unchanged YouTube search per collection.","検索語をそのまま収集ごとに検索します。") : tr("Explore niche automatically — rotate suggested searches after each successful collection; without a plan, use the niche name as a fallback.","ニッチを自動探索します。成功した収集ごとに検索語を切り替え、候補がない場合はニッチ名を使用します。")}</p>
+        {!newQuery.trim() && <div className="flex flex-col gap-2 md:col-span-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="outline" size="sm" disabled={busy || generatingQueries || !newName.trim()} onClick={()=>void suggestQueries("new")} icon={<Sparkles className="size-4"/>}>
+              {generatingQueries ? tr("Generating…","生成中…") : tr("Suggest searches with local AI","ローカルAIで検索語を提案")}
+            </Button>
+            <span className={note}>{newPlanText.trim() ? tr("Review/edit the search plan below.","検索プランを確認・編集してください。") : tr("Optional; the niche-name fallback works without AI.","任意です。AIがなくてもニッチ名で検索できます。")}</span>
+          </div>
+          <label className={label}>{tr("Proposed searches (one per line, maximum 8)","検索候補（1行に1つ、最大8件）")}
+            <textarea className={input} aria-label="Proposed searches" value={newPlanText} rows={newPlanText.trim()?Math.min(8,Math.max(4,parsePlan(newPlanText).length)):2}
+              placeholder="One YouTube search per line (optional)" onChange={e=>{setNewPlanText(e.target.value);setNewPlanSource("user-edited");}}/>
+          </label>
+          {!planIsValid(newPlanText) && <p role="alert" className="text-xs text-danger">{tr("Use up to eight distinct searches, each 3–160 characters.","重複のない検索語を8件以内、各3〜160文字で入力してください。")}</p>}
+        </div>}
         <label className="flex items-center gap-2 text-xs text-muted-foreground md:col-span-3">
           <input type="checkbox" checked={creatingEnabled} onChange={e => setCreatingEnabled(e.target.checked)}/>
           {tr("Enable daily automatic collection (requires API key)", "毎日の自動収集を有効化する（APIキーが必要）")}
         </label>
-        <p className={note+" md:col-span-3"}>{tr("Target market: United States · English. Edit the phrase for each niche.",
-          "対象市場: アメリカ · 英語。ニッチごとに検索語を編集できます。")}</p>
+        <p className={note+" md:col-span-3"}>{tr("Target market: United States · English. Each collection uses one API search; suggested queries are not search-volume predictions.",
+          "対象市場: アメリカ · 英語。収集ごとにAPI検索を1回使用します。検索候補は検索数の予測ではありません。")}</p>
       </form>
     </Surface>
 
     {loading ? <p className="p-4 text-sm text-muted-foreground">{tr("Loading local research…", "読み込み中…")}</p>
       : watchlists.length===0 ? <Surface variant="outline">
-        <p className="text-sm text-muted-foreground">{tr("No niches tracked yet. Add a phrase above to get started.", "まだ登録されたニッチはありません。検索語を追加してください。")}</p>
+        <p className="text-sm text-muted-foreground">{tr("No niches tracked yet. Enter a niche name above to get started.", "まだ登録されたニッチはありません。上にニッチ名を入力してください。")}</p>
       </Surface> : <>
         <Surface header={<h3 className="font-semibold">{tr("Tracked niches", "監視中のニッチ")}</h3>}>
           <div className="flex flex-col gap-3">
@@ -237,12 +289,30 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className={label}>{tr("Watchlist name", "リスト名")}
                   <input className={input} value={editName} maxLength={80} aria-label="Watchlist name"
-                    onChange={e=>setEditDraft({watchlistId:selected.id,name:e.target.value,query:editQuery})}/>
+                    onChange={e=>setEditDraft({...editValues(selected),name:e.target.value})}/>
                 </label>
-                <label className={label}>{tr("Tracked query", "監視する検索語")}
+                <label className={label}>{tr("Search phrase (optional)", "検索語（任意）")}
                   <input className={input} value={editQuery} maxLength={160} aria-label="Tracked query"
-                    onChange={e=>setEditDraft({watchlistId:selected.id,name:editName,query:e.target.value})}/>
+                    onChange={e=>setEditDraft({...editValues(selected),query:e.target.value})}/>
                 </label>
+              </div>
+              <div className="rounded-control border border-border bg-surface-subtle p-3">
+                <p className="text-sm font-semibold">{editQuery.trim() ? tr("Track exact phrase","検索語を固定") : tr("Explore niche automatically","ニッチを自動探索")}</p>
+                {!editQuery.trim() && <div className="mt-3 flex flex-col gap-3">
+                  <p className={note}>{tr("Queries rotate after successful collections. Without a plan, the niche name is used. No extra YouTube API calls.","収集成功後に検索語を切り替えます。候補がなければニッチ名を使用します。YouTube APIの追加呼び出しはありません。")}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className={note}>{tr("Source:","出典:")} {editDraft?.watchlistId===selected.id ? (parsePlan(editPlanText).length ? editPlanSource : "niche-name fallback") : selected.queryPlanSource}</span>
+                    <Button type="button" variant="outline" size="sm" disabled={busy || generatingQueries} onClick={()=>void suggestQueries("edit")} icon={<Sparkles className="size-4"/>}>
+                      {generatingQueries ? tr("Generating…","生成中…") : tr("Suggest searches with local AI","ローカルAIで検索語を提案")}
+                    </Button>
+                  </div>
+                  <label className={label}>{tr("Search plan (one per line, maximum 8)","検索プラン（1行に1つ、最大8件）")}
+                    <textarea className={input} aria-label="Search plan" rows={Math.max(3,Math.min(8,parsePlan(editPlanText).length))} value={editPlanText}
+                      onChange={e=>setEditDraft({...editValues(selected),planText:e.target.value,planSource:"user-edited"})}/>
+                  </label>
+                  {!planIsValid(editPlanText) && <p role="alert" className="text-xs text-danger">{tr("Use up to eight distinct searches, each 3–160 characters.","重複のない検索語を8件以内、各3〜160文字で入力してください。")}</p>}
+                  <p className={note}>{tr("Last searched:","前回の検索:")} {selected.lastSearchQuery ?? "—"} {" · "} {tr("Next search:","次の検索:")} {selected.nextSearchQuery}</p>
+                </div>}
               </div>
               <p className={note}>
                 {selected.enabled ? tr("Daily automatic collection enabled", "毎日の自動収集は有効")
@@ -252,17 +322,17 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
                 {selected.errorCode && <span className="text-danger"> · {tr("Last error:", "直近のエラー:")} {selected.errorCode}</span>}
               </p>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled={busy || !editName.trim() || editQuery.trim().length<3}
+                <Button variant="outline" size="sm" disabled={busy || !editName.trim() || Boolean(editQuery.trim() && editQuery.trim().length<3) || !planIsValid(editPlanText)}
                   onClick={()=>void perform(async()=>{await updateMarketWatchlist(selected.id,{
-                    name:editName.trim(),query:editQuery.trim(),region:selected.region,
-                    language:selected.language,enabled:selected.enabled,
+                    ...asWatchDraft(editName,editQuery,editPlanText,editPlanSource,selected.region,selected.language,selected.enabled),
                   });await refresh();setEditDraft(null);setMessage(tr("Watchlist updated.","リストを更新しました。"));})}>
                   {tr("Save changes", "変更を保存")}
                 </Button>
                 <Button variant="outline" size="sm" disabled={busy}
                   onClick={()=>void perform(async()=>{await updateMarketWatchlist(selected.id,{
-                    name:selected.name,query:selected.query,region:selected.region,
-                    language:selected.language,enabled:!selected.enabled,
+                    ...asWatchDraft(selected.name,selected.query,selected.queryPlan.join("\n"),
+                      selected.queryPlanSource==="local-model-generated"?"local-model-generated":"user-edited",
+                      selected.region,selected.language,!selected.enabled),
                   });await refresh();})}>
                   {selected.enabled ? tr("Disable", "無効化") : tr("Enable", "有効化")}
                 </Button>
@@ -373,7 +443,7 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
                 </a>
                 <Button size="sm" variant="outline" icon={<Video className="size-4"/>}
                   onClick={()=>{setSelectedVideo(video);
-                    setWorkingTitle(`What should viewers know about ${selected?.query ?? "this topic"}?`.slice(0,120));
+                    setWorkingTitle(`What should viewers know about ${selected?.query || selected?.name || "this topic"}?`.slice(0,120));
                     setError("");}}>
                   {tr("Use for video", "動画のアイデアに使う")}
                 </Button>
