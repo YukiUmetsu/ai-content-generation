@@ -317,8 +317,8 @@ export function parseVideoProductionJob(input) {
                 typeof state.subjectId!=="string" || !Array.isArray(dir.subjectIds) ||
                 !dir.subjectIds.includes(state.subjectId) ||
                 !["problem","mechanism","payoff"].includes(dir.phase) ||
-                stateTexts.some((value,i)=>typeof value!=="string" || value.trim().length<8 ||
-                  value.length>(i===1?90:48) || /[\u0000-\u001f]/u.test(value)) ||
+                stateTexts.some(value=>typeof value!=="string" || value.trim().length<8 ||
+                  value.length>500 || /[\u0000-\u001f]/u.test(value)) ||
                 new Set(stateTexts.filter(value=>typeof value==="string").map(value=>value.trim().toLowerCase())).size!==3)
                 add("invalid-teaching-transformation",path+".transformation",
                   "Use distinct, bounded before/action/after states for one visible technical subject.");
