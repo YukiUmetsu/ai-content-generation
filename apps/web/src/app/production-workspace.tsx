@@ -347,7 +347,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
                 "各シーンに意味のある動き、素材、カメラ演出を設計します。既存の映像制作ツールを利用できます。")}
             </p>
             <p className="mt-3 text-xs text-muted-foreground">{matchingDraft?.artifactId
-              ?tr("Opens the original saved research plan without running AI. Changes made afterward in Storyboard Planner are not yet synchronized; compare shots before rendering.","保存済みの元の調査計画をAIの再実行なしで開きます。その後の構成案の編集はまだ同期されないため、書き出し前に各シーンを確認してください。")
+              ?tr("Opens the saved research and carries over edited narration, on-screen text, and visual actions. Other storyboard changes are flagged for review; no AI runs.","保存済みの調査を開き、編集された音声原稿・画面テキスト・映像動作を引き継ぎます。他の構成案の変更は確認が必要です。AIは再実行しません。")
               :tr("No matching saved research is linked to this storyboard yet. You can still import a project or start in Video Director.","一致する保存済み調査がまだありません。Video Directorから読み込みや新規作成ができます。")}</p>
             <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenVisuals(matchingDraft?.artifactId)}
               aria-label="Open visual tools">{tr("Open visual tools","映像ツールを開く")}</button>
