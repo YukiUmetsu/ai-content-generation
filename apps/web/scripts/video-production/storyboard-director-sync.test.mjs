@@ -31,6 +31,9 @@ test("reconciles changed narration, on-screen text, and visual action without mu
   assert.equal(result.bundle.status,"draft-needs-review");
   assert.equal(result.bundle.assessment.ready,false);
   assert.equal(result.synchronization.applied.length,3);
+  assert.ok(result.synchronization.manualReview.some(message=>message.includes("narration timing")));
+  assert.ok(result.synchronization.manualReview.some(message=>message.includes("fallback")));
+
   assert.match(result.synchronization.storyboardSha256,/^[a-f0-9]{64}$/u);
   assert.equal(plan.shots[0].visualChange,"Reveal parts");
   assert.equal(dossier.claims[0].status,"unverified");
