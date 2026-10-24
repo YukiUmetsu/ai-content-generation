@@ -476,3 +476,88 @@ test("changing model identity rebuilds partial outline using a new checkpoint ge
     assert.equal(manifest.generation,1);
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test("structure states truncation preserves the accepted core across restart and resume",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-scene-core-"));
+  let coreCalls=0,stateCalls=0;
+  const pieces={scene:null,sceneStructure:null,
+    sceneCore:async(_story,index)=>{coreCalls++;return {index,subject:"Installation"};},
+    sceneStates:async(_story,index)=>{
+      if(index===0&&++stateCalls<=3)throw Object.assign(Error("private model text"),{code:"output_truncated",field:"response"});
+      return {before:"Hidden costs",action:"Split parts",after:"Full cost"};
+    },combineStructure:(core,states)=>({...core,...states}),
+    sceneVisual:async(_story,index,phase)=>({index,phase}),
+    sceneNarration:async()=>({narration:"Narration"}),combineScene:()=>({})};
+  const manager=fixture(root,pieces);
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const stopped=await settled(manager,jobId);
+    assert.equal(stopped.status,"failed");
+    assert.equal(stopped.stage,"scene:1");
+    assert.equal(stopped.currentStep,"structure:states");
+    assert.equal(stopped.error.detailCode,"output_truncated");
+    const folder=join(root,"jobs",jobId);
+    assert.deepEqual(JSON.parse(await readFile(join(folder,"structure_core_0_0_0.json"),"utf8")),
+      {index:0,subject:"Installation"});
+    const recovered=fixture(root,pieces);
+    await recovered.resume(jobId,{primary:model});
+    assert.equal((await settled(recovered,jobId)).status,"completed");
+    assert.equal(coreCalls,2);
+    assert.equal(stateCalls,4);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("visual elements truncation resumes from direction and saved completed phases",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-scene-elements-"));
+  const calls={direction:[],elements:[],narration:[]};
+  let failures=0;
+  const manager=fixture(root,{scene:null,sceneStructure:async()=>({subject:"Installation"}),
+    sceneVisual:null,
+    sceneDirection:async(_story,index,phase)=>{calls.direction.push([index,phase]);return {visualAction:`Action ${index} ${phase}`};},
+    sceneElements:async(_story,index,phase)=>{
+      calls.elements.push([index,phase]);
+      if(index===0&&phase===1&&failures++<3)throw Object.assign(Error("private details"),{code:"output_truncated",field:"response"});
+      return {visualElements:[{label:"Equipment",detail:"Shown"},{label:"Labor",detail:"Shown"}]};
+    },combineVisual:(direction,elements)=>({...direction,...elements}),
+    sceneNarration:async(_story,index,phase)=>{calls.narration.push([index,phase]);return {narration:"Narration"};},
+    combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const stopped=await settled(manager,jobId);
+    assert.equal(stopped.status,"failed");
+    assert.equal(stopped.currentStep,"visual:2:elements");
+    const folder=join(root,"jobs",jobId);
+    assert.deepEqual(JSON.parse(await readFile(join(folder,"visual_direction_0_0_0_1.json"),"utf8")),
+      {visualAction:"Action 0 1"});
+    assert.ok(JSON.parse(await readFile(join(folder,"visual_0_0_0_0.json"),"utf8")));
+    assert.ok(JSON.parse(await readFile(join(folder,"narration_0_0_0_0.json"),"utf8")));
+    await manager.resume(jobId,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(calls.direction.filter(([index,phase])=>index===0&&phase===0).length,1);
+    assert.equal(calls.direction.filter(([index,phase])=>index===0&&phase===1).length,1);
+    assert.equal(calls.elements.filter(([index,phase])=>index===0&&phase===1).length,4);
+    assert.equal(calls.narration.filter(([index,phase])=>index===0&&phase===0).length,1);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("an existing complete structure or visual checkpoint bypasses the new fragments",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-scene-compat-"));
+  let coreCalls=0,directionCalls=0;
+  const manager=fixture(root,{scene:null,sceneStructure:null,sceneVisual:null,
+    sceneCore:async()=>{coreCalls++;throw Error("new structure path must not run");},
+    sceneDirection:async()=>{directionCalls++;throw Error("existing phase must be reused");},
+    sceneNarration:async()=>({narration:"Narration"}),combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    const folder=join(root,"jobs",jobId);
+    await writeFile(join(folder,"structure_0_0_0.json"),JSON.stringify({subject:"Saved"}));
+    await writeFile(join(folder,"visual_0_0_0_0.json"),JSON.stringify({visualAction:"Saved"}));
+    await manager.resume(jobId,{primary:model});
+    const state=await settled(manager,jobId);
+    assert.equal(state.currentStep,"visual:2:direction");
+    assert.equal(coreCalls,1);
+    assert.equal(directionCalls,1);
+    assert.equal(state.status,"failed");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
