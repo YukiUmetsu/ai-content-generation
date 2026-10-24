@@ -5,6 +5,7 @@ import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
+import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
 import { searchStudioSources, loadStudioSearch, listStudioSearches } from "./video-production/studio-search.mjs";
 import { generateMarketQueries } from "./video-production/market-query-generator.mjs";
 import { researchJobManager } from "./video-production/research-job-queue.mjs";
@@ -115,6 +116,21 @@ export async function handleDirectorRequest(req,res,deps={}){
       await readBody(req);
       const parts=route.split("/");
       send(res,202,await (deps.jobs??researchJobManager).retryScene(parts[2],parts[4],await storyJobModels(deps)));
+    }else if(req.method==="POST"&&route==="/compile-saved-research"){
+      const input=await readBody(req);
+      if(!input||typeof input!=="object"||Array.isArray(input)||
+         Object.keys(input).length!==1||typeof input.artifactId!=="string"||
+         !/^research_[a-z0-9_-]{1,78}-[a-f0-9]{12}$/iu.test(input.artifactId))
+        throw Error("Select one valid saved research artifact.");
+      const saved=await (deps.loadResearch??loadStudioResearchDraft)(input.artifactId);
+      if(saved.artifactId!==input.artifactId||saved.snapshotId!==saved.dossier?.id||
+         saved.plan?.researchId!==saved.dossier?.id)
+        throw Error("Saved research and preproduction plan must have identical immutable lineage.");
+      // Compile and fingerprint on the local server; do not regenerate a storyboard or use a model.
+      const bundle=(deps.compileBundle??compilePreproductionBundle)(saved.dossier,saved.plan);
+      if(bundle.kind!=="preproduction-bundle"||bundle.researchId!==saved.dossier.id)
+        throw Error("The saved research compiled into a mismatched bundle.");
+      send(res,200,{artifactId:input.artifactId,dossier:saved.dossier,bundle});
     }else if(req.method==="POST"&&route==="/research-draft"){
       if(researchDraftRunning){send(res,409,{error:"Research is already running. Wait for the current draft or cancel it."});return;}
       researchDraftRunning=true;
