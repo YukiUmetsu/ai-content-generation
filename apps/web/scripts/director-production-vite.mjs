@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compilePreproductionRenderJob } from "./video-production/preproduction-render-bridge.mjs";
+import { resolveAndBindApprovedSfx } from "./video-production/sfx-render-bindings.mjs";
 import { compileLiveVisualPreview } from "./video-production/live-visual-preview.mjs";
 import { compileAnimatic } from "./video-production/animatic.mjs";
 import { renderAnimaticHtml } from "./video-production/animatic-player.mjs";
@@ -93,6 +94,8 @@ async function deliverVideo(req,res,releaseDir){
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
   const compile=deps.compile??compilePreproductionRenderJob;
+  const bindSfx=async (compiled,input)=>resolveAndBindApprovedSfx(compiled,input,
+    deps.resolveSfx?{resolve:deps.resolveSfx}:{});
   const compileLive=deps.compileLive??compileLiveVisualPreview;
   const research=deps.research??researchVideoTopic;
   const generateStory=deps.generateStory??generatePreproductionPlan;
@@ -196,7 +199,8 @@ export function createDirectorProduction(deps={}){
       }
       if(route==="/check"){
         const input=await readBody(req),compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
-        const settings=validateSettings(input.settings),job=configureRenderJob(compiled.job,settings);
+        const settings=validateSettings(input.settings);
+        const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const identity=sha({source:compiled.sourcePlanSha256,job,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
@@ -217,13 +221,15 @@ export function createDirectorProduction(deps={}){
           checked=report.ready?{identity}:null;
           status={...status,state:report.ready?"ready":"blocked",phase:"preflight",
             message:report.ready?"Ready to render an unverified test draft.":"Resolve the readiness findings below.",report};
-          respond(res,200,{ready:report.ready,report,warnings:compiled.warnings});
+          respond(res,200,{ready:report.ready,report,warnings:compiled.warnings,
+            sfxSummary:approvedSfx.sfxSummary});
         }finally{busy=false;}
         return;
       }
       if(route==="/start"){
         const input=await readBody(req),compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
-        const settings=validateSettings(input.settings),job=configureRenderJob(compiled.job,settings);
+        const settings=validateSettings(input.settings);
+        const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const identity=sha({source:compiled.sourcePlanSha256,job,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){

@@ -231,7 +231,11 @@ export async function produceVideo(candidate, options, deps = {}) {
       reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
       reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
+    const soundEffects=job.sounds.map(({id,eventId,licenseStatus,assetSha256})=>({
+      id,eventId,eventSample:timeline.eventSamples[eventId],licenseStatus,
+      ...(assetSha256?{assetSha256}:{})
+    }));
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.

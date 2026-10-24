@@ -59,6 +59,21 @@ test("intentional no-SFX mix remains playable without inserting sounds", { skip:
   assert.equal(result.findings.length, 0);
 });
 
+test("reviewed SFX is mixed at the exact event sample only when the imported WAV hash still matches", { skip: !enabled }, async t=>{
+  const {dir,beats,timeline}=await fixture(t);
+  const wav=toneWav(12000,1900),assetPath=join(dir,"reviewed-sound.wav");
+  await writeFile(assetPath,wav);
+  const sound={id:"reviewed",eventId:"lifetime-total-reveal",assetRef:assetPath,
+    assetPath,assetSha256:sha256(wav),licenseStatus:"verified"};
+  const verified=await renderMasterAudio({beats,timeline,sfx:[sound]},
+    {outputDir:join(dir,"verified")});
+  assert.equal(verified.sfxCueSamples.reviewed,60000);
+  assert.equal(verified.samples,timeline.totalSamples);
+  await writeFile(assetPath,toneWav(12000,2100));
+  await assert.rejects(renderMasterAudio({beats,timeline,sfx:[sound]},
+    {outputDir:join(dir,"tampered")}),/checksum|hash|changed/i);
+});
+
 test("orphan event, mismatched asset/rights, missing speech, wrong rate and clipped input fail closed", { skip: !enabled }, async (t) => {
   const { dir, beats, timeline, sfx } = await fixture(t);
   const out = (name) => ({ outputDir: join(dir, name), allowTestAssets: true });

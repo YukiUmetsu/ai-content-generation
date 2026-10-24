@@ -124,6 +124,44 @@ test("changing a checked setting demands a fresh preflight; revoked local voice 
   assert.equal((await invoke(server,"POST","/start",{...p,settings:{...config,localVoiceAuthorized:false},confirmRender:true})).status,422);
   assert.equal(calls,0);
 });
+test("readiness and export bind reviewed SFX to the same measured beat events, and recheck after changes",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-reviewed-sfx-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const project=inputs();
+  let soundHash="a".repeat(64),renders=0,inspected=null;
+  const bankChoice=()=>project.bundle.plan.shots.map((shot,index)=>({shotId:shot.id,
+    mode:index===0?"pin":"mute",assetId:index===0?"11111111-2222-3333-4444-555555555555":null,
+    localPath:index===0?"/reviewed/bank/sfx.wav":null,sha256:index===0?soundHash:null,
+    license:index===0?"cc0":null,rightsStatus:index===0?"user-reviewed":null}));
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    resolveSfx:async ({projectId,bundle})=>{
+      assert.equal(projectId,project.dossier.id);assert.equal(bundle.researchId,projectId);
+      return bankChoice();
+    },build:async()=>{},inspect:async job=>{inspected=job;return {ready:true,findings:[],tools:{}};},
+    produce:async (job,opts)=>{
+      renders++;assert.deepEqual(job.sounds,inspected.sounds);
+      const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock mp4");return {releaseDir};
+    }});
+  const checked=await invoke(server,"POST","/check",{...project,settings:config});
+  assert.equal(checked.status,200);assert.equal(checked.data.ready,true);
+  assert.equal(checked.data.sfxSummary.approved,1);
+  assert.equal(checked.data.sfxSummary.muted,project.bundle.plan.shots.length-1);
+  assert.equal(inspected.sounds.length,1);
+  assert.equal(inspected.sounds[0].assetSha256,soundHash);
+  assert.equal(inspected.sounds[0].assetRef,"/reviewed/bank/sfx.wav");
+  assert.equal(inspected.events.find(e=>e.id===inspected.sounds[0].eventId).beatId,inspected.beats[0].id);
+  assert.ok(inspected.beats[0].eventIds.includes(inspected.sounds[0].eventId));
+  assert.ok(inspected.sounds.every(s=>s.licenseStatus==="verified"));
+  soundHash="b".repeat(64);
+  const stale=await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true});
+  assert.equal(stale.status,409);assert.equal(renders,0);
+  const refreshed=await invoke(server,"POST","/check",{...project,settings:config});
+  assert.equal(refreshed.data.ready,true);
+  assert.equal((await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true})).status,202);
+  for(let i=0;i<30&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(renders,1);assert.equal(server.status().state,"done");
+  assert.equal(inspected.sounds[0].assetSha256,"b".repeat(64));
+});
 test("model authorization only configures the test-only free model; never raises rights",()=>{
   const base={voice:{profileId:"test"},locale:"en-US",approval:"test-only",policy:{}};
   const local=configureRenderJob(base,config);

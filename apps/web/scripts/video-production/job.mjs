@@ -373,15 +373,17 @@ export function parseVideoProductionJob(input) {
     !beats.at(-1)?.eventIds?.includes(input.topic?.payoffEventId) || beats.slice(0, -1).some((beat) => beat.eventIds?.includes(input.topic?.payoffEventId)))) {
     add("invalid-payoff-scene", "beats", "The final generic beat must own the payoff event and use general-payoff.");
   }
-  const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "licenseStatus"]);
+  const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "assetSha256", "licenseStatus"]);
   for (const [index, sound] of sounds.entries()) {
     for (const key of ["eventId", "category", "assetRef"]) text(sound[key], `sounds[${index}].${key}`);
     if (!eventIds.has(sound.eventId)) add("orphan-sound-event", `sounds[${index}].eventId`, "SFX event does not exist.");
     if (!["test-only", "verified", "unknown"].includes(sound.licenseStatus)) add("invalid-license", `sounds[${index}].licenseStatus`, "Explicit license status required.");
+    if (has(sound, "assetSha256") && (sound.licenseStatus !== "verified" ||
+      typeof sound.assetSha256 !== "string" || !/^[a-f\d]{64}$/iu.test(sound.assetSha256)))
+      add("invalid-sound-hash", `sounds[${index}].assetSha256`, "Only verified SFX may carry a valid 64-character source checksum.");
   }
-  if (!sounds.some((sound) => sound.eventId === input.topic?.payoffEventId)) {
-    add("missing-payoff-sfx", "sounds", "The payoff must have an explicit semantic SFX.");
-  }
+  // An intentional pause/silent payoff is a valid sound-design decision.
+  // The named payoff event itself remains mandatory for visual synchronization.
 
   if (input.approval === "approved" && (!input.policy?.commercialRightsVerified || !input.policy?.reviewerApproved ||
     input.voice?.licenseStatus !== "verified" ||

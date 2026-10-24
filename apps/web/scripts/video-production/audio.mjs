@@ -174,6 +174,11 @@ export async function renderMasterAudio(input, config) {
       path = effect.assetPath;
       const bytes = await readFile(path);
       readPcmData(bytes); // format check, not a license inference
+      if(effect.assetSha256&&hash(bytes)!==effect.assetSha256)
+        fail(`reviewed SFX checksum changed for ${effect.id}; inspect and reapprove the local sound`);
+      // Mix exactly the checked bytes, even if the bank file changes later.
+      path=join(dir,`sfx-${index}-reviewed.wav`);
+      await writeFile(path,bytes,{flag:"wx"});
     }
     inputPaths.push(path);
   }
