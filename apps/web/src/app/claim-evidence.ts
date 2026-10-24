@@ -1,0 +1,65 @@
+/** Browser-safe, deterministic classification of claim provenance and editorial review.
+ * Captured-source proof is always distinct from approval of the claim's truth.
+ */
+import type { SemanticStoryboard } from "@/features/storyboard-planner/model/types";
+import type { ResearchDraftResult } from "./researched-storyboard";
+
+export type ClaimEvidenceKind =
+  | "source_missing"
+  | "source_mismatch"
+  | "source_unchecked"
+  | "needs_factual_review";
+
+export interface ClaimEvidenceIssue {
+  claimId: string;
+  claimText: string;
+  kind: ClaimEvidenceKind;
+  beatIds: string[];
+  sourceRefs: string[];
+}
+
+const categories: readonly ClaimEvidenceKind[] = [
+  "source_missing", "source_mismatch", "needs_factual_review", "source_unchecked",
+];
+
+export function countClaimIssues(issues: readonly ClaimEvidenceIssue[]): Record<ClaimEvidenceKind, number> {
+  const counts = { source_missing: 0, source_mismatch: 0, needs_factual_review: 0, source_unchecked: 0 };
+  for (const issue of issues) counts[issue.kind]++;
+  return counts;
+}
+
+export function inspectClaimEvidence(
+  board: SemanticStoryboard,
+  draft?: ResearchDraftResult,
+): ClaimEvidenceIssue[] {
+  const byId = new Map(board.claims.map(claim => [claim.id, claim]));
+  const sourceIds = new Set(draft?.dossier?.evidence?.map(source => source.id) ?? []);
+  const quotations = draft?.quotes ?? [];
+  const issues = new Map<string, ClaimEvidenceIssue>();
+
+  for (const beat of board.beats) {
+    for (const id of new Set(beat.claimRefs)) {
+      const existing = issues.get(id);
+      if (existing) {
+        if (!existing.beatIds.includes(beat.id)) existing.beatIds.push(beat.id);
+        continue;
+      }
+      const claim = byId.get(id);
+      const refs = claim?.sourceRefs ?? [];
+      let kind: ClaimEvidenceKind;
+      if (!claim || refs.length === 0) kind = "source_missing";
+      else if (!draft) kind = "source_unchecked";
+      else {
+        const allReferencesCaptured = refs.every(ref => sourceIds.has(ref));
+        const hasExactCapturedQuote = quotations.some(quote => quote.claimId === id &&
+          refs.includes(quote.sourceId) && sourceIds.has(quote.sourceId) &&
+          typeof quote.quote === "string" && quote.quote.trim().length >= 10);
+        kind = allReferencesCaptured && hasExactCapturedQuote ? "needs_factual_review" : "source_mismatch";
+      }
+      issues.set(id, { claimId: id, claimText: claim?.note || id, kind,
+        beatIds: [beat.id], sourceRefs: [...refs] });
+    }
+  }
+
+  return [...issues.values()];
+}
