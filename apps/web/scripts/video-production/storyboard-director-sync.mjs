@@ -71,15 +71,30 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     const originalVisual=[shot.visualChange,linked.phase.visualAction].filter(Boolean).join("; ");
     if(beat.visualObjective!==originalVisual){
       if(!bounded(beat.visualObjective,1300))reject("visual objective for "+shot.id+" is invalid or too long.");
-      const value=beat.visualObjective.trim(),at=value.indexOf("; ");
-      const description=at<0?value:value.slice(0,at);
-      const action=at<0?value:value.slice(at+2);
+      const value=beat.visualObjective.trim(),boundary="; ";
+      const originalPrefix=shot.visualChange+boundary;
+      const originalSuffix=boundary+linked.phase.visualAction;
+      const separators=value.split(boundary).length-1;
+      let description,action;
+      if(value.startsWith(originalPrefix)){
+        description=shot.visualChange;action=value.slice(originalPrefix.length);
+      }else if(value.endsWith(originalSuffix)){
+        description=value.slice(0,-originalSuffix.length);action=linked.phase.visualAction;
+      }else if(separators===1){
+        const at=value.indexOf(boundary);
+        description=value.slice(0,at);action=value.slice(at+boundary.length);
+      }else if(separators===0){
+        description=value;action=value;
+      }else{
+        reject("ambiguous visual objective for "+shot.id+
+          "; edit only one side of 'shot description; visible action' or use Director for independent changes.");
+      }
       if(!bounded(description,650)||!bounded(action,600))
         reject("visual objective for "+shot.id+" must fit 'shot description; visible action' (650/600 characters).");
       shot.visualChange=description;linked.phase.visualAction=action;
       applied.push(shot.id+":visualObjective");
       manualReview.add("Edited visual actions need camera, focus, and fallback review.");
-      if(at<0)manualReview.add("A single visual objective was applied to both shot and motion descriptions; inspect this movement.");
+      if(separators===0)manualReview.add("A single visual objective was applied to both shot and motion descriptions; inspect this movement.");
     }
     if(beat.role!==originalRole(shot,i,updated.shots.length-1))
       manualReview.add("Storyboard narrative-role edits are not yet imported into Director.");
