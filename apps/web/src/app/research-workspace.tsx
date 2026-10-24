@@ -19,7 +19,7 @@ interface ResearchJobStatus {jobId:string;status:"queued"|"running"|"paused"|"fa
   stage:string;currentStep?:string;completedScenes:number;totalScenes:number;artifactId?:string;
   error?:{code:string;message:string;detailCode?:string;field?:string};
   retry?:{stage:string;attempt:number;maxAttempts:number;reason:string;modelIndex:number;totalModels:number;detailCode?:string;field?:string}}
-type ResearchJobResponse=Omit<ResearchJobStatus,"error">&{error?:string|{code:string;message:string}};
+type ResearchJobResponse=Omit<ResearchJobStatus,"error">&{error?:string|NonNullable<ResearchJobStatus["error"]>};
 interface SearchLead {title:string;url:string;snippet:string}
 interface SavedSearch {
   artifactId:string;schemaVersion:1;kind:"studio-search-snapshot";
@@ -117,8 +117,12 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
 
   useEffect(() => {
     const controller = new AbortController();
-    setCheckingReadiness(true);
-    setReadinessError(false);
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) {
+        setCheckingReadiness(true);
+        setReadinessError(false);
+      }
+    });
     void fetch("/api/local-research-model/readiness", { signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw Error("Readiness check unavailable.");

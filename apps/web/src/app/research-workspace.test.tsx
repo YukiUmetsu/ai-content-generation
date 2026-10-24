@@ -58,12 +58,12 @@ describe("Research workspace navigation", () => {
 
     await user.type(screen.getByRole("textbox", { name: "Research topic" }), "heat pump cost");
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    expect(screen.getByRole("textbox", { name: "Search stored evidence" })).toHaveValue("");
-    await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "home insurance");
+    expect(screen.getByRole("searchbox", { name: "Search stored evidence" })).toHaveValue("");
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "home insurance");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByRole("textbox", { name: "Research topic" })).toHaveValue("heat pump cost");
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    expect(screen.getByRole("textbox", { name: "Search stored evidence" })).toHaveValue("home insurance");
+    expect(screen.getByRole("searchbox", { name: "Search stored evidence" })).toHaveValue("home insurance");
   });
 });
 
@@ -113,7 +113,7 @@ describe("automatic local video context in Studio Research", () => {
     await user.click(screen.getByText("YouTube inspiration (optional)"));
     await waitFor(() => expect(requests.some(url => url.includes("topic=foundation%20repair%20costs"))).toBe(true));
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "home insurance");
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "home insurance");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByRole("textbox", { name: "Research topic" })).toHaveValue("foundation repair costs");
     expect(requests.every(url => url === readinessPath || url.startsWith("/api/research/market/related"))).toBe(true);
@@ -184,7 +184,7 @@ describe("Studio Research to source-backed story", () => {
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "different heating costs");
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "different heating costs");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByText("Insulation resists heat flow.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create editable sourced storyboard/i })).toBeInTheDocument();
@@ -211,7 +211,7 @@ describe("Studio Research to source-backed story", () => {
   it("restores the last immutable research draft without re-running the public search or model", async () => {
     localStorage.setItem("contentgen:studio-research:latest:v1", JSON.stringify({ topic: "Why insulation saves energy", artifactId: "research_home-123456789abc" }));
     const requests: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
       requests.push(String(url));
       if (readinessResponse(String(url))) return readinessResponse(String(url))!;
       if (String(url) === "/api/contentgen-director/research-draft/research_home-123456789abc")
@@ -240,7 +240,7 @@ describe("Studio Research to source-backed story", () => {
       if (searchResponse(String(url),options)) return searchResponse(String(url),options)!;
       throw Error(`Unexpected URL ${String(url)}`);
     }));
-    const create = vi.fn(() => true), user = userEvent.setup();
+    const create = vi.fn<(draft:EditorialDraft) => boolean>(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
     expect(await screen.findByText(/Set up local search:/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeDisabled();
@@ -256,7 +256,7 @@ describe("Studio Research to source-backed story", () => {
 
   it("selects a story direction with native radios and hides optional inputs until expanded", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? new Response("{}", { status: 200 })));
-    const create = vi.fn(() => true), user = userEvent.setup();
+    const create = vi.fn<(draft:EditorialDraft) => boolean>(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Rent vs buy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
     await user.click(screen.getByRole("radio", { name: /compare the options/i }));
     expect(screen.getByRole("radio", { name: /compare the options/i })).toBeChecked();
@@ -349,7 +349,7 @@ describe("Studio Research to source-backed story", () => {
     }));
     const user=userEvent.setup();
     render(<ResearchWorkspace locale="en" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
-    await user.click(screen.getByText(/Saved searches/i));
+    await user.click(screen.getByText("Saved searches",{exact:true}));
     await user.click(await screen.findByRole("button",{name:/Heat pump costs.*1 source/i}));
     expect(screen.getByRole("textbox",{name:"Research topic"})).toHaveValue("Heat pump costs");
     expect(screen.getByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();

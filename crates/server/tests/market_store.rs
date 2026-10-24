@@ -4,7 +4,7 @@ use contentgen_server::research::market_store::{self, MarketWatchlistDraft, Vide
 fn db_ready() -> rusqlite::Connection {
     let mut db = db::open_in_memory().unwrap();
     let report = db::migrate(&mut db).unwrap();
-    assert_eq!(report.to_version, 4);
+    assert_eq!(report.to_version, db::MIGRATION_VERSION);
     db
 }
 
@@ -160,7 +160,7 @@ fn disabled_watchlists_never_claim_and_deleting_cascades_results() {
     let db = db_ready();
     let watch = market_store::create_watchlist(&db, draft(false), 1_000_000).unwrap();
     assert!(
-        market_store::claim_watchlist(&db, &watch.id, 1_000_000, true)
+        market_store::claim_watchlist(&db, &watch.id, 1_000_000, false)
             .unwrap()
             .is_none()
     );

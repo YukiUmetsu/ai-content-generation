@@ -8,6 +8,7 @@ import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
 import {generateOutline,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
+import {withLocalInference} from "./local-inference-gate.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
 const sha=value=>createHash("sha256").update(value).digest("hex");
@@ -75,7 +76,6 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   sceneNarration=generateSceneNarration,combineScene=assembleSceneUnit,
   assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause}={}){
   const active=new Map();
-  let inferenceTail=Promise.resolve();
   const rootJobs=join(root,"jobs");
   const pathFor=(id,name)=>{
     if(!ID.test(id)||!safeName(name))throw Error("Invalid research job file identifier.");
@@ -98,13 +98,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   const setStage=async(job,stage,currentStep=null)=>{job.status="running";job.stage=stage;
     job.currentStep=currentStep;job.error=null;job.retry=null;await save(job);};
   const guard=signal=>{if(signal.aborted)throw signal.reason??Error("Job cancelled.");};
-  const inference=async(action,signal)=>{
-    const previous=inferenceTail;
-    let release;
-    inferenceTail=new Promise(resolve=>{release=resolve;});
-    await previous;
-    try{guard(signal);return await action();}finally{release();}
-  };
+  const inference=(action,signal)=>withLocalInference(()=>{guard(signal);return action();},signal);
   const attempt=async(job,call,signal)=>{
     const models=[job.models.primary,...(job.models.secondary?[job.models.secondary]:[])];
     let last;

@@ -43,6 +43,7 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
   const [videoResult, setVideoResult] = useState<{watchlistId: string; rows: MarketVideo[]} | null>(null);
   const [videoMode, setVideoMode] = useState<MarketVideoMode>("established");
   const [minViews, setMinViews] = useState(10_000);
+  const [observedClock, setObservedClock] = useState(() => Date.now());
   const [newName, setNewName] = useState("");
   const [newQuery, setNewQuery] = useState("");
   const [newPlanText, setNewPlanText] = useState("");
@@ -59,6 +60,10 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
   const [creative, setCreative] = useState<{watchlistId:string; draft:EditorialDraft} | null>(null);
   const [creativeError, setCreativeError] = useState("");
   const [creativeBusy, setCreativeBusy] = useState(false);
+  useEffect(() => {
+    const timer = window.setInterval(() => setObservedClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const refresh = useCallback(async () => {
     const [nextStatus, nextWatchlists] = await Promise.all([loadMarketStatus(), loadMarketWatchlists()]);
@@ -121,8 +126,8 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
     finally{setGeneratingQueries(false);}
   }
   const videos = videoResult?.watchlistId === selectedId ? videoResult.rows : [];
-  const allDistinctVideos = rankMarketVideos(videos, "all", minViews, Date.now());
-  const shownVideos = rankMarketVideos(videos, videoMode, minViews, Date.now());
+  const allDistinctVideos = rankMarketVideos(videos, "all", minViews, observedClock);
+  const shownVideos = rankMarketVideos(videos, videoMode, minViews, observedClock);
   const loadedDraft = useMemo(() => {
     const watch = watchlists.find(x => x.id === selectedId);
     return watch ? loadEditorialDraft(watch.id, watch.query || watch.name) : null;
@@ -324,7 +329,7 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
                 {selected.enabled ? tr("Daily automatic collection enabled", "毎日の自動収集は有効")
                   : tr("Daily automatic collection off · manual collection available", "自動収集は無効 · 手動収集は利用可能")}
                 {" · "}{tr("Last collected:", "最終収集:")} {asLocalDate(selected.lastFinishedAt,locale)}
-                {selected.backoffUntil > Math.floor(Date.now()/1000) && <span className="text-danger">
+                {selected.backoffUntil > Math.floor(observedClock/1000) && <span className="text-danger">
                   {" · "}{tr("Retry after:", "再試行可能:")} {asLocalDate(selected.backoffUntil,locale)}
                 </span>}
                 {" · "}{tr("Next eligible:", "次の予定:")} {asLocalDate(selected.nextDueAt,locale)}

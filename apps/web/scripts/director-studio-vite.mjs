@@ -7,7 +7,9 @@ import { generateEditorialVariants } from "./video-production/editorial-variants
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
 import { searchStudioSources, loadStudioSearch, listStudioSearches } from "./video-production/studio-search.mjs";
 import { generateMarketQueries } from "./video-production/market-query-generator.mjs";
+import { generateProjectKeywords } from "./video-production/project-keyword-generator.mjs";
 import { researchJobManager } from "./video-production/research-job-queue.mjs";
+import { discoveryJobManager } from "./video-production/discovery-job-queue.mjs";
 
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
@@ -82,6 +84,25 @@ export async function handleDirectorRequest(req,res,deps={}){
       const queries=await (deps.marketQueries??generateMarketQueries)({name:request.niche,description:request.description},
         {modelSettings:settings});
       send(res,200,{queries,source:"local-model-generated"});
+    }else if(req.method==="POST"&&route==="/project-keyword-suggestions"){
+      const input=await readBody(req);
+      const model=await (deps.model??resolveModelForTask)("research");
+      const generated=await (deps.projectKeywords??generateProjectKeywords)(input,{modelSettings:model});
+      send(res,200,generated);
+    }else if(req.method==="POST"&&route==="/project-discovery"){
+      const input=await readBody(req);
+      const model=await (deps.model??resolveModelForTask)("research");
+      const run=await (deps.discovery??discoveryJobManager).create(input,model);
+      send(res,202,run);
+    }else if(req.method==="GET"&&/^\/project-discovery\/[a-z0-9-]{2,80}\/runs$/iu.test(route)){
+      send(res,200,{runs:await (deps.discovery??discoveryJobManager).list(route.split("/")[2])});
+    }else if(req.method==="GET"&&/^\/project-discovery\/[a-z0-9-]{2,80}\/runs\/discover_[a-f0-9]{24}$/iu.test(route)){
+      const parts=route.split("/");
+      send(res,200,await (deps.discovery??discoveryJobManager).get(parts[2],parts[4]));
+    }else if(req.method==="POST"&&/^\/project-discovery\/discover_[a-f0-9]{24}\/resume$/iu.test(route)){
+      const input=await readBody(req);
+      const model=await (deps.model??resolveModelForTask)("research");
+      send(res,202,await (deps.discovery??discoveryJobManager).resume(input,route.split("/")[2],model));
     }else if(req.method==="GET"&&route==="/research-search"){
       send(res,200,{items:await (deps.listSearch??listStudioSearches)()});
     }else if(req.method==="GET"&&/^\/research-search\/[^/]+$/u.test(route)){

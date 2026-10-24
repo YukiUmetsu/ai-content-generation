@@ -91,3 +91,21 @@ test("research job only receives a secondary local model when fallback was expli
   assert.equal(seen.secondary.model,"backup");
 });
 
+test("project discovery routes load saved history without starting discovery until explicit POST",async()=>{
+  const runId="discover_"+"a".repeat(24);
+  const snapshot={id:runId,projectId:"project-house",status:"queued",candidates:[]};
+  let starts=0;
+  const deps={model:async()=>({model:"local-research",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
+    discovery:{list:async id=>{assert.equal(id,"project-house");return [snapshot];},
+      get:async()=>snapshot,
+      create:async()=>{starts++;return snapshot;},resume:async()=>snapshot}};
+  const saved=await get("/project-discovery/project-house/runs",deps);
+  assert.equal(saved.status,200);
+  assert.deepEqual(saved.result,{runs:[snapshot]});
+  assert.equal(starts,0);
+  assert.equal((await get(`/project-discovery/project-house/runs/${runId}`,deps)).result.id,runId);
+  assert.equal((await post("/project-discovery",{projectId:"project-house",projectName:"Home Costs",description:""},deps)).status,202);
+  assert.equal(starts,1);
+  assert.equal((await post(`/project-discovery/${runId}/resume`,{projectId:"project-house",projectName:"Home Costs",description:""},deps)).status,202);
+});
+

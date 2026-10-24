@@ -15,6 +15,7 @@ import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
+import { syncDiscoveryProject } from "@/lib/api/discovery";
 
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -30,6 +31,30 @@ export function Shell() {
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
   const [catalogError, setCatalogError] = useState<string | null>(initialCatalog.warning);
+  const [discoverySync, setDiscoverySync] = useState<"syncing" | "synced" | "offline">("syncing");
+  const [discoveryVisit, setDiscoveryVisit] = useState(0);
+  useEffect(() => {
+    const visit = () => { if (document.visibilityState === "visible") setDiscoveryVisit(value => value + 1); };
+    document.addEventListener("visibilitychange", visit);
+    return () => document.removeEventListener("visibilitychange", visit);
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setDiscoverySync("syncing");
+      void (async () => {
+        try {
+          const ordered = [...catalog.projects].sort((a,b) => Number(b.id === catalog.activeProjectId) - Number(a.id === catalog.activeProjectId));
+          for (const project of ordered) await syncDiscoveryProject(project, catalog.content, controller.signal);
+          if (!controller.signal.aborted) setDiscoverySync("synced");
+        } catch {
+          // Server may be stopped; the local catalog is saved independently.
+          if (!controller.signal.aborted) setDiscoverySync("offline");
+        }
+      })();
+    }, 600);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [catalog, discoveryVisit]);
   const saveCatalog = useCallback((next: StudioCatalog): boolean => {
     try {
       persistCatalog(next);
@@ -169,6 +194,7 @@ export function Shell() {
               catalog={catalog}
               save={saveCatalog}
               onCreate={() => setActiveSection("create")}
+              discoverySync={discoverySync}
             />
           )}
 
