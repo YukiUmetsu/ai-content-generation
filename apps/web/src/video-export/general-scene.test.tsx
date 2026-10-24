@@ -235,7 +235,7 @@ describe("specific teaching details in the actual encoded video frames",()=>{
 
 describe("information-dense question scenes retain real teaching notes", () => {
   it("renders named explanations in the expanded multi-column question layout", () => {
-    const notes = ["A recurring local bill", "Borrowing adds interest", "Repairs and upkeep", "A continuing utility cost"];
+    const notes = ["A recurring local bill", "Borrowing adds interest", "Repairs and upkeep", "Monthly utility cost"];
     const altered: GeneralVisualPlan = {
       ...plan,
       chapters: plan.chapters.map((chapter, index) => index === 1 ? {
