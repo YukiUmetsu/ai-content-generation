@@ -65,8 +65,9 @@ where
     let Ok(watchlist) = market_store::get_watchlist(&db, &run.watchlist_id) else {
         return;
     };
-    // Disabled/deleted while the run waited: don't make an external request.
-    if !watchlist.enabled {
+    // Disabled automatic jobs are cancelled, but explicit one-off jobs that
+    // were accepted while scheduling was off may still run.
+    if !watchlist.enabled && !run.allowed_while_disabled {
         let _ = market_store::fail_run(&db, &run.id, "disabled", epoch_now());
         return;
     }
@@ -80,6 +81,12 @@ where
                 }
             }
             Err(err) => {
+                // Correlate provider diagnostics with an opaque generated run ID.
+                // Do not log watchlist names, search phrases or raw provider errors.
+                eprintln!(
+                    "contentgen-server: youtube_collection_failed run_id={} reason={}",
+                    run.id, err.code()
+                );
                 let _ = market_store::fail_run(&db, &run.id, err.code(), epoch_now());
             }
         }

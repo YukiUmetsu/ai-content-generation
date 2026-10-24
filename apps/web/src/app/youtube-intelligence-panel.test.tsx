@@ -48,6 +48,7 @@ function fakeApi(withVideo: boolean, enabled = true) {
 }
 
 describe("YouTube Intelligence", () => {
+
   it("saves a niche-only watchlist without a phrase and marks automatic exploration", async () => {
     fakeApi(false);
     const user=userEvent.setup();

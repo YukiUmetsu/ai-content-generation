@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clapperboard, ExternalLink, Plus, RefreshCw, Sparkles, Trash2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
+import { marketErrorHint } from "./market-error-hint";
 import type { Locale } from "@/features/registry";
 import {
   createMarketWatchlist, deleteMarketWatchlist, loadMarketStatus,
@@ -322,7 +323,7 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
                   {" · "}{tr("Retry after:", "再試行可能:")} {asLocalDate(selected.backoffUntil,locale)}
                 </span>}
                 {" · "}{tr("Next eligible:", "次の予定:")} {asLocalDate(selected.nextDueAt,locale)}
-                {selected.errorCode && <span className="text-danger"> · {tr("Last error:", "直近のエラー:")} {selected.errorCode}</span>}
+                {selected.errorCode && <span className="text-danger"> · {tr("Last error:", "直近のエラー:")} {selected.errorCode}{marketErrorHint(selected.errorCode, ja) && <> — {marketErrorHint(selected.errorCode, ja)}</>}</span>}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" disabled={busy || !editName.trim() || Boolean(editQuery.trim() && editQuery.trim().length<3) || !planIsValid(editPlanText)}

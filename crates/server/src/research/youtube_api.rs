@@ -16,6 +16,14 @@ pub enum YoutubeError {
     MissingKey,
     #[error("YouTube API refused the request")]
     Permission,
+    #[error("YouTube Data API is not enabled for the Google Cloud project")]
+    ApiNotEnabled,
+    #[error("YouTube API key is invalid or expired")]
+    InvalidKey,
+    #[error("YouTube API key restrictions refused the server request")]
+    KeyRestricted,
+    #[error("YouTube API rejected the search parameters")]
+    InvalidRequest,
     #[error("YouTube API search quota is exhausted")]
     Quota,
     #[error("YouTube API rate limit reached")]
@@ -31,12 +39,57 @@ impl YoutubeError {
         match self {
             Self::MissingKey => "api_key_missing",
             Self::Permission => "permission",
+            Self::ApiNotEnabled => "api_not_enabled",
+            Self::InvalidKey => "api_key_invalid",
+            Self::KeyRestricted => "api_key_restricted",
+            Self::InvalidRequest => "invalid_request",
             Self::Quota => "quota_exceeded",
             Self::RateLimited => "rate_limited",
             Self::Unavailable => "provider_unavailable",
             Self::InvalidPayload => "payload_invalid",
         }
     }
+}
+
+/// Diagnostics are composed exclusively from fixed, reviewed strings.
+/// Never include the request URL, query, headers, credential, or Google response.
+fn safe_failure_log(
+    endpoint: &str,
+    status: Option<reqwest::StatusCode>,
+    error: YoutubeError,
+) -> String {
+    let stage = match endpoint {
+        "search" => "search",
+        "videos" => "videos",
+        "channels" => "channels",
+        _ => "unknown",
+    };
+    let http_status = status.map(|s| s.as_u16().to_string()).unwrap_or_else(|| "network".into());
+    let advice = match error {
+        YoutubeError::MissingKey => "configure_youtube_key",
+        YoutubeError::Permission => "check_google_cloud_api_and_key_permissions",
+        YoutubeError::ApiNotEnabled => "enable_youtube_data_api_v3",
+        YoutubeError::InvalidKey => "replace_youtube_api_key",
+        YoutubeError::KeyRestricted => "check_key_application_restrictions",
+        YoutubeError::InvalidRequest => "check_request_parameters",
+        YoutubeError::Quota => "check_google_cloud_youtube_quota",
+        YoutubeError::RateLimited => "wait_for_provider_backoff",
+        YoutubeError::Unavailable => "retry_provider_connection",
+        YoutubeError::InvalidPayload => "check_provider_response_contract",
+    };
+    format!(
+        "contentgen-server: youtube_api_failure endpoint={stage} http_status={http_status} reason={} action={advice}",
+        error.code()
+    )
+}
+
+fn log_failure(
+    endpoint: &str,
+    status: Option<reqwest::StatusCode>,
+    error: YoutubeError,
+) -> YoutubeError {
+    eprintln!("{}", safe_failure_log(endpoint, status, error));
+    error
 }
 
 #[derive(Clone)]
@@ -87,47 +140,41 @@ impl YoutubeClient {
             .query(params)
             .send()
             .await
-            .map_err(|_| YoutubeError::Unavailable)?;
+            .map_err(|_| log_failure(endpoint, None, YoutubeError::Unavailable))?;
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(YoutubeError::RateLimited);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::RateLimited));
         }
-        if status == reqwest::StatusCode::FORBIDDEN {
-            // Distinguish quota from other permissions without logging the response.
-            let b = response
-                .bytes()
-                .await
-                .map_err(|_| YoutubeError::Permission)?;
-            if b.windows(b"quotaExceeded".len())
-                .any(|w| w == b"quotaExceeded")
-                || b.windows(b"dailyLimitExceeded".len())
-                    .any(|w| w == b"dailyLimitExceeded")
-            {
-                return Err(YoutubeError::Quota);
-            }
-            return Err(YoutubeError::Permission);
-        }
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::BAD_REQUEST
-        {
-            return Err(YoutubeError::Permission);
+        if matches!(
+            status,
+            reqwest::StatusCode::FORBIDDEN
+                | reqwest::StatusCode::UNAUTHORIZED
+                | reqwest::StatusCode::BAD_REQUEST
+        ) {
+            // Only classify known Google error codes locally. Never log or
+            // persist the provider's raw message, URL or credential.
+            let bytes = response.bytes().await
+                .map_err(|_| log_failure(endpoint, Some(status), YoutubeError::Permission))?;
+            return Err(log_failure(endpoint, Some(status), classify_youtube_error(status, &bytes)));
         }
         if !status.is_success() {
-            return Err(YoutubeError::Unavailable);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::Unavailable));
         }
         if response
             .content_length()
             .is_some_and(|size| size > 1_000_000)
         {
-            return Err(YoutubeError::InvalidPayload);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::InvalidPayload));
         }
         let bytes = response
             .bytes()
             .await
-            .map_err(|_| YoutubeError::Unavailable)?;
+            .map_err(|_| log_failure(endpoint, Some(status), YoutubeError::Unavailable))?;
         if bytes.len() > 1_000_000 {
-            return Err(YoutubeError::InvalidPayload);
+            return Err(log_failure(endpoint, Some(status), YoutubeError::InvalidPayload));
         }
-        serde_json::from_slice(&bytes).map_err(|_| YoutubeError::InvalidPayload)
+        serde_json::from_slice(&bytes)
+            .map_err(|_| log_failure(endpoint, Some(status), YoutubeError::InvalidPayload))
     }
 
     pub async fn collect(
@@ -263,6 +310,78 @@ impl YoutubeClient {
     }
 }
 
+/// Google returns both legacy errors[].reason and google.rpc.ErrorInfo
+/// details[].reason. Only selected, sanitized reason families become stored
+/// error codes: provider messages are never copied into the UI or logs.
+fn classify_youtube_error(status: reqwest::StatusCode, body: &[u8]) -> YoutubeError {
+    if body.len() > 32_768 {
+        return YoutubeError::Permission;
+    }
+    let Ok(json) = serde_json::from_slice::<Value>(body) else {
+        return YoutubeError::Permission;
+    };
+    let Some(error) = json.get("error") else {
+        return YoutubeError::Permission;
+    };
+    let mut reasons: Vec<String> = Vec::new();
+    if let Some(items) = error.get("errors").and_then(Value::as_array) {
+        for item in items.iter().take(10) {
+            if let Some(reason) = item.get("reason").and_then(Value::as_str) {
+                reasons.push(reason.to_ascii_lowercase());
+            }
+        }
+    }
+    if let Some(details) = error.get("details").and_then(Value::as_array) {
+        for detail in details.iter().take(10) {
+            if let Some(reason) = detail.get("reason").and_then(Value::as_str) {
+                reasons.push(reason.to_ascii_lowercase());
+            }
+        }
+    }
+    if let Some(reason) = error.get("status").and_then(Value::as_str) {
+        reasons.push(reason.to_ascii_lowercase());
+    }
+    // Google can return only a human-readable message for some restrictions.
+    // Match only known short patterns, never expose the message itself.
+    let message = error.get("message").and_then(Value::as_str)
+        .unwrap_or("").to_ascii_lowercase();
+    if reasons.iter().any(|r| matches!(r.as_str(),
+        "quotaexceeded" | "dailylimitexceeded" | "dailylimitexceededunreg"
+        | "quota_exceeded" | "resource_exhausted"
+    )) {
+        return YoutubeError::Quota;
+    }
+    if reasons.iter().any(|r| matches!(r.as_str(),
+        "ratelimitexceeded" | "userratelimitexceeded" | "rate_limit_exceeded"
+    )) {
+        return YoutubeError::RateLimited;
+    }
+    if reasons.iter().any(|r| matches!(r.as_str(),
+        "accessnotconfigured" | "service_disabled" | "api_not_enabled"
+    )) || (message.contains("youtube data api") && message.contains("disabled"))
+        || message.contains("has not been used in project") {
+        return YoutubeError::ApiNotEnabled;
+    }
+    if reasons.iter().any(|r| matches!(r.as_str(),
+        "keyinvalid" | "api_key_invalid" | "api_key_expired"
+    )) || message.contains("api key not valid")
+        || message.contains("api key is invalid") {
+        return YoutubeError::InvalidKey;
+    }
+    if reasons.iter().any(|r|
+        r.starts_with("api_key_") && (r.ends_with("_blocked") || r == "api_key_service_blocked")
+        || matches!(r.as_str(), "iprefererblocked" | "referernotallowed")
+    ) || (message.contains("referer") && message.contains("blocked"))
+        || (message.contains("api key") && message.contains("not authorized"))
+    {
+        return YoutubeError::KeyRestricted;
+    }
+    if status == reqwest::StatusCode::BAD_REQUEST {
+        return YoutubeError::InvalidRequest;
+    }
+    YoutubeError::Permission
+}
+
 fn count_at(item: &Value, path: &str) -> Option<i64> {
     item.pointer(path)
         .and_then(Value::as_str)?
@@ -372,6 +491,57 @@ mod tests {
         assert_eq!(records[0].subscriber_count, Some(20000));
         assert_eq!(records[1].like_count, None);
         assert_eq!(records[1].subscriber_count, None);
+    }
+
+    #[test]
+    fn classifies_known_google_errors_without_exposing_provider_messages_or_keys() {
+        use reqwest::StatusCode;
+        let examples = [
+            (StatusCode::FORBIDDEN, json!({"error":{"errors":[{"reason":"accessNotConfigured"}],"message":"secret token sample"}}), "api_not_enabled"),
+            (StatusCode::FORBIDDEN, json!({"error":{"details":[{"reason":"SERVICE_DISABLED"}]}}), "api_not_enabled"),
+            (StatusCode::BAD_REQUEST, json!({"error":{"details":[{"reason":"API_KEY_INVALID"}]}}), "api_key_invalid"),
+            (StatusCode::FORBIDDEN, json!({"error":{"details":[{"reason":"API_KEY_HTTP_REFERRER_BLOCKED"}]}}), "api_key_restricted"),
+            (StatusCode::FORBIDDEN, json!({"error":{"message":"Requests from referer <empty> are blocked."}}), "api_key_restricted"),
+            (StatusCode::FORBIDDEN, json!({"error":{"errors":[{"reason":"quotaExceeded"}]}}), "quota_exceeded"),
+            (StatusCode::FORBIDDEN, json!({"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}), "rate_limited"),
+            (StatusCode::BAD_REQUEST, json!({"error":{"errors":[{"reason":"unexpectedParameter"}]}}), "invalid_request"),
+            (StatusCode::FORBIDDEN, json!({"error":{"errors":[{"reason":"forbidden"}],"message":"private provider details"}}), "permission"),
+        ];
+        for (status, payload, expected) in examples {
+            let err = classify_youtube_error(status, payload.to_string().as_bytes());
+            assert_eq!(err.code(), expected);
+            assert!(!format!("{err:?}").contains("secret"));
+            assert!(!format!("{err:?}").contains("private provider"));
+        }
+    }
+
+    #[test]
+    fn safe_diagnostics_include_action_and_stage_but_never_untrusted_values() {
+        use reqwest::StatusCode;
+        let redacted = safe_failure_log(
+            "search?key=AIza_private-secret&q=my-private-research",
+            Some(StatusCode::FORBIDDEN),
+            YoutubeError::KeyRestricted,
+        );
+        assert_eq!(
+            redacted,
+            "contentgen-server: youtube_api_failure endpoint=unknown http_status=403 reason=api_key_restricted action=check_key_application_restrictions"
+        );
+        assert!(!redacted.contains("AIza"));
+        assert!(!redacted.contains("my-private-research"));
+        for (stage, error, expected) in [
+            ("search", YoutubeError::ApiNotEnabled, "enable_youtube_data_api_v3"),
+            ("videos", YoutubeError::InvalidKey, "replace_youtube_api_key"),
+            ("channels", YoutubeError::Quota, "check_google_cloud_youtube_quota"),
+        ] {
+            let line = safe_failure_log(stage, Some(StatusCode::FORBIDDEN), error);
+            assert!(line.contains(&format!("endpoint={stage}")));
+            assert!(line.contains(&format!("reason={}", error.code())));
+            assert!(line.contains(&format!("action={expected}")));
+        }
+        let network = safe_failure_log("search", None, YoutubeError::Unavailable);
+        assert!(network.contains("http_status=network"));
+        assert!(!network.contains("https://"));
     }
 
     #[tokio::test]
