@@ -109,6 +109,9 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
     const loaded=projectId?loadProjectStoryboard(projectId):null;
     const board=loaded?.board?.assumptions.includes("Research artifact: "+researchArtifactId)
       ?loaded.board:null;
+    if(loaded?.warning)setLoadError(loaded.warning+" The original research plan will open without storyboard edits.");
+    else if(loaded?.board&&!board)
+      setLoadError("The saved storyboard references a different research artifact. Director will use the selected research plan without its edits.");
     const payload={artifactId:researchArtifactId,
       ...(board&&projectId?{projectId,storyboard:board}:{})};
     void request("compile-saved-research",payload).then(result=>{
