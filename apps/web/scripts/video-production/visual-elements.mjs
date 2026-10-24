@@ -8,7 +8,7 @@ export function isVisualElements(value){
  for(const element of value){
    if(!element||typeof element!=="object"||Array.isArray(element)||
      Object.keys(element).length!==2||!Object.hasOwn(element,"label")||!Object.hasOwn(element,"detail")||
-     !isText(element.label,44)||!isText(element.detail,44)||generic.test(element.label.trim()))return false;
+     !isText(element.label,44)||!isText(element.detail,160)||generic.test(element.label.trim()))return false;
    const normalized=element.label.trim().toLocaleLowerCase();
    if(labels.has(normalized)||element.detail.trim().toLocaleLowerCase()===normalized)return false;
    labels.add(normalized);

@@ -16,10 +16,30 @@ const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
 const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
-const safeSchemaIssue=issue=>["missing","wrong_type","too_short","too_long","placeholder","control_char"].includes(issue)?issue:null;
+const safeSchemaIssue=issue=>["missing","wrong_type","too_short","too_long","placeholder","control_char",
+  "wrong_shape","invalid_element","duplicate_previous"].includes(issue)?issue:null;
 const sceneStateRepairHint=field=>field==="before"||field==="after"?
   ` The ${field} field must be a string of 8–48 characters describing a concrete ${field==="before"?"starting":"ending"} visible state, not a generic label.`:
   field==="action"?" The action field must be a string of 8–90 characters describing a concrete visible change.":"";
+const phaseRepairHint=step=>{
+  const phase=/^visual:([123]):direction$/u.exec(step??"")?.[1];
+  return ({"1":"Problem phase: expose the unresolved viewer question without giving away the answer.",
+    "2":"Mechanism phase: demonstrate cause and effect with a new visual transformation, not another setup.",
+    "3":"Payoff phase: resolve the beat's question with a new synthesis or reveal, not another comparison or repetition."})[phase]??
+      "Show a genuinely different teaching operation for this phase.";
+};
+const repairHint=(failure,step)=>{
+  if(failure.schemaIssue==="duplicate_previous"&&["visualAction","learningChange"].includes(failure.field))
+    return ` ${phaseRepairHint(step)} The ${failure.field} exactly repeated an accepted previousVisuals value. `+
+      `Do not paraphrase or rename a prior action or insight. Choose a different ${failure.field==="visualAction"?
+        "physical on-screen operation":"learning outcome that advances the explanation"} supported by the provided evidence.`;
+  if(failure.field==="visualElements")return " Return exactly two distinct visible objects as "+
+    "{visualElements:[{label,detail},{label,detail}]}. Use concrete short labels and useful visual descriptions, not generic names.";
+  if(failure.schemaIssue==="too_long")return " Shorten the failing field substantially while retaining its concrete meaning.";
+  if(["missing","wrong_type","wrong_shape","invalid_element"].includes(failure.schemaIssue))
+    return " Restore the required field name, JSON type, and structure; do not omit other required fields.";
+  return sceneStateRepairHint(failure.field);
+};
 const errorInfo=error=>{
   const raw=String(error?.message??error??"Unknown job failure");
   const detailCode=["schema_invalid","json_invalid","output_truncated","output_missing","provider_envelope_invalid"].includes(error?.code)?error.code:null;
@@ -160,9 +180,11 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
         try{
           const failure=last?errorInfo(last):null;
           const compact=sawTruncation?" The previous JSON was cut off at the output limit. Keep all required fields but use shorter text in one complete JSON object.":"";
-          const feedback=n>0||sawTruncation?failure?.field&&failure.detailCode==="schema_invalid"?
+          const feedback=n>0||sawTruncation?failure?.code==="provider_unavailable"?
+            (sawTruncation?compact.trim():null):
+            failure?.field&&failure.detailCode==="schema_invalid"?
             `The previous JSON failed validation at ${failure.field}${failure.schemaIssue?` (${failure.schemaIssue})`:""}. `+
-              `Correct that field and return the complete JSON without inventing facts.`+sceneStateRepairHint(failure.field)+compact:
+              `Correct that field and return the complete JSON without inventing facts.`+repairHint(failure,job.currentStep)+compact:
             sawTruncation?compact.trim():
               "Return ONLY a complete JSON object with exactly the required fields and types; correct any malformed fields without inventing facts.":null;
           const result=await inference(()=>withModelDebugContext({
