@@ -22,6 +22,7 @@ pub struct ErrorEnvelope {
 pub enum ApiError {
     NotImplemented { feature: &'static str },
     InvalidDocument { message: String },
+    MalformedJson { message: String },
     Internal { message: String },
     NotFound { message: String },
     Forbidden { message: String },
@@ -59,6 +60,14 @@ impl IntoResponse for ApiError {
                 StatusCode::BAD_REQUEST,
                 ErrorBody {
                     code: "invalid_document",
+                    message,
+                    feature: None,
+                },
+            ),
+            Self::MalformedJson { message } => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ErrorBody {
+                    code: "invalid_request_json",
                     message,
                     feature: None,
                 },

@@ -3,7 +3,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State, rejection::JsonRejection};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -37,6 +37,15 @@ fn market_error(error: MarketError) -> ApiError {
         },
         MarketError::Db(err) => db_error(err),
     }
+}
+
+fn parse_watchlist_json(payload: Result<Json<MarketWatchlistDraft>, JsonRejection>) -> Result<MarketWatchlistDraft, ApiError> {
+    payload.map(|Json(draft)| draft).map_err(|rejection| ApiError::MalformedJson {
+        message: format!(
+            "Invalid watchlist request JSON: {}. Make sure the browser and local Rust server are from the same build.",
+            rejection.body_text()
+        ),
+    })
 }
 
 fn require_editor_header(headers: &HeaderMap) -> Result<(), ApiError> {
@@ -142,9 +151,10 @@ async fn get_watchlist(
 async fn create(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(draft): Json<MarketWatchlistDraft>,
+    payload: Result<Json<MarketWatchlistDraft>, JsonRejection>,
 ) -> Result<(StatusCode, Json<market_store::MarketWatchlist>), ApiError> {
     require_editor_header(&headers)?;
+    let draft = parse_watchlist_json(payload)?;
     let db = state.connect().map_err(db_error)?;
     let value = market_store::create_watchlist(&db, draft, epoch_now()).map_err(market_error)?;
     Ok((StatusCode::CREATED, Json(value)))
@@ -154,9 +164,10 @@ async fn update(
     Path(id): Path<String>,
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(draft): Json<MarketWatchlistDraft>,
+    payload: Result<Json<MarketWatchlistDraft>, JsonRejection>,
 ) -> Result<Json<market_store::MarketWatchlist>, ApiError> {
     require_editor_header(&headers)?;
+    let draft = parse_watchlist_json(payload)?;
     let db = state.connect().map_err(db_error)?;
     Ok(Json(
         market_store::update_watchlist(&db, &id, draft, epoch_now()).map_err(market_error)?,
