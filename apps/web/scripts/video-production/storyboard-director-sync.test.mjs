@@ -139,3 +139,21 @@ test("the real preproduction compiler accepts a source-bound visual and narratio
   assert.equal(plan.sound[1].narration,
     "If you borrow to buy it, mortgage interest adds to the purchase price. Property tax and insurance recur, and repairs and maintenance happen over time. These are different costs, not another price tag.");
 });
+
+test("flags deleted fallback, focus, and source-linked teaching plans instead of silently discarding them",()=>{
+  const source=structuredClone(plan);
+  source.shots[0].subjectIds=["house"];
+  source.teachingSequences[0].technicalSubjectId="house";
+  source.teachingSequences[0].phases[0].kind="problem";
+  source.teachingSequences[0].visualStates={before:"Cost unknown",action:"Reveal bill",after:"Cost visible"};
+  source.teachingSequences[0].visualMechanic={kind:"visual-mechanic-v1",subjectId:"house"};
+  const edited=board();
+  edited.beats[0].focusTarget="";
+  edited.beats[0].staticFallback="";
+  const result=reconcileStoryboardPlan({artifactId,projectId:"project-demo",
+    dossier,plan:source,storyboard:edited,compile});
+  for(const subject of ["focus","fallback","teaching-state","semantic-mechanic"]){
+    assert.ok(result.synchronization.manualReview.some(w=>w.includes(subject)),subject);
+  }
+  assert.deepEqual(result.bundle.plan,source);
+});
