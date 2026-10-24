@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { CATALOG_KEY } from "./catalog-model";
@@ -13,26 +13,26 @@ describe("Studio menu workspaces", () => {
     const navigate = async (name:string) => user.click(screen.getByRole("link",{name}));
     await navigate("Projects");
     expect(screen.queryByText(/outside this foundation/i)).not.toBeInTheDocument();
-    await user.type(screen.getByRole("textbox",{name:"Name"}),"Short documentaries");
+    fireEvent.change(screen.getByRole("textbox",{name:"Name"}),{target:{value:"Short documentaries"}});
     await user.click(screen.getByRole("button",{name:"Create project"}));
     expect(screen.getByText("Short documentaries")).toBeInTheDocument();
 
     await navigate("Content");
-    await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Why data travels in packets");
+    fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Why data travels in packets"}});
     await user.selectOptions(screen.getByRole("combobox",{name:"Kind"}),"short");
     await user.click(screen.getByRole("button",{name:"Add entry"}));
     expect(screen.getByText("Why data travels in packets")).toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox",{name:"Stage for Why data travels in packets"}),"review");
 
     await navigate("Assets");
-    await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Narrator recording");
+    fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Narrator recording"}});
     await user.selectOptions(screen.getByRole("combobox",{name:"Kind"}),"audio");
     await user.selectOptions(screen.getByRole("combobox",{name:"Rights"}),"cleared");
     await user.click(screen.getByRole("button",{name:"Add entry"}));
     expect(screen.getByText("Narrator recording")).toBeInTheDocument();
 
     await navigate("Products");
-    await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Narration editing course");
+    fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Narration editing course"}});
     await user.selectOptions(screen.getByRole("combobox",{name:"Kind"}),"course");
     await user.click(screen.getByRole("button",{name:"Add entry"}));
     expect(screen.getByText("Narration editing course")).toBeInTheDocument();
