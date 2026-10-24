@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {reconcileStoryboardPlan} from "./storyboard-director-sync.mjs";
+import {readFile} from "node:fs/promises";
+import {compilePreproductionBundle} from "./preproduction.mjs";
 
 const artifactId="research_hvac-123456789abc";
 const dossier={id:"research_hvac",topic:{title:"HVAC",viewerQuestion:"Why?"},claims:[
@@ -102,4 +104,38 @@ test("rejects multi-delimiter visual edits when both original fields changed amb
   edited.beats[0].visualObjective="Reveal machine; rotate slowly; Show labor; fade to black";
   assert.throws(()=>reconcileStoryboardPlan({artifactId,projectId:"project-demo",
     dossier,plan:source,storyboard:edited,compile}),/ambiguous visual objective/iu);
+});
+
+test("the real preproduction compiler accepts a source-bound visual and narration edit",async()=>{
+  const dossier=JSON.parse(await readFile(
+    new URL("../../../../examples/preproduction-research-smoke.json",import.meta.url),"utf8"));
+  const plan=JSON.parse(await readFile(
+    new URL("../../../../examples/preproduction-plan-smoke.json",import.meta.url),"utf8"));
+  const artifactId="research_synthetic_home-123456789abc",projectId="project-demo";
+  const baseline=compilePreproductionBundle(dossier,plan);
+  const board={schemaVersion:1,kind:"contentgen-semantic-storyboard",id:"storyboard-"+projectId,
+    assumptions:["Immutable research snapshot: "+dossier.id+". Human review required.",
+      "Research artifact: "+artifactId],
+    beats:plan.shots.map(shot=>{
+      const sound=plan.sound.find(s=>s.shotId===shot.id);
+      const phase=plan.teachingSequences.flatMap(s=>s.phases).find(p=>p.shotId===shot.id);
+      return {id:shot.id,claimRefs:[...shot.claimIds],narration:sound.narration,
+        onScreenText:shot.onScreenText,visualObjective:shot.visualChange+"; "+phase.visualAction};
+    }),
+  };
+  board.beats[1].narration="Loan interest, property taxes, insurance, and repairs are separate costs.";
+  board.beats[1].visualObjective=plan.shots[1].visualChange+
+    "; Animate cost cards alongside the same house in a clear sequence.";
+  const result=reconcileStoryboardPlan({artifactId,projectId,dossier,plan,storyboard:board});
+  assert.equal(result.bundle.kind,"preproduction-bundle");
+  assert.equal(result.bundle.status,"draft-needs-review");
+  assert.equal(result.bundle.assessment.ready,false);
+  assert.equal(result.bundle.researchSha256,baseline.researchSha256);
+  assert.notEqual(result.bundle.planSha256,baseline.planSha256);
+  assert.equal(result.bundle.plan.sound[1].narration,
+    "Loan interest, property taxes, insurance, and repairs are separate costs.");
+  assert.equal(result.bundle.plan.teachingSequences[0].phases[1].visualAction,
+    "Animate cost cards alongside the same house in a clear sequence.");
+  assert.equal(plan.sound[1].narration,
+    "If you borrow to buy it, mortgage interest adds to the purchase price. Property tax and insurance recur, and repairs and maintenance happen over time. These are different costs, not another price tag.");
 });
