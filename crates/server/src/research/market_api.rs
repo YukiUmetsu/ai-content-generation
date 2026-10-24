@@ -57,6 +57,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/status", get(status))
         .route("/related", get(related))
+        .route("/explore", post(explore))
         .route("/watchlists", get(watchlists).post(create))
         .route(
             "/watchlists/{id}",
@@ -172,6 +173,78 @@ async fn delete_watchlist(
     let db = state.connect().map_err(db_error)?;
     market_store::delete_watchlist(&db, &id).map_err(market_error)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExploreRequest {
+    query: String,
+}
+
+fn validate_explore_query(query: &str) -> Result<&str, ApiError> {
+    let query = query.trim();
+    if !(3..=160).contains(&query.chars().count()) || query.chars().any(char::is_control) {
+        return Err(ApiError::InvalidDocument {
+            message: "Search query must be 3–160 characters with no control characters".into(),
+        });
+    }
+    Ok(query)
+}
+
+#[derive(Serialize)]
+struct ExploreResults {
+    videos: Vec<market_store::MarketVideoRecord>,
+}
+
+/// Explicit, one-shot public YouTube search. No model, watchlist, stored
+/// observations, or background polling is involved.
+async fn explore(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<ExploreRequest>,
+) -> Result<Json<ExploreResults>, ApiError> {
+    require_editor_header(&headers)?;
+    let query = validate_explore_query(&request.query)?;
+    let key = state.credentials().youtube_key().map_err(|_| ApiError::Unavailable {
+        message: "Configure your YouTube API key in local Settings before searching".into(),
+    })?;
+    let client = YoutubeClient::from_key(key).map_err(|_| ApiError::Unavailable {
+        message: "A valid YouTube API key is required for search".into(),
+    })?;
+    let _permit = state.market_semaphore().acquire_owned().await.map_err(|_| ApiError::Unavailable {
+        message: "Local YouTube search is temporarily unavailable".into(),
+    })?;
+    {
+        let db = state.connect().map_err(db_error)?;
+        if !market_store::reserve_explore_search(&db, epoch_now()).map_err(market_error)? {
+            return Err(ApiError::RateLimited {
+                message: "The shared YouTube search budget is exhausted (20 searches / 24h)".into(),
+            });
+        }
+    }
+    let observations = client.collect(query, "US", "en").await.map_err(|error| {
+        use super::youtube_api::YoutubeError;
+        match error {
+            YoutubeError::Quota | YoutubeError::RateLimited => ApiError::RateLimited {
+                message: error.to_string(),
+            },
+            _ => ApiError::Unavailable {
+                message: error.to_string(),
+            },
+        }
+    })?;
+    let now = epoch_now();
+    Ok(Json(ExploreResults {
+        videos: observations.into_iter().map(|video| {
+            market_store::MarketVideoRecord {
+                source_url: format!("https://www.youtube.com/watch?v={}", video.video_id),
+                provider: "youtube-data-api",
+                video,
+                observed_at: now,
+                expires_at: now + 86_400,
+            }
+        }).collect(),
+    }))
 }
 
 #[derive(Serialize)]
