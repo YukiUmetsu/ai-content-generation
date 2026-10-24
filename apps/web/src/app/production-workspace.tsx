@@ -30,9 +30,9 @@ interface Props {
   onSelectProject: (projectId:string)=>void;
   onOpenResearch: ()=>void;
   onOpenStoryboard: ()=>void;
-  onOpenVisuals: ()=>void;
-  onOpenAudio: ()=>void;
-  onOpenExport: ()=>void;
+  onOpenVisuals: (artifactId?:string)=>void;
+  onOpenAudio: (artifactId?:string)=>void;
+  onOpenExport: (artifactId?:string)=>void;
   onOpenNav: ()=>void;
   onCreateStoryboard: (draft:EditorialDraft,research?:ResearchDraftResult)=>boolean;
   onUseVideo: (idea:{title:string;sourceUrl:string})=>boolean;
@@ -346,7 +346,10 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
               {tr("Plan meaningful movement, assets, and camera actions for each beat. Existing visual and Kumiki tools remain available.",
                 "各シーンに意味のある動き、素材、カメラ演出を設計します。既存の映像制作ツールを利用できます。")}
             </p>
-            <button type="button" className={primaryButton+" mt-5"} onClick={onOpenVisuals}
+            <p className="mt-3 text-xs text-muted-foreground">{matchingDraft?.artifactId
+              ?tr("Opens this project's saved research and preproduction plan without running AI again.","このプロジェクトの保存済み調査と制作計画をAIの再実行なしで開きます。")
+              :tr("No matching saved research is linked to this storyboard yet. You can still import a project or start in Video Director.","一致する保存済み調査がまだありません。Video Directorから読み込みや新規作成ができます。")}</p>
+            <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenVisuals(matchingDraft?.artifactId)}
               aria-label="Open visual tools">{tr("Open visual tools","映像ツールを開く")}</button>
           </div>}
           {step==="audio"&&<div className={contentCard}>
@@ -355,7 +358,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
               {tr("Use the existing video studio to produce and review authorized narration and sound effects.",
                 "既存の制作スタジオでナレーションと効果音を作成・確認します。")}
             </p>
-            <button type="button" className={primaryButton+" mt-5"} onClick={onOpenAudio}>
+            <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenAudio(matchingDraft?.artifactId)}>
               {tr("Open audio tools","音声ツールを開く")}</button>
           </div>}
           {step==="export"&&<div className={contentCard}>
@@ -364,7 +367,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
               {tr("Inspect playback and evidence before rendering. Completing steps here never automatically approves or publishes a video.",
                 "再生と根拠を確認してから書き出します。各ステップの完了は自動的な承認や公開を意味しません。")}
             </p>
-            <button type="button" className={primaryButton+" mt-5"} onClick={onOpenExport}>
+            <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenExport(matchingDraft?.artifactId)}>
               {tr("Open preview & export","確認と書き出しを開く")}</button>
           </div>}
         </div>
