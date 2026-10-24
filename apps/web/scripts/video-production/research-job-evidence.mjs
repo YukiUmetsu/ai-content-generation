@@ -4,7 +4,25 @@ import { extractPageText, fetchPublicPage, publicSourceUrl, validateExtractedCla
 import { parseResearchDossier } from "./preproduction.mjs";
 
 const sha=value=>createHash("sha256").update(value).digest("hex");
-const words=value=>new Set(String(value).toLocaleLowerCase().match(/[\p{L}\p{N}]{3,}/gu)??[]);
+const JP_STOP=new Set(["です","ます","する","した","して","いる","ある","こと","もの","ため","から","そして","どう","いつ","どこ","どれ","これ","それ","あれ","では","ので","でしょう","によって"]);
+const words=(value,locale="en-US")=>{
+  const source=String(value).toLocaleLowerCase();
+  const terms=new Set(source.match(/[\p{L}\p{N}]{3,}/gu)??[]);
+  // Japanese/Chinese/Korean text has no reliable whitespace boundaries. Rank by
+  // adjacent ideographs/kana words, without treating common hiragana particles
+  // as useful evidence of topical relevance.
+  for(const span of source.match(/[\p{Script=Han}\p{Script=Katakana}\p{Script=Hangul}\u30fc]{2,}/gu)??[]){
+    for(let index=0;index<span.length-1;index++)terms.add(span.slice(index,index+2));
+  }
+  if(/^(ja|zh|ko)(?:-|$)/iu.test(locale)){
+    const segmenter=new Intl.Segmenter(locale,{granularity:"word"});
+    for(const {segment,isWordLike} of segmenter.segment(source)){
+      if(isWordLike&&segment.length>=2&&!JP_STOP.has(segment)&&
+        /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(segment))terms.add(segment);
+    }
+  }
+  return terms;
+};
 const STOP=new Set(["what","why","when","where","which","does","that","this","the","for","are","how","and","can","with","from","into","your","you","home","high","cost","costs","lifetime"]);
 
 /** A failed page is a source gap, not a citation. Preserve the successful captures. */
@@ -36,14 +54,20 @@ export async function captureSavedSources(savedSearch,brief,{fetchPage=fetchPubl
 /** Passages are exact contiguous substrings; lexical ranking does not verify their factual truth. */
 export function buildDeterministicDossier(brief,captures,gaps=[]){
   if(!Array.isArray(captures)||!captures.length)throw Error("Research requires captured evidence.");
-  const terms=[...words(brief.viewerQuestion+" "+brief.title)].filter(term=>!STOP.has(term));
+  const terms=[...words(brief.viewerQuestion+" "+brief.title,brief.locale)].filter(term=>!STOP.has(term));
   const candidates=captures.flatMap(capture=>{
     const sentences=capture.text.match(/[^.!?。！？]+[.!?。！？]?/gu)??[];
     return sentences.flatMap(sentence=>{
       const quote=sentence.trim();
-      if(quote.length<35||quote.length>300||/\b(cookie|privacy policy|subscribe|javascript|advertisement)\b/iu.test(quote))return [];
-      const found=words(quote),score=terms.filter(term=>found.has(term)).length;
-      return score>0?[{sourceId:capture.id,quote,score}]:[];
+      const japanese=brief.locale?.startsWith("ja")||brief.locale?.startsWith("zh")||brief.locale?.startsWith("ko");
+      if(quote.length<(japanese?12:35)||quote.length>300||/\b(cookie|privacy policy|subscribe|javascript|advertisement)\b/iu.test(quote))return [];
+      const found=words(quote,brief.locale),matched=terms.filter(term=>found.has(term));
+      const score=matched.length;
+      // One shared two-character word (e.g. 日本) is too weak to cite an
+      // unrelated Japanese page. An exact longer term or two independent
+      // overlaps are stronger evidence of topical relevance.
+      const relevant=japanese?(score>=2||matched.some(term=>term.length>=3)):score>0;
+      return relevant?[{sourceId:capture.id,quote,score}]:[];
     });
   }).sort((a,b)=>b.score-a.score||b.quote.length-a.quote.length||a.sourceId.localeCompare(b.sourceId));
   const perSource=new Map();

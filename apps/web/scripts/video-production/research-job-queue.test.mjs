@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {mkdtemp,readFile,writeFile,rm} from "node:fs/promises";
+import {mkdtemp,readFile,writeFile,rename,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {createResearchJobManager} from "./research-job-queue.mjs";
@@ -191,9 +191,11 @@ test("restart recovers a queued job as paused instead of displaying queued forev
 test("changing saved generation limits does not invalidate a resumable job's completed scenes",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   let scenes=0;
+  const observedLimits=[];
   const limits={outlineTokens:1024,sceneTokens:3072,timeoutSeconds:360};
-  const manager=fixture(root,{scene:async(_outline,index)=>{
+  const manager=fixture(root,{scene:async(_outline,index,_d,_q,settings)=>{
     scenes++;
+    observedLimits.push(settings.generation.sceneTokens);
     if(index===1&&scenes<=4)throw Error("Invalid scene JSON");
     return {index};
   }});
@@ -205,7 +207,220 @@ test("changing saved generation limits does not invalidate a resumable job's com
     assert.equal((await settled(manager,jobId)).status,"completed");
     assert.equal(scenes,5);
     const manifest=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
-    assert.deepEqual(manifest.models.primary.generation,limits);
+    assert.deepEqual(manifest.models.primary.generation,{...limits,sceneTokens:6144});
+    assert.deepEqual(observedLimits,[3072,3072,3072,3072,6144]);
+    assert.equal(manifest.generation,0);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("manual resume starts the failed truncated fragment with compact feedback",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-resume-feedback-"));
+  const feedback=[];
+  const manager=fixture(root,{scene:async(_story,index,_d,_q,_settings,options)=>{
+    if(index===0){
+      feedback.push(options.feedback);
+      if(feedback.length<=3)throw Object.assign(Error("private incomplete answer"),{code:"output_truncated",field:"response"});
+    }
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    await manager.resume(jobId,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(feedback.length,4);
+    assert.match(feedback[3],/shorter|compact|cut off|truncat/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("switching models does not reuse truncated-fragment feedback from the old generation",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-model-new-generation-"));
+  const feedback=[];
+  const manager=fixture(root,{outline:null,
+    outlineSkeleton:async(_d,_q,settings,options)=>{
+      if(settings.model==="local-small")throw Object.assign(Error("private truncated answer"),{code:"output_truncated",field:"response"});
+      feedback.push(options.feedback);return {beatCount:2};
+    },outlineBeat:async(_s,index)=>({index}),combineOutline:()=>outline});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    await manager.resume(jobId,{primary:{...model,model:"local-replacement"}});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.deepEqual(feedback,[null]);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("truncation hint survives a later provider error and terminal resume",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-sticky-truncation-"));
+  const feedback=[];
+  let resumed=false;
+  const manager=fixture(root,{outline:null,
+    outlineSkeleton:async(_d,_q,settings,options)=>{
+      if(!resumed){
+        if(settings.model==="local-small")throw Object.assign(Error("partial private JSON"),{code:"output_truncated",field:"response"});
+        throw Error("Local model returned HTTP 503");
+      }
+      feedback.push(options.feedback);return {beatCount:2};
+    },outlineBeat:async(_s,index)=>({index}),combineOutline:()=>outline});
+  try{
+    const models={primary:model,secondary:{...model,model:"local-backup"}};
+    const {jobId}=await manager.create(brief,models);
+    const failed=await settled(manager,jobId);
+    assert.equal(failed.error.code,"provider_unavailable");
+    resumed=true;
+    await manager.resume(jobId,models);
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.match(feedback[0],/shorter|compact|cut off|truncat/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("assemble failure for a saved invalid scene marks only that scene for regeneration",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-assemble-repair-"));
+  const attempts=[0,0];
+  const manager=fixture(root,{scene:async(_story,index)=>{
+    attempts[index]++;
+    return {index,invalid:index===0&&attempts[index]===1};
+  },assemble:(_d,_o,units)=>{
+    if(units[0].invalid)throw Object.assign(Error("Assembled storyboard rejected"),{sceneIndex:0});
+    return {shots:[{id:"shot_1"}]};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const failed=await settled(manager,jobId);
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.stage,"scene:1");
+    assert.equal(failed.completedScenes,0);
+    await manager.resume(jobId,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.deepEqual(attempts,[2,1]);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("invalid persisted micro-fragments are rebuilt instead of failing every resume",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-stale-fragment-"));
+  let firstCore=0;
+  const manager=fixture(root,{scene:null,sceneStructure:null,
+    sceneCore:async()=>({invalid:++firstCore===1}),
+    sceneStates:async()=>({before:"Equipment is hidden",action:"Reveal the required labor",after:"Complete estimate is visible"}),
+    combineStructure:(core,states)=>{
+      if(core.invalid)throw Object.assign(Error("Saved fragment rejected"),{code:"schema_invalid",field:"subject"});
+      return {...core,...states};
+    },
+    sceneVisual:async()=>({visualAction:"Split visible components"}),
+    sceneNarration:async()=>({narration:"A visible explanation"}),combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const failed=await settled(manager,jobId);
+    assert.equal(failed.status,"failed");
+    assert.equal(failed.stage,"scene:1");
+    assert.equal(failed.currentStep,"regenerate");
+    await manager.resume(jobId,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(firstCore,3);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("legacy complete structure checkpoint is invalidated before prompting another scene fragment",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-old-structure-"));
+  const first=fixture(root,{scene:null,sceneStructure:null,
+    sceneCore:async()=>{throw Error("Model failed before structure saved");}});
+  try{
+    const {jobId}=await first.create(brief,{primary:model});
+    assert.equal((await settled(first,jobId)).status,"failed");
+    await writeFile(join(root,"jobs",jobId,"structure_0_0_0.json"),JSON.stringify({
+      subject:" Heat pump ",parts:["Equipment","Labor"],operator:"split",
+      before:"Equipment hidden",action:"Show both cost categories",after:"Both categories visible",
+    }));
+    const resumed=fixture(root,{scene:null,sceneStructure:null,sceneVisual:null,
+      sceneDirection:async()=>({visualAction:"Show equipment"}),
+      sceneElements:async()=>({visualElements:[]}),combineVisual:()=>({}),
+      sceneNarration:async()=>({narration:"Visible detail"}),combineScene:()=>({})});
+    await resumed.resume(jobId,{primary:model});
+    const failed=await settled(resumed,jobId);
+    assert.equal(failed.stage,"scene:1");
+    assert.equal(failed.currentStep,"regenerate");
+    const manifest=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
+    assert.equal(manifest.sceneRevisions[0],1);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("legacy complete visual checkpoint is invalidated before narration retries",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-old-visual-"));
+  const structure={subject:"Installation",parts:["Equipment","Labor"],operator:"split",
+    before:"Equipment hidden",action:"Show both cost categories",after:"Both categories visible"};
+  const first=fixture(root,{scene:null,sceneStructure:async()=>structure,
+    sceneVisual:null,sceneDirection:async()=>{throw Error("Direction model failed");}});
+  try{
+    const {jobId}=await first.create(brief,{primary:model});
+    assert.equal((await settled(first,jobId)).status,"failed");
+    await writeFile(join(root,"jobs",jobId,"visual_0_0_0_0.json"),JSON.stringify({visualAction:"Show equipment"}));
+    const resumed=fixture(root,{scene:null,sceneStructure:async()=>structure,sceneVisual:null,
+      sceneNarration:async()=>({narration:"Visible detail"}),combineScene:()=>({})});
+    await resumed.resume(jobId,{primary:model});
+    const failed=await settled(resumed,jobId);
+    assert.equal(failed.stage,"scene:1");
+    assert.equal(failed.currentStep,"regenerate");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("old partial core checkpoint is invalidated before the dependent states AI request",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-old-core-"));
+  const first=fixture(root,{scene:null,sceneStructure:null,sceneCore:async()=>{throw Error("Core unavailable");}});
+  try{
+    const {jobId}=await first.create(brief,{primary:model});
+    assert.equal((await settled(first,jobId)).status,"failed");
+    await writeFile(join(root,"jobs",jobId,"structure_core_0_0_0.json"),JSON.stringify({
+      subject:" https://example.com ",parts:["Equipment","Labor"],operator:"split",
+    }));
+    const resumed=fixture(root,{scene:null,sceneStructure:null,
+      sceneStates:async()=>({before:"Equipment hidden",action:"Reveal cost",after:"Labor visible"}),
+      combineStructure:(core,states)=>({...core,...states}),sceneVisual:async()=>({}),
+      sceneNarration:async()=>({}),combineScene:()=>({})});
+    await resumed.resume(jobId,{primary:model});
+    const stopped=await settled(resumed,jobId);
+    assert.equal(stopped.currentStep,"regenerate");
+    assert.equal(stopped.stage,"scene:1");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("old partial direction checkpoint is invalidated before the visual elements request",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-old-direction-"));
+  const structure={subject:"Installation",parts:["Equipment","Labor"],operator:"split",
+    before:"Equipment hidden",action:"Show both cost categories",after:"Both categories visible"};
+  const first=fixture(root,{scene:null,sceneStructure:async()=>structure,sceneVisual:null,
+    sceneDirection:async()=>{throw Error("Direction unavailable");}});
+  try{
+    const {jobId}=await first.create(brief,{primary:model});
+    assert.equal((await settled(first,jobId)).status,"failed");
+    await writeFile(join(root,"jobs",jobId,"visual_direction_0_0_0_0.json"),JSON.stringify({
+      visualAction:"No",learningChange:"Show cost",onScreenText:"Cost",
+    }));
+    const resumed=fixture(root,{scene:null,sceneStructure:async()=>structure,sceneVisual:null,
+      sceneElements:async()=>({visualElements:[]}),combineVisual:()=>({}),
+      sceneNarration:async()=>({}),combineScene:()=>({})});
+    await resumed.resume(jobId,{primary:model});
+    const stopped=await settled(resumed,jobId);
+    assert.equal(stopped.currentStep,"regenerate");
+    assert.equal(stopped.stage,"scene:1");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("invalid cached outline skeleton starts a fresh outline generation on resume",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-old-outline-"));
+  const first=fixture(root,{outline:null,outlineSkeleton:async()=>{throw Error("Outline model unavailable");}});
+  try{
+    const {jobId}=await first.create(brief,{primary:model});
+    assert.equal((await settled(first,jobId)).status,"failed");
+    await writeFile(join(root,"jobs",jobId,"outline_skeleton_0.json"),JSON.stringify({
+      pattern:"mechanism",premise:"Explain one topic",hook:"A useful video hook",beatCount:900,
+    }));
+    const resumed=fixture(root,{outline:null,outlineBeat:async()=>({}),combineOutline:()=>outline});
+    await resumed.resume(jobId,{primary:model});
+    const stopped=await settled(resumed,jobId);
+    assert.equal(stopped.stage,"outline");
+    assert.equal(stopped.currentStep,"regenerate");
+    const manifest=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
+    assert.equal(manifest.generation,1);
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
@@ -251,6 +466,30 @@ test("explicit cancellation during final persistence never reports a completed j
     finishPersist();await later(20);
     assert.equal((await manager.get(jobId)).status,"cancelled");
   }finally{finishPersist();await rm(root,{recursive:true,force:true});}
+});
+
+test("cancellation acknowledged during an in-flight completed checkpoint stays cancelled",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-complete-cancel-race-"));
+  let releaseWrite=()=>{},startedWrite=()=>{};
+  const blocked=new Promise(resolve=>{releaseWrite=resolve;});
+  const entered=new Promise(resolve=>{startedWrite=resolve;});
+  const manager=fixture(root,{writeCheckpoint:async(file,value)=>{
+    if(file.endsWith("manifest.json")&&value.status==="completed"){
+      startedWrite();await blocked;
+    }
+    const temp=file+"."+Math.random().toString(16).slice(2)+".test.tmp";
+    await writeFile(temp,JSON.stringify(value));await rename(temp,file);
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    await entered;
+    const cancellation=manager.cancel(jobId);
+    await later(10);
+    releaseWrite();
+    assert.equal((await cancellation).status,"cancelled");
+    await later(25);
+    assert.equal((await manager.get(jobId)).status,"cancelled");
+  }finally{releaseWrite();await rm(root,{recursive:true,force:true});}
 });
 
 test("completed job writes an artifact readable by the existing Studio research loader",async()=>{
@@ -448,7 +687,13 @@ test("existing whole outline artifact skips the new skeleton and beat jobs",asyn
   try{
     const {jobId}=await manager.create(brief,{primary:model});
     assert.equal((await settled(manager,jobId)).status,"failed");
-    await writeFile(join(root,"jobs",jobId,"outline_0.json"),JSON.stringify(outline));
+    await writeFile(join(root,"jobs",jobId,"outline_0.json"),JSON.stringify({
+      pattern:"mechanism",premise:"Installation cost includes multiple components",hook:"Why does installation cost so much?",
+      beats:[
+        {question:"What materials are involved?",claimIds:["claim_01"],purpose:"Reveal the equipment and labor",payoff:"Installation needs more than equipment"},
+        {question:"Why does labor matter?",claimIds:["claim_01"],purpose:"Explain the skilled work involved",payoff:"Skilled labor changes the total cost"},
+      ],
+    }));
     await manager.resume(jobId,{primary:model});
     assert.equal((await settled(manager,jobId)).status,"completed");
     assert.equal(calls,1);
@@ -459,7 +704,7 @@ test("changing model identity rebuilds partial outline using a new checkpoint ge
   const root=await mkdtemp(join(tmpdir(),"research-outline-model-"));
   const calls=[];
   const manager=fixture(root,{outline:null,
-    outlineSkeleton:async(_d,_q,settings)=>{calls.push(["skeleton",settings.model]);return {beatCount:2};},
+    outlineSkeleton:async(_d,_q,settings,options)=>{calls.push(["skeleton",settings.model,options.feedback]);return {beatCount:2};},
     outlineBeat:async(_skeleton,index,_previous,_d,_q,settings)=>{
       calls.push([`beat:${index}`,settings.model]);
       if(index===1&&settings.model==="local-small")throw Object.assign(Error("model cut off"),{code:"output_truncated",field:"response"});
@@ -470,7 +715,7 @@ test("changing model identity rebuilds partial outline using a new checkpoint ge
     assert.equal((await settled(manager,jobId)).status,"failed");
     await manager.resume(jobId,{primary:{...model,model:"new-local-model"}});
     assert.equal((await settled(manager,jobId)).status,"completed");
-    assert.deepEqual(calls.filter(([step])=>step==="skeleton"),[["skeleton","local-small"],["skeleton","new-local-model"]]);
+    assert.deepEqual(calls.filter(([step])=>step==="skeleton"),[["skeleton","local-small",null],["skeleton","new-local-model",null]]);
     assert.deepEqual(calls.filter(([step])=>step==="beat:0"),[["beat:0","local-small"],["beat:0","new-local-model"]]);
     const manifest=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
     assert.equal(manifest.generation,1);
@@ -559,5 +804,71 @@ test("an existing complete structure or visual checkpoint bypasses the new fragm
     assert.equal(coreCalls,1);
     assert.equal(directionCalls,1);
     assert.equal(state.status,"failed");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("terminal checkpoint disk failure does not leave an unhandled worker rejection",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-terminal-storage-"));
+  let failTerminal=true;
+  const manager=fixture(root,{
+    scene:async()=>{throw Error("Invalid scene JSON");},
+    writeCheckpoint:async(file,value)=>{
+      if(failTerminal&&file.endsWith("manifest.json")&&value.status==="failed"){
+        failTerminal=false;
+        throw Object.assign(Error("ENOSPC"),{code:"ENOSPC"});
+      }
+      const temp=file+".test.tmp";
+      await writeFile(temp,JSON.stringify(value));
+      await rename(temp,file);
+    },
+  });
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const recovered=await settled(manager,jobId);
+    assert.equal(recovered.status,"paused");
+    assert.equal(recovered.error.code,"interrupted");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("an interrupted prior final snapshot write can be recovered without restarting AI",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-atomic-final-"));
+  let inferenceCalls=0;
+  const manager=fixture(root,{persist:undefined,scene:async(_,index)=>{inferenceCalls++;return {index};}});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const done=await settled(manager,jobId);
+    assert.equal(done.status,"completed");
+    const path=join(root,done.artifactId+".json");
+    const full=await readFile(path,"utf8");
+    await writeFile(path,"{\"incomplete\":true}");
+    const manifestPath=join(root,"jobs",jobId,"manifest.json");
+    const manifest=JSON.parse(await readFile(manifestPath,"utf8"));
+    manifest.status="failed";manifest.stage="assemble";manifest.artifactId=null;
+    await writeFile(manifestPath,JSON.stringify(manifest));
+    const restarted=fixture(root,{persist:undefined,scene:async()=>{throw Error("AI must not rerun");}});
+    await restarted.resume(jobId,{primary:model});
+    const recovered=await settled(restarted,jobId);
+    assert.equal(recovered.status,"completed");
+    assert.equal(recovered.artifactId,done.artifactId);
+    assert.equal(await readFile(path,"utf8"),full);
+    assert.equal(inferenceCalls,2);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("saved snapshot accurately records local models that produced accepted fragments",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-provenance-"));
+  const manager=fixture(root,{persist:undefined,
+    outline:async(_d,_q,settings)=>{
+      if(settings.model==="local-small")throw Error("Model memory exhausted");
+      return outline;
+    },
+  });
+  try{
+    const {jobId}=await manager.create(brief,{primary:model,secondary:{...model,model:"local-backup"}});
+    const done=await settled(manager,jobId);
+    assert.equal(done.status,"completed");
+    const snapshot=JSON.parse(await readFile(join(root,done.artifactId+".json"),"utf8"));
+    assert.deepEqual(snapshot.modelsUsed,["local-backup","local-small"]);
+    assert.equal(snapshot.model,"multiple local models");
   }finally{await rm(root,{recursive:true,force:true});}
 });

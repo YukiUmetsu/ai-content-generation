@@ -6,7 +6,11 @@ import { selectEvidenceForScene } from "./research-job-evidence.mjs";
 import {DEFAULT_RESEARCH_GENERATION,validateResearchGeneration} from "./research-model-settings.mjs";
 
 const txt=(v,min,max)=>typeof v==="string"&&v.trim().length>=min&&v.length<=max&&!/[\u0000-\u001f]/u.test(v);
-const noQuantity=v=>txt(v,2,42)&&!/[$€£¥%\p{N}<>`{}\\]/u.test(v);
+// Keep fragment acceptance no looser than visual-mechanic's actor-label grammar.
+const noQuantity=v=>txt(v,2,42)&&v.trim()===v&&
+  !/[\p{C}\p{N}$€£¥%<>`{}\\]/u.test(v)&&!/https?:|www\.|data:|javascript:|\/\//iu.test(v);
+const visibleState=(value,min,max)=>txt(value,min,max)&&
+  !/^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu.test(value.trim());
 const patterns=new Set(["investigation","misconception","mechanism","cost-dissection","decision","failure","scale"]);
 export const RESEARCH_MODEL_LIMITS=Object.freeze({...DEFAULT_RESEARCH_GENERATION,timeoutMs:DEFAULT_RESEARCH_GENERATION.timeoutSeconds*1000});
 const outputError=(code,field,message)=>Object.assign(new Error(message),{code,field});
@@ -98,6 +102,7 @@ function validateOutline(outline,dossier){
   for(const [index,beat] of outline.beats.entries())validateBeat(beat,known,`beats[${index}]`);
   return outline;
 }
+export const validateSavedOutline=(value,dossier)=>validateOutline(value,dossier);
 
 export async function generateOutline(dossier,quotes,settings,deps={}){
   const excerpt=dossier.claims.slice(0,8).map(c=>({id:c.id,text:c.text.slice(0,240),
@@ -123,6 +128,9 @@ function validateOutlineSkeleton(skeleton){
     "beatCount","choose 2–4 short teaching beats");
   return {pattern:skeleton.pattern,premise:skeleton.premise,hook:skeleton.hook,beatCount:skeleton.beatCount};
 }
+export const validateSavedOutlineSkeleton=value=>validateOutlineSkeleton(value);
+export const validateSavedOutlineBeat=(value,dossier,previous=[])=>
+  validateBeat(value,new Set(dossier.claims.map(claim=>claim.id)),"",previous);
 function outlineOptions(settings,deps){
   const generation=validateResearchGeneration(settings.generation);
   return {...deps,maxTokens:generation.outlineTokens,timeoutMs:generation.timeoutSeconds*1000};
@@ -177,9 +185,9 @@ function validateUnit(unit){
   for(let i=0;i<2;i++)requireField(noQuantity(unit.parts[i]),`parts[${i}]`,"use a concrete noun without quantities");
   requireField(unit.parts[0]!==unit.parts[1],"parts","use two distinct parts");
   requireField(["compare","split"].includes(unit.operator),"operator","use split or compare");
-  requireField(txt(unit.before,8,48),"before","write 8–48 characters");
-  requireField(txt(unit.action,8,90),"action","write 8–90 characters");
-  requireField(txt(unit.after,8,48),"after","write 8–48 characters");
+  requireField(visibleState(unit.before,8,48),"before","describe a concrete visible state in 8–48 characters");
+  requireField(visibleState(unit.action,8,90),"action","describe a concrete visible action in 8–90 characters");
+  requireField(visibleState(unit.after,8,48),"after","describe a concrete visible state in 8–48 characters");
   requireField(new Set([unit.before,unit.action,unit.after].map(s=>s.toLowerCase())).size===3,
     "before/action/after","describe three different states");
   requireField(Array.isArray(unit.phases)&&unit.phases.length===3,"phases","provide exactly three phases");
@@ -219,9 +227,9 @@ function validateSceneStructure(structure){
   for(let i=0;i<2;i++)requireField(noQuantity(structure.parts[i]),`parts[${i}]`,"use a concrete noun without quantities");
   requireField(structure.parts[0]!==structure.parts[1],"parts","use two distinct parts");
   requireField(["compare","split"].includes(structure.operator),"operator","use split or compare");
-  requireField(txt(structure.before,8,48),"before","write 8–48 characters");
-  requireField(txt(structure.action,8,90),"action","write 8–90 characters");
-  requireField(txt(structure.after,8,48),"after","write 8–48 characters");
+  requireField(visibleState(structure.before,8,48),"before","describe a concrete visible state in 8–48 characters");
+  requireField(visibleState(structure.action,8,90),"action","describe a concrete visible action in 8–90 characters");
+  requireField(visibleState(structure.after,8,48),"after","describe a concrete visible state in 8–48 characters");
   requireField(new Set([structure.before,structure.action,structure.after].map(s=>s.toLowerCase())).size===3,
     "before/action/after","describe three different states");
   return {subject:structure.subject,parts:structure.parts,operator:structure.operator,
@@ -239,6 +247,15 @@ function validateSceneVisual(visual,previous=[]){
   return {visualAction:visual.visualAction,learningChange:visual.learningChange,
     onScreenText:visual.onScreenText,visualElements:visual.visualElements};
 }
+/** Recheck older disk checkpoints before passing them into a new inference step. */
+export const validateSavedSceneStructure=value=>validateSceneStructure(value);
+export const validateSavedSceneVisual=(value,previous=[])=>validateSceneVisual(value,previous);
+export const validateSavedSceneUnit=value=>validateUnit(value);
+export const validateSavedSceneCore=value=>validateSceneCore(value);
+export const validateSavedSceneStates=value=>validateSceneStates(value);
+export const validateSavedSceneDirection=(value,previous=[])=>validateSceneDirection(value,previous);
+export const validateSavedSceneElements=value=>validateSceneElements(value);
+export const validateSavedSceneNarration=value=>validateSceneNarration(value);
 function validateSceneNarration(value){
   requireField(txt(value?.narration,10,500),"narration","write 10–500 characters");
   return {narration:value.narration};
@@ -253,9 +270,9 @@ function validateSceneCore(core){
   return {subject:core.subject,parts:core.parts,operator:core.operator};
 }
 function validateSceneStates(states){
-  requireField(txt(states?.before,8,48),"before","write 8–48 characters");
-  requireField(txt(states.action,8,90),"action","write 8–90 characters");
-  requireField(txt(states.after,8,48),"after","write 8–48 characters");
+  requireField(visibleState(states?.before,8,48),"before","describe a concrete visible state in 8–48 characters");
+  requireField(visibleState(states.action,8,90),"action","describe a concrete visible action in 8–90 characters");
+  requireField(visibleState(states.after,8,48),"after","describe a concrete visible state in 8–48 characters");
   requireField(new Set([states.before,states.action,states.after].map(text=>text.toLowerCase())).size===3,
     "before/action/after","describe distinct states");
   return {before:states.before,action:states.action,after:states.after};
@@ -431,7 +448,9 @@ export async function generateSceneUnit(outline,index,dossier,quotes,settings,de
 export function assembleResumablePlan(dossier,outline,units){
   validateOutline(outline,dossier);
   if(!Array.isArray(units)||units.length!==outline.beats.length)throw Error("Cannot assemble incomplete storyboard units.");
-  units.forEach(validateUnit);
+  units.forEach((unit,index)=>{
+    try{validateUnit(unit);}catch(error){error.sceneIndex=index;throw error;}
+  });
   const acts=[],explanation=[],shots=[],sound=[],teachingSequences=[];
   outline.beats.forEach((beat,i)=>{
     const unit=units[i],n=i+1,actId=`act_${n}`,explanationId=`explain_${n}`,subjectId=`subject_${n}`;
@@ -467,6 +486,13 @@ export function assembleResumablePlan(dossier,outline,units){
       hook:outline.hook,question:dossier.topic.viewerQuestion,answerExplanationId:`explain_${units.length}`,acts},
     explanation,shots,continuity,sound,teachingSequences};
   const verdict=parsePreproductionPlan(plan,dossier);
-  if(!verdict.ok)throw Error("Assembled storyboard rejected: "+verdict.findings.filter(f=>f.severity==="error").map(f=>f.code).join(", "));
+  if(!verdict.ok){
+    const errors=verdict.findings.filter(f=>f.severity==="error");
+    const rejected=Error("Assembled storyboard rejected: "+errors.map(f=>f.code).join(", "));
+    const at=errors.map(f=>String(f.path??"").match(/^(?:teachingSequences|explanation)\[(\d+)\]/u))
+      .find(Boolean);
+    if(at)rejected.sceneIndex=Number(at[1]);
+    throw rejected;
+  }
   return plan;
 }
