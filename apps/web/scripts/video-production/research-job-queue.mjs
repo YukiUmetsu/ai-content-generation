@@ -8,6 +8,7 @@ import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
 import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedOutline,validateSavedOutlineSkeleton,validateSavedOutlineBeat,validateSavedSceneStructure,validateSavedSceneVisual,validateSavedSceneUnit,validateSavedSceneCore,validateSavedSceneStates,validateSavedSceneDirection,validateSavedSceneElements,validateSavedSceneNarration} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
+import {withModelDebugContext} from "./research-ai-debug.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
 const sha=value=>createHash("sha256").update(value).digest("hex");
@@ -164,7 +165,9 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
               `Correct that field and return the complete JSON without inventing facts.`+sceneStateRepairHint(failure.field)+compact:
             sawTruncation?compact.trim():
               "Return ONLY a complete JSON object with exactly the required fields and types; correct any malformed fields without inventing facts.":null;
-          const result=await inference(()=>call(settings,feedback),signal);
+          const result=await inference(()=>withModelDebugContext({
+            jobId:job.id,stage:job.stage,currentStep:job.currentStep,model:settings.model,attempt:n+1,
+          },()=>call(settings,feedback)),signal);
           job.retry=null;
           job.repairHint=null;
           job.modelsUsed??=[];

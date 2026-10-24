@@ -4,6 +4,7 @@ import { parsePreproductionPlan } from "./preproduction.mjs";
 import { isVisualElements } from "./visual-elements.mjs";
 import { selectEvidenceForScene } from "./research-job-evidence.mjs";
 import {DEFAULT_RESEARCH_GENERATION,validateResearchGeneration} from "./research-model-settings.mjs";
+import {captureModelOutput} from "./research-ai-debug.mjs";
 
 const txt=(v,min,max)=>typeof v==="string"&&v.trim().length>=min&&v.length<=max&&!/[\u0000-\u001f]/u.test(v);
 // Keep fragment acceptance no looser than visual-mechanic's actor-label grammar.
@@ -34,6 +35,7 @@ function parseLocalResponse(content){
   const choice=envelope?.choices?.[0];
   if(choice?.finish_reason==="length")throw outputError("output_truncated","response","Local model response was truncated by its output token limit.");
   const raw=choice?.message?.content;
+  if(typeof raw==="string")captureModelOutput(raw);
   if(typeof raw!=="string"||raw.length===0)throw outputError("output_missing","response","Local model did not return a JSON message.");
   const cleaned=raw.trim().replace(/^```(?:json)?\s*\n/iu,"").replace(/\n\s*```$/u,"").trim();
   try{return JSON.parse(cleaned);}catch{
