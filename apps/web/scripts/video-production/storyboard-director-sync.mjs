@@ -45,10 +45,12 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     if(beat.narration!==sound.narration){
       if(!bounded(beat.narration,2000))reject("narration for "+shot.id+" is empty, too long, or contains control characters.");
       sound.narration=beat.narration.trim();applied.push(shot.id+":narration");
+      manualReview.add("Changed narration timing needs a playback and voice review.");
     }
     if(beat.onScreenText!==readable(shot.onScreenText)){
       if(!bounded(beat.onScreenText,240))reject("on-screen copy for "+shot.id+" must be nonempty and at most 240 characters.");
       shot.onScreenText=beat.onScreenText.trim();applied.push(shot.id+":onScreenText");
+      manualReview.add("Edited on-screen text needs safe-area and fallback review.");
     }
     const originalVisual=[shot.visualChange,linked.phase.visualAction].filter(Boolean).join("; ");
     if(beat.visualObjective!==originalVisual){
@@ -60,6 +62,7 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
         reject("visual objective for "+shot.id+" must fit 'shot description; visible action' (650/600 characters).");
       shot.visualChange=description;linked.phase.visualAction=action;
       applied.push(shot.id+":visualObjective");
+      manualReview.add("Edited visual actions need camera, focus, and fallback review.");
       if(at<0)manualReview.add("A single visual objective was applied to both shot and motion descriptions; inspect this movement.");
     }
     if(beat.cameraIntent)manualReview.add("Storyboard camera edits are not yet imported into Director.");
