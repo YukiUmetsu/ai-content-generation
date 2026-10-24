@@ -74,4 +74,4 @@
 
 - [x] Run Node keyword and director route suites.
 - [x] Run full frontend Vitest, lint, TypeScript and build without GitHub Actions.
-- [ ] Review intended file diff and create one GitHub PR against latest main.
+- [x] Review intended file diff and create one GitHub PR against latest main.
