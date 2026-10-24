@@ -29,7 +29,10 @@ describe("Production claim issues",()=>{
   it("lets a person explicitly record and undo review without hiding the claim",()=>{
     const onMarkReviewed=vi.fn(),onUndoReviewed=vi.fn();
     const draft={quotes:[{claimId:"claim_02",sourceId:"source_01",
-      quote:"A saved report excerpt confirms what the source said."}],dossier:{evidence:[]}} as unknown as ResearchDraftResult;
+      quote:"A saved report excerpt confirms what the source said."}],
+      dossier:{evidence:[{id:"source_01",title:"Saved report",sourceUri:"https://example.org",
+        retrievedAt:"2026-10-24T00:00:00Z",passageLocator:"p1",snapshotSha256:"a".repeat(64)}]}}
+      as unknown as ResearchDraftResult;
     const props={issues:[issues[0]],draft,onOpenBeat:()=>{},onFindEvidence:()=>{},
       onMarkReviewed,onUndoReviewed};
     const view=render(<ProductionClaimIssues {...props} reviewedClaims={new Set<string>()}/>);
