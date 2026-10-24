@@ -12,6 +12,22 @@ const readable=(value,max=64)=>{
   return chars.length>max?chars.slice(0,max-1).join("")+"…":chars.join("");
 };
 const equivalent=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const originalRole=(shot,index,last)=>{
+  if(index===0)return "hook";
+  if(index===last)return "takeaway";
+  if(shot.purpose==="prove"||shot.family==="evidence")return "evidence";
+  if(shot.purpose==="reveal")return "reveal";
+  if(shot.purpose==="compare")return "explanation";
+  return index===1?"setup":"explanation";
+};
+const originalIntent=(shot,index,last)=>{
+  if(index===0)return "question";
+  if(index===last)return "takeaway";
+  if(shot.family==="cost-breakdown")return "cost-accumulation";
+  if(shot.family==="comparison")return "comparison";
+  if(shot.family==="evidence")return "evidence";
+  return "explanation";
+};
 const originalDuration=voice=>{
   const words=voice.narration.trim().split(/\s+/u).length;
   return Math.min(900,Math.max(150,Math.ceil(words/2.2)*30+Math.ceil((voice.pauseAfterMs||0)*0.03)));
@@ -65,6 +81,25 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
       manualReview.add("Edited visual actions need camera, focus, and fallback review.");
       if(at<0)manualReview.add("A single visual objective was applied to both shot and motion descriptions; inspect this movement.");
     }
+    if(beat.role!==originalRole(shot,i,updated.shots.length-1))
+      manualReview.add("Storyboard narrative-role edits are not yet imported into Director.");
+    if(beat.visualIntent!==originalIntent(shot,i,updated.shots.length-1))
+      manualReview.add("Storyboard visual-intent edits are not yet imported into Director.");
+    const sourceExplanation=plan.explanation?.find(x=>x.id===shot.explanationId);
+    const sourceObjective=plan.teachingSequences.flatMap(x=>x.phases)
+      .find(x=>x.shotId===shot.id)?.learningChange||sourceExplanation?.after;
+    if(sourceObjective&&beat.objective!==sourceObjective)
+      manualReview.add("Storyboard learning-objective edits are not yet imported into Director.");
+    const expectedEvents=i===0?["research-question-opens"]:
+      i===updated.shots.length-1?["research-payoff-reveals"]:[];
+    if(!equivalent(beat.namedEvents,expectedEvents))
+      manualReview.add("Storyboard semantic-event changes are not yet imported into Director.");
+    const expectedQuestion=i===0?"research-main-question":undefined;
+    const expectedAnswer=i===updated.shots.length-1?"research-main-question":undefined;
+    if(beat.opensQuestion!==expectedQuestion||beat.answersQuestion!==expectedAnswer)
+      manualReview.add("Storyboard question-open/payoff edits are not yet imported into Director.");
+    if(beat.narrationCueId!==undefined)
+      manualReview.add("Storyboard narration-cue edits are not yet imported into Director.");
     if(beat.cameraIntent)manualReview.add("Storyboard camera edits are not yet imported into Director.");
     if(Number.isInteger(beat.durationFrames)&&beat.durationFrames!==originalDuration(plan.sound.find(v=>v.shotId===shot.id)))
       manualReview.add("Storyboard timing edits are not yet imported into Director.");
@@ -90,6 +125,24 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     const claim=dossier.claims?.find(x=>x.id===c.id);
     return !claim||c.note!==claim.text||c.status!=="unverified"||!equivalent(c.sourceRefs,claim.sourceRefs);
   }))manualReview.add("Storyboard claim notes, statuses, or source edits are not applied to immutable research.");
+  if(!equivalent(storyboard.fps,{num:30,den:1}))
+    manualReview.add("Storyboard frame-rate changes are not yet imported into Director.");
+  if(storyboard.locale!==((dossier.topic?.locale==="ja-JP")?"ja":"en"))
+    manualReview.add("Storyboard locale changes are not yet imported into Director.");
+  if(storyboard.illustrativeData)
+    manualReview.add("Storyboard illustrative-data changes need review before Director or publication.");
+  const originalObjects=[...new Set(plan.shots.flatMap(x=>x.subjectIds))].map(id=>
+    ({id,label:id.replace(/[_-]/gu," ")}));
+  if(!equivalent(storyboard.semanticObjects,originalObjects))
+    manualReview.add("Storyboard semantic-object catalog edits are not yet imported into Director.");
+  const originalEvents=[
+    {id:"research-question-opens",label:"Show the motivating question",
+      objectId:plan.shots[0].subjectIds[0]},
+    {id:"research-payoff-reveals",label:"Demonstrate the researched takeaway",
+      objectId:plan.shots.at(-1).subjectIds[0]},
+  ];
+  if(!equivalent(storyboard.semanticEvents,originalEvents))
+    manualReview.add("Storyboard semantic-event catalog edits are not yet imported into Director.");
   const bundle=compile(dossier,updated);
   if(bundle.kind!=="preproduction-bundle"||bundle.researchId!==dossier.id)
     reject("preproduction compiler returned mismatched research.");
