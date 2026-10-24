@@ -5,7 +5,8 @@ import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { localChatEndpoint } from "./topic-generator.mjs";
-import { DEFAULT_MODEL_ENDPOINT, MODEL_SETTINGS_PATH, validateResearchModelSettings } from "./research-model-settings.mjs";
+import { DEFAULT_MODEL_ENDPOINT, MODEL_SETTINGS_PATH, validateResearchModelSettings,
+  validateResearchGeneration } from "./research-model-settings.mjs";
 
 export const MODEL_PROFILES_PATH = fileURLToPath(new URL("../../../../data/local-ai-profiles.json", import.meta.url));
 export const PROVIDER_ENDPOINTS = Object.freeze({
@@ -23,7 +24,7 @@ const text = (value, label, max) => {
 };
 
 export function validateModelProfiles(candidate) {
-  if (fields(candidate, ["version", "profiles", "defaultProfileId", "assignments"]) || candidate.version !== 1 ||
+  if (fields(candidate, ["version", "profiles", "defaultProfileId", "assignments", "generation"]) || candidate.version !== 1 ||
     !Array.isArray(candidate.profiles) || candidate.profiles.length < 1 || candidate.profiles.length > 12)
     throw Error("Expected local-ai-profiles/v1 with 1–12 profiles.");
   const profiles = candidate.profiles.map(profile => {
@@ -48,7 +49,8 @@ export function validateModelProfiles(candidate) {
     if (!ids.has(id)) throw Error(`Assignment for ${task} references a missing profile.`);
     assignments[task] = id;
   }
-  return { version: 1, profiles, defaultProfileId: candidate.defaultProfileId, assignments };
+  return { version: 1, profiles, defaultProfileId: candidate.defaultProfileId, assignments,
+    generation:validateResearchGeneration(candidate.generation) };
 }
 
 const providerForEndpoint = endpoint => endpoint?.includes("/inference/v1/") ? "magnitude" :
@@ -91,7 +93,8 @@ export function modelForTask(profiles, task) {
   const clean = validateModelProfiles(profiles);
   const selectedId = clean.assignments[task] ?? clean.defaultProfileId;
   const profile = clean.profiles.find(p => p.id === selectedId);
-  return { endpoint: profile.endpoint, model: profile.model };
+  return { endpoint: profile.endpoint, model: profile.model,
+    ...(task==="story"?{generation:clean.generation}:{}) };
 }
 export function resolveModelForTaskSync(task, { path = MODEL_PROFILES_PATH, legacyPath = MODEL_SETTINGS_PATH } = {}) {
   return modelForTask(readModelProfilesSync(path, legacyPath), task);
