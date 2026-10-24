@@ -27,6 +27,11 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function Shell() {
   const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("production");
+  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"export"}|null>(null);
+  const selectSection = (next:SectionId) => {
+    if(next==="video-director")setDirectorEntry(null);
+    setActiveSection(next);
+  };
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
@@ -116,7 +121,7 @@ export function Shell() {
       <div className="hidden lg:block">
         <StudioSidebar
           activeSection={activeSection}
-          onSelectSection={setActiveSection}
+          onSelectSection={selectSection}
           locale={locale}
           onOpenShortcuts={() => setShortcutsOpen(true)}
         />
@@ -126,7 +131,7 @@ export function Shell() {
         open={mobileNavOpen}
         onOpenChange={setMobileNavOpen}
         activeSection={activeSection}
-        onSelectSection={setActiveSection}
+        onSelectSection={selectSection}
         locale={locale}
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />
@@ -154,9 +159,9 @@ export function Shell() {
               onOpenNav={() => setMobileNavOpen(true)}
               onOpenResearch={() => setActiveSection("research")}
               onOpenStoryboard={() => {setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
-              onOpenVisuals={() => setActiveSection("video-director")}
-              onOpenAudio={() => setActiveSection("video-director")}
-              onOpenExport={() => setActiveSection("video-director")}
+              onOpenVisuals={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
+              onOpenAudio={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
+              onOpenExport={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
               onCreateStoryboard={startEditorialStoryboard}
               onUseVideo={saveVideoIdea}
             />
@@ -172,7 +177,11 @@ export function Shell() {
               onToolGuideOpenChange={setToolGuideOpen}
             />
           ) : activeSection === "video-director" ? (
-            <VideoDirectorWorkspace locale={locale}/>
+            <VideoDirectorWorkspace
+              key={catalog.activeProjectId+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
+              locale={locale} projectId={catalog.activeProjectId}
+              researchArtifactId={directorEntry?.projectId===catalog.activeProjectId?directorEntry.artifactId:undefined}
+              focusStage={directorEntry?.projectId===catalog.activeProjectId?directorEntry.stage:undefined}/>
           ) : activeSection === "research" ? (
             <ResearchWorkspace key={catalog.activeProjectId} locale={locale} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}
               projectTopic={catalog.content.filter(item=>item.projectId===catalog.activeProjectId && item.kind==="video").at(-1)?.name ??
