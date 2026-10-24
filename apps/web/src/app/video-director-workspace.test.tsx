@@ -151,3 +151,62 @@ describe("first-run complete Studio demo",()=>{
     expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
   });
 });
+
+
+describe("editing meaningful visible teaching elements as a normal Studio user",()=>{
+ it("accepts readable label + explanation lines and saves only the selected visual shot",async()=>{
+   const dossier={kind:"research-dossier",id:"r1",topic:{title:"Learning video",audience:"Learners"}};
+   const shot={id:"hook",purpose:"hook",visualChange:"Show the lesson",onScreenText:"How does it work?"};
+   const plan={shots:[shot],story:{question:"Why?"},sound:[{
+     shotId:"hook",narration:"Understand the subject by seeing it change.",sfxIntent:null
+   }],teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Show the subject"}]}]};
+   const bundle={kind:"preproduction-bundle",researchId:"r1",plan};
+   const edits:Array<Record<string,unknown>>=[];
+   vi.spyOn(globalThis,"fetch").mockImplementation(async (url,opts)=>{
+     if(String(url).endsWith("/edit")){
+       const body=JSON.parse(String(opts?.body)) as Record<string,unknown>;
+       edits.push(body);
+       const changed=structuredClone(bundle);
+       changed.plan.shots[0]={...shot,...(body.changes as Record<string,unknown>)} as typeof shot;
+       return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:changed,reviewRequired:true,
+         impacts:{changedFields:["visualElements"],speechRegenerate:[],visualRerender:["hook"],
+           sfxRemix:[],timelineRecalculate:false,downstreamRetiming:[],externalActionsPerformed:[]}}),{status:200});
+     }
+     throw Error("Visual edit unexpectedly invoked "+url);
+   });
+   const user=userEvent.setup();
+   render(<VideoDirectorWorkspace locale="en"/>);
+   const file=new File([JSON.stringify({dossier,bundle})],"example.json",{type:"application/json"});
+   fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[file]}});
+   expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
+   const editor=screen.getByRole("textbox",{name:"Visible teaching elements"});
+   fireEvent.change(editor,{target:{value:"Home insurance | Recurring premium protects the house\nMaintenance | Repairs and upkeep cost money"}});
+   await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+   await waitFor(()=>expect(edits).toHaveLength(1));
+   expect(edits[0].shotId).toBe("hook");
+   expect(edits[0].changes).toEqual({visualElements:[
+     {label:"Home insurance",detail:"Recurring premium protects the house"},
+     {label:"Maintenance",detail:"Repairs and upkeep cost money"}
+   ]});
+ });
+ it("rejects placeholder visual labels in the UI before sending an edit",async()=>{
+   const dossier={kind:"research-dossier",id:"r1",topic:{title:"Learning video",audience:"Learners"}};
+   const bundle={kind:"preproduction-bundle",researchId:"r1",plan:{
+     story:{question:"Why?"},shots:[{id:"hook",purpose:"hook",visualChange:"Show something",onScreenText:"Why?"}],
+     sound:[{shotId:"hook",narration:"The question is interesting for learners.",sfxIntent:null}],
+     teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Show question"}]}]
+   }};
+   const network=vi.spyOn(globalThis,"fetch");
+   const user=userEvent.setup();
+   render(<VideoDirectorWorkspace locale="en"/>);
+   fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+     new File([JSON.stringify({dossier,bundle})],"bad-example.json",{type:"application/json"})
+   ]}});
+   await screen.findByText("Video project loaded");
+   fireEvent.change(screen.getByRole("textbox",{name:"Visible teaching elements"}),{
+     target:{value:"House | Some house\nCategories | Many categories"}});
+   await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+   expect(await screen.findByText(/specific visual elements/i)).toBeInTheDocument();
+   expect(network).not.toHaveBeenCalled();
+ });
+});

@@ -23,6 +23,8 @@ test("built-in interactive demo is an actual instructive home-cost story, not em
  assert.ok(bridged.job.beats[1].visual.items.some(x=>/interest/iu.test(x)));
  assert.ok(bridged.job.beats[1].visual.items.some(x=>/insurance/iu.test(x)));
  assert.ok(bridged.job.beats[1].visual.items.some(x=>/maintenance/iu.test(x)));
+ assert.equal(bridged.job.beats[1].visual.itemNotes.length,5);
+ assert.match(bridged.job.beats[1].visual.itemNotes[1],/Borrowing adds interest/iu);
  const preview=compileLiveVisualPreview(dossier,bundle);
  assert.equal(preview.plan.chapters.length,3);
  assert.deepEqual(preview.plan.chapters.map(x=>x.visual.sceneRecipe),Array(3).fill("home-cost-story-v1"));

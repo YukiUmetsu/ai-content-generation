@@ -101,6 +101,13 @@ test("transition identity, unknown citation, missing narration and undeclared as
 });
 test("local planner never invents source IDs or retries rejected model output",async()=>{
   const d=dossier(), valid=plan();let calls=0;
+  // The new local AI planner must author visible, teachable labels rather than
+  // relying on the fallback title-cased technical subject IDs.
+  for(const shot of valid.shots)shot.visualElements=[
+    {label:"Purchase price",detail:"The purchase begins with a quoted amount"},
+    {label:"Ownership costs",detail:"Other costs can occur during ownership"},
+    {label:"Conditions",detail:"Financing and time change the picture"}
+  ];
   const transport=async(url,request)=>{calls++;
     assert.match(url,/127\.0\.0\.1/);
     assert.match(request.body,/research_home_cost/);

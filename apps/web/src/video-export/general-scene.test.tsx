@@ -201,3 +201,34 @@ describe("visual export safety for all generic projects",()=>{
     expect(svg).not.toContain("DRAFT ·");
   });
 });
+
+
+describe("specific teaching details in the actual encoded video frames",()=>{
+ const informative={
+  ...plan,
+  chapters:plan.chapters.map((chapter,index)=>index===1?{...chapter,intent:"general-breakdown" as const,
+   visual:{...chapter.visual,items:["Mortgages","Property tax","Maintenance"],
+    itemNotes:["Borrowing adds interest","Annual local ownership charge","Repairs and upkeep over time"]}}:chapter)
+ };
+ it("renders both named elements and their meanings instead of only subject identifiers",()=>{
+   const output=renderToStaticMarkup(<GeneralExportScene plan={informative} frame={117}/>);
+   expect(output).toContain("Borrowing adds interest");
+   expect(output).toContain("Annual local ownership charge");
+   expect(output).toContain("Repairs and upkeep over time");
+   expect(output.match(/data-teaching-detail/g)).toHaveLength(3);
+   expect(output).not.toContain("How it changes");
+ });
+ it("never leaks the next teaching detail before that item is revealed",()=>{
+   const first=renderToStaticMarkup(<GeneralExportScene plan={informative} frame={60}/>);
+   expect(first).toContain("Borrowing adds interest");
+   expect(first).not.toContain("Annual local ownership charge");
+   expect(first).not.toContain("Repairs and upkeep over time");
+   const late=renderToStaticMarkup(<GeneralExportScene plan={informative} frame={117}/>);
+   expect(late).toContain("Repairs and upkeep over time");
+ });
+ it("allows legacy footage to omit explanations without changing existing node presentation",()=>{
+   const legacy=renderToStaticMarkup(<GeneralExportScene plan={plan} frame={96}/>);
+   expect(legacy).not.toContain('data-teaching-detail=""');
+   expect(legacy).toContain("Router");
+ });
+});

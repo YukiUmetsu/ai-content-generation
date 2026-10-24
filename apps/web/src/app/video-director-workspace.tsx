@@ -6,8 +6,9 @@ import type { Locale } from "@/features/registry";
 import { ProductionPanel } from "./video-production-panel";
 import { NewVideoSetup } from "./new-video-setup";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
+import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
 
-type Shot={id:string;visualChange:string;onScreenText:string;purpose:string};
+type Shot={id:string;visualChange:string;onScreenText:string;purpose:string;visualElements?:VisualElement[]};
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
@@ -44,14 +45,15 @@ function shotDraft(bundle:Bundle,id:string){
   const phase=bundle.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===id);
   return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",
     visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
-    sfxIntent:audio?.sfxIntent??""};
+    sfxIntent:audio?.sfxIntent??"",
+    visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
 }
 export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
-  const [draft,setDraft]=useState({narration:"",onScreenText:"",visualChange:"",visualAction:"",sfxIntent:""});
+  const [draft,setDraft]=useState({narration:"",onScreenText:"",visualChange:"",visualAction:"",sfxIntent:"",visualElementsText:""});
   const [variants,setVariants]=useState<Variant[]>([]);
   const [voiceVariant,setVoiceVariant]=useState("");
   const [visualVariant,setVisualVariant]=useState("");
@@ -106,17 +108,30 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");
     if(focusEditor)document.querySelector<HTMLSelectElement>('select[aria-label="Selected video shot"]')?.focus();
   }
+  function parseElementsInput(value:string):VisualElement[]{
+    const lines=value.trim().split("\n").map(s=>s.trim()).filter(Boolean);
+    const parsed=lines.map(line=>{
+      const sections=line.split("|");
+      if(sections.length!==2)throw Error("Each visual element must be one line: Label | what the viewer learns.");
+      return {label:sections[0].trim(),detail:sections[1].trim()};
+    });
+    if(!isVisualElements(parsed))throw Error("Add 2–5 unique, specific visual elements with short explanations (not labels like 'House' or 'Categories').");
+    return parsed;
+  }
   function changes(){
     if(!shot||!audio)return {};
-    const result:Record<string,string|null>={};
+    const result:Record<string,string|null|VisualElement[]>={};
     if(draft.narration!==audio.narration)result.narration=draft.narration;
     if(draft.onScreenText!==shot.onScreenText)result.onScreenText=draft.onScreenText;
     if(draft.visualChange!==shot.visualChange)result.visualChange=draft.visualChange;
     if(draft.visualAction!==(phase?.visualAction??shot.visualChange))result.visualAction=draft.visualAction;
     if(draft.sfxIntent!==(audio.sfxIntent??""))result.sfxIntent=draft.sfxIntent||null;
+    const savedText=shot.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
+    if(draft.visualElementsText.trim()!==savedText.trim())
+      result.visualElements=parseElementsInput(draft.visualElementsText);
     return result;
   }
-  async function apply(changed:Record<string,string|null>){
+  async function apply(changed:Record<string,string|null|VisualElement[]>){
     if(!bundle||!dossier||!shot)return;
     setBusy(true);setStatus("");
     try{
@@ -158,6 +173,11 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     void apply({narration:spoken.narration,visualChange:picture.firstVisual,
       visualAction:picture.firstVisual,onScreenText:picture.onScreenText,sfxIntent:sound.sfxIntent});
   }
+  const visualTextSaved=shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
+  const dirty=!!shot&&!!audio&&(
+    draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
+    draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
+    draft.sfxIntent!==(audio.sfxIntent??"")||draft.visualElementsText.trim()!==visualTextSaved.trim());
   const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId;
   const mergedImpact={
     speech:new Set(revisions.flatMap(x=>x.impacts.speechRegenerate)),
@@ -219,14 +239,22 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
             <div className="grid gap-3 lg:grid-cols-2">
               <label className={header}>Narration script<textarea className={field+" mt-2"} rows={6} maxLength={2000} aria-label="Edit narration" value={draft.narration} onChange={e=>setDraft({...draft,narration:e.target.value})}/></label>
               <label className={header}>Visible explanation / motion intent<textarea className={field+" mt-2"} rows={6} maxLength={650} aria-label="Edit visual action" value={draft.visualAction} onChange={e=>setDraft({...draft,visualAction:e.target.value})}/></label>
+              <label className={header}>What the viewer actually sees and learns
+                <textarea className={field+" mt-2 font-mono"} rows={5}
+                  aria-label="Visible teaching elements" maxLength={900}
+                  placeholder={"Mortgage interest | Borrowing adds interest over time\\nProperty tax | Local tax payments recur"}
+                  value={draft.visualElementsText}
+                  onChange={e=>setDraft({...draft,visualElementsText:e.target.value})}/>
+                <span className="mt-1 block text-xs text-muted-foreground">Two to five lines in <code>Label | explanation</code> format. These appear in the actual diagram, unlike free-form motion instructions. Avoid unsourced numbers.</span>
+              </label>
               <label className={header}>Shot description<textarea className={field+" mt-2"} rows={3} maxLength={650} aria-label="Edit shot description" value={draft.visualChange} onChange={e=>setDraft({...draft,visualChange:e.target.value})}/></label>
               <div className="flex flex-col gap-3">
                 <label className={header}>On-screen text<input className={field+" mt-2"} maxLength={240} aria-label="Edit on-screen text" value={draft.onScreenText} onChange={e=>setDraft({...draft,onScreenText:e.target.value})}/></label>
                 <label className={header}>Sound effect intent (optional)<input className={field+" mt-2"} maxLength={250} aria-label="Edit sound effect intent" value={draft.sfxIntent} onChange={e=>setDraft({...draft,sfxIntent:e.target.value})}/></label>
               </div>
             </div>
-            <Button icon={<Save className="size-4"/>} disabled={busy||Object.keys(changes()).length===0}
-              onClick={()=>void apply(changes())}>Apply selected-shot edit</Button>
+            <Button icon={<Save className="size-4"/>} disabled={busy||!dirty}
+              onClick={()=>{try{void apply(changes());}catch(error){setStatus(error instanceof Error?error.message:"Review the visual elements.");}}}>Apply selected-shot edit</Button>
           </div>
         </Surface>
         <Surface header={<h2 className="font-medium">3 · Generate creative alternatives</h2>}>

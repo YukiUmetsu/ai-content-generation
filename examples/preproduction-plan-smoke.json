@@ -85,7 +85,29 @@
         "claim_illustrative"
       ],
       "assetRefs": [],
-      "sceneRecipe": "home-cost-story-v1"
+      "sceneRecipe": "home-cost-story-v1",
+      "visualElements": [
+        {
+          "label": "Purchase price",
+          "detail": "The listed amount is only the starting price"
+        },
+        {
+          "label": "Mortgage interest",
+          "detail": "Borrowing adds interest over time"
+        },
+        {
+          "label": "Property tax",
+          "detail": "Taxes can recur throughout ownership"
+        },
+        {
+          "label": "Home insurance",
+          "detail": "Premiums cover specified risks"
+        },
+        {
+          "label": "Maintenance",
+          "detail": "Repairs and upkeep cost money over time"
+        }
+      ]
     },
     {
       "id": "shot_answer",

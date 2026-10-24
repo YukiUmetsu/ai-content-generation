@@ -1108,3 +1108,37 @@ authorize publication. General Kumiki process journeys now clip inside their
 safe 770×640 region, preventing artwork from bleeding off the 1920×1080
 canvas. Inspect the actual silent preview at each scene start, mid-reveal,
 and final frame before generating narrated MP4s.
+
+
+### New videos: replace placeholder boxes with teachable on-screen elements
+
+The AI preproduction planner now has an explicit, required **visualElements**
+contract for every newly generated shot. Each shot specifies **2–5
+audience-readable labels**, each with a short explanation of the object's
+role or state. These become the *actual text inside the supported Kumiki
+scene compositions* (flow, breakdown, contrast, question and payoff), rather
+than inferring words from internal `subjectIds` such as 'house' or 'category'.
+
+To edit them, open **Video Director**, select a shot, and fill in **What the
+viewer actually sees and learns** with one element per line:
+
+```text
+Mortgage interest | Borrowing adds interest over time
+Property tax | Local ownership taxes typically recur
+Insurance | Premiums cover some insured risks
+```
+
+Click **Apply selected-shot edit**. The editor validates 2–5 unique labels,
+short meaningful descriptions (up to 44 characters), and no generic placeholder names. The saved
+preproduction bundle and production job preserve these details. Existing
+visual preview refreshes after the edit; full MP4 export uses the same scene
+component and does **not** force regeneration of unchanged speech.
+
+Older storyboards without these fields still load and render, but the bridge
+clearly warns that their diagrams derive from generic subject IDs. Newly
+generated plans missing the fields are rejected instead of silently showing
+empty boxes. Model output remains subject to source checks: this feature
+does not certify a claim, synthesize 3D models, or turn natural-language
+`visualAction` instructions into custom scene choreography. It makes the
+supported diagrams useful and editable while indicating when richer
+domain assets or human direction are needed.
