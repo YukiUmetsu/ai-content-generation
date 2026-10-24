@@ -106,8 +106,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
 }
 
 type ExportPlan = HouseMathVisualPlan | GeneralVisualPlan;
-// eslint-disable-next-line react-refresh/only-export-components -- Dedicated headless bootstrap is not a Fast Refresh module.
-function ExportApp({ plan }: { plan: ExportPlan }) {
+export function ExportApp({ plan }: { plan: ExportPlan }) {
   const [frame, setFrame] = useState(0);
   return <VideoExportStage manifest={plan.manifest} frame={frame} onSeek={(absoluteFrame) => setFrame(absoluteFrame)} prepareFrame={(target) => prepareVideoFrame(target, plan.kind, plan.events[plan.payoffEventId], plan.manifest.height > plan.manifest.width)}>
     {plan.kind === "house-math-visual-plan"

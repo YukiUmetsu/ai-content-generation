@@ -9,6 +9,7 @@ import {captureSavedSources,buildDeterministicDossier} from "./research-job-evid
 import {repairCapturedLinks} from "./evidence-link-repair.mjs";
 import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedOutline,validateSavedOutlineSkeleton,validateSavedOutlineBeat,validateSavedSceneStructure,validateSavedSceneVisual,validateSavedSceneUnit,validateSavedSceneCore,validateSavedSceneStates,validateSavedSceneDirection,validateSavedSceneElements,validateSavedSceneNarration} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
+import {withLocalInference} from "./local-inference-gate.mjs";
 import {withModelDebugContext} from "./research-ai-debug.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
@@ -121,10 +122,10 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   combineStructure=assembleSceneStructure,sceneVisual=null,sceneDirection=generateSceneDirection,
   sceneElements=generateSceneElements,combineVisual=assembleSceneVisual,
   sceneNarration=generateSceneNarration,combineScene=assembleSceneUnit,
-  assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause,writeCheckpoint=atomicJson}={}){
+  assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause,writeCheckpoint=atomicJson,
+  inferenceGate=withLocalInference}={}){
   const active=new Map();
   const manifestWrites=new Map();
-  let inferenceTail=Promise.resolve();
   const rootJobs=join(root,"jobs");
   const pathFor=(id,name)=>{
     if(!ID.test(id)||!safeName(name))throw Error("Invalid research job file identifier.");
@@ -159,13 +160,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   const setStage=async(job,stage,currentStep=null)=>{job.status="running";job.stage=stage;
     job.currentStep=currentStep;job.error=null;job.retry=null;await save(job);};
   const guard=signal=>{if(signal.aborted)throw signal.reason??Error("Job cancelled.");};
-  const inference=async(action,signal)=>{
-    const previous=inferenceTail;
-    let release;
-    inferenceTail=new Promise(resolve=>{release=resolve;});
-    await previous;
-    try{guard(signal);return await action();}finally{release();}
-  };
+  const inference=(action,signal)=>inferenceGate(()=>{guard(signal);return action();},signal);
   const attempt=async(job,call,signal)=>{
     const models=[job.models.primary,...(job.models.secondary?[job.models.secondary]:[])];
     let last;

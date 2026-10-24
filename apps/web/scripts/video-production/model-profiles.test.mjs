@@ -54,7 +54,7 @@ test("generation limits default, validate and follow story task selection",()=>{
   const generation={outlineTokens:1024,sceneTokens:3072,timeoutSeconds:360};
   const adjusted=validateModelProfiles({...config,generation});
   assert.deepEqual(modelForTask(adjusted,"story").generation,generation);
-  assert.equal(modelForTask(adjusted,"research").generation,undefined);
+  assert.deepEqual(modelForTask(adjusted,"research").generation,generation);
   for(const patch of [{outlineTokens:0},{sceneTokens:999999},{timeoutSeconds:0},{timeoutSeconds:1.5}])
     assert.throws(()=>validateModelProfiles({...config,generation:{...generation,...patch}}),/limit|tokens|timeout/i);
 });

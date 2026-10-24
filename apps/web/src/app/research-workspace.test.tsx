@@ -43,6 +43,22 @@ vi.mock("./youtube-intelligence-panel", () => ({ YoutubeIntelligencePanel: () =>
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe("Research workspace navigation", () => {
+  it("prefills a selected discovery angle and visibly labels its sources as unverified leads",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL)=>readinessResponse(String(url))??
+      new Response(JSON.stringify({status:"empty",results:[],records:[]}),{status:200})));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" onUseVideo={()=>true} handoff={{
+      title:"Why Home Insurance Premiums Keep Rising",hook:"The surprising drivers of your monthly premium",
+      premise:"Explain replacement cost, climate risk and coverage exclusions",
+      sourceLeads:[{title:"Insurance policy overview",url:"https://example.com/policy",evidenceState:"lead_only"}]}}/>);
+    expect(screen.getByRole("textbox",{name:"Research topic"})).toHaveValue("Why Home Insurance Premiums Keep Rising");
+    expect(screen.getByText("The surprising drivers of your monthly premium")).toBeInTheDocument();
+    expect(screen.getByRole("link",{name:"Insurance policy overview"})).toHaveAttribute("href","https://example.com/policy");
+    expect(screen.getByText(/unverified source leads/i)).toBeInTheDocument();
+    await user.click(screen.getByText("Fine-tune your brief"));
+    expect(screen.getByRole("textbox",{name:/Question to answer/i})).toHaveValue("Why Home Insurance Premiums Keep Rising");
+  });
+
   it("has separate Research, Evidence Library, Packaging and YouTube tabs", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ??
       new Response(JSON.stringify({ status: "empty", results: [], records: [] }), { status: 200 })));
@@ -240,7 +256,7 @@ describe("Studio Research to source-backed story", () => {
       if (searchResponse(String(url),options)) return searchResponse(String(url),options)!;
       throw Error(`Unexpected URL ${String(url)}`);
     }));
-    const create = vi.fn(() => true), user = userEvent.setup();
+    const create = vi.fn<(draft:EditorialDraft) => boolean>(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
     expect(await screen.findByText(/Set up local search:/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeDisabled();
@@ -256,7 +272,7 @@ describe("Studio Research to source-backed story", () => {
 
   it("selects a story direction with native radios and hides optional inputs until expanded", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? new Response("{}", { status: 200 })));
-    const create = vi.fn((draft:EditorialDraft) => Boolean(draft)), user = userEvent.setup();
+    const create = vi.fn<(draft:EditorialDraft) => boolean>(() => true), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Rent vs buy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
     await user.click(screen.getByRole("radio", { name: /compare the options/i }));
     expect(screen.getByRole("radio", { name: /compare the options/i })).toBeChecked();
@@ -273,11 +289,21 @@ describe("Studio Research to source-backed story", () => {
           researchModel: { state: "unverified" }, storyModel: { state: "unverified" } }), { status: 200 })
       : new Response(JSON.stringify(researchedFixture), { status: 200 })));
     render(<ResearchWorkspace locale="en" projectTopic="Heat pumps" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
-    expect(await screen.findByText(/story model is not responding/i)).toBeInTheDocument();
+    expect(await screen.findByText(/model list could not be checked/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
   });
 
-  it("can search and save sources when both local models are unavailable", async () => {
+  it("lets a configured local model run when the provider's /models list omits its ID", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url) === readinessPath
+      ? new Response(JSON.stringify({ ...readyServices, ready: false,
+          storyModel: { state: "model_missing", model: "Qwen3.5 9B (Q4)" } }), { status: 200 })
+      : new Response(JSON.stringify(researchedFixture), { status: 200 })));
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pumps" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
+    expect(await screen.findByText(/model ID.*not listed/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
+  });
+
+  it("can search and save sources when the research model is unavailable and story ID is unlisted", async () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit) => {
       const path=String(url);requests.push(path);
@@ -289,13 +315,23 @@ describe("Studio Research to source-backed story", () => {
     render(<ResearchWorkspace locale="en" projectTopic="Heat pump costs" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
     const search=await screen.findByRole("button",{name:/search.*save sources/i});
     await waitFor(()=>expect(search).toBeEnabled());
-    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeDisabled();
+    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeEnabled();
     await user.click(search);
     expect(await screen.findByRole("link",{name:/DOE Energy Saver/i})).toHaveAttribute("href","https://www.energy.gov/energysaver/insulation");
     expect(screen.getByText(/Insulation reduces the movement of heat/)).toBeInTheDocument();
     expect(screen.getByText(/Search leads are not verified evidence/i)).toBeInTheDocument();
     expect(requests.filter(x=>x==="/api/contentgen-director/research-search")).toHaveLength(1);
     expect(requests).not.toContain("/api/contentgen-director/research-jobs");
+  });
+
+  it("still blocks starting with no configured story model", async () => {
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL)=>String(url)===readinessPath
+      ?new Response(JSON.stringify({...readyServices,ready:false,
+        storyModel:{state:"not_configured"}}),{status:200})
+      :new Response("{}",{status:200})));
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pump costs" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    expect(await screen.findByText(/select an installed Story model/i)).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeDisabled();
   });
 
   it("keeps search links after a failed scene and resumes without searching again", async () => {

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import { ProductionPanel } from "./video-production-panel";
+import { AssetDiscoveryPanel } from "./asset-discovery-panel";
+import { SfxDiscoveryPanel } from "./sfx-discovery-panel";
 import { loadProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { NewVideoSetup } from "./new-video-setup";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
@@ -329,6 +331,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
           selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
           onApplyMotion={applyShotMotion} autoOpenSample={sampleMode} focusStage={focusStage}/>
+        <AssetDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
+        <SfxDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
         <Surface header={<h2 className="font-medium">2 · Choose and edit a shot</h2>}>
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
@@ -424,3 +428,4 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     </div>
   </main>;
 }
+

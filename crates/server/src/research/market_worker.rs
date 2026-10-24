@@ -85,7 +85,8 @@ where
                 // Do not log watchlist names, search phrases or raw provider errors.
                 eprintln!(
                     "contentgen-server: youtube_collection_failed run_id={} reason={}",
-                    run.id, err.code()
+                    run.id,
+                    err.code()
                 );
                 let _ = market_store::fail_run(&db, &run.id, err.code(), epoch_now());
             }
@@ -132,16 +133,21 @@ mod tests {
         let db = state.connect().unwrap();
         market_store::set_enabled(&db, &id, false, epoch_now()).unwrap();
         let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
-            .unwrap().unwrap();
+            .unwrap()
+            .unwrap();
         assert!(run.allowed_while_disabled);
         drop(db);
         run_claim_with(state.clone(), run, |_, query| async move {
             assert_eq!(query, "home repair");
             Ok(vec![])
-        }).await;
+        })
+        .await;
         let db = state.connect().unwrap();
         let saved = market_store::get_watchlist(&db, &id).unwrap();
-        assert!(!saved.enabled, "one-off collection must not activate daily scheduling");
+        assert!(
+            !saved.enabled,
+            "one-off collection must not activate daily scheduling"
+        );
         assert!(saved.last_finished_at.is_some());
     }
 
@@ -150,29 +156,56 @@ mod tests {
         let (_dir, state, id) = setup();
         let db = state.connect().unwrap();
         let previous = market_store::get_watchlist(&db, &id).unwrap();
-        market_store::update_watchlist(&db, &id, MarketWatchlistDraft {
-            name: previous.name, query: "".into(), region: previous.region,
-            language: previous.language, enabled: true, query_mode: "auto".into(),
-            query_plan: vec!["roof installation cost".into(), "home insurance rates".into()],
-            query_plan_source: "user-edited".into(),
-        }, epoch_now()).unwrap();
-        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true).unwrap().unwrap();
+        market_store::update_watchlist(
+            &db,
+            &id,
+            MarketWatchlistDraft {
+                name: previous.name,
+                query: "".into(),
+                region: previous.region,
+                language: previous.language,
+                enabled: true,
+                query_mode: "auto".into(),
+                query_plan: vec![
+                    "roof installation cost".into(),
+                    "home insurance rates".into(),
+                ],
+                query_plan_source: "user-edited".into(),
+            },
+            epoch_now(),
+        )
+        .unwrap();
+        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
+            .unwrap()
+            .unwrap();
         assert_eq!(run.effective_query, "roof installation cost");
         let watch = market_store::get_watchlist(&db, &id).unwrap();
-        market_store::update_watchlist(&db, &id, MarketWatchlistDraft {
-            name: watch.name, query: "".into(),region:watch.region,language:watch.language,
-            enabled:true,query_mode:"auto".into(),
-            query_plan:vec!["different phrase".into()],query_plan_source:"user-edited".into(),
-        },epoch_now()).unwrap();
+        market_store::update_watchlist(
+            &db,
+            &id,
+            MarketWatchlistDraft {
+                name: watch.name,
+                query: "".into(),
+                region: watch.region,
+                language: watch.language,
+                enabled: true,
+                query_mode: "auto".into(),
+                query_plan: vec!["different phrase".into()],
+                query_plan_source: "user-edited".into(),
+            },
+            epoch_now(),
+        )
+        .unwrap();
         drop(db);
-        run_claim_with(state.clone(),run,|_,query| async move {
-            assert_eq!(query,"roof installation cost");
+        run_claim_with(state.clone(), run, |_, query| async move {
+            assert_eq!(query, "roof installation cost");
             Ok(vec![])
-        }).await;
+        })
+        .await;
         let db = state.connect().unwrap();
         let updated = market_store::get_watchlist(&db, &id).unwrap();
-        assert_eq!(updated.next_search_query,"different phrase");
-        assert_eq!(updated.query_index,0);
+        assert_eq!(updated.next_search_query, "different phrase");
+        assert_eq!(updated.query_index, 0);
     }
 
     #[tokio::test]

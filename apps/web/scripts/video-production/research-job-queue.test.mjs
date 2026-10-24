@@ -4,6 +4,7 @@ import {mkdtemp,readFile,writeFile,rename,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {createResearchJobManager} from "./research-job-queue.mjs";
+import {createLocalInferenceGate} from "./local-inference-gate.mjs";
 import {buildDeterministicDossier} from "./research-job-evidence.mjs";
 import {assembleResumablePlan} from "./research-job-planner.mjs";
 import {loadStudioResearchDraft} from "./studio-research.mjs";
@@ -15,7 +16,7 @@ const capture={captures:[{id:"source_01",url:"https://energy.example.org/guide",
 const dossier={dossier:{id:"research_test",claims:[{id:"claim_01"}]},quotes:[{claimId:"claim_01",sourceId:"source_01",quote:"Installation includes the equipment purchase"}],captures:capture.captures,warnings:[]};
 const outline={beats:[{claimIds:["claim_01"]},{claimIds:["claim_01"]}]};
 const later=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const fixture=(root,overrides={})=>createResearchJobManager({root,
+const fixture=(root,overrides={})=>createResearchJobManager({root,inferenceGate:createLocalInferenceGate(),
   loadSearch:async()=>({topic:brief.title,query:brief.viewerQuestion,audience:brief.audience,locale:brief.locale,results:[{url:"https://energy.example.org/guide",title:"Energy"}]}),
   capture:async()=>capture,evidence:()=>dossier,outline:async()=>outline,
   scene:async (_outline,index)=>({index}),assemble:()=>({shots:[{id:"shot_1"}]}),

@@ -80,17 +80,21 @@ interface ResearchWorkspaceProps {
   onUseVideo: (idea: {title: string; sourceUrl: string}) => boolean;
   onCreateStoryboard?: (draft: EditorialDraft, research?: ResearchDraftResult) => boolean;
   projectTopic?: string;
+  handoff?: ResearchIdeaHandoff | null;
 }
 
-export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, projectTopic = "" }: ResearchWorkspaceProps) {
+export type ResearchIdeaHandoff = {title:string;hook:string;premise:string;
+  sourceLeads:{title:string;url:string;evidenceState:"captured"|"lead_only"}[]};
+
+export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, projectTopic = "",handoff }: ResearchWorkspaceProps) {
   const ja = locale === "ja";
   const tr = (en: string, jp: string) => ja ? jp : en;
-  const [topic, setTopic] = useState(projectTopic);
+  const [topic, setTopic] = useState(handoff?.title??projectTopic);
   const [evidenceQuery, setEvidenceQuery] = useState("");
   const [showInspiration, setShowInspiration] = useState(false);
   const [selectedUrls, setSelectedUrls] = useState<string[]>([]);
   const [audience, setAudience] = useState("");
-  const [viewerQuestion, setViewerQuestion] = useState("");
+  const [viewerQuestion, setViewerQuestion] = useState(handoff?.title??"");
   const [payoff, setPayoff] = useState("");
   const [approach, setApproach] = useState<EditorialDraft["selectedId"]>("direct");
   const [projectError, setProjectError] = useState("");
@@ -117,6 +121,12 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
 
   useEffect(() => {
     const controller = new AbortController();
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) {
+        setCheckingReadiness(true);
+        setReadinessError(false);
+      }
+    });
     void fetch("/api/local-research-model/readiness", { signal: controller.signal })
       .then(async response => {
         if (!response.ok) throw Error("Readiness check unavailable.");
@@ -133,9 +143,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   const blockedForReadiness = checkingReadiness || (readiness !== null && (
     (!searchResult && readiness.search.state !== "ready") ||
     [readiness.storyModel].some(service =>
-      service.state === "not_configured" || service.state === "model_missing" || service.state === "unavailable")));
+      service.state === "not_configured" || service.state === "unavailable")));
   const blockedForStory = checkingReadiness || (readiness !== null &&
-    ["not_configured","model_missing","unavailable"].includes(readiness.storyModel.state));
+    ["not_configured","unavailable"].includes(readiness.storyModel.state));
   const blockedForSearch = checkingReadiness || (readiness !== null &&
     ["not_configured","unavailable"].includes(readiness.search.state));
 
@@ -149,9 +159,15 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
       "ローカル検索を設定してください：pnpm --dir apps/web research:up、続けて pnpm --dir apps/web research:check。");
     if (readiness.search.state !== "ready") return tr("SearXNG is not responding. Run pnpm --dir apps/web research:status, then research:check.",
       "SearXNG に接続できません。pnpm --dir apps/web research:status と research:check を実行してください。");
-    if ([readiness.storyModel].some(service => service.state === "not_configured" || service.state === "model_missing"))
+    if (readiness.storyModel.state === "not_configured")
       return tr("Select an installed Story model in Settings → Local AI, then check again.",
         "設定 → ローカル AI で構成用モデルを選択し、再確認してください。");
+    if (readiness.storyModel.state === "model_missing")
+      return tr("The model ID is not listed by your local server. You can try starting; if inference fails, check the exact ID and endpoint in Settings → Local AI.",
+        "ローカルサーバーのモデル一覧に ID がありません。実行は試せますが、失敗した場合は設定 → ローカル AI で ID と接続先を確認してください。");
+    if (readiness.storyModel.state === "unverified")
+      return tr("The model list could not be checked. You can try starting; actual inference will confirm whether the configured model responds.",
+        "モデル一覧を確認できませんでした。実行を試すと、設定されたモデルが応答するか確認できます。");
     if (readiness.storyModel.state !== "ready")
       return tr("The story model is not responding; deterministic evidence capture can still be saved.",
         "構成用モデルが応答していませんが、出典情報は保存できます。");
@@ -164,7 +180,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
       case "ready": return tr("Connected", "接続済み");
       case "not_configured": return tr("Not configured", "未設定");
       case "unavailable": return tr("Not responding", "応答なし");
-      case "model_missing": return tr("Model not found", "モデルがありません");
+      case "model_missing": return tr("Model not listed", "モデル一覧にありません");
       default: return tr("Unverified", "未確認");
     }
   }
@@ -466,6 +482,17 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 {tr("Capture public sources, review what they actually support, and turn the research into an editable visual story.",
                   "公開情報を集め、出典が裏付ける内容を確認し、編集できる映像ストーリーにまとめます。")}
               </p>
+              {handoff&&<aside className="mt-5 rounded-control border border-border bg-surface p-4 text-sm" aria-label={tr("Selected discovery idea","発見したアイデア")}>
+                <p className="text-xs font-semibold text-muted-foreground">{tr("Selected discovery idea","発見したアイデア")}</p>
+                <p className="mt-2 font-semibold">{handoff.hook}</p>
+                <p className="mt-1 text-muted-foreground">{handoff.premise}</p>
+                {handoff.sourceLeads.length>0&&<div className="mt-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">{tr("Unverified source leads — capture and check passages before using factual claims.",
+                    "未検証の情報源 — 事実の根拠として使用する前に本文を取得・確認してください。")}</p>
+                  {handoff.sourceLeads.map(lead=><a className="block break-words text-xs text-primary underline" key={lead.url}
+                    href={lead.url} target="_blank" rel="noopener noreferrer">{lead.title}</a>)}
+                </div>}
+              </aside>}
               <div className="mt-6 rounded-surface border border-border bg-surface p-4 sm:p-5" aria-label={tr("Local research readiness", "ローカル調査の準備状況")}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>

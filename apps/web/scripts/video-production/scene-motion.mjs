@@ -31,7 +31,7 @@ export function motionRevealState({
   // of user settings. No editor setting can move that disclosure earlier.
   if(isPayoff&&frame===0)return {visibleItems:0,revealStartFrame:1,revealStepFrames:1};
   const delay=isPayoff
-    ? Math.max(1,Math.floor((frames-1)*preset.revealDelayPercent/100))
+    ? Math.max(1,Math.ceil(frames*preset.revealDelayPercent/100))
     : Math.floor(frames*preset.revealDelayPercent/100);
   const remaining=Math.max(1,frames-delay-1);
   const intervals=Math.max(1,itemCount-1);

@@ -108,10 +108,8 @@ test("local planner never invents source IDs or retries rejected model output",a
     {label:"Ownership costs",detail:"Other costs can occur during ownership"},
     {label:"Conditions",detail:"Financing and time change the picture"}
   ];
-  valid.teachingSequences[0].visualStates={
-    before:"Only the listing price is visible",
-    action:"Reveal financing and the ownership costs",
-    after:"The budget includes recurring costs beyond price"};
+  valid.teachingSequences[0].visualStates={before:"The list price stands alone",
+    action:"Reveal borrowing and recurring costs",after:"The home has multiple cost categories"};
   valid.teachingSequences[0].visualMechanic={version:1,operator:"accumulate",subjectId:"house",
     actors:[{id:"house",label:"Home ownership",role:"subject",claimIds:["claim_illustration"]},
       {id:"tax",label:"Property tax",role:"part",claimIds:["claim_illustration"]},

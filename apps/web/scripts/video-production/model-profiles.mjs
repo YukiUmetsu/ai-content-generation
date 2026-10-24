@@ -94,7 +94,7 @@ export function modelForTask(profiles, task) {
   const selectedId = clean.assignments[task] ?? clean.defaultProfileId;
   const profile = clean.profiles.find(p => p.id === selectedId);
   return { endpoint: profile.endpoint, model: profile.model,
-    ...(task==="story"?{generation:clean.generation}:{}) };
+    ...(task==="story"||task==="research"?{generation:clean.generation}:{}) };
 }
 export function resolveModelForTaskSync(task, { path = MODEL_PROFILES_PATH, legacyPath = MODEL_SETTINGS_PATH } = {}) {
   return modelForTask(readModelProfilesSync(path, legacyPath), task);

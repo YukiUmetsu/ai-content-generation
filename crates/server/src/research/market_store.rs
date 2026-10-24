@@ -9,13 +9,20 @@ const RETENTION_SECONDS: i64 = 30 * DAILY_SECONDS;
 const MAX_SEARCH_CALLS: i64 = 20;
 const MAX_ENABLED: i64 = 10;
 
-fn manual_mode() -> String { "manual".into() }
-fn default_plan_source() -> String { "user-edited".into() }
+fn manual_mode() -> String {
+    "manual".into()
+}
+fn default_plan_source() -> String {
+    "user-edited".into()
+}
 
 fn fallback_query(name: &str) -> String {
     let name = name.trim();
-    if name.chars().count() >= 3 { name.to_string() }
-    else { format!("{name} YouTube videos") }
+    if name.chars().count() >= 3 {
+        name.to_string()
+    } else {
+        format!("{name} YouTube videos")
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,7 +135,9 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
         return Err(MarketError::Invalid("name must be 1–80 characters".into()));
     }
     if !matches!(draft.query_mode.as_str(), "auto" | "manual") {
-        return Err(MarketError::Invalid("queryMode must be manual or auto".into()));
+        return Err(MarketError::Invalid(
+            "queryMode must be manual or auto".into(),
+        ));
     }
     if draft.query_mode == "manual" && !(3..=160).contains(&query.chars().count()) {
         return Err(MarketError::Invalid(
@@ -136,10 +145,14 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
         ));
     }
     if draft.query_mode == "auto" && !query.is_empty() {
-        return Err(MarketError::Invalid("automatic mode does not accept a manual search phrase".into()));
+        return Err(MarketError::Invalid(
+            "automatic mode does not accept a manual search phrase".into(),
+        ));
     }
     if draft.query_plan.len() > 8 {
-        return Err(MarketError::Invalid("queryPlan cannot exceed eight phrases".into()));
+        return Err(MarketError::Invalid(
+            "queryPlan cannot exceed eight phrases".into(),
+        ));
     }
     let mut seen = std::collections::HashSet::new();
     for phrase in &draft.query_plan {
@@ -148,13 +161,20 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
             || text.chars().any(char::is_control)
             || !seen.insert(text.to_lowercase())
         {
-            return Err(MarketError::Invalid("queryPlan requires unique phrases of 3–160 characters".into()));
+            return Err(MarketError::Invalid(
+                "queryPlan requires unique phrases of 3–160 characters".into(),
+            ));
         }
     }
     if draft.query_mode == "manual" && !draft.query_plan.is_empty() {
-        return Err(MarketError::Invalid("manual mode cannot have a rotating queryPlan".into()));
+        return Err(MarketError::Invalid(
+            "manual mode cannot have a rotating queryPlan".into(),
+        ));
     }
-    if !matches!(draft.query_plan_source.as_str(), "user-edited" | "local-model-generated" | "niche-name fallback") {
+    if !matches!(
+        draft.query_plan_source.as_str(),
+        "user-edited" | "local-model-generated" | "niche-name fallback"
+    ) {
         return Err(MarketError::Invalid("invalid queryPlanSource".into()));
     }
     if draft.region.len() != 2 || !draft.region.bytes().all(|b| b.is_ascii_uppercase()) {
@@ -183,8 +203,9 @@ fn fresh_id(db: &Connection, prefix: &str) -> Result<String, MarketError> {
 fn read_watchlist(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketWatchlist> {
     let query_mode: String = row.get(12)?;
     let plan_json: String = row.get(13)?;
-    let query_plan: Vec<String> = serde_json::from_str(&plan_json).map_err(|err|
-        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err)))?;
+    let query_plan: Vec<String> = serde_json::from_str(&plan_json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err))
+    })?;
     let stored_query: String = row.get(2)?;
     let name: String = row.get(1)?;
     let query_index: i64 = row.get(15)?;
@@ -192,11 +213,17 @@ fn read_watchlist(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketWatchlist> 
         query_plan[(query_index as usize) % query_plan.len()].clone()
     } else if query_mode == "auto" {
         fallback_query(&name)
-    } else { stored_query.clone() };
+    } else {
+        stored_query.clone()
+    };
     Ok(MarketWatchlist {
         id: row.get(0)?,
         name,
-        query: if query_mode == "auto" { String::new() } else { stored_query },
+        query: if query_mode == "auto" {
+            String::new()
+        } else {
+            stored_query
+        },
         region: row.get(3)?,
         language: row.get(4)?,
         enabled: row.get::<_, i64>(5)? == 1,
@@ -236,9 +263,19 @@ pub fn create_watchlist(
         }
     }
     let id = fresh_id(&txn, "watch")?;
-    let stored_query = if draft.query_mode == "auto" { fallback_query(&draft.name) } else { draft.query.trim().to_string() };
-    let plan = serde_json::to_string(&draft.query_plan.iter().map(|q| q.trim()).collect::<Vec<_>>())
-        .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
+    let stored_query = if draft.query_mode == "auto" {
+        fallback_query(&draft.name)
+    } else {
+        draft.query.trim().to_string()
+    };
+    let plan = serde_json::to_string(
+        &draft
+            .query_plan
+            .iter()
+            .map(|q| q.trim())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
     txn.execute(
         "INSERT INTO market_watchlists(id,name,query,region,language,enabled,created_at,updated_at,next_due_at,
          query_mode,query_plan_json,query_plan_source)
@@ -288,9 +325,19 @@ pub fn update_watchlist(
             return Err(MarketError::Limit);
         }
     }
-    let stored_query = if draft.query_mode == "auto" { fallback_query(&draft.name) } else { draft.query.trim().to_string() };
-    let plan = serde_json::to_string(&draft.query_plan.iter().map(|q| q.trim()).collect::<Vec<_>>())
-        .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
+    let stored_query = if draft.query_mode == "auto" {
+        fallback_query(&draft.name)
+    } else {
+        draft.query.trim().to_string()
+    };
+    let plan = serde_json::to_string(
+        &draft
+            .query_plan
+            .iter()
+            .map(|q| q.trim())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
     let plan_changed = previous.query_mode != draft.query_mode
         || previous.query_plan != draft.query_plan
         || previous.name != draft.name.trim()
@@ -361,26 +408,41 @@ pub fn used_search_calls(db: &Connection, now: i64) -> Result<i64, MarketError> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimBlocked {
     Disabled,
-    Backoff { seconds: i64, last_error: Option<String> },
-    NotDue { seconds: i64 },
+    Backoff {
+        seconds: i64,
+        last_error: Option<String>,
+    },
+    NotDue {
+        seconds: i64,
+    },
     InProgress,
-    DailyBudget { seconds: i64 },
+    DailyBudget {
+        seconds: i64,
+    },
 }
 
 impl ClaimBlocked {
     pub fn message(&self) -> String {
-        fn minutes(seconds: i64) -> i64 { ((seconds.max(1) + 59) / 60).max(1) }
+        fn minutes(seconds: i64) -> i64 {
+            ((seconds.max(1) + 59) / 60).max(1)
+        }
         match self {
             Self::Disabled => "Daily collection is disabled for this watchlist.".into(),
-            Self::Backoff { seconds, last_error } => format!(
+            Self::Backoff {
+                seconds,
+                last_error,
+            } => format!(
                 "Collection is temporarily paused after {}. Try again in about {} minute(s).",
-                last_error.as_deref().unwrap_or("a previous error"), minutes(*seconds)
+                last_error.as_deref().unwrap_or("a previous error"),
+                minutes(*seconds)
             ),
             Self::NotDue { seconds } => format!(
                 "Next scheduled collection is due in about {} minute(s).",
                 minutes(*seconds)
             ),
-            Self::InProgress => "This watchlist is already collecting. Results refresh automatically.".into(),
+            Self::InProgress => {
+                "This watchlist is already collecting. Results refresh automatically.".into()
+            }
             Self::DailyBudget { seconds } => format!(
                 "The rolling 24-hour YouTube search budget (20 searches) is exhausted. Try again in about {} minute(s).",
                 minutes(*seconds)
@@ -410,7 +472,9 @@ pub fn claim_watchlist_detailed(
         }));
     }
     if !manual && w.next_due_at > now {
-        return Ok(Err(ClaimBlocked::NotDue { seconds: w.next_due_at - now }));
+        return Ok(Err(ClaimBlocked::NotDue {
+            seconds: w.next_due_at - now,
+        }));
     }
     let active: i64 = txn.query_row(
         "SELECT COUNT(*) FROM market_runs WHERE watchlist_id=?1 AND state='running'",
@@ -503,12 +567,15 @@ pub fn complete_run(
         "UPDATE market_runs SET state='succeeded', finished_at=?2, video_count=?3 WHERE id=?1",
         params![run_id, now, observations.len() as i64],
     )?;
-    txn.execute("UPDATE market_watchlists
+    txn.execute(
+        "UPDATE market_watchlists
         SET last_finished_at=?2, backoff_until=0, error_code=NULL,
             last_search_query=?3,
             query_index=CASE WHEN query_mode='auto' AND query_plan_json!='[]'
                    AND query_plan_revision=?4 THEN query_index+1 ELSE query_index END
-        WHERE id=?1", params![watchlist_id, now, effective_query, plan_revision])?;
+        WHERE id=?1",
+        params![watchlist_id, now, effective_query, plan_revision],
+    )?;
     txn.commit()?;
     Ok(())
 }
