@@ -263,7 +263,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
               </p>:null}
               {job.status==="paused"&&job.stage==="evidence-repair"&&<button type="button" disabled={retryBusy}
                 className={primaryButton+" mt-3"} onClick={()=>void retryEvidence()}>
-                {tr("Retry evidence repair","出典修復を再試行")}
+                {tr("Refresh sources and retry","出典を再取得して再試行")}
               </button>}
             </div>}
             <div className="flex min-h-[620px] flex-col overflow-hidden rounded-surface border border-border bg-surface">
