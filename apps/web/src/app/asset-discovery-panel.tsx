@@ -27,12 +27,14 @@ const key=(asset:Candidate)=>`${asset.provider}:${asset.assetId}`;
 
 /** Optional per-scene visual ingredients; does not alter the approved storyboard or renderer. */
 export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bundle;projectId:string;selectedShotId:string}){
-  const [results,setResults]=useState<Results|null>(null);
+  const [search,setSearch]=useState<{bundle:Bundle;data:Results}|null>(null);
   const [approved,setApproved]=useState<Approved[]>([]);
-  const [pending,setPending]=useState<Candidate|null>(null);
+  const [pending,setPending]=useState<{bundle:Bundle;shotId:string;asset:Candidate}|null>(null);
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const results=search?.bundle===bundle?search.data:null;
+  const review=pending?.bundle===bundle&&pending.shotId===selectedShotId?pending.asset:null;
   const scene=results?.scenes.find(x=>x.shotId===selectedShotId);
   const sceneApproved=approved.filter(x=>x.shotId===selectedShotId);
 
@@ -43,20 +45,18 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
     }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Could not load approved assets.");});
     return()=>{active=false;};
   },[projectId]);
-  useEffect(()=>{setResults(null);setPending(null);setAcknowledged(false);},[bundle]);
-
   async function discover(){
     setBusy("search");setNotice("");setPending(null);
     try{
       // This button is the user-facing opt-in to public-provider requests.
       const result=await localAssets("suggest",{bundle,providers:["polyhaven","pexels"],allowExternalSearch:true});
-      setResults(result as unknown as Results);
+      setSearch({bundle,data:result as unknown as Results});
       setNotice("Suggestions only—nothing was downloaded. Choose and approve each useful asset.");
     }catch(error){setNotice(error instanceof Error?error.message:"Asset search failed.");}
     finally{setBusy("");}
   }
   async function approve(asset:Candidate){
-    if(!acknowledged)return;
+    if(!acknowledged||!pending||pending.bundle!==bundle||pending.shotId!==selectedShotId)return;
     setBusy(key(asset));setNotice("");
     try{
       await localAssets("approve",{projectId,shotId:selectedShotId,provider:asset.provider,
@@ -102,16 +102,16 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
                 <a href={asset.licenseUrl} target="_blank" rel="noopener noreferrer" className="underline">{asset.license} terms</a>
               </div>
               <Button size="sm" variant="outline" disabled={!!busy||existing}
-                onClick={()=>{setPending(asset);setAcknowledged(false);}}>
+                onClick={()=>{setPending({asset,bundle,shotId:selectedShotId});setAcknowledged(false);}}>
                 {existing?<><CheckCircle2 className="mr-1 size-4"/> Imported</>:"Review before import"}
               </Button>
             </div>
           </div>;
         })}
       </div>}
-      {pending&&<div className="space-y-3 rounded-control border border-primary/40 bg-surface-subtle p-4">
+      {review&&<div className="space-y-3 rounded-control border border-primary/40 bg-surface-subtle p-4">
         <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4"/>Approve this asset</p>
-        <p><strong>{pending.title}</strong> · {pending.provider} · {pending.assetType}</p>
+        <p><strong>{review.title}</strong> · {review.provider} · {review.assetType}</p>
         <p className="text-xs text-muted-foreground">This action downloads files to your local ContentGen data folder.
           Check the source and license, especially recognizable people, trademarks, or redistribution restrictions.
           Stock assets are illustrations, never evidence for a factual claim.</p>
@@ -119,8 +119,8 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
           onChange={event=>setAcknowledged(event.target.checked)} className="mt-0.5"/>
           I reviewed this asset and its license, and approve downloading it for this video.</label>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={!acknowledged||!!busy} onClick={()=>void approve(pending)}>
-            <Download className="mr-1 size-4"/>{busy==key(pending)?"Downloading…":"Approve and download"}
+          <Button size="sm" disabled={!acknowledged||!!busy} onClick={()=>void approve(review)}>
+            <Download className="mr-1 size-4"/>{busy==key(review)?"Downloading…":"Approve and download"}
           </Button>
           <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>{setPending(null);setAcknowledged(false);}}>Cancel</Button>
         </div>
