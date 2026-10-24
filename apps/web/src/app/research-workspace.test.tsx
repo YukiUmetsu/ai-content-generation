@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ResearchWorkspace } from "./research-workspace";
 import type { EditorialDraft } from "./editorial-brief";
@@ -9,6 +9,16 @@ const readinessPath = "/api/local-research-model/readiness";
 const readyServices = { version: 1, ready: true,
   search: { state: "ready" }, researchModel: { state: "ready", model: "local-model" },
   storyModel: { state: "ready", model: "local-model" } };
+const savedSearchId = "search_20261024T015250000Z-aaaaaaaaaaaa";
+function searchResponse(url: string, options?: RequestInit): Response | null {
+  if (url !== "/api/contentgen-director/research-search" || options?.method !== "POST") return null;
+  const brief = JSON.parse(String(options.body)) as {title:string;viewerQuestion:string;audience:string;locale:string};
+  return new Response(JSON.stringify({schemaVersion:1,kind:"studio-search-snapshot",
+    artifactId:savedSearchId,topic:brief.title,query:brief.viewerQuestion,audience:brief.audience,
+    locale:brief.locale,provider:"searxng",searchedAt:"2026-10-24T01:52:50.000Z",
+    results:[{title:"DOE Energy Saver",url:"https://www.energy.gov/energysaver/insulation",
+      snippet:"Insulation reduces the movement of heat."}]}),{status:200});
+}
 function readinessResponse(url: string) {
   return url === readinessPath ? new Response(JSON.stringify(readyServices), { status: 200 }) : null;
 }
@@ -106,6 +116,7 @@ describe("Studio Research to source-backed story", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
       requests.push({ url: String(url), options });
       if (readinessResponse(String(url))) return readinessResponse(String(url))!;
+      if (searchResponse(String(url),options)) return searchResponse(String(url),options)!;
       if (String(url).startsWith("/api/research/market/related")) return new Response(JSON.stringify({ videos: [] }), { status: 200 });
       if (String(url) === "/api/contentgen-director/research-draft") return new Response(JSON.stringify(researchedFixture), { status: 200 });
       throw Error("Unexpected request");
@@ -125,7 +136,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("reports research errors and never invents a source-backed storyboard", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify({ error: "Local SearXNG unavailable" }), { status: 422 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const create = vi.fn(() => true), user = userEvent.setup();
@@ -138,7 +149,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("clears stale research as soon as the Research topic changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const create = vi.fn(() => true), user = userEvent.setup();
@@ -153,7 +164,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("does not invalidate reviewed research when only the Evidence Library query changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const user = userEvent.setup();
@@ -169,7 +180,7 @@ describe("Studio Research to source-backed story", () => {
   });
 
   it("invalidates reviewed evidence if the intended viewer question or audience changes", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? (String(url).includes("/research-draft")
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => readinessResponse(String(url)) ?? searchResponse(String(url),options) ?? (String(url).includes("/research-draft")
       ? new Response(JSON.stringify(researchedFixture), { status: 200 })
       : new Response(JSON.stringify({ videos: [] }), { status: 200 }))));
     const user = userEvent.setup();
@@ -189,7 +200,7 @@ describe("Studio Research to source-backed story", () => {
   it("restores the last immutable research draft without re-running the public search or model", async () => {
     localStorage.setItem("contentgen:studio-research:latest:v1", JSON.stringify({ topic: "Why insulation saves energy", artifactId: "research_home-123456789abc" }));
     const requests: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => {
       requests.push(String(url));
       if (readinessResponse(String(url))) return readinessResponse(String(url))!;
       if (String(url) === "/api/contentgen-director/research-draft/research_home-123456789abc")
@@ -215,6 +226,7 @@ describe("Studio Research to source-backed story", () => {
         researchPosts++;
         return new Response(JSON.stringify(researchedFixture), { status: 200 });
       }
+      if (searchResponse(String(url),options)) return searchResponse(String(url),options)!;
       throw Error(`Unexpected URL ${String(url)}`);
     }));
     const create = vi.fn(() => true), user = userEvent.setup();
@@ -253,4 +265,106 @@ describe("Studio Research to source-backed story", () => {
     expect(await screen.findByText(/model list could not be verified/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
   });
+
+  it("can search and save sources when both local models are unavailable", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit) => {
+      const path=String(url);requests.push(path);
+      if(path===readinessPath)return new Response(JSON.stringify({...readyServices,
+        researchModel:{state:"unavailable"},storyModel:{state:"model_missing"}}),{status:200});
+      return searchResponse(path,options) ?? new Response(JSON.stringify({items:[]}),{status:200});
+    }));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pump costs" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    const search=await screen.findByRole("button",{name:/search.*save sources/i});
+    await waitFor(()=>expect(search).toBeEnabled());
+    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeDisabled();
+    await user.click(search);
+    expect(await screen.findByRole("link",{name:/DOE Energy Saver/i})).toHaveAttribute("href","https://www.energy.gov/energysaver/insulation");
+    expect(screen.getByText(/Insulation reduces the movement of heat/)).toBeInTheDocument();
+    expect(screen.getByText(/Search leads are not verified evidence/i)).toBeInTheDocument();
+    expect(requests.filter(x=>x==="/api/contentgen-director/research-search")).toHaveLength(1);
+    expect(requests).not.toContain("/api/contentgen-director/research-draft");
+  });
+
+  it("keeps search links after an invalid quote and retries storyboard without searching again", async () => {
+    let searches=0,drafts=0;
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit) => {
+      const path=String(url);
+      if(path===readinessPath)return readinessResponse(path)!;
+      if(path==="/api/contentgen-director/research-search"){
+        searches++;return searchResponse(path,options)!;
+      }
+      if(path==="/api/contentgen-director/research-draft"){
+        drafts++;
+        expect(JSON.parse(String(options?.body)).searchArtifactId).toBe(savedSearchId);
+        return drafts===1
+          ?new Response(JSON.stringify({error:"Claim 3 has an unsupported or non-verbatim source quote."}),{status:422})
+          :new Response(JSON.stringify(researchedFixture),{status:200});
+      }
+      return new Response(JSON.stringify({items:[]}),{status:200});
+    }));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    await expectResearchEnabled();
+    await user.click(screen.getByRole("button",{name:/research.*generate storyboard/i}));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Claim 3 has an unsupported/i);
+    expect(screen.getByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();
+    expect(localStorage.getItem("contentgen:studio-search:latest:v1")).toContain(savedSearchId);
+    await user.click(screen.getByRole("button",{name:/retry storyboard generation/i}));
+    expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
+    expect(searches).toBe(1);
+    expect(drafts).toBe(2);
+  });
+
+  it("restores a selected saved search from the local history without running AI", async () => {
+    const paths:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL) => {
+      const path=String(url);paths.push(path);
+      if(path===readinessPath)return readinessResponse(path)!;
+      if(path==="/api/contentgen-director/research-search")
+        return new Response(JSON.stringify({items:[{artifactId:savedSearchId,topic:"Heat pump costs",
+          query:"Why heat pumps?",audience:"Homeowners",locale:"en-US",resultCount:1,searchedAt:"2026-10-24T01:52:50.000Z"}]}),{status:200});
+      if(path.endsWith("/"+savedSearchId))
+        return new Response(JSON.stringify({artifactId:savedSearchId,topic:"Heat pump costs",
+          query:"Why heat pumps?",audience:"Homeowners",locale:"en-US",
+          results:[{title:"DOE Energy Saver",url:"https://www.energy.gov/energysaver/insulation",snippet:"Costs vary."}]}),{status:200});
+      return new Response(JSON.stringify({items:[]}),{status:200});
+    }));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    await user.click(screen.getByText(/Saved searches/i));
+    await user.click(await screen.findByRole("button",{name:/Heat pump costs.*1 source/i}));
+    expect(screen.getByRole("textbox",{name:"Research topic"})).toHaveValue("Heat pump costs");
+    expect(screen.getByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();
+    expect(paths).not.toContain("/api/contentgen-director/research-draft");
+  });
+
+  it("never generates from a search that finishes after its topic was edited",async()=>{
+    let finishSearch:(response:Response)=>void=()=>{};
+    const deferred=new Promise<Response>(resolve=>{finishSearch=resolve;});
+    let drafts=0;
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit)=>{
+      const path=String(url);
+      if(path===readinessPath)return readinessResponse(path)!;
+      if(path==="/api/contentgen-director/research-search")return deferred;
+      if(path==="/api/contentgen-director/research-draft"){drafts++;return new Response(JSON.stringify(researchedFixture),{status:200});}
+      return searchResponse(path,options)??new Response(JSON.stringify({items:[]}),{status:200});
+    }));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" projectTopic="Why insulation saves energy" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    await expectResearchEnabled();
+    await user.click(screen.getByRole("button",{name:/research.*generate storyboard/i}));
+    const topic=screen.getByRole("textbox",{name:"Research topic"});
+    await user.clear(topic);await user.type(topic,"Home insurance premiums");
+    await act(async()=>{
+      finishSearch(searchResponse("/api/contentgen-director/research-search",{method:"POST",body:JSON.stringify({
+        title:"Why insulation saves energy",viewerQuestion:"What should I understand about Why insulation saves energy?",
+        audience:"people exploring this topic",locale:"en-US"})})!);
+      await deferred;
+    });
+    expect(screen.queryByRole("link",{name:/DOE Energy Saver/i})).not.toBeInTheDocument();
+    expect(drafts).toBe(0);
+  });
 });
+
