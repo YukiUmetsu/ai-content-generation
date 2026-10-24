@@ -210,3 +210,33 @@ describe("editing meaningful visible teaching elements as a normal Studio user",
    expect(network).not.toHaveBeenCalled();
  });
 });
+
+describe("saved research to Video Director handoff",()=>{
+  const artifactId="research_hvac-123456789abc";
+  const dossier={kind:"research-dossier",id:"research_hvac",topic:{title:"Heat pump installation",audience:"Homeowners"}};
+  const bundle={kind:"preproduction-bundle",researchId:"research_hvac",plan:{
+    shots:[{id:"shot_1",visualChange:"Show equipment",onScreenText:"The real cost",purpose:"reveal"}],
+    sound:[{shotId:"shot_1",narration:"Installation includes labor.",sfxIntent:null}],
+    teachingSequences:[],story:{question:"Why is replacement expensive?"}}};
+  it("opens the exact saved research artifact without generating a fresh storyboard",async()=>{
+    const calls:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
+      calls.push(String(url));
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({artifactId});
+      return new Response(JSON.stringify({artifactId,dossier,bundle}),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId} focusStage="visuals"/>);
+    expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
+    expect(screen.getByText(/Heat pump installation · 1 scenes/)).toBeInTheDocument();
+    expect(calls).toEqual(["/api/contentgen-director/compile-saved-research"]);
+  });
+  it("rejects a result from a different saved artifact",async()=>{
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
+      artifactId:"research_other-123456789abc",dossier,bundle,
+    }),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("status")).toHaveTextContent(/did not match the selected research artifact/i);
+    expect(screen.queryByText("Video project loaded")).not.toBeInTheDocument();
+  });
+});
