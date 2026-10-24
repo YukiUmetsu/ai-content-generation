@@ -31,6 +31,7 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
   const artifactId=research?.artifactId??input.researchArtifactId;
   const researchComplete=Boolean(artifactId) && (!research || research.status==="completed");
   const researchStatus:ProductionStageStatus = research?.status==="running" || research?.status==="queued"?"running":
+    research?.status==="paused" && research.stage==="evidence-repair"?"needs_review":
     research?.status==="failed" || research?.status==="paused" || research?.status==="cancelled"?"failed":
       researchComplete?"complete":"not_started";
   const stale=Boolean(input.storyboardReady && input.storyboardResearchArtifactId &&
@@ -46,9 +47,10 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       input.briefReady?"Video question saved.":"Start with a clear viewer question.","Create brief"),
     stage("research",researchStatus,
       researchStatus==="running"?"Research is progressing through saved stages.":
+        researchStatus==="needs_review"?"Captured source links need editorial review or a fresh capture.":
         researchStatus==="failed"?"Saved research needs attention or retry.":
           researchComplete?"Captured research saved.":"Collect and assess captured sources.",
-      researchStatus==="failed"?"Retry research":"Start research"),
+      researchStatus==="needs_review"?"Review source links":researchStatus==="failed"?"Retry research":"Start research"),
     stage("storyboard",storyboardStatus,
       stale?"Research changed; review the existing storyboard before replacing anything.":
         missing>0?`${missing} claim${missing===1?"":"s"} lack resolved source evidence.`:
