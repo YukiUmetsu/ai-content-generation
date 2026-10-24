@@ -51,3 +51,43 @@ test("oversized streaming model output is stopped before consuming the whole res
   assert.ok(reads<=3);
   assert.equal(cancelled,true);
 });
+
+test("local model fenced JSON is recovered without changing the content",async()=>{
+  const transport=async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+    finish_reason:"stop",message:{content:"```json\n"+JSON.stringify(outline)+"\n```"}}]})});
+  assert.equal((await generateOutline(dossier,quotes,settings,{transport})).beats.length,2);
+});
+
+test("safe trailing-comma repair preserves commas inside quoted text",async()=>{
+  const malformed=JSON.stringify({...outline,premise:"Hardware, labor, and permits matter"})
+    .replace('"payoff":"Installation includes work beyond the unit"}',
+      '"payoff":"Installation includes work beyond the unit",}')
+    .replace('}]}','},]}');
+  const transport=async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+    finish_reason:"stop",message:{content:malformed}}]})});
+  const result=await generateOutline(dossier,quotes,settings,{transport});
+  assert.equal(result.premise,"Hardware, labor, and permits matter");
+  assert.equal(result.beats.length,2);
+});
+
+test("truncated model output exposes safe finish reason without leaking generated text",async()=>{
+  const transport=async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+    finish_reason:"length",message:{content:'{"private":"secret passage"'}}]})});
+  await assert.rejects(generateOutline(dossier,quotes,settings,{transport}),error=>{
+    assert.equal(error.code,"output_truncated");
+    assert.equal(error.field,"response");
+    assert.doesNotMatch(error.message,/secret passage/);
+    return true;
+  });
+});
+
+test("schema errors identify the invalid field with no source text",async()=>{
+  await assert.rejects(generateSceneUnit(outline,0,dossier,quotes,settings,{
+    transport:transportFor({...unit("The cost"),phases:unit("The cost").phases.map((phase,i)=>i===1?{...phase,visualElements:[]}:phase)})
+  }),error=>{
+    assert.equal(error.code,"schema_invalid");
+    assert.equal(error.field,"phases[1].visualElements");
+    assert.doesNotMatch(error.message,/Installation requires equipment/);
+    return true;
+  });
+});
