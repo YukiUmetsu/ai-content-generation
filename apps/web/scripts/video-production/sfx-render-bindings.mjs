@@ -30,6 +30,8 @@ export function bindApprovedSfxToRenderJob(compiled,sceneChoices){
     if(!seenShot.has(choice?.shotId))throw Error("Reviewed SFX references an unknown shot.");
     if(byShot.has(choice.shotId))throw Error("Duplicate reviewed SFX shot selection.");
     if(!["auto","pin","mute"].includes(choice.mode))throw Error("Invalid reviewed SFX choice mode.");
+    if(!["shot-start","first-visual-reveal"].includes(choice.trigger??"shot-start"))
+      throw Error("Invalid reviewed SFX timing trigger.");
     byShot.set(choice.shotId,choice);
   }
   const eventIds=new Set(job.events.map(x=>x.id)),soundIds=new Set(job.sounds.map(x=>x.id));
@@ -44,12 +46,19 @@ export function bindApprovedSfxToRenderJob(compiled,sceneChoices){
     if(!UUID.test(choice.assetId)||choice.license!=="cc0"||choice.rightsStatus!=="user-reviewed"||
       !HASH.test(choice.sha256??"")||typeof choice.localPath!=="string"||!isAbsolute(choice.localPath))
       throw Error(`Selected sound lacks approved rights, verified hash or safe path for shot ${mapped.shotId}.`);
-    let event=job.events.find(x=>x.beatId===mapped.beatId&&x.id===job.topic.payoffEventId)??
-      job.events.find(x=>x.beatId===mapped.beatId&&!job.sounds.some(s=>s.eventId===x.id));
+    const visual=choice.trigger==="first-visual-reveal";
+    const beat=job.beats[index],visualState=beat.visual;
+    const unknownReveal=beat.visualIntent==="general-flow"||visualState?.sceneRecipe||visualState?.chart||
+      visualState?.direction?.visualMechanic||visualState?.direction?.transformation||
+      (beat.visualIntent==="general-intro"&&visualState?.hookStrategy==="unexpected-reveal");
+    if(visual&&(job.visualFamily!=="general-explainer-v1"||unknownReveal))
+      throw Error(`First-visual-reveal SFX timing is unsupported for this visual presentation in shot ${mapped.shotId}; use shot-start timing.`);
+    let event=visual?undefined:(job.events.find(x=>x.beatId===mapped.beatId&&x.id===job.topic.payoffEventId)??
+      job.events.find(x=>x.beatId===mapped.beatId&&!x.anchor&&!job.sounds.some(s=>s.eventId===x.id)));
     if(!event){
       let eventId=`contentgen-sfx-${index+1}`;
       while(eventIds.has(eventId))eventId+="-new";
-      event={id:eventId,beatId:mapped.beatId};job.events.push(event);
+      event={id:eventId,beatId:mapped.beatId,...(visual?{anchor:"first-visual-reveal"}:{})};job.events.push(event);
       job.beats[index].eventIds.push(eventId);eventIds.add(eventId);
     }
     if(job.sounds.some(x=>x.eventId===event.id))throw Error("A beat already has an authored sound on the selected SFX event.");

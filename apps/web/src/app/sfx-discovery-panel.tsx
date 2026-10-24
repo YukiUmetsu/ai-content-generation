@@ -3,7 +3,10 @@ import {CheckCircle2,ExternalLink,Headphones,Search,ShieldCheck,VolumeX} from "l
 import {Button} from "@/components/ui/button";
 import {Surface} from "@/components/ui/surface-card";
 
-type Bundle={plan:{shots:Array<{id:string}>;sound?:Array<{shotId:string;sfxIntent:string|null}>}};
+type Bundle={plan:{shots:Array<{id:string;family?:string;sceneRecipe?:string;subjectIds?:string[]}>;
+  sound?:Array<{shotId:string;sfxIntent:string|null}>;
+  teachingSequences?:Array<{technicalSubjectId:string;visualStates?:unknown;visualMechanic?:unknown;
+    phases:Array<{shotId:string;kind:string}>}>}};
 type Candidate={provider:"openverse";assetId:string;title:string;creator:string;durationSeconds:number;
   sourceUrl:string;previewUrl:string;license:"cc0";licenseUrl:string;source:string;matchCount:number;
   rightsStatus:"needs-human-review";tags:string[]};
@@ -11,7 +14,8 @@ type SearchResult={scenes:Array<{shotId:string;intent:string;query:string;candid
 type Approved={assetId:string;title:string;creator:string;sha256:string;license:"cc0";
   sourceUrl:string;rightsStatus:"user-reviewed";localPath:string;durationSeconds:number};
 type Choice={shotId:string;mode:"auto"|"pin"|"mute";assetId:string|null;title:string|null;
-  sha256:string|null;localPath:string|null;reason:string};
+  sha256:string|null;localPath:string|null;reason:string;
+  trigger:"shot-start"|"first-visual-reveal"};
 
 async function localSfx(path:string,body?:unknown){
   const response=await fetch("/api/contentgen-sfx/"+path,{method:body===undefined?"GET":"POST",
@@ -34,6 +38,13 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
   const [notice,setNotice]=useState("");
   const scene=search?.bundle===bundle?search.data.scenes.find(x=>x.shotId===selectedShotId):undefined;
   const planned=bundle.plan.sound?.find(x=>x.shotId===selectedShotId)?.sfxIntent?.trim()??"";
+  const selectedShot=bundle.plan.shots.find(x=>x.id===selectedShotId);
+  const visualSequence=bundle.plan.teachingSequences?.find(seq=>seq.phases.some(phase=>
+    phase.shotId===selectedShotId&&["problem","mechanism","payoff"].includes(phase.kind)&&
+    !!selectedShot?.subjectIds?.includes(seq.technicalSubjectId)&&
+    (seq.visualStates||seq.visualMechanic)));
+  const unsupportedReveal=Boolean(selectedShot?.sceneRecipe||
+    ["question","process","mechanism","summary"].includes(selectedShot?.family??"")||visualSequence);
   const choice=choices.find(x=>x.shotId===selectedShotId);
   const review=pending?.shotId===selectedShotId?pending.asset:null;
 
@@ -71,12 +82,27 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
     setBusy("choice");setNotice("");
     try{
       await localSfx("set-choice",{projectId,shotId:selectedShotId,mode,
+        trigger:choice?.trigger??"shot-start",
         ...(mode==="pin"&&asset?{assetId:asset.assetId,sha256:asset.sha256}:{})});
       await reload();
       setNotice(mode==="mute"?"This sound cue is muted.":mode==="auto"?
         "Automatically use the best matching sound from your approved library, or silence if none matches.":
         "This sound is pinned to the selected shot.");
     }catch(error){setNotice(error instanceof Error?error.message:"Could not change scene sound.");}
+    finally{setBusy("");}
+  }
+  async function chooseTrigger(trigger:"shot-start"|"first-visual-reveal"){
+    setBusy("choice");setNotice("");
+    try{
+      const mode=choice?.mode??"auto";
+      const pinned=mode==="pin"?library.find(x=>x.assetId===choice?.assetId&&x.sha256===choice?.sha256):null;
+      if(mode==="pin"&&!pinned)throw Error("Pinned sound is no longer available. Choose another approved sound.");
+      await localSfx("set-choice",{projectId,shotId:selectedShotId,mode,trigger,
+        ...(pinned?{assetId:pinned.assetId,sha256:pinned.sha256}:{})});
+      await reload();
+      setNotice(trigger==="shot-start"?"Sound will start with this shot's narration beat.":
+        "Sound will follow the first measured on-screen element reveal, if the scene supports it.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not save sound timing.");}
     finally{setBusy("");}
   }
 
@@ -100,6 +126,17 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
         </p>}
         {choice?.sha256&&<audio className="mt-2 w-full" controls preload="none"
           src={`/api/contentgen-sfx/preview/${choice.sha256}`} aria-label={`Listen to selected sound ${choice.title??"effect"}`}/>}
+        {planned&&<label className="mt-3 block text-xs font-medium">Sound timing
+          <select className="mt-1 w-full rounded-control border border-border bg-surface px-3 py-2"
+            aria-label="Sound timing" disabled={!!busy} value={choice?.trigger??"shot-start"}
+            onChange={e=>void chooseTrigger(e.target.value as "shot-start"|"first-visual-reveal")}>
+            <option value="shot-start">At narration shot start</option>
+            <option value="first-visual-reveal" disabled={unsupportedReveal}>At first visible element reveal</option>
+          </select>
+          <span className="mt-1 block font-normal text-muted-foreground">{unsupportedReveal?
+            "This shot uses custom or dynamic visuals without a measurable element-reveal clock. Use shot-start timing.":
+            "Reveal timing follows the first measurable on-screen element change. If none occurs, production stops with a timing error."}</span>
+        </label>}
         {planned&&<div className="mt-3 flex flex-wrap gap-2">
           <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("auto")}>Use approved match</Button>
           <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("mute")}>
@@ -161,7 +198,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
       </details>}
       {search?.bundle===bundle&&search.data.warnings.map((warning,i)=><p key={i} className="text-xs text-muted-foreground">{warning}</p>)}
       {notice&&<p role="status" className="rounded-control border border-border p-3 text-xs">{notice}</p>}
-      <p className="text-xs text-muted-foreground">Automatic scene choices remain editable. The final audio renderer needs an explicit shot-to-timed-event mapping before SFX can be mixed; no timing is invented.</p>
+      <p className="text-xs text-muted-foreground">Approved effects play in exported drafts at the narration shot start or an actual measured on-screen reveal. Silence remains valid; no timing is guessed.</p>
     </div>
   </Surface>;
 }

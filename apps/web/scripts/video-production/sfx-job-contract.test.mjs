@@ -18,3 +18,14 @@ test("verified local-bank sounds carry a strictly formatted optional source chec
   job.sounds[0].assetSha256="incorrect hash";
   assert.equal(parseVideoProductionJob(job).findings.some(x=>x.code==="invalid-sound-hash"),true);
 });
+
+test("only non-payoff events may request an exact visual reveal anchor",()=>{
+  const job=fixture();job.events.push({id:"visual-cue",beatId:"reveal",anchor:"first-visual-reveal"});
+  job.beats[2].eventIds.push("visual-cue");
+  assert.equal(parseVideoProductionJob(job).ok,true);
+  job.events.at(-1).anchor="estimated-50-percent";
+  assert.ok(parseVideoProductionJob(job).findings.some(x=>x.code==="invalid-event-anchor"));
+  job.events.at(-1).anchor="first-visual-reveal";
+  job.events[0].anchor="first-visual-reveal";
+  assert.ok(parseVideoProductionJob(job).findings.some(x=>x.code==="invalid-payoff-anchor"));
+});

@@ -355,10 +355,14 @@ export function parseVideoProductionJob(input) {
     if (family === "general-explainer-v1" && !has(beat, "visual")) add("missing-general-visual", `beats[${index}].visual`, "Generic scenes require authored visual copy and diagram labels.");
   }
   const beatIds = new Set(beats.map((beat) => beat.id));
-  const events = objects(input.events, "events", ["id", "beatId"]);
+  const events = objects(input.events, "events", ["id", "beatId", "anchor"]);
   const eventIds = new Set(events.map((event) => event.id));
   for (const [index, event] of events.entries()) {
     text(event.beatId, `events[${index}].beatId`);
+    if(has(event,"anchor")&&event.anchor!=="first-visual-reveal")
+      add("invalid-event-anchor",`events[${index}].anchor`,"Only real first-visual-reveal cues are supported.");
+    if(event.id===input.topic?.payoffEventId&&has(event,"anchor"))
+      add("invalid-payoff-anchor",`events[${index}].anchor`,"The answer reveal event must start the final payoff beat.");
     if (!beatIds.has(event.beatId)) add("orphan-event-beat", `events[${index}].beatId`, "Event beat does not exist.");
     const beat = beats.find((item) => item.id === event.beatId);
     if (beat && (!Array.isArray(beat.eventIds) || !beat.eventIds.includes(event.id))) {

@@ -98,6 +98,37 @@ test("release manifest records approved sound identity, event, and measured cue 
   assert.ok(!JSON.stringify(manifest).includes("/approved/local/asset.wav"));
 });
 
+test("production binds a reviewed visual sound to a measured on-screen reveal before mixing and export",async t=>{
+  const ctx=await context(t),generic=JSON.parse(readFileSync(
+    new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...generic,voice:ctx.job.voice};
+  const first=ctx.job.beats[0];
+  first.eventIds.push("semantic-reveal");
+  ctx.job.events.push({id:"semantic-reveal",beatId:first.id,anchor:"first-visual-reveal"});
+  ctx.job.sounds=[{id:"semantic-whoosh",eventId:"semantic-reveal",category:"visual.reveal",
+    assetRef:"/reviewed/whoosh.wav",assetSha256:"b".repeat(64),licenseStatus:"verified"}];
+  let audioEvent=null,visualEvent=null;
+  const originalAudio=ctx.injected.renderMasterAudio;
+  ctx.injected.renderMasterAudio=async(input,options)=>{
+    audioEvent=input.timeline.eventSamples["semantic-reveal"];
+    assert.equal(input.sfx[0].eventId,"semantic-reveal");
+    return originalAudio(input,options);
+  };
+  ctx.injected.startLocalStageServer=async({validatedPlan})=>{
+    assert.equal(validatedPlan.kind,"general-explainer-visual-plan");
+    visualEvent=validatedPlan.events["semantic-reveal"];
+    return {url:"http://127.0.0.1:9876/video-export.html",buildHash:"b".repeat(64),close:async()=>{}};
+  };
+  const result=await produceVideo(ctx.job,ctx.opts,ctx.injected);
+  const manifest=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.ok(Number.isSafeInteger(audioEvent)&&audioEvent>0);
+  assert.ok(Number.isSafeInteger(visualEvent)&&visualEvent>0);
+  assert.equal(manifest.soundEffects[0].eventSample,audioEvent);
+  assert.equal(manifest.plan.events["semantic-reveal"],visualEvent);
+  assert.equal(manifest.plan.events[ctx.job.topic.payoffEventId],
+    manifest.plan.chapters.at(-1).startFrame);
+});
+
 test("production emits real stage transitions and forwards verified capture frame progress", async (t) => {
   const ctx = await context(t);
   const events = [];

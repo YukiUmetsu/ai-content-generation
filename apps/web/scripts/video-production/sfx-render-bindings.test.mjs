@@ -9,7 +9,7 @@ import {parseVideoProductionJob} from "./job.mjs";
 const audioHash="f".repeat(64);
 const approved=(shotId,mode="auto")=>({shotId,mode,intent:"Soft reveal",assetId:"f0012345-1234-1234-1234-123456789abc",
   sha256:audioHash,localPath:"/local/sfx/approved.wav",title:"Soft reveal",license:"cc0",rightsStatus:"user-reviewed"});
-function bridge(){return {job:{kind:"video-production-job",topic:{payoffEventId:"payoff"},
+function bridge(){return {job:{kind:"video-production-job",visualFamily:"general-explainer-v1",topic:{payoffEventId:"payoff"},
   beats:[{id:"beat0",eventIds:[]},{id:"beat1",eventIds:["test-accent"]},{id:"beat2",eventIds:["payoff"]}],
   events:[{id:"test-accent",beatId:"beat1"},{id:"payoff",beatId:"beat2"}],
   sounds:[{id:"test-tick",eventId:"test-accent",category:"transition",assetRef:"self-authored-test-soft-tick",licenseStatus:"test-only"},
@@ -80,4 +80,38 @@ test("a real research-to-render bridge with reviewed SFX remains valid for produ
   const parsed=parseVideoProductionJob(job);
   assert.equal(parsed.ok,true,JSON.stringify(parsed.findings.filter(f=>f.severity==="error")));
   assert.equal(job.sounds.length,1);
+});
+
+test("reviewed visual reveal uses its own anchored event and never moves the narrative payoff",()=>{
+  const compiled=bridge();
+  const selected={...approved("shot2","pin"),trigger:"first-visual-reveal"};
+  const {job}=bindApprovedSfxToRenderJob(compiled,[selected]);
+  assert.equal(job.sounds.length,1);
+  const event=job.events.find(x=>x.id===job.sounds[0].eventId);
+  assert.equal(event.anchor,"first-visual-reveal");
+  assert.equal(event.beatId,"beat2");
+  assert.notEqual(event.id,job.topic.payoffEventId);
+  assert.equal(job.events.find(x=>x.id==="payoff").anchor,undefined);
+  assert.ok(job.beats[2].eventIds.includes(event.id));
+  assert.throws(()=>bindApprovedSfxToRenderJob(compiled,[{...selected,trigger:"halfway-maybe"}]),/trigger|timing/i);
+});
+
+test("unsupported custom-scene reveals are rejected at readiness before expensive narration",()=>{
+  const compiled=bridge();compiled.job.beats[0].visual={sceneRecipe:"custom-scenes-v1"};
+  assert.throws(()=>bindApprovedSfxToRenderJob(compiled,[{...approved("shot0"),
+    trigger:"first-visual-reveal"}]),/unsupported|scene|recipe/i);
+});
+
+test("dynamic visual families are rejected at readiness without guessing their reveal",()=>{
+  for(const change of [
+    {visualIntent:"general-flow"},
+    {visual:{chart:{kind:"bar"}}},
+    {visual:{direction:{visualMechanic:{type:"transform"}}}},
+    {visual:{direction:{transformation:{type:"morph"}}}},
+    {visualIntent:"general-intro",visual:{hookStrategy:"unexpected-reveal"}},
+  ]){
+    const compiled=bridge();Object.assign(compiled.job.beats[0],change);
+    assert.throws(()=>bindApprovedSfxToRenderJob(compiled,[{...approved("shot0"),trigger:"first-visual-reveal"}]),
+      /unsupported|visual|dynamic|timing/i);
+  }
 });

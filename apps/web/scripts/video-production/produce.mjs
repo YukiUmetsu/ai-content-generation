@@ -10,6 +10,7 @@ import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
 import { buildSampleTimeline, toFrame } from "./timeline.mjs";
+import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
@@ -149,14 +150,19 @@ export async function produceVideo(candidate, options, deps = {}) {
       onDiagnostic: options.onProgress,
     });
     options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
-    const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
+    let timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const captionReadability = analyzeCaptionReadability(
       timeline, Object.fromEntries(job.beats.map((beat) => [beat.id, beat.narration])),
       { profile: job.mode === "youtube-long" ? "long" : "short" },
     );
     if (!captionReadability.ok) fail("caption-readability preflight found missing or invalid beat captions");
-    const plan = job.visualFamily === "general-explainer-v1"
+    let plan = job.visualFamily === "general-explainer-v1"
       ? compileGeneralVisuals(job, timeline) : compileHouseMathVisuals(job, timeline);
+    const visualCueTimeline=resolveVisualSfxTimeline(job,timeline,plan);
+    if(visualCueTimeline!==timeline){
+      timeline=visualCueTimeline;
+      plan=compileGeneralVisuals(job,timeline);
+    }
     const frames = plan.manifest.durationFrames;
     const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
     const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));
