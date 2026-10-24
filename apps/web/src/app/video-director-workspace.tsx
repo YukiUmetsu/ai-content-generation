@@ -70,7 +70,11 @@ function shotDraft(bundle:Bundle,id:string){
     sfxIntent:audio?.sfxIntent??"",
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
 }
-export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focusStage}:{locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"export"}){
+type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"export"};
+export function VideoDirectorWorkspace(props:DirectorWorkspaceProps){
+  return <VideoDirectorWorkspaceContent key={`${props.projectId??""}:${props.researchArtifactId??""}`} {...props}/>;
+}
+function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focusStage}:DirectorWorkspaceProps){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
@@ -101,21 +105,22 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
     setStatus("Storyboard ready. Review and edit individual shots, then preview the renderable scenes below.");
   },[]);
   useEffect(()=>{
-    if(!researchArtifactId){setLoadingSaved(false);return;}
+    if(!researchArtifactId)return;
     let active=true;
-    setLoadingSaved(true);setLoadError("");
-    setStatus("Opening saved research and checking for Storyboard Planner edits…");
     // Re-read on entry so source-bound edits made since Production was last shown are included.
     const loaded=projectId?loadProjectStoryboard(projectId):null;
     const board=loaded?.board?.assumptions.includes("Research artifact: "+researchArtifactId)
       ?loaded.board:null;
-    if(loaded?.warning)setLoadError(loaded.warning+" The original research plan will open without storyboard edits.");
-    else if(loaded?.board&&!board)
-      setLoadError("The saved storyboard references a different research artifact. Director will use the selected research plan without its edits.");
+    const warning=loaded?.warning
+      ?loaded.warning+" The original research plan will open without storyboard edits."
+      :loaded?.board&&!board
+        ?"The saved storyboard references a different research artifact. Director will use the selected research plan without its edits."
+        :"";
     const payload={artifactId:researchArtifactId,
       ...(board&&projectId?{projectId,storyboard:board}:{})};
     void request("compile-saved-research",payload).then(result=>{
       if(!active)return;
+      if(warning)setLoadError(warning);
       const saved=result as {artifactId?:string;dossier?:Dossier;bundle?:Bundle;synchronization?:StoryboardSync|null};
       if(saved.artifactId!==researchArtifactId || saved.dossier?.kind!=="research-dossier" ||
         saved.bundle?.kind!=="preproduction-bundle" || !saved.dossier.id ||
@@ -142,14 +147,17 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
   useEffect(()=>{
     if(!projectId||!researchArtifactId||sourceArtifactId!==researchArtifactId||!dossier||!bundle||
       typeof sessionStorage==="undefined")return;
+    let warningTimer:ReturnType<typeof setTimeout>|undefined;
     try{
       // Only applied shot edits are saved here. Never store provider keys or voice permissions.
       const data=JSON.stringify({version:1,artifactId:researchArtifactId,dossier,bundle});
       if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
       sessionStorage.setItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha),data);
     }catch{
-      setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director.");
+      // Storage failure is reported after the effect finishes, avoiding a cascading render.
+      warningTimer=setTimeout(()=>setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director."),0);
     }
+    return ()=>{if(warningTimer!==undefined)clearTimeout(warningTimer);};
   },[projectId,researchArtifactId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
   async function importProject(file:File|undefined){
     if(!file)return;
