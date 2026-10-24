@@ -86,7 +86,7 @@ export function VideoDirectorWorkspace({locale,projectId,researchArtifactId,focu
         saved.bundle.researchId!==saved.dossier.id || !saved.bundle.plan?.shots?.length)
         throw Error("The returned project did not match the selected research artifact.");
       acceptProject(saved.dossier,saved.bundle);
-      setStatus("Opened the saved research draft. Source claims and media rights still require review.");
+      setStatus("Opened the saved research plan. Changes made later in Storyboard Planner are not yet imported; compare the shots before rendering. Claims and media rights still need review.");
     }).catch(error=>{if(active)setStatus(error instanceof Error?error.message:"Saved research could not be opened.");})
       .finally(()=>{if(active)setLoadingSaved(false);});
     return ()=>{active=false;};
