@@ -263,6 +263,7 @@ describe("saved research to Video Director handoff",()=>{
     }),{status:200}));
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
     await waitFor(()=>expect(screen.getByRole("status")).toHaveTextContent(/did not match the selected research artifact/i));
+    expect(screen.getByRole("alert")).toHaveTextContent(/did not match the selected research artifact/i);
     expect(screen.queryByText("Video project loaded")).not.toBeInTheDocument();
   });
 });
