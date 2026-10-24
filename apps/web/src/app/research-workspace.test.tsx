@@ -289,11 +289,21 @@ describe("Studio Research to source-backed story", () => {
           researchModel: { state: "unverified" }, storyModel: { state: "unverified" } }), { status: 200 })
       : new Response(JSON.stringify(researchedFixture), { status: 200 })));
     render(<ResearchWorkspace locale="en" projectTopic="Heat pumps" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
-    expect(await screen.findByText(/story model is not responding/i)).toBeInTheDocument();
+    expect(await screen.findByText(/model list could not be checked/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
   });
 
-  it("can search and save sources when both local models are unavailable", async () => {
+  it("lets a configured local model run when the provider's /models list omits its ID", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => String(url) === readinessPath
+      ? new Response(JSON.stringify({ ...readyServices, ready: false,
+          storyModel: { state: "model_missing", model: "Qwen3.5 9B (Q4)" } }), { status: 200 })
+      : new Response(JSON.stringify(researchedFixture), { status: 200 })));
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pumps" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)} />);
+    expect(await screen.findByText(/model ID.*not listed/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /research.*generate storyboard/i })).toBeEnabled();
+  });
+
+  it("can search and save sources when the research model is unavailable and story ID is unlisted", async () => {
     const requests: string[] = [];
     vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL,options?:RequestInit) => {
       const path=String(url);requests.push(path);
@@ -305,13 +315,23 @@ describe("Studio Research to source-backed story", () => {
     render(<ResearchWorkspace locale="en" projectTopic="Heat pump costs" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
     const search=await screen.findByRole("button",{name:/search.*save sources/i});
     await waitFor(()=>expect(search).toBeEnabled());
-    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeDisabled();
+    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeEnabled();
     await user.click(search);
     expect(await screen.findByRole("link",{name:/DOE Energy Saver/i})).toHaveAttribute("href","https://www.energy.gov/energysaver/insulation");
     expect(screen.getByText(/Insulation reduces the movement of heat/)).toBeInTheDocument();
     expect(screen.getByText(/Search leads are not verified evidence/i)).toBeInTheDocument();
     expect(requests.filter(x=>x==="/api/contentgen-director/research-search")).toHaveLength(1);
     expect(requests).not.toContain("/api/contentgen-director/research-jobs");
+  });
+
+  it("still blocks starting with no configured story model", async () => {
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL)=>String(url)===readinessPath
+      ?new Response(JSON.stringify({...readyServices,ready:false,
+        storyModel:{state:"not_configured"}}),{status:200})
+      :new Response("{}",{status:200})));
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pump costs" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    expect(await screen.findByText(/select an installed Story model/i)).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/research.*generate storyboard/i})).toBeDisabled();
   });
 
   it("keeps search links after a failed scene and resumes without searching again", async () => {
