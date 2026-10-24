@@ -27,7 +27,12 @@ export default defineConfig({
       // live in the Rust ContentGen server (default 127.0.0.1:8787).
       // The director and model-setting Vite plugins expose their own routes.
       "/api/research/market": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
-      "/api/research": process.env.CONTENTGEN_RESEARCH_ORIGIN ?? process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
+      // Discovery and graph APIs enforce the same loopback Host/Origin match
+      // as Settings; keep the browser's Host when forwarding mutations.
+      "/api/research": {
+        target: process.env.CONTENTGEN_RESEARCH_ORIGIN ?? process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
+        changeOrigin: false,
+      },
       "/api/jobs": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
       // Preserve the browser Host for the Rust credential Origin guard.
       // Vite URL-string proxy shorthand otherwise rewrites Host to :8787.
