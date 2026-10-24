@@ -13,12 +13,22 @@ export interface MarketStatus {
 export interface MarketWatchlistDraft {
   name: string;
   query: string;
+  queryMode?: "manual" | "auto";
+  queryPlan?: string[];
+  queryPlanSource?: "local-model-generated" | "user-edited" | "niche-name fallback";
   region: string;
   language: string;
   enabled: boolean;
 }
 
 export interface MarketWatchlist extends MarketWatchlistDraft {
+  queryMode: "manual" | "auto";
+  queryPlan: string[];
+  queryPlanSource: "local-model-generated" | "user-edited" | "niche-name fallback";
+  queryIndex: number;
+  queryPlanRevision: number;
+  lastSearchQuery: string | null;
+  nextSearchQuery: string;
   id: string;
   createdAt: number;
   updatedAt: number;
@@ -85,9 +95,22 @@ export function parseMarketStatus(raw: unknown): MarketStatus {
 
 export function parseWatchlist(raw: unknown): MarketWatchlist {
   const x = obj(raw, "watchlist");
+  const queryMode = str(x.queryMode, "queryMode");
+  if (queryMode !== "manual" && queryMode !== "auto") throw Error("Invalid watchlist query mode.");
+  if (!Array.isArray(x.queryPlan) || x.queryPlan.length > 8 ||
+      !x.queryPlan.every(v=>typeof v === "string" && v.length >= 3 && v.length <= 160)) {
+    throw Error("Invalid watchlist query plan.");
+  }
+  const queryPlanSource = str(x.queryPlanSource,"queryPlanSource");
+  if (!(["local-model-generated","user-edited","niche-name fallback"] as string[]).includes(queryPlanSource)) {
+    throw Error("Invalid query plan source.");
+  }
   return {
     id: str(x.id, "id"), name: str(x.name, "name"),
     query: str(x.query, "query"), region: str(x.region, "region"),
+    queryMode,queryPlan:x.queryPlan as string[],queryPlanSource:queryPlanSource as MarketWatchlist["queryPlanSource"],
+    queryIndex:num(x.queryIndex,"queryIndex"),queryPlanRevision:num(x.queryPlanRevision,"queryPlanRevision"),
+    lastSearchQuery:nullableString(x.lastSearchQuery,"lastSearchQuery"),nextSearchQuery:str(x.nextSearchQuery,"nextSearchQuery"),
     language: str(x.language, "language"), enabled: bool(x.enabled, "enabled"),
     createdAt: num(x.createdAt, "createdAt"), updatedAt: num(x.updatedAt, "updatedAt"),
     nextDueAt: num(x.nextDueAt, "nextDueAt"),
