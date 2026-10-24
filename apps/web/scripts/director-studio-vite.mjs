@@ -19,14 +19,15 @@ async function configuredStoryFallback(){
   const profiles=await readModelProfiles();
   const selected=profiles.profiles.find(profile=>profile.id===id);
   if(!selected?.model)throw Error("Configured local fallback model profile is missing or has no model.");
-  return {endpoint:selected.endpoint,model:selected.model};
+  return {endpoint:selected.endpoint,model:selected.model,generation:profiles.generation};
 }
 async function storyJobModels(deps){
   const primary=await (deps.model??resolveModelForTask)("story");
   if(!primary?.model)throw Error("Choose an installed local story model in Studio Settings.");
   const secondary=await (deps.fallback??configuredStoryFallback)();
   return {primary,...(secondary?.model&&
-    (secondary.model!==primary.model||secondary.endpoint!==primary.endpoint)?{secondary}:{})};
+    (secondary.model!==primary.model||secondary.endpoint!==primary.endpoint)?
+      {secondary:{...secondary,generation:primary.generation??secondary.generation}}:{})};
 }
 function send(res,status,body){
   const data=JSON.stringify(body);
