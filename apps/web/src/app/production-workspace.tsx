@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Check, Circle, Loader2, Menu, RotateCcw } from "lucide-react";
 import type { Locale } from "@/features/registry";
 import type { StudioCatalog } from "./catalog-model";
-import { loadProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
+import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
+import { repairStoryboardEvidence } from "./storyboard-evidence-repair";
 import { ResearchWorkspace } from "./research-workspace";
 import { inspectClaimEvidence } from "./claim-evidence";
 import { ProductionClaimIssues } from "./production-claim-issues";
@@ -84,7 +85,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const video=catalog.content.filter(item=>item.projectId===projectId&&item.kind==="video").at(-1);
   const topic=video?.name??(project?.name==="My project"?"":project?.name??"");
   const [step,setStep]=useState<ProductionStageId>(()=>previousStep(projectId));
-  const [board]=useState(()=>loadProjectStoryboard(projectId).board);
+  const [board,setBoard]=useState(()=>loadProjectStoryboard(projectId).board);
   const [boardError]=useState<string|null>(()=>loadProjectStoryboard(projectId).warning);
   const [jobId,setJobId]=useState<string|null>(()=>storedForTopic(lastJobKey,topic,"jobId"));
   const [researchArtifactId,setResearchArtifactId]=useState<string|null>(()=>
@@ -93,6 +94,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const [draft,setDraft]=useState<ResearchDraftResult|null>(null);
   const [error,setError]=useState("");
   const [retryBusy,setRetryBusy]=useState(false);
+  const [repairSummary,setRepairSummary]=useState("");
 
   useEffect(()=>{
     const refresh=()=>{
@@ -163,6 +165,26 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
       setJob(await response.json() as JobState);
     }catch(reason){setError(reason instanceof Error?reason.message:"Evidence repair could not restart.");}
     finally{setRetryBusy(false);}
+  }
+  function fixStoryboardSources(){
+    setError("");setRepairSummary("");
+    if(!draft){setError("Load a saved research snapshot before repairing source links.");return;}
+    try{
+      // Always re-read the live draft. Never write an obsolete in-memory copy over an edit.
+      const saved=loadProjectStoryboard(projectId);
+      if(!saved.board)throw Error(saved.warning??"No saved storyboard was found.");
+      const result=repairStoryboardEvidence(saved.board,draft);
+      if(result.reason){setError("This storyboard does not belong to the loaded research snapshot. Open its original research before repairing references.");return;}
+      if(!result.fixed.length){
+        setRepairSummary(tr("No source links could be safely repaired. Preserve the claim and find new evidence or edit it manually.",
+          "安全に修復できる参照はありません。新しい根拠を探すか、主張を手動で修正してください。"));
+        return;
+      }
+      saveProjectStoryboard(projectId,result.board);
+      setBoard(result.board);
+      setRepairSummary(tr(`${result.fixed.length} source link(s) repaired from saved evidence. These claims still need factual review.`,
+        `保存された根拠から${result.fixed.length}件の参照を修復しました。事実確認は引き続き必要です。`));
+    }catch(reason){setError(reason instanceof Error?reason.message:"Storyboard repair could not be saved.");}
   }
   const contentCard="rounded-surface border border-border bg-surface p-5 sm:p-6";
   const primaryButton="rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
@@ -250,14 +272,20 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
             </div>
           </>}
           {step==="storyboard"&&<>
+            {repairSummary&&<p role="status" className="rounded-control border border-border bg-surface p-3 text-sm">{repairSummary}</p>}
             {board?<div className={contentCard}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div><h3 className="font-serif text-xl font-semibold">{board.title}</h3>
                   <p className="mt-1 text-sm text-muted-foreground">{board.beats.length} {tr("editable teaching beats","個の編集可能な説明シーン")}</p>
                 </div>
-                <button type="button" className={primaryButton} onClick={onOpenStoryboard}>
-                  {tr("Open editable storyboard","構成案を編集")}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  {unresolved>0&&draft&&<button type="button" className={secondaryButton} onClick={fixStoryboardSources}>
+                    {tr("Auto-fix safe source links","安全な出典参照を自動修復")}
+                  </button>}
+                  <button type="button" className={primaryButton} onClick={onOpenStoryboard}>
+                    {tr("Open editable storyboard","構成案を編集")}
+                  </button>
+                </div>
               </div>
               <ol className="mt-5 grid gap-2">
                 {board.beats.map((beat,index)=><li key={beat.id} className="rounded-control border border-border bg-surface-subtle p-3">
