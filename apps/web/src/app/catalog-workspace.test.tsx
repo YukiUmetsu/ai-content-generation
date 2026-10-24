@@ -106,7 +106,9 @@ describe("Research model setup in Settings", () => {
       await user.click(screen.getByRole("button",{name:"Save AI settings"}));
       expect(await screen.findByText(/Saved\. New Research/)).toBeInTheDocument();
       const saved=calls.find(call=>call.path.endsWith("/profiles/save"));
-      expect(saved?.body).toEqual({version:1,defaultProfileId:"local-default",assignments:{},profiles:[{
+      // Legacy stored profiles omit generation; saving them persists the explicit safe defaults.
+      expect(saved?.body).toEqual({version:1,defaultProfileId:"local-default",assignments:{},
+        generation:{outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240},profiles:[{
         id:"local-default",name:"Local model",provider:"ollama",endpoint:"http://127.0.0.1:11434/v1/chat/completions",model:"gemma:4b"}]});
       expect(localStorage.getItem(CATALOG_KEY)).not.toContain("gemma:4b");
     } finally {
