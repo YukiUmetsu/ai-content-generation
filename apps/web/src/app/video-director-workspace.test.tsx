@@ -226,7 +226,7 @@ describe("saved research to Video Director handoff",()=>{
       expect(JSON.parse(String(init?.body))).toEqual({artifactId});
       return new Response(JSON.stringify({artifactId,dossier,bundle}),{status:200});
     });
-    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId} focusStage="visuals"/>);
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
     expect(screen.getByText(/Heat pump installation · 1 scenes/)).toBeInTheDocument();
     expect(calls).toEqual(["/api/contentgen-director/compile-saved-research"]);
