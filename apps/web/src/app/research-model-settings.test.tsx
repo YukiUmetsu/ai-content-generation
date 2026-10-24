@@ -8,6 +8,21 @@ const preset={version:1,profiles:[{id:"one",name:"Research",provider:"ollama",en
 
 afterEach(()=>vi.restoreAllMocks());
 describe("local AI task profiles",()=>{
+  it("edits and saves the research generation token and timeout settings",async()=>{
+    let saved={...structuredClone(preset),generation:{outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240}};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
+      if(String(url).endsWith("/profiles"))return Response.json({profiles:saved,searchEndpoint:null});
+      if(String(url).endsWith("/profiles/save")){saved=JSON.parse(String(init?.body));return Response.json({profiles:saved});}
+      throw Error("Unexpected request");
+    });
+    const user=userEvent.setup();render(<ResearchModelSettings locale="en"/>);
+    await waitFor(()=>expect(screen.getByRole("spinbutton",{name:"Outline output tokens"})).toHaveValue(2048));
+    await user.clear(screen.getByRole("spinbutton",{name:"Scene output tokens"}));
+    await user.type(screen.getByRole("spinbutton",{name:"Scene output tokens"}),"6144");
+    await user.click(screen.getByRole("button",{name:"Save AI settings"}));
+    await waitFor(()=>expect(saved.generation.sceneTokens).toBe(6144));
+    expect(saved.generation.timeoutSeconds).toBe(240);
+  });
   it("persists explicit Custom provider even when endpoint equals an Ollama preset; reloads assignments",async()=>{
     let saved=structuredClone(preset);
     const fetcher=vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
