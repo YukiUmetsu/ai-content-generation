@@ -23,7 +23,9 @@ Each stage is navigable. Its status comes from saved project/storyboard or resea
 
 The server runs deterministic evidence-link inspection during a user-started research job. It can relink a claim only when both a source SHA-256 digest and an exact per-claim quotation match a **single** stored capture. Ambiguous, unsupported, or modified material remains flagged for review. The repair result is checkpointed, so a refresh or resume does not discard completed research fragments.
 
-A paused evidence-repair job can be explicitly retried. Opening or refreshing Production never starts a source search or local-model inference.
+A paused evidence-repair job can be explicitly retried, which re-captures public sources into a new checkpoint revision (up to two manual retries) and preserves older captured material. The click may contact the source websites; opening or refreshing Production never starts a source search or local-model inference.
+
+For an existing storyboard, Production offers **Auto-fix safe source links** when unresolved claims and the matching saved research draft are available. It can restore missing source IDs on exact, unedited claims from the same research artifact, but does not replace nonempty user-edited references or approve factual truth.
 
 ## Resume and existing tools
 
