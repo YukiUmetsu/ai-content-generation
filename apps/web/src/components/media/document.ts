@@ -200,6 +200,8 @@ export interface TextSpec {
   /** BCP-47 tag used for locale-aware segmentation and hyphenation. */
   language?: string;
   fit: TextFit;
+  /** `explicit-only` suppresses automatic word wrapping while preserving `\n` breaks (display headlines). */
+  lineBreak?: "auto" | "explicit-only";
   /** Truncation budget; `undefined` means unlimited. */
   maxLines?: number;
   /** `shrink` lower/upper bounds. */
@@ -1233,6 +1235,9 @@ export function validateDocument(document: MediaDocument): Diagnostic[] {
       }
       if (!TEXT_FITS.includes(spec.fit)) {
         push({ code: "enum-invalid", severity: "error", message: `Unknown text fit "${String(spec.fit)}".`, layerId: layer.id, path: `${path}.text.fit` });
+      }
+      if (spec.lineBreak !== undefined && !["auto", "explicit-only"].includes(spec.lineBreak)) {
+        push({ code: "enum-invalid", severity: "error", message: `Unknown text line-break policy "${String(spec.lineBreak)}".`, layerId: layer.id, path: `${path}.text.lineBreak` });
       }
       if (!TEXT_ALIGNS.includes(spec.align)) {
         push({ code: "enum-invalid", severity: "error", message: `Unknown text align "${String(spec.align)}".`, layerId: layer.id, path: `${path}.text.align` });
