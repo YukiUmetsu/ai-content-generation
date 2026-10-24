@@ -46,3 +46,55 @@ it("does not offer visual-reveal timing for dynamic flow-family scenes",async()=
   const option=await screen.findByRole("option",{name:/first visible element reveal/i});
   expect(option.hasAttribute("disabled")).toBe(true);
 });
+
+it("adds a supplemental effect from the approved library with independent timing and envelope",async()=>{
+  const sent:Array<Record<string,unknown>>=[];
+  vi.stubGlobal("fetch",vi.fn(async (url:string,options?:RequestInit)=>{
+    const path=String(url).split("/").at(-1)??"";
+    const body=options?.body?JSON.parse(String(options.body)) as Record<string,unknown>:{};
+    if(path==="sound-design"&&"action" in body&&body.action==="upsert")sent.push(body);
+    const payload=path==="library"?{assets:[{assetId:"11111111-2222-3333-4444-555555555555",
+      sha256:"a".repeat(64),title:"Soft mechanical click",rightsStatus:"user-reviewed",license:"cc0"}]}:
+      path==="choices"?{scenes:[]}:
+      path==="sound-design"&&body.action==="resolve"?{layers:[],ambience:null}:{};
+    return {ok:true,json:async()=>payload};
+  }));
+  const user=userEvent.setup();
+  render(<SfxDiscoveryPanel projectId="test" selectedShotId="shot1"
+    bundle={{plan:{shots:[{id:"shot1",family:"comparison"}],sound:[]}}}/>);
+  await user.click(screen.getByText(/Additional sound cues/i));
+  await user.selectOptions(await screen.findByRole("combobox",{name:"Additional cue asset"}),
+    "11111111-2222-3333-4444-555555555555");
+  await user.clear(screen.getByRole("spinbutton",{name:"Additional cue offset (ms)"}));
+  await user.type(screen.getByRole("spinbutton",{name:"Additional cue offset (ms)"}),"250");
+  await user.click(screen.getByRole("button",{name:"Add cue"}));
+  await waitFor(()=>expect(sent).toHaveLength(1));
+  expect(sent[0]).toMatchObject({action:"upsert",shotId:"shot1",offsetMs:250,gainDb:-24});
+});
+
+it("saves and disables one independent reviewed ambience bed",async()=>{
+  const sent:Array<Record<string,unknown>>=[];
+  let savedAmbience:Record<string,unknown>|null=null;
+  vi.stubGlobal("fetch",vi.fn(async (url:string,options?:RequestInit)=>{
+    const path=String(url).split("/").at(-1)??"";
+    const body=options?.body?JSON.parse(String(options.body)) as Record<string,unknown>:{};
+    if(path==="sound-design"&&body.action==="ambience"){
+      sent.push(body);savedAmbience=body.assetId===null?null:{...body,title:"Wind room tone"};
+    }
+    const payload=path==="library"?{assets:[{assetId:"11111111-2222-3333-4444-555555555555",
+      sha256:"a".repeat(64),title:"Wind room tone",rightsStatus:"user-reviewed",license:"cc0"}]}:
+      path==="choices"?{scenes:[]}:
+      path==="sound-design"&&body.action==="resolve"?{layers:[],ambience:savedAmbience}:{};
+    return {ok:true,json:async()=>payload};
+  }));
+  const user=userEvent.setup();
+  render(<SfxDiscoveryPanel projectId="test" selectedShotId="shot1"
+    bundle={{plan:{shots:[{id:"shot1",family:"comparison"}],sound:[]}}}/>);
+  await user.click(screen.getByText(/Background ambience/i));
+  await user.selectOptions(await screen.findByRole("combobox",{name:"Ambience asset"}),
+    "11111111-2222-3333-4444-555555555555");
+  await user.click(screen.getByRole("button",{name:"Save ambience"}));
+  await waitFor(()=>expect(sent[0]).toMatchObject({action:"ambience",gainDb:-33}));
+  await user.click(screen.getByRole("button",{name:"Disable ambience"}));
+  await waitFor(()=>expect(sent[1]).toMatchObject({action:"ambience",assetId:null}));
+});

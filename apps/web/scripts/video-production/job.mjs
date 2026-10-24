@@ -377,7 +377,8 @@ export function parseVideoProductionJob(input) {
     !beats.at(-1)?.eventIds?.includes(input.topic?.payoffEventId) || beats.slice(0, -1).some((beat) => beat.eventIds?.includes(input.topic?.payoffEventId)))) {
     add("invalid-payoff-scene", "beats", "The final generic beat must own the payoff event and use general-payoff.");
   }
-  const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "assetSha256", "licenseStatus"]);
+  const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "assetSha256", "licenseStatus",
+    "kind", "offsetMs", "gainDb", "fadeInMs", "fadeOutMs"]);
   for (const [index, sound] of sounds.entries()) {
     for (const key of ["eventId", "category", "assetRef"]) text(sound[key], `sounds[${index}].${key}`);
     if (!eventIds.has(sound.eventId)) add("orphan-sound-event", `sounds[${index}].eventId`, "SFX event does not exist.");
@@ -385,7 +386,21 @@ export function parseVideoProductionJob(input) {
     if (has(sound, "assetSha256") && (sound.licenseStatus !== "verified" ||
       typeof sound.assetSha256 !== "string" || !/^[a-f\d]{64}$/iu.test(sound.assetSha256)))
       add("invalid-sound-hash", `sounds[${index}].assetSha256`, "Only verified SFX may carry a valid 64-character source checksum.");
+    const ambience=sound.kind==="ambience";
+    if(has(sound,"kind")&&!ambience&&sound.kind!=="effect")
+      add("invalid-sound-kind",`sounds[${index}].kind`,"Only sound effects and ambience are supported.");
+    if(has(sound,"offsetMs")&&(!Number.isSafeInteger(sound.offsetMs)||sound.offsetMs<0||
+      sound.offsetMs>(ambience?0:10000)))
+      add("invalid-sound-offset",`sounds[${index}].offsetMs`,"Sound offset must be a bounded explicit millisecond value.");
+    if(has(sound,"gainDb")&&(!Number.isFinite(sound.gainDb)||sound.gainDb< -48||
+      sound.gainDb>(ambience?-12:0)))
+      add("invalid-sound-gain",`sounds[${index}].gainDb`,"Sound gain must be within the safe dB range.");
+    for(const key of ["fadeInMs","fadeOutMs"])if(has(sound,key)&&
+      (!Number.isSafeInteger(sound[key])||sound[key]<0||sound[key]>(ambience?5000:2000)))
+      add("invalid-sound-fade",`sounds[${index}].${key}`,"Fades must be bounded nonnegative milliseconds.");
   }
+  if(sounds.filter(sound=>sound.kind==="ambience").length>1)
+    add("multiple-ambience-beds","sounds","Only one looping ambience track is supported.");
   // An intentional pause/silent payoff is a valid sound-design decision.
   // The named payoff event itself remains mandatory for visual synchronization.
 

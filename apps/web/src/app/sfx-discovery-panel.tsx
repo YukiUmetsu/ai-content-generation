@@ -16,6 +16,51 @@ type Approved={assetId:string;title:string;creator:string;sha256:string;license:
 type Choice={shotId:string;mode:"auto"|"pin"|"mute";assetId:string|null;title:string|null;
   sha256:string|null;localPath:string|null;reason:string;
   trigger:"shot-start"|"first-visual-reveal"};
+type Trigger="shot-start"|"first-visual-reveal";
+type SoundMix={gainDb:number;fadeInMs:number;fadeOutMs:number};
+type SoundLayer=SoundMix&{layerId:string;shotId:string;assetId:string;sha256:string;
+  title:string;trigger:Trigger;offsetMs:number};
+type SoundAmbience=SoundMix&{assetId:string;sha256:string;title:string};
+type SoundDesign={layers:SoundLayer[];ambience:SoundAmbience|null};
+const emptyDesign:SoundDesign={layers:[],ambience:null};
+type CueDraft=SoundMix&{assetId:string;trigger:Trigger;offsetMs:number};
+
+function SupplementaryLayerRow({layer,busy,unsupportedReveal,onSave,onRemove}:{layer:SoundLayer;busy:boolean;
+  unsupportedReveal:boolean;onSave:(layer:SoundLayer)=>Promise<void>;onRemove:(layerId:string)=>Promise<void>}){
+  const [draft,setDraft]=useState({trigger:layer.trigger,offsetMs:layer.offsetMs,gainDb:layer.gainDb,
+    fadeInMs:layer.fadeInMs,fadeOutMs:layer.fadeOutMs});
+  useEffect(()=>setDraft({trigger:layer.trigger,offsetMs:layer.offsetMs,gainDb:layer.gainDb,
+    fadeInMs:layer.fadeInMs,fadeOutMs:layer.fadeOutMs}),[layer]);
+  const change=(values:Partial<typeof draft>)=>setDraft(current=>({...current,...values}));
+  return <div className="rounded-control border border-border p-3 space-y-2">
+    <p className="text-xs font-medium">{layer.title} · {layer.shotId}</p>
+    <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+      <label>Timing<select className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+        value={draft.trigger} disabled={busy} onChange={e=>change({trigger:e.target.value as Trigger})}>
+        <option value="shot-start">Shot start</option>
+        <option value="first-visual-reveal" disabled={unsupportedReveal}>First element reveal</option>
+      </select></label>
+      <label>Offset (ms)<input className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+        type="number" min="0" max="10000" step="10" disabled={busy} value={draft.offsetMs}
+        onChange={e=>change({offsetMs:Number(e.target.value)})}/></label>
+      <label>Gain (dB)<input className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+        type="number" min="-48" max="0" step="1" disabled={busy} value={draft.gainDb}
+        onChange={e=>change({gainDb:Number(e.target.value)})}/></label>
+      <label>Fade in/out (ms)<span className="mt-1 flex gap-1">
+        <input aria-label={`Fade in ${layer.layerId}`} className="w-1/2 min-w-0 rounded-control border border-border bg-surface p-2"
+          type="number" min="0" max="2000" step="10" disabled={busy} value={draft.fadeInMs}
+          onChange={e=>change({fadeInMs:Number(e.target.value)})}/>
+        <input aria-label={`Fade out ${layer.layerId}`} className="w-1/2 min-w-0 rounded-control border border-border bg-surface p-2"
+          type="number" min="0" max="2000" step="10" disabled={busy} value={draft.fadeOutMs}
+          onChange={e=>change({fadeOutMs:Number(e.target.value)})}/>
+      </span></label>
+    </div>
+    <div className="flex flex-wrap gap-2">
+      <Button size="sm" variant="outline" disabled={busy} onClick={()=>void onSave({...layer,...draft})}>Save cue</Button>
+      <Button size="sm" variant="ghost" disabled={busy} onClick={()=>void onRemove(layer.layerId)}>Remove cue</Button>
+    </div>
+  </div>;
+}
 
 async function localSfx(path:string,body?:unknown){
   const response=await fetch("/api/contentgen-sfx/"+path,{method:body===undefined?"GET":"POST",
@@ -32,6 +77,10 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
   const [search,setSearch]=useState<{bundle:Bundle;data:SearchResult}|null>(null);
   const [library,setLibrary]=useState<Approved[]>([]);
   const [choices,setChoices]=useState<Choice[]>([]);
+  const [design,setDesign]=useState<SoundDesign>(emptyDesign);
+  const [cueDraft,setCueDraft]=useState<CueDraft>({assetId:"",trigger:"shot-start",offsetMs:0,
+    gainDb:-24,fadeInMs:0,fadeOutMs:120});
+  const [ambientDraft,setAmbientDraft]=useState({assetId:"",gainDb:-33,fadeInMs:1000,fadeOutMs:1500});
   const [pending,setPending]=useState<{shotId:string;asset:Candidate}|null>(null);
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
@@ -48,16 +97,55 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
   const choice=choices.find(x=>x.shotId===selectedShotId);
   const review=pending?.shotId===selectedShotId?pending.asset:null;
 
+  function showDesign(raw:unknown){
+    const value=raw as Partial<SoundDesign>|null;
+    const resolved={layers:Array.isArray(value?.layers)?value.layers:[],ambience:value?.ambience??null};
+    setDesign(resolved);
+    setAmbientDraft({assetId:resolved.ambience?.assetId??"",gainDb:resolved.ambience?.gainDb??-33,
+      fadeInMs:resolved.ambience?.fadeInMs??1000,fadeOutMs:resolved.ambience?.fadeOutMs??1500});
+  }
   useEffect(()=>{
     let active=true;
-    void Promise.all([localSfx("library"),localSfx("choices",{projectId,bundle})]).then(([bank,resolved])=>{
-      if(active){setLibrary(bank.assets as Approved[]);setChoices(resolved.scenes as Choice[]);}
+    void Promise.all([localSfx("library"),localSfx("choices",{projectId,bundle}),
+      localSfx("sound-design",{action:"resolve",projectId,bundle})]).then(([bank,resolved,soundDesign])=>{
+      if(active){setLibrary(bank.assets as Approved[]);setChoices(resolved.scenes as Choice[]);showDesign(soundDesign);}
     }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Could not load local sounds.");});
     return()=>{active=false;};
   },[projectId,bundle]);
   async function reload(){
-    const [bank,resolved]=await Promise.all([localSfx("library"),localSfx("choices",{projectId,bundle})]);
-    setLibrary(bank.assets as Approved[]);setChoices(resolved.scenes as Choice[]);
+    const [bank,resolved,soundDesign]=await Promise.all([localSfx("library"),localSfx("choices",{projectId,bundle}),
+      localSfx("sound-design",{action:"resolve",projectId,bundle})]);
+    setLibrary(bank.assets as Approved[]);setChoices(resolved.scenes as Choice[]);showDesign(soundDesign);
+  }
+  async function saveLayer(layer:CueDraft,layerId?:string){
+    const asset=library.find(x=>x.assetId===layer.assetId);
+    if(!asset){setNotice("Choose a reviewed local sound first.");return;}
+    setBusy("design");setNotice("");
+    try{await localSfx("sound-design",{action:"upsert",projectId,shotId:selectedShotId,
+      ...(layerId?{layerId}:{}),assetId:asset.assetId,sha256:asset.sha256,
+      trigger:layer.trigger,offsetMs:layer.offsetMs,gainDb:layer.gainDb,
+      fadeInMs:layer.fadeInMs,fadeOutMs:layer.fadeOutMs});
+      await reload();setNotice("Sound cue saved. Run Check again before rendering.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not save the sound cue.");}
+    finally{setBusy("");}
+  }
+  async function removeLayer(layerId:string){
+    setBusy("design");setNotice("");
+    try{await localSfx("sound-design",{action:"remove",projectId,layerId});await reload();
+      setNotice("Sound cue removed. Run Check again before rendering.");}
+    catch(error){setNotice(error instanceof Error?error.message:"Could not remove the sound cue.");}
+    finally{setBusy("");}
+  }
+  async function saveAmbience(disable=false){
+    const asset=library.find(x=>x.assetId===ambientDraft.assetId);
+    if(!disable&&!asset){setNotice("Choose a reviewed ambience sound first.");return;}
+    setBusy("design");setNotice("");
+    try{await localSfx("sound-design",disable?{action:"ambience",projectId,assetId:null}:
+      {action:"ambience",projectId,assetId:asset?.assetId,sha256:asset?.sha256,
+        gainDb:ambientDraft.gainDb,fadeInMs:ambientDraft.fadeInMs,fadeOutMs:ambientDraft.fadeOutMs});
+      await reload();setNotice(disable?"Ambience disabled.":"Ambience saved. Run Check again before rendering.");}
+    catch(error){setNotice(error instanceof Error?error.message:"Could not save ambience.");}
+    finally{setBusy("");}
   }
   async function discover(){
     setBusy("search");setNotice("");setPending(null);
@@ -144,6 +232,72 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
           </Button>
         </div>}
       </div>
+      <details className="space-y-3 rounded-control border border-border p-3">
+        <summary className="cursor-pointer text-sm font-semibold">Additional sound cues · {design.layers.filter(x=>x.shotId===selectedShotId).length}</summary>
+        <p className="mt-2 text-xs text-muted-foreground">Layer up to four extra reviewed CC0 sounds on this shot. Offset is relative to your selected timing event. Sounds are remixed on export.</p>
+        {design.layers.filter(layer=>layer.shotId===selectedShotId).map(layer=><SupplementaryLayerRow
+          key={layer.layerId} layer={layer} busy={!!busy} unsupportedReveal={unsupportedReveal}
+          onSave={next=>saveLayer(next,next.layerId)} onRemove={removeLayer}/>)}
+        <div className="grid gap-2 text-xs sm:grid-cols-2">
+          <label className="sm:col-span-2">Additional cue asset
+            <select aria-label="Additional cue asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+              disabled={!!busy} value={cueDraft.assetId}
+              onChange={e=>setCueDraft(x=>({...x,assetId:e.target.value}))}>
+              <option value="">Choose from reviewed sound library</option>
+              {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
+            </select></label>
+          <label>Timing<select aria-label="Additional cue timing" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            disabled={!!busy} value={cueDraft.trigger}
+            onChange={e=>setCueDraft(x=>({...x,trigger:e.target.value as Trigger}))}>
+            <option value="shot-start">Shot start</option>
+            <option value="first-visual-reveal" disabled={unsupportedReveal}>First element reveal</option>
+          </select></label>
+          <label>Offset (ms)<input aria-label="Additional cue offset (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            type="number" min="0" max="10000" step="10" disabled={!!busy} value={cueDraft.offsetMs}
+            onChange={e=>setCueDraft(x=>({...x,offsetMs:Number(e.target.value)}))}/></label>
+          <label>Gain (dB)<input aria-label="Additional cue gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            type="number" min="-48" max="0" step="1" disabled={!!busy} value={cueDraft.gainDb}
+            onChange={e=>setCueDraft(x=>({...x,gainDb:Number(e.target.value)}))}/></label>
+          <div className="grid grid-cols-2 gap-2">
+            <label>Fade in (ms)<input aria-label="Additional cue fade in (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+              type="number" min="0" max="2000" step="10" disabled={!!busy} value={cueDraft.fadeInMs}
+              onChange={e=>setCueDraft(x=>({...x,fadeInMs:Number(e.target.value)}))}/></label>
+            <label>Fade out (ms)<input aria-label="Additional cue fade out (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+              type="number" min="0" max="2000" step="10" disabled={!!busy} value={cueDraft.fadeOutMs}
+              onChange={e=>setCueDraft(x=>({...x,fadeOutMs:Number(e.target.value)}))}/></label>
+          </div>
+        </div>
+        <Button size="sm" variant="outline" disabled={!!busy||!cueDraft.assetId||
+          design.layers.filter(x=>x.shotId===selectedShotId).length>=4}
+          onClick={()=>void saveLayer(cueDraft)}>Add cue</Button>
+      </details>
+      <details className="space-y-3 rounded-control border border-border p-3">
+        <summary className="cursor-pointer text-sm font-semibold">Background ambience · {design.ambience?"on":"off"}</summary>
+        <p className="mt-2 text-xs text-muted-foreground">One quiet, continuously looping CC0 recording for the full video, with a gentle start and end fade. This is independent of individual shot cues.</p>
+        <label className="block text-xs">Ambience asset
+          <select aria-label="Ambience asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            disabled={!!busy} value={ambientDraft.assetId}
+            onChange={e=>setAmbientDraft(x=>({...x,assetId:e.target.value}))}>
+            <option value="">No ambience selected</option>
+            {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
+          </select></label>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <label>Gain (dB)<input aria-label="Ambience gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            type="number" min="-48" max="-12" step="1" disabled={!!busy} value={ambientDraft.gainDb}
+            onChange={e=>setAmbientDraft(x=>({...x,gainDb:Number(e.target.value)}))}/></label>
+          <label>Fade in (ms)<input aria-label="Ambience fade in (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            type="number" min="0" max="5000" step="100" disabled={!!busy} value={ambientDraft.fadeInMs}
+            onChange={e=>setAmbientDraft(x=>({...x,fadeInMs:Number(e.target.value)}))}/></label>
+          <label>Fade out (ms)<input aria-label="Ambience fade out (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            type="number" min="0" max="5000" step="100" disabled={!!busy} value={ambientDraft.fadeOutMs}
+            onChange={e=>setAmbientDraft(x=>({...x,fadeOutMs:Number(e.target.value)}))}/></label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" disabled={!!busy||!ambientDraft.assetId} onClick={()=>void saveAmbience()}>Save ambience</Button>
+          <Button size="sm" variant="ghost" disabled={!!busy||!design.ambience} onClick={()=>void saveAmbience(true)}>Disable ambience</Button>
+        </div>
+        {design.ambience&&<p className="text-xs text-muted-foreground">Current bed: {design.ambience.title} · {design.ambience.gainDb} dB</p>}
+      </details>
       {scene&&<div className="space-y-2">
         <p className="text-xs font-semibold">Search: {scene.query} · {scene.candidates.length} CC0 candidates</p>
         <div className="grid gap-3 md:grid-cols-2">

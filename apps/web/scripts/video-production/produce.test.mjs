@@ -98,6 +98,26 @@ test("release manifest records approved sound identity, event, and measured cue 
   assert.ok(!JSON.stringify(manifest).includes("/approved/local/asset.wav"));
 });
 
+test("release manifest records effective offsets and ambience settings without revealing sound paths",async t=>{
+  const ctx=await context(t),payoff=ctx.job.sounds[0].eventId;
+  ctx.job.events.push({id:"sound-bed-start",beatId:ctx.job.beats[0].id});
+  ctx.job.beats[0].eventIds.push("sound-bed-start");
+  ctx.job.sounds=[{id:"manual-layer",kind:"effect",eventId:payoff,category:"supplemental",
+    assetRef:"/approved/clip.wav",assetSha256:"e".repeat(64),licenseStatus:"verified",
+    offsetMs:375,gainDb:-28,fadeInMs:80,fadeOutMs:120},
+    {id:"room-tone",kind:"ambience",eventId:"sound-bed-start",category:"ambience",
+      assetRef:"/approved/room.wav",assetSha256:"f".repeat(64),licenseStatus:"verified",
+      offsetMs:0,gainDb:-33,fadeInMs:1200,fadeOutMs:1800}];
+  const result=await produceVideo(ctx.job,ctx.opts,ctx.injected);
+  const manifest=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.equal(manifest.soundEffects[0].eventSample,124800+375*48);
+  assert.equal(manifest.soundEffects[0].gainDb,-28);
+  assert.equal(manifest.soundEffects[0].fadeOutMs,120);
+  assert.equal(manifest.soundEffects[1].eventSample,0);
+  assert.equal(manifest.soundEffects[1].kind,"ambience");
+  assert.ok(!JSON.stringify(manifest.soundEffects).includes("/approved/"));
+});
+
 test("production binds a reviewed visual sound to a measured on-screen reveal before mixing and export",async t=>{
   const ctx=await context(t),generic=JSON.parse(readFileSync(
     new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));

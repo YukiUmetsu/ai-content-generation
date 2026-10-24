@@ -134,14 +134,14 @@ export async function renderMasterAudio(input, config) {
   const { beats, timeline, sfx, music } = input ?? {};
   if (!timeline || timeline.sampleRate !== SAMPLE_RATE || !Array.isArray(timeline.beats) || !Number.isSafeInteger(timeline.totalSamples)) fail("48 kHz measured speech timeline is required");
   if (!Array.isArray(beats) || beats.length !== timeline.beats.length) fail("narrated WAV beat count must match the timeline");
-  if (!Array.isArray(sfx)) fail("SFX declarations are required (an empty list is allowed)");
+  if (!Array.isArray(sfx) || sfx.length > 200) fail("SFX declarations are required and must be bounded");
   if (music) fail("music has not been implemented; do not silently omit a requested music bed");
   if (!config?.outputDir) fail("an explicit output directory is required");
   const dir = resolve(config.outputDir);
   if (dir === parse(dir).root) fail("filesystem root is not a safe mastering output directory");
   const ffmpeg = config.ffmpeg ?? "ffmpeg", ffprobe = config.ffprobe ?? "ffprobe";
   const voiceStemPath = join(dir, "voice.wav"), wavPath = join(dir, "master.wav"), srtPath = join(dir, "captions.srt");
-  const sfxCueSamples = Object.create(null), inputPaths = [];
+  const sfxCueSamples = Object.create(null), inputPaths = [], clipSamples=[];
   const rightsFindings = [];
   for (const effect of sfx) {
     if (!effect?.id || !effect.eventId || !Object.hasOwn(timeline.eventSamples ?? {}, effect.eventId)) fail("SFX event is orphaned or missing from the timeline");
@@ -152,7 +152,19 @@ export async function renderMasterAudio(input, config) {
     if (effect.licenseStatus === "test-only" && !["self-authored-test-chime","self-authored-test-soft-tick"].includes(effect.assetRef)) fail("test-only SFX must be an original allowed procedural cue");
     if (effect.licenseStatus === "verified" && !effect.assetPath) fail("verified external SFX requires an asset path");
     if (effect.licenseStatus === "test-only") rightsFindings.push({ severity: "warning", code: "test-only-audio-not-commercial", id: effect.id });
-    sfxCueSamples[effect.id] = timeline.eventSamples[effect.eventId];
+    const ambience=effect.kind==="ambience",offset=effect.offsetMs??0;
+    if(effect.kind!==undefined&&!ambience&&effect.kind!=="effect")fail("unsupported sound kind");
+    if(!Number.isSafeInteger(offset)||offset<0||offset>(ambience?0:10000))fail("invalid sound offset");
+    if(effect.gainDb!==undefined&&(!Number.isFinite(effect.gainDb)||effect.gainDb< -48||
+      effect.gainDb>(ambience?-12:0)))fail("invalid sound gain range");
+    for(const key of ["fadeInMs","fadeOutMs"])if(effect[key]!==undefined&&
+      (!Number.isSafeInteger(effect[key])||effect[key]<0||effect[key]>(ambience?5000:2000)))
+      fail("invalid sound fade range");
+    const sample=timeline.eventSamples[effect.eventId]+offset*48;
+    if(!Number.isSafeInteger(sample)||sample>=timeline.totalSamples||sample<0)
+      fail("sound offset starts outside measured movie duration");
+    if(ambience&&sample!==0)fail("ambience must start at the beginning of the movie");
+    sfxCueSamples[effect.id]=sample;
   }
 
   // Avoid overwriting a different master, even if the caller points at an existing directory.
@@ -181,6 +193,7 @@ export async function renderMasterAudio(input, config) {
       await writeFile(path,bytes,{flag:"wx"});
     }
     inputPaths.push(path);
+    clipSamples.push(readPcmData(await readFile(path)).length/2);
   }
 
   const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i", voiceStemPath];
@@ -188,8 +201,21 @@ export async function renderMasterAudio(input, config) {
   const filters = [];
   const lanes = ["[0:a]"];
   for (const [index, effect] of sfx.entries()) {
-    // FFmpeg's S suffix means audio samples, not milliseconds. Use named event samples unchanged.
-    filters.push(`[${index + 1}:a]volume=0.12,adelay=${sfxCueSamples[effect.id]}S[s${index}]`);
+    const start=sfxCueSamples[effect.id],ambience=effect.kind==="ambience";
+    const usable=ambience?timeline.totalSamples:Math.min(clipSamples[index],timeline.totalSamples-start);
+    const clipDuration=usable/SAMPLE_RATE;
+    let fadeIn=(effect.fadeInMs??0)/1000,fadeOut=(effect.fadeOutMs??0)/1000;
+    if(fadeIn+fadeOut>clipDuration){const factor=clipDuration/(fadeIn+fadeOut);
+      fadeIn*=factor;fadeOut*=factor;}
+    const filtersForClip=[];
+    if(ambience)filtersForClip.push(`aloop=loop=-1:size=${clipSamples[index]}`);
+    filtersForClip.push(`atrim=end_sample=${usable}`);
+    filtersForClip.push(effect.gainDb===undefined?"volume=0.12":`volume=${effect.gainDb}dB`);
+    if(fadeIn>0)filtersForClip.push(`afade=t=in:st=0:d=${fadeIn}`);
+    if(fadeOut>0)filtersForClip.push(`afade=t=out:st=${Math.max(0,clipDuration-fadeOut)}:d=${fadeOut}`);
+    // FFmpeg's S suffix means exact audio samples, not milliseconds.
+    filtersForClip.push(`adelay=${start}S[s${index}]`);
+    filters.push(`[${index+1}:a]${filtersForClip.join(",")}`);
     lanes.push(`[s${index}]`);
   }
   const mixed = lanes.length === 1 ? lanes[0] : `${lanes.join("")}amix=inputs=${lanes.length}:duration=longest:normalize=0`;

@@ -29,3 +29,26 @@ test("only non-payoff events may request an exact visual reveal anchor",()=>{
   job.events[0].anchor="first-visual-reveal";
   assert.ok(parseVideoProductionJob(job).findings.some(x=>x.code==="invalid-payoff-anchor"));
 });
+
+test("bounded soundtrack gain, fades and explicit offsets validate as part of the render job",()=>{
+  const job=fixture();job.sounds[0]={...job.sounds[0],kind:"effect",offsetMs:250,
+    gainDb:-24,fadeInMs:75,fadeOutMs:180};
+  assert.equal(parseVideoProductionJob(job).ok,true);
+  for(const change of [{gainDb:4},{offsetMs:-1},{fadeInMs:9000},{kind:"music"},{fadeOutMs:1.5}]){
+    const mutated=structuredClone(job);Object.assign(mutated.sounds[0],change);
+    assert.equal(parseVideoProductionJob(mutated).ok,false,JSON.stringify(change));
+  }
+  const ambience=structuredClone(job);ambience.sounds[0].kind="ambience";
+  ambience.sounds[0].gainDb=-34;ambience.sounds[0].offsetMs=0;
+  ambience.sounds[0].fadeInMs=1200;ambience.sounds[0].fadeOutMs=1700;
+  assert.equal(parseVideoProductionJob(ambience).ok,true);
+  ambience.sounds[0].gainDb=-3;
+  assert.equal(parseVideoProductionJob(ambience).ok,false);
+});
+
+test("a production job cannot silently layer several ambience loops",()=>{
+  const job=fixture();
+  job.sounds[0]={...job.sounds[0],kind:"ambience",gainDb:-30};
+  job.sounds.push({...job.sounds[0],id:"other-ambience"});
+  assert.ok(parseVideoProductionJob(job).findings.some(x=>x.code==="multiple-ambience-beds"));
+});

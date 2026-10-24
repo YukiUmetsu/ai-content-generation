@@ -115,3 +115,40 @@ test("dynamic visual families are rejected at readiness without guessing their r
       /unsupported|visual|dynamic|timing/i);
   }
 });
+
+test("supplementary cues retain separate events, individual mix controls and an ambience bed",()=>{
+  const compiled=bridge(),base=approved("shot0");
+  const layer=(layerId,shotId,trigger,offsetMs)=>({layerId,shotId,trigger,offsetMs,assetId:base.assetId,
+    sha256:base.sha256,localPath:base.localPath,license:"cc0",rightsStatus:"user-reviewed",
+    gainDb:-25,fadeInMs:60,fadeOutMs:160});
+  const ambience={...layer("not-used","shot0","shot-start",0),gainDb:-34,fadeInMs:1200,fadeOutMs:1700};
+  const {job,sfxSummary}=bindApprovedSfxToRenderJob(compiled,[base],{layers:[
+    layer("layer_alpha","shot0","shot-start",360),layer("layer_beta","shot2","first-visual-reveal",80)],ambience});
+  assert.equal(job.sounds.length,4);
+  const extra=job.sounds.find(s=>s.id==="reviewed-layer-layer_alpha");
+  assert.equal(extra.offsetMs,360);
+  assert.equal(extra.gainDb,-25);
+  assert.equal(extra.fadeOutMs,160);
+  const reveal=job.sounds.find(s=>s.id==="reviewed-layer-layer_beta");
+  assert.equal(job.events.find(e=>e.id===reveal.eventId).anchor,"first-visual-reveal");
+  assert.equal(job.events.find(e=>e.id===extra.eventId).anchor,undefined);
+  assert.notEqual(reveal.eventId,job.topic.payoffEventId);
+  assert.equal(job.sounds.find(s=>s.kind==="ambience").gainDb,-34);
+  assert.equal(sfxSummary.extraLayers,2);
+  assert.equal(sfxSummary.ambience,1);
+});
+
+test("invalid extra-layer mapping and permissions fail at readiness",()=>{
+  const approvedAsset=approved("shot0");
+  const layer={layerId:"layer_test",shotId:"shot0",assetId:approvedAsset.assetId,
+    sha256:approvedAsset.sha256,localPath:approvedAsset.localPath,license:"cc0",
+    rightsStatus:"user-reviewed",trigger:"shot-start",offsetMs:0,gainDb:-20,fadeInMs:0,fadeOutMs:0};
+  for(const change of [{shotId:"orphan"},{sha256:"invalid"},{rightsStatus:"unknown"},
+    {trigger:"invented-reveal"},{offsetMs:-1}]){
+    assert.throws(()=>bindApprovedSfxToRenderJob(bridge(),[],{layers:[{...layer,...change}],ambience:null}),
+      /invalid|unsupported|approved|unknown|offset|shot|rights|trigger/i);
+  }
+  const compiled=bridge();compiled.job.beats[0].visualIntent="general-flow";
+  assert.throws(()=>bindApprovedSfxToRenderJob(compiled,[],{layers:[{...layer,trigger:"first-visual-reveal"}],ambience:null}),
+    /unsupported|visual/i);
+});

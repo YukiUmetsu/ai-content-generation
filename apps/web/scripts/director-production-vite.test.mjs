@@ -162,6 +162,26 @@ test("readiness and export bind reviewed SFX to the same measured beat events, a
   assert.equal(renders,1);assert.equal(server.status().state,"done");
   assert.equal(inspected.sounds[0].assetSha256,"b".repeat(64));
 });
+test("changing a checked supplemental sound layer invalidates readiness without rendering",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-extra-sfx-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const project=inputs();let gainDb=-25,renderCount=0,checkedSound;
+  const extra={layerId:"layer_sample",shotId:project.bundle.plan.shots[0].id,
+    assetId:"11111111-2222-3333-4444-555555555555",sha256:"c".repeat(64),
+    localPath:"/trusted/approved.wav",license:"cc0",rightsStatus:"user-reviewed",
+    trigger:"shot-start",offsetMs:300,fadeInMs:30,fadeOutMs:70};
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    resolveSfx:async()=>[],resolveSoundDesign:async()=>({layers:[{...extra,gainDb}],ambience:null}),
+    build:async()=>{},inspect:async job=>{checkedSound=job.sounds.at(-1);return {ready:true,findings:[],tools:{}};},
+    produce:async()=>{renderCount++;throw Error("render should not start with changed sound settings");}});
+  const prior=await invoke(server,"POST","/check",{...project,settings:config});
+  assert.equal(prior.data.ready,true);
+  assert.equal(checkedSound.gainDb,-25);
+  assert.equal(prior.data.sfxSummary.extraLayers,1);
+  gainDb=-32;
+  const stale=await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true});
+  assert.equal(stale.status,409);
+  assert.equal(renderCount,0);
+});
 test("model authorization only configures the test-only free model; never raises rights",()=>{
   const base={voice:{profileId:"test"},locale:"en-US",approval:"test-only",policy:{}};
   const local=configureRenderJob(base,config);

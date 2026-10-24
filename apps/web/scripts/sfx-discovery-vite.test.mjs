@@ -41,6 +41,27 @@ test("library, plan, and per-shot override endpoints are restricted to local Stu
   assert.equal((await request("POST","/set-choice",{projectId:"prj1",shotId:"s1",mode:"mute"},deps)).answer.mode,"mute");
 });
 
+test("supplementary sound-design edits require same-origin action and never accept local paths",async()=>{
+  let reads=0,writes=0;
+  const deps={soundDesignRead:async ({projectId})=>{reads++;return {projectId,
+    layers:[{layerId:"layer1",localPath:"/private/approved/impact.wav",assetId:"approved",title:"Impact"}],
+    ambience:{assetId:"amb",localPath:"/private/approved/rain.wav",title:"Rain"}};},
+    soundDesignWrite:async ({projectId,action})=>{writes++;return {projectId,action};}};
+  const payload={projectId:"p1",action:"upsert",shotId:"intro",assetId:"approved",sha256:"b".repeat(64)};
+  const read=await request("POST","/sound-design",{projectId:"p1",action:"resolve",bundle:{}},deps);
+  assert.equal(read.status,200);
+  assert.equal(read.answer.layers[0].title,"Impact");
+  assert.equal(read.answer.ambience.title,"Rain");
+  assert.equal(JSON.stringify(read.answer).includes("/private/approved"),false,
+    "editor API returns approved cue metadata, never local audio filesystem paths");
+  assert.equal(reads,1);
+  assert.equal((await request("POST","/sound-design",payload,deps,{origin:"http://evil.test"})).status,403);
+  assert.equal((await request("POST","/sound-design",{...payload,localPath:"/etc/passwd"},deps)).status,422);
+  assert.equal((await request("POST","/sound-design",{...payload,projectId:"../escape"},deps)).status,422);
+  assert.equal((await request("POST","/sound-design",payload,deps)).answer.action,"upsert");
+  assert.equal(writes,1,"invalid writes never reach persistence");
+});
+
 test("sound previews are served only from hash-verified approved bank items",async()=>{
   const bytes=Buffer.from("RIFF-audition"),digest=createHash("sha256").update(bytes).digest("hex");
   const item={sha256:digest,localPath:"/approved/sfx.wav"};

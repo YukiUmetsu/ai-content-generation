@@ -1,10 +1,19 @@
 /** Same-origin, local-only Studio bridge for third-party CC0 SFX. */
 import {approveSfx,discoverSfx,listApprovedSfx,resolveSceneSfxChoices,setSceneSfxChoice}
   from "./video-production/sfx-discovery.mjs";
+import {setSoundDesign,resolveSoundDesign} from "./video-production/sound-design.mjs";
 import {readFile} from "node:fs/promises";
 import {createHash} from "node:crypto";
 
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u;
+const mixFields=["assetId","sha256","title","gainDb","fadeInMs","fadeOutMs"];
+const editorFields=[...mixFields,"layerId","shotId","trigger","offsetMs"];
+const projectEditorFields=(item,fields)=>Object.fromEntries(fields.filter(key=>
+  Object.hasOwn(item,key)).map(key=>[key,item[key]]));
+function forSoundEditor(design){
+  return {layers:design.layers.map(item=>projectEditorFields(item,editorFields)),
+    ambience:design.ambience?projectEditorFields(design.ambience,mixFields):null};
+}
 function send(res,status,value){res.writeHead(status,{"Content-Type":"application/json; charset=utf-8",
   "Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"});
   res.end(JSON.stringify(value));}
@@ -58,6 +67,17 @@ export async function handleSfxDiscoveryRequest(req,res,deps={}){
       if(!ID.test(payload?.projectId??"")||!ID.test(payload?.shotId??"")||
         !["auto","mute","pin"].includes(payload?.mode))throw Error("Invalid SFX choice.");
       send(res,200,await (deps.choice??setSceneSfxChoice)(payload,opts));
+    }else if(req.method==="POST"&&pathname==="/sound-design"){
+      const payload=await jsonBody(req),action=payload?.action;
+      if(!ID.test(payload?.projectId??"")||!["resolve","upsert","remove","ambience"].includes(action))
+        throw Error("Invalid sound-design request.");
+      const accepted=new Set(action==="resolve"?["action","projectId","bundle"]:
+        action==="upsert"?["action","projectId","layerId","shotId","assetId","sha256","trigger","offsetMs","gainDb","fadeInMs","fadeOutMs"]:
+        action==="remove"?["action","projectId","layerId"]:
+        ["action","projectId","assetId","sha256","gainDb","fadeInMs","fadeOutMs"]);
+      if(Object.keys(payload).some(key=>!accepted.has(key)))throw Error("Unexpected sound-design input field.");
+      if(action==="resolve")send(res,200,forSoundEditor(await (deps.soundDesignRead??resolveSoundDesign)(payload,opts)));
+      else send(res,200,await (deps.soundDesignWrite??setSoundDesign)(payload,opts));
     }else send(res,404,{error:"Unknown sound library route."});
   }catch(error){send(res,422,{error:String(error?.message??"Sound operation failed.").slice(0,270)});}
 }

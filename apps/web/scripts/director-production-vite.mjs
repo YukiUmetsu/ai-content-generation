@@ -94,8 +94,9 @@ async function deliverVideo(req,res,releaseDir){
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
   const compile=deps.compile??compilePreproductionRenderJob;
-  const bindSfx=async (compiled,input)=>resolveAndBindApprovedSfx(compiled,input,
-    deps.resolveSfx?{resolve:deps.resolveSfx}:{});
+  const bindSfx=async (compiled,input)=>resolveAndBindApprovedSfx(compiled,input,{
+    ...(deps.resolveSfx?{resolve:deps.resolveSfx}:{}),
+    ...(deps.resolveSoundDesign?{resolveDesign:deps.resolveSoundDesign}:{})});
   const compileLive=deps.compileLive??compileLiveVisualPreview;
   const research=deps.research??researchVideoTopic;
   const generateStory=deps.generateStory??generatePreproductionPlan;

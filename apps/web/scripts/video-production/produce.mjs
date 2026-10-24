@@ -237,9 +237,11 @@ export async function produceVideo(candidate, options, deps = {}) {
       reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
       reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
-    const soundEffects=job.sounds.map(({id,eventId,licenseStatus,assetSha256})=>({
-      id,eventId,eventSample:timeline.eventSamples[eventId],licenseStatus,
-      ...(assetSha256?{assetSha256}:{})
+    const soundEffects=job.sounds.map(({id,eventId,licenseStatus,assetSha256,kind,offsetMs,gainDb,fadeInMs,fadeOutMs})=>({
+      id,eventId,eventSample:timeline.eventSamples[eventId]+(offsetMs??0)*48,licenseStatus,
+      ...(assetSha256?{assetSha256}:{}),...(kind?{kind}:{}),
+      ...(offsetMs!==undefined?{offsetMs}:{}),...(gainDb!==undefined?{gainDb}:{}),
+      ...(fadeInMs!==undefined?{fadeInMs}:{}),...(fadeOutMs!==undefined?{fadeOutMs}:{})
     }));
     await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
