@@ -82,7 +82,7 @@ describe("Studio shell", () => {
       const data = url.endsWith("/status")
         ? {apiKeyConfigured:true, collecting:false, searchCallsLast24h:2, searchCallLimit:20}
         : url.endsWith("/watchlists")
-          ? {watchlists:[{id:"watch-demo",name:"House Math",query:"heat pump savings",region:"US",language:"en",enabled:true,createdAt:1,updatedAt:1,nextDueAt:1,lastFinishedAt:1,backoffUntil:0,errorCode:null}]}
+          ? {watchlists:[{id:"watch-demo",name:"House Math",query:"heat pump savings",queryMode:"manual",queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump savings",region:"US",language:"en",enabled:true,createdAt:1,updatedAt:1,nextDueAt:1,lastFinishedAt:1,backoffUntil:0,errorCode:null}]}
           : url.endsWith("/videos")
             ? {videos:[{videoId:"abcABC12345",title:"Competitor video",channelId:"UCdemo",channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:60,viewCount:1234,likeCount:null,commentCount:null,subscriberCount:null,sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",provider:"youtube-data-api",observedAt:1,expiresAt:9999999999}]}
             : null;
