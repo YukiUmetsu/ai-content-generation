@@ -256,7 +256,7 @@ describe("Studio Research to source-backed story", () => {
 
   it("selects a story direction with native radios and hides optional inputs until expanded", async () => {
     vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => readinessResponse(String(url)) ?? new Response("{}", { status: 200 })));
-    const create = vi.fn(() => true), user = userEvent.setup();
+    const create = vi.fn((draft:EditorialDraft) => Boolean(draft)), user = userEvent.setup();
     render(<ResearchWorkspace locale="en" projectTopic="Rent vs buy" onUseVideo={vi.fn(() => true)} onCreateStoryboard={create} />);
     await user.click(screen.getByRole("radio", { name: /compare the options/i }));
     expect(screen.getByRole("radio", { name: /compare the options/i })).toBeChecked();
@@ -349,7 +349,7 @@ describe("Studio Research to source-backed story", () => {
     }));
     const user=userEvent.setup();
     render(<ResearchWorkspace locale="en" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
-    await user.click(screen.getByText(/Saved searches/i));
+    await user.click(screen.getByText("Saved searches", { selector: "summary" }));
     await user.click(await screen.findByRole("button",{name:/Heat pump costs.*1 source/i}));
     expect(screen.getByRole("textbox",{name:"Research topic"})).toHaveValue("Heat pump costs");
     expect(screen.getByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();
