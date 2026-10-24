@@ -130,13 +130,16 @@ export async function discoverShotAssets(input,opts={}){
     if(!opts.pexelsKey)warnings.push("Pexels is disabled until PEXELS_API_KEY is configured locally.");
     else{
       const cache=new Map();
-      for(const need of active.slice(0,12)){
-        try{
-          if(!cache.has(need.query))cache.set(need.query,await pexelsCandidates(need.query,opts));
-          byShot.get(need.shotId).push(...cache.get(need.query));
-        }catch(error){warnings.push(`Pexels ${need.shotId}: ${visible(error.message,120)}`);}
+      const queries=[...new Set(active.map(x=>x.query))].slice(0,12);
+      for(let start=0;start<queries.length;start+=3){
+        await Promise.all(queries.slice(start,start+3).map(async query=>{
+          try{cache.set(query,await pexelsCandidates(query,opts));}
+          catch(error){warnings.push(`Pexels ${query}: ${visible(error.message,120)}`);cache.set(query,[]);}
+        }));
       }
-      if(active.length>12)warnings.push("Pexels requests were capped at 12 scenes; use Poly Haven or search the next storyboard section.");
+      for(const need of active)byShot.get(need.shotId).push(...(cache.get(need.query)??[]));
+      if(new Set(active.map(x=>x.query)).size>12)
+        warnings.push("Pexels requests were capped at 12 distinct subjects; use Poly Haven for remaining scenes.");
     }
   }
   return {schemaVersion:1,kind:"contentgen-scene-asset-suggestions",providerCredit:"Assets via Poly Haven / Pexels",
