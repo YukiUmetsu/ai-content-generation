@@ -74,7 +74,11 @@ jobs:
             scripts/video-production/studio-server.test.mjs \
             scripts/video-production/text-layout.test.mjs \
             scripts/video-production/topic-cli.test.mjs \
-            scripts/video-production/try.test.mjs
+            scripts/video-production/try.test.mjs \
+            scripts/video-production/research-job-planner.test.mjs \
+            scripts/video-production/research-job-queue.test.mjs \
+            scripts/video-production/research-model-settings.test.mjs \
+            scripts/video-production/model-profiles.test.mjs
 
       - name: Production build
         run: pnpm build
