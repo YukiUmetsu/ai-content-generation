@@ -346,7 +346,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           await setStage(job,`scene:${index+1}`);
           if(scene){
             // Preserve the original injectable whole-scene producer for existing integrations/tests.
-            unit=await attempt(job,(settings,feedback)=>scene(story,index,data.dossier,data.quotes,settings,{signal,feedback}),signal);
+            unit=await attempt(job,(settings,feedback)=>scene(story,index,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),signal);
           }else{
             const substep=async(filename,label,action,validator)=>{
               const saved=await stageFile(job,filename);
@@ -362,13 +362,13 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
             if(!structure){
               if(sceneStructure){
                 structure=await substep(`structure_${prefix}.json`,"structure",(settings,feedback)=>
-                  sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback}));
+                  sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}));
               }else{
                 const core=await substep(`structure_core_${prefix}.json`,"structure:core",(settings,feedback)=>
-                  sceneCore(story,index,data.dossier,data.quotes,settings,{signal,feedback}),
+                  sceneCore(story,index,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                   sceneCore===generateSceneCore?validateSavedSceneCore:null);
                 const states=await substep(`structure_states_${prefix}.json`,"structure:states",(settings,feedback)=>
-                  sceneStates(story,index,core,data.dossier,data.quotes,settings,{signal,feedback}),
+                  sceneStates(story,index,core,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                   sceneStates===generateSceneStates?validateSavedSceneStates:null);
                 structure=compose(index,()=>combineStructure(core,states));
                 guard(signal);await write(job,`structure_${prefix}.json`,structure);
@@ -383,20 +383,20 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
               if(!visual){
                 if(sceneVisual){
                   visual=await substep(`visual_${prefix}_${phase}.json`,`visual:${phase+1}`,(settings,feedback)=>
-                    sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}));
+                    sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}));
                 }else{
                   const direction=await substep(`visual_direction_${prefix}_${phase}.json`,`visual:${phase+1}:direction`,(settings,feedback)=>
-                    sceneDirection(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}),
+                    sceneDirection(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                     sceneDirection===generateSceneDirection?value=>validateSavedSceneDirection(value,previous):null);
                   const elements=await substep(`visual_elements_${prefix}_${phase}.json`,`visual:${phase+1}:elements`,(settings,feedback)=>
-                    sceneElements(story,index,phase,structure,direction,data.dossier,data.quotes,settings,{signal,feedback}),
+                    sceneElements(story,index,phase,structure,direction,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                     sceneElements===generateSceneElements?validateSavedSceneElements:null);
                   visual=compose(index,()=>combineVisual(direction,elements,previous));
                   guard(signal);await write(job,`visual_${prefix}_${phase}.json`,visual);
                 }
               }
               const narration=await substep(`narration_${prefix}_${phase}.json`,`narration:${phase+1}`,(settings,feedback)=>
-                sceneNarration(story,index,phase,structure,visual,data.dossier,data.quotes,settings,{signal,feedback}),
+                sceneNarration(story,index,phase,structure,visual,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                 sceneNarration===generateSceneNarration?validateSavedSceneNarration:null);
               phases.push({visual,narration});
             }
