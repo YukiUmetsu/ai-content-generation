@@ -146,7 +146,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const unresolved=issues.filter(issue=>issue.kind==="source_missing"||issue.kind==="source_mismatch").length;
   const unreviewed=issues.filter(issue=>issue.kind==="needs_factual_review"||issue.kind==="source_unchecked").length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
-  const stages=getProductionStages({briefReady:Boolean(topic.trim()),researchJob:job,
+  const stages=getProductionStages({briefReady:Boolean(draft?.dossier?.topic?.viewerQuestion?.trim()||job?.jobId),researchJob:job,
     researchArtifactId:artifactId,storyboardReady:Boolean(board),
     storyboardResearchArtifactId,missingEvidenceClaims:unresolved,unreviewedClaims:unreviewed});
   const current=stages.find(item=>item.id===step)!;
@@ -242,6 +242,11 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
               {project?.notes||tr("Your research brief defines the audience, viewer question, and learning payoff.",
                 "誰に、何を、どう伝えるかを調査用ブリーフで決めます。")}
             </p>
+            {draft?.dossier?.topic?.viewerQuestion&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm">
+              <p className="text-xs font-medium text-muted-foreground">{tr("Viewer question","視聴者の疑問")}</p>
+              <p className="mt-1">{draft.dossier.topic.viewerQuestion}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{tr("Audience","対象視聴者")}: {draft.dossier.topic.audience}</p>
+            </div>}
             <div className="mt-5 flex flex-wrap gap-3">
               <button type="button" className={primaryButton} onClick={()=>selectStep("research")}>
                 {tr("Continue to research","調査へ進む")}
