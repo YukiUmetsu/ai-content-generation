@@ -4,11 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { YoutubeIntelligencePanel } from "./youtube-intelligence-panel";
 import type { EditorialDraft } from "./editorial-brief";
 
-afterEach(() => vi.unstubAllGlobals());
+const GENERATED_WATCHLIST_ID = "watch_419bc7901411bd7b609fb5bb38a927e2";
+afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); });
 
 function fakeApi(withVideo: boolean, enabled = true) {
   let watchlists: Array<Record<string, unknown>> = withVideo ? [{
-    id: "watch-demo", name: "House Math", query: "heat pump cost",
+    id: GENERATED_WATCHLIST_ID, name: "House Math", query: "heat pump cost",
     queryMode:"manual", queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump cost",
     region: "US", language: "en", enabled,
     createdAt: 123, updatedAt: 123, nextDueAt: 456,
@@ -92,7 +93,7 @@ describe("YouTube Intelligence", () => {
     expect(collect).toBeEnabled();
     await user.click(collect);
     expect(await screen.findByText(/Collection queued locally/i)).toBeInTheDocument();
-    expect(requests).toContain("POST /api/research/market/watchlists/watch-demo/collect");
+    expect(requests).toContain(`POST /api/research/market/watchlists/${GENERATED_WATCHLIST_ID}/collect`);
     expect(screen.getByText(/Daily automatic collection off/i)).toBeInTheDocument();
   });
 
@@ -111,6 +112,21 @@ describe("YouTube Intelligence", () => {
     await user.selectOptions(filter,"fast-starters");
     expect(screen.getByText(/No videos match this performance filter/)).toBeInTheDocument();
     expect(requests.filter(x=>x.endsWith("/videos"))).toHaveLength(requestsBefore);
+  });
+
+  it("autosaves original-video edits for a real server-generated watchlist ID", async () => {
+    fakeApi(true);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    const audience = await screen.findByRole("textbox", {name:"Who is this for?"});
+    await user.type(audience, " considering upgrades");
+    const key = `contentgen:editorial-brief:v1:${GENERATED_WATCHLIST_ID}`;
+    await waitFor(() => {
+      const saved = localStorage.getItem(key);
+      expect(saved).not.toBeNull();
+      expect(JSON.parse(saved ?? "{}").input.audience).toContain("considering upgrades");
+    });
+    expect(screen.queryByText(/Invalid niche ID/)).not.toBeInTheDocument();
   });
 
   it("saves an original editable idea without copying competitor metrics", async () => {

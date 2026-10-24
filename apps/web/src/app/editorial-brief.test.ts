@@ -31,6 +31,29 @@ describe("editorial niche to storyboard", () => {
     expect(restored.draft.input.topic).toBe("new roof cost");
   });
 
+  it("persists drafts using actual SQLite-generated watchlist IDs without weakening project ID validation", () => {
+    const generatedId = "watch_419bc7901411bd7b609fb5bb38a927e2";
+    const draft = createDraft("homeownership costs");
+    draft.input.audience = "Homebuyers evaluating lifetime costs";
+    expect(() => persistEditorialDraft(generatedId, draft)).not.toThrow();
+    expect(localStorage.getItem(`contentgen:editorial-brief:v1:${generatedId}`)).not.toBeNull();
+    const restored = loadEditorialDraft(generatedId, "a different fallback topic");
+    expect(restored.warning).toBeNull();
+    expect(restored.draft.input.audience).toBe("Homebuyers evaluating lifetime costs");
+    expect(restored.draft.input.topic).toBe("homeownership costs");
+
+    // A generated watchlist ID is valid for draft storage but NOT for storyboard IDs.
+    expect(() => draftToStoryboard(draft, generatedId, "en")).toThrow("Invalid video project ID.");
+    for (const id of [
+      "watch_1234", "watch_419bc7901411bd7b609fb5bb38a927e2/../other",
+      "watch_419bc7901411bd7b609fb5bb38a927eZ", "watch_" + "a".repeat(64),
+      "__proto__", "watch_foo_bar",
+    ]) {
+      expect(() => persistEditorialDraft(id, draft)).toThrow("Invalid niche ID.");
+    }
+    expect(() => persistEditorialDraft("watch-house", draft)).not.toThrow();
+  });
+
   it("produces a valid original storyboard that answers the opening question with unverified claims", () => {
     const draft = createDraft("heat pump cost");
     draft.input.audience = "Homeowners comparing quotes";

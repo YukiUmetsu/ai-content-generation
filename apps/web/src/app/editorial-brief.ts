@@ -37,7 +37,10 @@ export interface EditorialDraft {
 
 export const EDITORIAL_STORAGE_PREFIX = "contentgen:editorial-brief:v1:";
 const MAX_DRAFT_BYTES = 28 * 1024;
+// Video-project and legacy draft identifiers are slug-shaped. SQLite watchlist IDs
+// are generated separately as "watch_" plus 16 random bytes encoded in hex.
 const KEY = /^[a-z0-9][a-z0-9-]{1,79}$/i;
+const WATCHLIST_ID = /^watch_[0-9a-f]{32}$/i;
 const APPROACH_IDS = ["direct", "process", "comparison"] as const;
 
 const bounded = (value: unknown, label: string, max: number, min = 0): string => {
@@ -140,7 +143,7 @@ export function validateEditorialDraft(candidate: unknown): EditorialDraft {
 }
 
 function storageKey(watchlistId: string): string {
-  if (!KEY.test(watchlistId)) throw Error("Invalid niche ID.");
+  if (!KEY.test(watchlistId) && !WATCHLIST_ID.test(watchlistId)) throw Error("Invalid niche ID.");
   return EDITORIAL_STORAGE_PREFIX + watchlistId;
 }
 
