@@ -7,6 +7,8 @@ import { repairStoryboardEvidence } from "./storyboard-evidence-repair";
 import { ResearchWorkspace } from "./research-workspace";
 import { inspectClaimEvidence } from "./claim-evidence";
 import { ProductionClaimIssues } from "./production-claim-issues";
+import { createClaimReviewReceipt, isClaimReviewCurrent, loadClaimReviews,
+  saveClaimReviews } from "./production-claim-reviews";
 import { getProductionStages, type ProductionStageId, type ProductionStageStatus } from "./production-progress";
 import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
@@ -95,6 +97,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const [error,setError]=useState("");
   const [retryBusy,setRetryBusy]=useState(false);
   const [repairSummary,setRepairSummary]=useState("");
+  const [claimReviews,setClaimReviews]=useState(()=>loadClaimReviews(projectId));
 
   useEffect(()=>{
     const refresh=()=>{
@@ -143,8 +146,12 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   },[artifactId]);
 
   const issues=useMemo(()=>board?inspectClaimEvidence(board,draft??undefined):[],[board,draft]);
+  const reviewedClaims=useMemo(()=>new Set(issues.filter(issue=>
+    isClaimReviewCurrent(issue,draft,claimReviews[issue.claimId])).map(issue=>issue.claimId)),
+    [issues,draft,claimReviews]);
   const unresolved=issues.filter(issue=>issue.kind==="source_missing"||issue.kind==="source_mismatch").length;
-  const unreviewed=issues.filter(issue=>issue.kind==="needs_factual_review"||issue.kind==="source_unchecked").length;
+  const unreviewed=issues.filter(issue=>issue.kind==="source_unchecked"||
+    (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
   const stages=getProductionStages({briefReady:Boolean(draft?.dossier?.topic?.viewerQuestion?.trim()||job?.jobId),researchJob:job,
     researchArtifactId:artifactId,storyboardReady:Boolean(board),
@@ -165,6 +172,22 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
       setJob(await response.json() as JobState);
     }catch(reason){setError(reason instanceof Error?reason.message:"Evidence repair could not restart.");}
     finally{setRetryBusy(false);}
+  }
+  function markClaimReviewed(claimId:string){
+    setError("");
+    const issue=issues.find(item=>item.claimId===claimId);
+    if(!issue||!draft){setError("A saved claim and research snapshot are required for review.");return;}
+    try{
+      const receipt=createClaimReviewReceipt(issue,draft);
+      const next={...claimReviews,[claimId]:receipt};
+      saveClaimReviews(projectId,next);
+      setClaimReviews(next);
+    }catch(reason){setError(reason instanceof Error?reason.message:"Claim review could not be recorded.");}
+  }
+  function undoClaimReview(claimId:string){
+    const next={...claimReviews};delete next[claimId];
+    try{saveClaimReviews(projectId,next);setClaimReviews(next);setError("");}
+    catch(reason){setError(reason instanceof Error?reason.message:"Claim review could not be removed.");}
   }
   function fixStoryboardSources(){
     setError("");setRepairSummary("");
@@ -307,6 +330,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
                 {tr("Go to research","調査へ")}
               </button></div>}
             {board&&<ProductionClaimIssues issues={issues} draft={draft} locale={locale}
+              reviewedClaims={reviewedClaims} onMarkReviewed={markClaimReviewed} onUndoReviewed={undoClaimReview}
               onOpenBeat={beatId=>{
                 try { sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,beatId); }
                 catch { /* The planner still opens when session storage is unavailable. */ }
