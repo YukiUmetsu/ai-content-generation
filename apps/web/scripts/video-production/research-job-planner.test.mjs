@@ -320,3 +320,32 @@ test("invalid split scene fragments never assemble into an accepted visual or st
   assert.throws(()=>assembleSceneVisual(direction,{visualElements},previous),
     error=>error.code==="schema_invalid"&&error.field==="visualAction");
 });
+
+test("tiny scene core rejects labels that final visual mechanic forbids",async()=>{
+  for(const subject of [" Heat pump ","https://example.com/unit","Heat // pump"]){
+    await assert.rejects(generateSceneCore(outline,0,dossier,quotes,settings,{
+      transport:transportFor({subject,parts:["Equipment","Labor"],operator:"split"})
+    }),error=>error.code==="schema_invalid"&&error.field==="subject");
+  }
+  await assert.rejects(generateSceneCore(outline,0,dossier,quotes,settings,{
+    transport:transportFor({subject:"Heat pump",parts:["Equipment ","Labor"],operator:"split"})
+  }),error=>error.code==="schema_invalid"&&error.field==="parts[0]");
+});
+
+test("tiny scene states reject placeholders before accepting a checkpoint",async()=>{
+  const core={subject:"Heat pump",parts:["Equipment","Labor"],operator:"split"};
+  await assert.rejects(generateSceneStates(outline,0,core,dossier,quotes,settings,{
+    transport:transportFor({before:"The problem",action:"Split the bill into parts",after:"The answer"})
+  }),error=>error.code==="schema_invalid"&&error.field==="before");
+  assert.throws(()=>assembleSceneStructure(core,{before:"Main idea",action:"Split the bill into parts",after:"Both parts are visible"}),
+    error=>error.code==="schema_invalid"&&error.field==="before");
+});
+
+test("whole-scene acceptance catches downstream mechanic and state violations",async()=>{
+  assert.throws(()=>assembleResumablePlan(dossier,outline,[unit("Complete cost"),{
+    ...unit("Complete cost"),subject:" Heat pump "
+  }]),error=>error.sceneIndex===1&&/subject|mechanic-label/i.test(error.message));
+  assert.throws(()=>assembleResumablePlan(dossier,outline,[unit("Complete cost"),{
+    ...unit("Complete cost"),before:"The problem"
+  }]),/before|teaching-state-placeholder/i);
+});
