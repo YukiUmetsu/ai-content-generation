@@ -366,5 +366,34 @@ describe("Studio Research to source-backed story", () => {
     expect(screen.queryByRole("link",{name:/DOE Energy Saver/i})).not.toBeInTheDocument();
     expect(drafts).toBe(0);
   });
+
+  it("can generate from an existing saved search while SearXNG is offline",async()=>{
+    localStorage.setItem("contentgen:studio-search:latest:v1",JSON.stringify({
+      topic:"Heat pump costs",artifactId:savedSearchId}));
+    const requests:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async (url:RequestInfo|URL)=>{
+      const path=String(url);requests.push(path);
+      if(path===readinessPath)return new Response(JSON.stringify({...readyServices,
+        search:{state:"unavailable"}}),{status:200});
+      if(path.endsWith("/"+savedSearchId))return new Response(JSON.stringify({
+        artifactId:savedSearchId,topic:"Heat pump costs",
+        query:"What should I understand about Heat pump costs?",
+        audience:"people exploring this topic",locale:"en-US",
+        searchedAt:"2026-10-24T01:52:50.000Z",results:[
+          {title:"DOE Energy Saver",url:"https://www.energy.gov/energysaver/insulation",snippet:"Insulation overview."}
+        ]}),{status:200});
+      if(path==="/api/contentgen-director/research-draft")
+        return new Response(JSON.stringify(researchedFixture),{status:200});
+      throw Error(`Unexpected URL ${path}`);
+    }));
+    const user=userEvent.setup();
+    render(<ResearchWorkspace locale="en" projectTopic="Heat pump costs" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
+    expect(await screen.findByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();
+    const generate=screen.getByRole("button",{name:/generate storyboard from saved sources/i});
+    await waitFor(()=>expect(generate).toBeEnabled());
+    await user.click(generate);
+    expect(requests).not.toContain("/api/contentgen-director/research-search");
+    expect(requests).toContain("/api/contentgen-director/research-draft");
+  });
 });
 
