@@ -15,6 +15,10 @@ const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
 const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
+const safeSchemaIssue=issue=>["missing","wrong_type","too_short","too_long","placeholder","control_char"].includes(issue)?issue:null;
+const sceneStateRepairHint=field=>field==="before"||field==="after"?
+  ` The ${field} field must be a string of 8–48 characters describing a concrete ${field==="before"?"starting":"ending"} visible state, not a generic label.`:
+  field==="action"?" The action field must be a string of 8–90 characters describing a concrete visible change.":"";
 const errorInfo=error=>{
   const raw=String(error?.message??error??"Unknown job failure");
   const detailCode=["schema_invalid","json_invalid","output_truncated","output_missing","provider_envelope_invalid"].includes(error?.code)?error.code:null;
@@ -31,8 +35,11 @@ const errorInfo=error=>{
   const message=({model_memory:"Local model ran out of available memory.",model_timeout:"Local model request timed out.",
     invalid_output:"Local model returned invalid structured data.",storage:"Cannot write local job checkpoints.",
     provider_unavailable:"Local model or network provider is unavailable.",stage_failed:"This job stage failed; review server diagnostics."})[code];
-  return {code,message,...(detailCode?{detailCode}:{}),...(providerDetail?{providerDetail}:{}),
-    ...(safeField(error?.field)?{field:safeField(error.field)}:{})};
+  const field=safeField(error?.field);
+  const schemaIssue=detailCode==="schema_invalid"?safeSchemaIssue(error?.schemaIssue):null;
+  const safeMessage=schemaIssue&&field?`${message} ${field}: ${schemaIssue}.`:message;
+  return {code,message:safeMessage,...(detailCode?{detailCode}:{}),...(providerDetail?{providerDetail}:{}),
+    ...(field?{field}:{}),...(schemaIssue?{schemaIssue}:{})};
 };
 
 async function atomicText(file,bytes,limit=512*1024){
@@ -153,7 +160,8 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           const failure=last?errorInfo(last):null;
           const compact=sawTruncation?" The previous JSON was cut off at the output limit. Keep all required fields but use shorter text in one complete JSON object.":"";
           const feedback=n>0||sawTruncation?failure?.field&&failure.detailCode==="schema_invalid"?
-            `The previous JSON failed validation at ${failure.field}. Correct that field and return the complete JSON without inventing facts.`+compact:
+            `The previous JSON failed validation at ${failure.field}${failure.schemaIssue?` (${failure.schemaIssue})`:""}. `+
+              `Correct that field and return the complete JSON without inventing facts.`+sceneStateRepairHint(failure.field)+compact:
             sawTruncation?compact.trim():
               "Return ONLY a complete JSON object with exactly the required fields and types; correct any malformed fields without inventing facts.":null;
           const result=await inference(()=>call(settings,feedback),signal);
@@ -176,11 +184,11 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           if(retryable&&n<maxAttempts-1){
             job.retry={stage:job.stage,attempt:n+2,maxAttempts,reason:info.code,modelIndex:modelIndex+1,totalModels:models.length,
               ...(info.detailCode?{detailCode:info.detailCode}:{}),...(info.providerDetail?{providerDetail:info.providerDetail}:{}),
-              ...(info.field?{field:info.field}:{})};
+              ...(info.field?{field:info.field}:{}),...(info.schemaIssue?{schemaIssue:info.schemaIssue}:{})};
             await save(job);
             console.warn("[contentgen-research-retry]",JSON.stringify({jobId:job.id,stage:job.stage,
               errorCode:info.code,detailCode:info.detailCode??null,providerDetail:info.providerDetail??null,field:info.field??null,
-              nextAttempt:n+2,maxAttempts,modelIndex:modelIndex+1}));
+              schemaIssue:info.schemaIssue??null,nextAttempt:n+2,maxAttempts,modelIndex:modelIndex+1}));
             await sleep(1000*(n+1));
           }else break;
         }
@@ -190,6 +198,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           ...(errorInfo(last).detailCode?{detailCode:errorInfo(last).detailCode}:{}),
           ...(errorInfo(last).providerDetail?{providerDetail:errorInfo(last).providerDetail}:{}),
           ...(errorInfo(last).field?{field:errorInfo(last).field}:{}),
+          ...(errorInfo(last).schemaIssue?{schemaIssue:errorInfo(last).schemaIssue}:{}),
           modelIndex:modelIndex+2,totalModels:models.length};
         await save(job);
         await sleep(2500);
