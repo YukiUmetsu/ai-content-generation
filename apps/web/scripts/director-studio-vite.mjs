@@ -6,6 +6,7 @@ import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
+import { reconcileStoryboardPlan } from "./video-production/storyboard-director-sync.mjs";
 import { searchStudioSources, loadStudioSearch, listStudioSearches } from "./video-production/studio-search.mjs";
 import { generateMarketQueries } from "./video-production/market-query-generator.mjs";
 import { researchJobManager } from "./video-production/research-job-queue.mjs";
@@ -119,18 +120,25 @@ export async function handleDirectorRequest(req,res,deps={}){
     }else if(req.method==="POST"&&route==="/compile-saved-research"){
       const input=await readBody(req);
       if(!input||typeof input!=="object"||Array.isArray(input)||
-         Object.keys(input).length!==1||typeof input.artifactId!=="string"||
-         !/^research_[a-z0-9_-]{1,78}-[a-f0-9]{12}$/iu.test(input.artifactId))
-        throw Error("Select one valid saved research artifact.");
+         Object.keys(input).some(key=>!["artifactId","projectId","storyboard"].includes(key))||
+         typeof input.artifactId!=="string"||
+         !/^research_[a-z0-9_-]{1,78}-[a-f0-9]{12}$/iu.test(input.artifactId)||
+         ((input.projectId===undefined)!==(input.storyboard===undefined)))
+        throw Error("Select one saved research artifact and an optional matching project storyboard.");
       const saved=await (deps.loadResearch??loadStudioResearchDraft)(input.artifactId);
       if(saved.artifactId!==input.artifactId||saved.snapshotId!==saved.dossier?.id||
          saved.plan?.researchId!==saved.dossier?.id)
         throw Error("Saved research and preproduction plan must have identical immutable lineage.");
-      // Compile and fingerprint on the local server; do not regenerate a storyboard or use a model.
-      const bundle=(deps.compileBundle??compilePreproductionBundle)(saved.dossier,saved.plan);
-      if(bundle.kind!=="preproduction-bundle"||bundle.researchId!==saved.dossier.id)
+      // Compile and fingerprint on the local server; never regenerate a storyboard or use a model.
+      const result=input.storyboard
+        ?(deps.syncStoryboard??reconcileStoryboardPlan)({artifactId:input.artifactId,
+          projectId:input.projectId,dossier:saved.dossier,plan:saved.plan,storyboard:input.storyboard})
+        :{bundle:(deps.compileBundle??compilePreproductionBundle)(saved.dossier,saved.plan),
+          synchronization:null};
+      if(result.bundle.kind!=="preproduction-bundle"||result.bundle.researchId!==saved.dossier.id)
         throw Error("The saved research compiled into a mismatched bundle.");
-      send(res,200,{artifactId:input.artifactId,dossier:saved.dossier,bundle});
+      send(res,200,{artifactId:input.artifactId,dossier:saved.dossier,
+        bundle:result.bundle,synchronization:result.synchronization});
     }else if(req.method==="POST"&&route==="/research-draft"){
       if(researchDraftRunning){send(res,409,{error:"Research is already running. Wait for the current draft or cancel it."});return;}
       researchDraftRunning=true;
