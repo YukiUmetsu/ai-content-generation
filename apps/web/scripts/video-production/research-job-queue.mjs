@@ -6,14 +6,14 @@ import {fileURLToPath} from "node:url";
 import {validateStudioBrief} from "./studio-research.mjs";
 import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
-import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneStructure,generateSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
+import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
 const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
+const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
 const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const errorInfo=error=>{
   const raw=String(error?.message??error??"Unknown job failure");
@@ -77,7 +77,9 @@ async function saveCompleted(root,job,data,plan){
 export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudioSearch,
   capture=captureSavedSources,evidence=buildDeterministicDossier,outline=null,
   outlineSkeleton=generateOutlineSkeleton,outlineBeat=generateOutlineBeat,combineOutline=assembleOutline,
-  scene=null,sceneStructure=generateSceneStructure,sceneVisual=generateSceneVisual,
+  scene=null,sceneStructure=null,sceneCore=generateSceneCore,sceneStates=generateSceneStates,
+  combineStructure=assembleSceneStructure,sceneVisual=null,sceneDirection=generateSceneDirection,
+  sceneElements=generateSceneElements,combineVisual=assembleSceneVisual,
   sceneNarration=generateSceneNarration,combineScene=assembleSceneUnit,
   assemble=assembleResumablePlan,persist=saveCompleted,sleep=pause}={}){
   const active=new Map();
@@ -237,13 +239,37 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
               guard(signal);await write(job,filename,result);
               return result;
             };
-            const structure=await substep(`structure_${prefix}.json`,"structure",(settings,feedback)=>
-              sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback}));
+            let structure=await stageFile(job,`structure_${prefix}.json`);
+            if(!structure){
+              if(sceneStructure){
+                structure=await substep(`structure_${prefix}.json`,"structure",(settings,feedback)=>
+                  sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback}));
+              }else{
+                const core=await substep(`structure_core_${prefix}.json`,"structure:core",(settings,feedback)=>
+                  sceneCore(story,index,data.dossier,data.quotes,settings,{signal,feedback}));
+                const states=await substep(`structure_states_${prefix}.json`,"structure:states",(settings,feedback)=>
+                  sceneStates(story,index,core,data.dossier,data.quotes,settings,{signal,feedback}));
+                structure=combineStructure(core,states);
+                guard(signal);await write(job,`structure_${prefix}.json`,structure);
+              }
+            }
             const phases=[];
             for(let phase=0;phase<3;phase++){
               const previous=phases.map(part=>part.visual);
-              const visual=await substep(`visual_${prefix}_${phase}.json`,`visual:${phase+1}`,(settings,feedback)=>
-                sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}));
+              let visual=await stageFile(job,`visual_${prefix}_${phase}.json`);
+              if(!visual){
+                if(sceneVisual){
+                  visual=await substep(`visual_${prefix}_${phase}.json`,`visual:${phase+1}`,(settings,feedback)=>
+                    sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}));
+                }else{
+                  const direction=await substep(`visual_direction_${prefix}_${phase}.json`,`visual:${phase+1}:direction`,(settings,feedback)=>
+                    sceneDirection(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}));
+                  const elements=await substep(`visual_elements_${prefix}_${phase}.json`,`visual:${phase+1}:elements`,(settings,feedback)=>
+                    sceneElements(story,index,phase,structure,direction,data.dossier,data.quotes,settings,{signal,feedback}));
+                  visual=combineVisual(direction,elements,previous);
+                  guard(signal);await write(job,`visual_${prefix}_${phase}.json`,visual);
+                }
+              }
               const narration=await substep(`narration_${prefix}_${phase}.json`,`narration:${phase+1}`,(settings,feedback)=>
                 sceneNarration(story,index,phase,structure,visual,data.dossier,data.quotes,settings,{signal,feedback}));
               phases.push({visual,narration});
