@@ -18,6 +18,7 @@ const contentBoxes: SafeFrameItem[] = [
 ];
 
 /** Reserved overlay regions are approximate preset authoring guidance, not official UI guarantees. */
+// eslint-disable-next-line react-refresh/only-export-components -- Headless export shares this deterministic profile helper.
 export function portraitProfile(preset: "youtube-shorts" | "instagram-reels" | "tiktok") {
   const item = videoPlatformPreset(preset);
   return safeFrameProfileFromInset({
