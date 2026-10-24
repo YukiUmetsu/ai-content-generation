@@ -61,3 +61,21 @@ test("rejects silently rewriting claim citations, and identifies unsupported sem
   assert.equal(result.synchronization.applied.length,0);
   assert.ok(result.synchronization.manualReview.some(w=>w.includes("camera")));
 });
+
+test("reports unsupported narrative and semantic edits explicitly without mutating the saved plan",()=>{
+  const edited=board();
+  edited.locale="ja";edited.fps={num:24,den:1};edited.illustrativeData=true;
+  edited.beats[0].role="reveal";edited.beats[0].visualIntent="comparison";
+  edited.beats[0].namedEvents=["custom-reveal"];edited.beats[0].opensQuestion="custom-question";
+  edited.semanticObjects=[{id:"new-subject",label:"A different object"}];
+  edited.semanticEvents=[];
+  const result=reconcileStoryboardPlan({artifactId,projectId:"project-demo",
+    dossier,plan,storyboard:edited,compile});
+  assert.equal(result.synchronization.applied.length,0);
+  for(const subject of ["narrative-role","visual-intent","semantic-event","question-open",
+    "frame-rate","locale","illustrative-data","semantic-object catalog"]){
+    assert.ok(result.synchronization.manualReview.some(w=>w.includes(subject)),subject);
+  }
+  assert.deepEqual(result.bundle.plan,plan);
+  assert.equal(plan.shots[0].visualChange,"Reveal parts");
+});
