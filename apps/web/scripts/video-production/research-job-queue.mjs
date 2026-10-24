@@ -15,7 +15,7 @@ const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",impo
 const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const safeName=name=>/^(?:manifest|captures|evidence|evidence_repair_\d+|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
+const safeName=name=>/^(?:manifest|captures(?:_repair_\d+)?|evidence|evidence_source_repair_\d+|evidence_repair_\d+|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
 const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const safeSchemaIssue=issue=>["missing","wrong_type","too_short","too_long","placeholder","control_char",
   "wrong_shape","invalid_element","duplicate_previous"].includes(issue)?issue:null;
@@ -132,7 +132,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   };
   const write=async(job,name,data)=>{
     await mkdir(join(rootJobs,job.id),{recursive:true,mode:0o700});
-    await writeCheckpoint(pathFor(job.id,name),data,name==="captures.json"?256*1024:512*1024);
+    await writeCheckpoint(pathFor(job.id,name),data,name==="captures.json"||/^captures_repair_\d+\.json$/u.test(name)?256*1024:512*1024);
   };
   const save=job=>{
     const previous=manifestWrites.get(job.id)??Promise.resolve();
@@ -155,7 +155,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     if(job.id!==id||job.version!==1)throw Error("Research job manifest is invalid.");
     return job;
   };
-  const stageFile=async(job,name)=>optionalJson(pathFor(job.id,name),name==="captures.json"?256*1024:512*1024);
+  const stageFile=async(job,name)=>optionalJson(pathFor(job.id,name),name==="captures.json"||/^captures_repair_\d+\.json$/u.test(name)?256*1024:512*1024);
   const setStage=async(job,stage,currentStep=null)=>{job.status="running";job.stage=stage;
     job.currentStep=currentStep;job.error=null;job.retry=null;await save(job);};
   const guard=signal=>{if(signal.aborted)throw signal.reason??Error("Job cancelled.");};
@@ -240,19 +240,22 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     try{
       job=await read(id);
       guard(signal);
-      let captures=await stageFile(job,"captures.json");
+      const revision=job.evidenceRepairRevision??0;
+      const captureName=revision>0?`captures_repair_${revision}.json`:"captures.json";
+      const evidenceName=revision>0?`evidence_source_repair_${revision}.json`:"evidence.json";
+      let captures=await stageFile(job,captureName);
       if(!captures){
         await setStage(job,"capture");
         const saved=await loadSearch(job.searchArtifactId,{root});
         validateStudioSearchMatch(saved,job.brief);
         captures=await capture(saved,job.brief,{signal});
-        guard(signal);await write(job,"captures.json",captures);
+        guard(signal);await write(job,captureName,captures);
       }
-      let data=await stageFile(job,"evidence.json");
+      let data=await stageFile(job,evidenceName);
       if(!data){
         await setStage(job,"evidence");
         data=evidence(job.brief,captures.captures,captures.gaps);
-        guard(signal);await write(job,"evidence.json",data);
+        guard(signal);await write(job,evidenceName,data);
       }
       // Repair only existing captured source IDs and verbatim passages.
       // Injected legacy evidence producers remain unchanged unless they opt in.
@@ -503,8 +506,13 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     if(active.has(id))throw Error("Evidence repair is already active.");
     if(job.status!=="paused"||job.stage!=="evidence-repair")
       throw Error("Only a paused evidence-repair job can be retried.");
+    if((job.evidenceRepairRevision??0)>=2)
+      throw Error("Evidence still could not be linked after two fresh source captures. Start new research with better sources.");
+    // Explicit user retry fetches a NEW capture revision. Old source and model checkpoints stay intact.
     job.evidenceRepairRevision=(job.evidenceRepairRevision??0)+1;
-    job.status="queued";job.stage="queued";job.evidenceRepair=null;job.error=null;
+    job.generation++;job.sceneRevisions={};job.completedScenes=0;job.totalScenes=0;
+    job.modelsUsed=[];job.repairHint=null;
+    job.status="queued";job.stage="queued";job.currentStep=null;job.evidenceRepair=null;job.error=null;job.retry=null;
     await save(job);start(job);return publicState(job);
   }
   async function cancel(id){
