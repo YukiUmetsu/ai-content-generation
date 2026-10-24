@@ -72,7 +72,7 @@ export async function createStudioResearchDraft(candidate,modelSettings,deps={})
   const brief=validateStudioBrief(briefInput);
   const settings=validateResearchModelSettings({...modelSettings,version:1});
   const searchEndpoint=(deps.searchEndpoint??configuredSearchEndpoint());
-  if(!searchEndpoint)throw Error("Local SearXNG is not configured. Run pnpm research:up and pnpm research:check.");
+  if(!searchEndpoint&&!searchArtifactId)throw Error("Local SearXNG is not configured. Run pnpm research:up and pnpm research:check.");
   const options={provider:"searxng",searchEndpoint,model:settings.model,
     endpoint:settings.endpoint,allowNetwork:true,maxSources:4};
   const searchSnapshot=searchArtifactId
