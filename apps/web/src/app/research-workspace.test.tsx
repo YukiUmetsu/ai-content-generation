@@ -15,7 +15,7 @@ const savedDraftId = "research_home-123456789abc";
 function jobResponse(url:string, options?:RequestInit):Response|null{
   if(url==="/api/contentgen-director/research-jobs"&&options?.method==="POST")
     return new Response(JSON.stringify({jobId:savedJobId,status:"queued",stage:"queued",completedScenes:0,totalScenes:0}),{status:202});
-  if(url==="/api/contentgen-director/research-jobs/"+savedJobId&&(!options||options.method==="GET"))
+  if(url==="/api/contentgen-director/research-jobs/"+savedJobId&&(!options?.method||options.method==="GET"))
     return new Response(JSON.stringify({jobId:savedJobId,status:"completed",stage:"completed",completedScenes:2,totalScenes:2,artifactId:savedDraftId}),{status:200});
   if(url==="/api/contentgen-director/research-draft/"+savedDraftId)
     return new Response(JSON.stringify(researchedFixture),{status:200});
