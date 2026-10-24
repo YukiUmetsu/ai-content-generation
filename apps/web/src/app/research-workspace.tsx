@@ -16,8 +16,9 @@ const LATEST_SEARCH_KEY="contentgen:studio-search:latest:v1";
 const LATEST_JOB_KEY="contentgen:studio-research-job:latest:v1";
 interface RecentResearch {topic:string;artifactId:string}
 interface ResearchJobStatus {jobId:string;status:"queued"|"running"|"paused"|"failed"|"cancelled"|"completed";
-  stage:string;completedScenes:number;totalScenes:number;artifactId?:string;error?:{code:string;message:string};
-  retry?:{stage:string;attempt:number;maxAttempts:number;reason:string;modelIndex:number;totalModels:number}}
+  stage:string;completedScenes:number;totalScenes:number;artifactId?:string;
+  error?:{code:string;message:string;detailCode?:string;field?:string};
+  retry?:{stage:string;attempt:number;maxAttempts:number;reason:string;modelIndex:number;totalModels:number;detailCode?:string;field?:string}}
 type ResearchJobResponse=Omit<ResearchJobStatus,"error">&{error?:string|{code:string;message:string}};
 interface SearchLead {title:string;url:string;snippet:string}
 interface SavedSearch {
@@ -227,7 +228,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
             try{localStorage.setItem(LATEST_RESEARCH_KEY,JSON.stringify({topic:expectedTopic,artifactId:state.artifactId}));}catch{/* Server artifact is durable. */}
           }
         }else if(state.status==="failed"||state.status==="paused"){
-          setResearchError(state.error&&typeof state.error==="object"?state.error.message:"Research job paused. Resume to continue.");
+          setResearchError(state.error&&typeof state.error==="object"?
+            `${state.error.message}${state.error.detailCode?` (${state.error.detailCode}${state.error.field?` · ${state.error.field}`:""})`:""}`:
+            "Research job paused. Resume to continue.");
         }
         if(["queued","running"].includes(state.status))timer=setTimeout(()=>void refresh(),1500);
       }catch(error){
@@ -580,7 +583,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
               {researchJob&&<div role="status" className="mt-3 rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm">
                 <p className="font-semibold text-foreground">{tr("Research production job","調査・構成作成ジョブ")} · {researchJob.status}</p>
                 <p className="mt-1 text-muted-foreground">{researchJob.stage} · {researchJob.totalScenes?`${researchJob.completedScenes}/${researchJob.totalScenes} ${tr("teaching units saved","解説単位を保存")}`:tr("Preparing evidence and outline","出典と構成案を準備中")}</p>
-                {researchJob.retry&&<p className="mt-2 text-sm text-status-warning">{tr("Local model retry","ローカルモデルの再試行")} {researchJob.retry.attempt}/{researchJob.retry.maxAttempts} · {researchJob.retry.reason==="invalid_output"?tr("Invalid structured response","構造化された応答が無効です"):researchJob.retry.reason==="model_timeout"?tr("Model timed out","モデルがタイムアウトしました"):tr("Provider temporarily unavailable","モデルに一時的に接続できません")} {researchJob.retry.totalModels>1&&`· ${tr("Model","モデル")} ${researchJob.retry.modelIndex}/${researchJob.retry.totalModels}`}</p>}
+                {researchJob.retry&&<p className="mt-2 text-sm text-status-warning">{tr("Local model retry","ローカルモデルの再試行")} {researchJob.retry.attempt}/{researchJob.retry.maxAttempts} · {researchJob.retry.detailCode??(researchJob.retry.reason==="invalid_output"?tr("Invalid structured response","構造化された応答が無効です"):researchJob.retry.reason==="model_timeout"?tr("Model timed out","モデルがタイムアウトしました"):tr("Provider temporarily unavailable","モデルに一時的に接続できません"))} {researchJob.retry.field&&`· ${researchJob.retry.field}`} {researchJob.retry.totalModels>1&&`· ${tr("Model","モデル")} ${researchJob.retry.modelIndex}/${researchJob.retry.totalModels}`}</p>}
                 <p className="mt-1 text-xs text-muted-foreground">{tr("Progress survives page refreshes. Completed stages are reused on retry.","ページを更新しても進行状況は保存されます。再試行時は完了済みの工程を再利用します。")}</p>
               </div>}
               {searchBusy&&!researchBusy&&<p role="status" className="text-sm text-muted-foreground">{tr("Searching SearXNG and saving sources locally…","SearXNG を検索して出典候補をローカルに保存中…")}</p>}
