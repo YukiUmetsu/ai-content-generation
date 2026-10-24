@@ -476,7 +476,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                   {searchBusy?tr("Searching…","検索中…"):tr("Search & save sources","出典候補を検索・保存")}
                 </Button>
                 <Button size="lg" onClick={()=>void researchAndGenerate()} disabled={!onCreateStoryboard||searchBusy||researchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160}>
-                  {researchBusy?tr("Researching…","調査中…"):searchResult?tr("Retry storyboard generation","構成案を再生成"):tr("Research & generate storyboard","調査して構成案を生成")}
+                  {researchBusy?tr("Researching…","調査中…"):researchError?tr("Retry storyboard generation","構成案を再生成"):
+                    searchResult?tr("Generate storyboard from saved sources","保存済みの出典候補から構成案を生成"):
+                      tr("Research & generate storyboard","調査して構成案を生成")}
                 </Button>
                 {(researchBusy||searchBusy)&&<Button variant="outline" onClick={cancelResearch}>{tr("Cancel","中止")}</Button>}
                 <Button variant="subtle" onClick={createFromResearch} disabled={!onCreateStoryboard||researchBusy||searchBusy||topic.trim().length<3||topic.trim().length>160}>
