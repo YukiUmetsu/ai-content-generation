@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HVAC_EXAMPLE } from "@/features/storyboard-planner/model/hvac-example";
 import { cloneStoryboard } from "@/features/storyboard-planner/model/types";
-import { inspectClaimEvidence, countClaimIssues } from "./claim-evidence";
+import { inspectClaimEvidence, countClaimIssues, matchesStoryboardResearch } from "./claim-evidence";
 import type { ResearchDraftResult } from "./researched-storyboard";
 
 const draft = {
@@ -65,6 +65,15 @@ describe("claim evidence inspection", () => {
     const twoQuotes={...twoSources,quotes:[...twoSources.quotes,
       {claimId:"claim_02",sourceId:"source_02",quote:"A second independently saved excerpt."}]};
     expect(inspectClaimEvidence(value,twoQuotes)[0].kind).toBe("needs_factual_review");
+  });
+
+  it("never attaches research quotes from a different artifact or unbound storyboard", () => {
+    const value=populated();
+    const bound={...draft,artifactId:"research_one-0123456789ab",snapshotId:"research_one"};
+    expect(matchesStoryboardResearch(value,bound)).toBe(false);
+    value.assumptions.push("Research artifact: research_one-0123456789ab");
+    expect(matchesStoryboardResearch(value,bound)).toBe(true);
+    expect(matchesStoryboardResearch(value,{...bound,artifactId:"research_other-0123456789ab"})).toBe(false);
   });
 
   it("requires a stored per-claim quotation, not merely a source ID", () => {
