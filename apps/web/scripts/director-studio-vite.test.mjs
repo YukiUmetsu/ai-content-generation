@@ -101,3 +101,36 @@ test("research job only receives a secondary local model when fallback was expli
   assert.equal(seen.secondary.model,"backup");
 });
 
+
+test("compile saved research opens an immutable snapshot without running any model or search",async()=>{
+  const artifactId="research_hvac-123456789abc";
+  const dossier={kind:"research-dossier",id:"research_hvac",topic:{title:"HVAC"}};
+  const plan={kind:"preproduction-plan",researchId:dossier.id,shots:[{id:"shot_1"}]};
+  let loaded=0,compiled=0;
+  const deps={
+    model:async()=>{throw Error("Saved project loading must not start a model.");},
+    loadResearch:async id=>{loaded++;assert.equal(id,artifactId);return {artifactId,snapshotId:dossier.id,dossier,plan};},
+    compileBundle:(d,p)=>{
+      compiled++;assert.equal(d,dossier);assert.equal(p,plan);
+      return {kind:"preproduction-bundle",researchId:d.id,plan:p,planSha256:"a".repeat(64)};
+    },
+  };
+  const result=await post("/compile-saved-research",{artifactId},deps);
+  assert.equal(result.status,200);
+  assert.equal(result.result.artifactId,artifactId);
+  assert.equal(result.result.bundle.researchId,dossier.id);
+  assert.deepEqual([loaded,compiled],[1,1]);
+});
+test("compile saved research rejects malformed IDs and mismatched saved plans",async()=>{
+  let loads=0;
+  const bad=await post("/compile-saved-research",{artifactId:"../../elsewhere"},{
+    loadResearch:async()=>{loads++;throw Error("Must not read path");},
+  });
+  assert.equal(bad.status,422);assert.equal(loads,0);
+  const cross=await post("/compile-saved-research",{artifactId:"research_hvac-123456789abc"},{
+    loadResearch:async()=>({artifactId:"research_hvac-123456789abc",snapshotId:"research_hvac",
+      dossier:{kind:"research-dossier",id:"research_hvac"},plan:{researchId:"research_other"}}),
+    compileBundle:()=>{throw Error("Must reject cross-research bundles");},
+  });
+  assert.equal(cross.status,422);
+});
