@@ -126,3 +126,16 @@ test("saved search must match the entire research brief before generation",async
   assert.equal(reachedModel,false);
 });
 
+test("generating from a saved search does not require a live SearXNG endpoint",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-search-offline-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const saved=await searchStudioSources(brief,{root,searchEndpoint:"http://127.0.0.1:58023/search",
+    search:async()=>[{title:"DOE",url:"https://www.energy.gov/"}]});
+  const result=await createStudioResearchDraft({...brief,searchArtifactId:saved.artifactId},settings,
+    {root,searchEndpoint:"",research:async(_brief,_options,deps)=>{
+      assert.deepEqual(await deps.search(),saved.results);
+      return research;
+    },generate:async()=>plan});
+  assert.equal(result.searchArtifactId,saved.artifactId);
+});
+
