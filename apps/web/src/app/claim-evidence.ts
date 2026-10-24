@@ -29,7 +29,7 @@ export function inspectClaimEvidence(
   draft?: ResearchDraftResult,
 ): ClaimEvidenceIssue[] {
   const byId = new Map(board.claims.map(claim => [claim.id, claim]));
-  const sourceIds = new Set(draft?.dossier?.evidence?.map(source => source.id) ?? []);
+  const sourceById = new Map(draft?.dossier?.evidence?.map(source => [source.id, source] as const) ?? []);
   const quotations = draft?.quotes ?? [];
   const issues = new Map<string, ClaimEvidenceIssue>();
 
@@ -46,11 +46,13 @@ export function inspectClaimEvidence(
       if (!claim || refs.length === 0) kind = "source_missing";
       else if (!draft) kind = "source_unchecked";
       else {
-        const allReferencesCaptured = refs.every(ref => sourceIds.has(ref));
-        const hasExactCapturedQuote = quotations.some(quote => quote.claimId === id &&
-          refs.includes(quote.sourceId) && sourceIds.has(quote.sourceId) &&
-          typeof quote.quote === "string" && quote.quote.trim().length >= 10);
-        kind = allReferencesCaptured && hasExactCapturedQuote ? "needs_factual_review" : "source_mismatch";
+        const everySourceHasCapturedQuote = refs.every(ref => {
+          const source = sourceById.get(ref);
+          return source && /^[a-f0-9]{64}$/iu.test(source.snapshotSha256) &&
+            quotations.some(quote => quote.claimId === id && quote.sourceId === ref &&
+              typeof quote.quote === "string" && quote.quote.trim().length >= 10);
+        });
+        kind = everySourceHasCapturedQuote ? "needs_factual_review" : "source_mismatch";
       }
       issues.set(id, { claimId: id, claimText: claim?.note || id, kind,
         beatIds: [beat.id], sourceRefs: [...refs] });
