@@ -42,3 +42,19 @@ Video Director saves **applied shot edits** for the same project, research artif
 The page reuses the current project catalog, browser-local storyboard, last saved research pointers, durable local research jobs, and existing editor routes. Selected step is a UI preference, not a second copy of the content. Research snapshots are immutable. Changing an upstream research artifact makes derived storyboard/visual/audio/export stages stale when their stored lineage can be compared; prior edits must be preserved.
 
 The Production page is a guided entry point; it does not replace Research, Create, Video Director, or their release gates.
+
+## Local verification gate (without GitHub Actions)
+
+From the repository root, run these checks after installing the existing dependencies:
+
+```sh
+pnpm --dir apps/web run typecheck
+pnpm --dir apps/web run lint
+pnpm --dir apps/web run test
+pnpm --dir apps/web run test:video:headless
+pnpm --dir apps/web run build
+```
+
+The headless-video command includes source-link repair, storyboard synchronization, the saved-research API, and the Director production/readiness route tests. These checks are local and do not request a GitHub Actions runner.
+
+Then use a project with a saved captured-research artifact to open **Production → Storyboard → Video Director**. Edit a shot's narration, screen copy, and visual action; confirm all three are present in Director, the source claim references remain unchanged, unsupported camera/semantic/timing edits show explicit review warnings, and a source mismatch cannot reuse an older Director session. Preview and export require actual visual/audio inspection and rights approval. A saved plan or test result is not a completed media artifact.
