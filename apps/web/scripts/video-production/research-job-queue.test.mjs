@@ -93,6 +93,45 @@ test("retry uses the validated field path and reports it without private model o
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test("invalid before receives field-specific state constraints on retry",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  const feedback=[];
+  const manager=fixture(root,{scene:async(_outline,index,_d,_q,_settings,options)=>{
+    if(index===1){
+      feedback.push(options.feedback);
+      if(feedback.length===1)throw Object.assign(Error("Private draft content"),{
+        code:"schema_invalid",field:"before",schemaIssue:"too_short"});
+    }
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(feedback[0],null);
+    assert.match(feedback[1],/before/i);
+    assert.match(feedback[1],/8[–-]48/iu);
+    assert.match(feedback[1],/visible|starting|initial/iu);
+    assert.doesNotMatch(feedback[1],/Private draft content/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("exhausted before errors expose safe failure classification only",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  const manager=fixture(root,{scene:async(_outline,index)=>{
+    if(index===1)throw Object.assign(Error("private model field value"),{
+      code:"schema_invalid",field:"before",schemaIssue:"placeholder"});
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const state=await settled(manager,jobId);
+    assert.equal(state.status,"failed");
+    assert.equal(state.error.schemaIssue,"placeholder");
+    assert.match(state.error.message,/before.*placeholder|placeholder.*before/i);
+    assert.doesNotMatch(JSON.stringify(state),/private model field value/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("exhausted schema retries retain safe failure detail for Studio",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   const manager=fixture(root,{scene:async(_outline,index)=>{

@@ -9,8 +9,17 @@ const txt=(v,min,max)=>typeof v==="string"&&v.trim().length>=min&&v.length<=max&
 // Keep fragment acceptance no looser than visual-mechanic's actor-label grammar.
 const noQuantity=v=>txt(v,2,42)&&v.trim()===v&&
   !/[\p{C}\p{N}$€£¥%<>`{}\\]/u.test(v)&&!/https?:|www\.|data:|javascript:|\/\//iu.test(v);
-const visibleState=(value,min,max)=>txt(value,min,max)&&
-  !/^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu.test(value.trim());
+const genericState=/^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu;
+const visibleStateIssue=(value,min,max)=>{
+  if(value===undefined||value===null)return "missing";
+  if(typeof value!=="string")return "wrong_type";
+  if(genericState.test(value.trim()))return "placeholder";
+  if(value.trim().length<min)return "too_short";
+  if(value.length>max)return "too_long";
+  if(/[\u0000-\u001f]/u.test(value))return "control_char";
+  return null;
+};
+const visibleState=(value,min,max)=>visibleStateIssue(value,min,max)===null;
 const patterns=new Set(["investigation","misconception","mechanism","cost-dissection","decision","failure","scale"]);
 const qwen35Model=model=>/qwen3[._-]5\b/iu.test(model);
 export const RESEARCH_MODEL_LIMITS=Object.freeze({...DEFAULT_RESEARCH_GENERATION,timeoutMs:DEFAULT_RESEARCH_GENERATION.timeoutSeconds*1000});
@@ -272,9 +281,14 @@ function validateSceneCore(core){
   return {subject:core.subject,parts:core.parts,operator:core.operator};
 }
 function validateSceneStates(states){
-  requireField(visibleState(states?.before,8,48),"before","describe a concrete visible state in 8–48 characters");
-  requireField(visibleState(states.action,8,90),"action","describe a concrete visible action in 8–90 characters");
-  requireField(visibleState(states.after,8,48),"after","describe a concrete visible state in 8–48 characters");
+  const requireState=(value,field,min,max,kind)=>{
+    const schemaIssue=visibleStateIssue(value,min,max);
+    if(schemaIssue)throw Object.assign(outputError("schema_invalid",field,
+      `Invalid ${field}: describe a concrete visible ${kind} in ${min}–${max} characters.`),{schemaIssue});
+  };
+  requireState(states?.before,"before",8,48,"state");
+  requireState(states.action,"action",8,90,"action");
+  requireState(states.after,"after",8,48,"state");
   requireField(new Set([states.before,states.action,states.after].map(text=>text.toLowerCase())).size===3,
     "before/action/after","describe distinct states");
   return {before:states.before,action:states.action,after:states.after};
