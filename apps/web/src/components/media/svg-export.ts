@@ -159,6 +159,8 @@ interface RenderContext {
   usedXlink: boolean;
   /** Generated `<clipPath>` markup keyed by deterministic id. */
   clips: Map<string, string>;
+  /** Generated `<filter>` elements keyed by deterministic layer ids. */
+  filters: Map<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +240,7 @@ function estimateAdvance(font: string, text: string): number {
  * the canvas reports nothing. `layoutText` is fed this function so preview and
  * export break lines the same way.
  */
-function createExportMeasurer(fonts: Record<string, FontAsset>): MeasureText {
+export function createExportMeasurer(fonts: Record<string, FontAsset>): MeasureText {
   const canvasMeasurer = createCanvasMeasurer(fonts);
   return (font, text) => {
     if (text.length === 0) return 0;
@@ -644,6 +646,34 @@ function renderLayer(
   if (layer.blend !== "normal") {
     attributes.push(["style", `mix-blend-mode:${layer.blend}`]);
   }
+  const shadow = layer.appearance?.dropShadow;
+  if (shadow) {
+    const id = `km-shadow-${layer.id}`;
+    // The SVG filter region is relative to the subject's bounding box. A
+    // fixed percentage clips shadows around small cutouts or large offsets.
+    // Three Gaussian standard deviations capture nearly all visible blur.
+    const spread = shadow.blur * 3;
+    const left = Math.max(0, spread - shadow.dx);
+    const right = Math.max(0, spread + shadow.dx);
+    const top = Math.max(0, spread - shadow.dy);
+    const bottom = Math.max(0, spread + shadow.dy);
+    const width = Math.max(layer.transform.width, 1);
+    const height = Math.max(layer.transform.height, 1);
+    const filterBounds = `x="${formatNumber(-100 * left / width, context.precision)}%" ` +
+      `y="${formatNumber(-100 * top / height, context.precision)}%" ` +
+      `width="${formatNumber(100 * (1 + (left + right) / width), context.precision)}%" ` +
+      `height="${formatNumber(100 * (1 + (top + bottom) / height), context.precision)}%"`;
+    // Decompose the modern feDropShadow shorthand into core SVG 1.1 primitives.
+    // Inkscape and other older renderers may silently drop the entire filtered
+    // subject when they encounter the shorthand, even though the SVG is valid.
+    context.filters.set(id, `<filter id="${escapeXml(id)}" ${filterBounds} color-interpolation-filters="sRGB">` +
+      `<feGaussianBlur in="SourceAlpha" stdDeviation="${formatNumber(shadow.blur, context.precision)}" result="shadow-blur"/>` +
+      `<feOffset in="shadow-blur" dx="${formatNumber(shadow.dx, context.precision)}" dy="${formatNumber(shadow.dy, context.precision)}" result="shadow-offset"/>` +
+      `<feFlood flood-color="${escapeXml(shadow.color)}" flood-opacity="${formatNumber(shadow.opacity, context.precision)}" result="shadow-color"/>` +
+      `<feComposite in="shadow-color" in2="shadow-offset" operator="in" result="shadow"/>` +
+      `<feMerge><feMergeNode in="shadow"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`);
+    attributes.push(["filter", `url(#${id})`]);
+  }
   if (layer.clip) {
     attributes.push(["clip-path", `url(#${registerSelfClip(context, layer)})`]);
   }
@@ -797,11 +827,14 @@ function collectExportDiagnostics(
       });
       continue;
     }
-    if (!context.hrefs.get(layer.id)) {
+    // An asset already containing a data: image URI is as inline as one
+    // returned by resolveAssetHref; neither requires a remote image request.
+    const usedHref = context.hrefs.get(layer.id) ?? asset.uri;
+    if (!/^data:image\/[^,]+,/i.test(usedHref)) {
       push({
         code: "export-asset-not-inlined",
         severity: "warning",
-        message: `Asset "${layer.media.assetId}" is emitted as a reference to its uri; rasterising it to PNG will taint the canvas.`,
+        message: `Asset "${layer.media.assetId}" is referenced externally; rasterising SVG to PNG may taint the canvas.`,
         layerId: layer.id,
         capability: "asset-inline",
         fallback: "reference",
@@ -890,6 +923,7 @@ export function documentToSvg(
     emitXlink,
     usedXlink: false,
     clips: new Map(),
+    filters: new Map(),
   };
 
   const childrenByParent = groupVisibleLayers(document.layers);
@@ -904,7 +938,11 @@ export function documentToSvg(
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([, markup]) => markup)
     .join("");
-  const defs = styleMarkup || clipMarkup ? `<defs>${styleMarkup}${clipMarkup}</defs>` : "";
+  const filterMarkup = [...context.filters.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, markup]) => markup)
+    .join("");
+  const defs = styleMarkup || clipMarkup || filterMarkup ? `<defs>${styleMarkup}${clipMarkup}${filterMarkup}</defs>` : "";
 
   const background = includeBackground
     ? `<rect x="0" y="0" width="${formatNumber(width, precision)}" height="${formatNumber(
