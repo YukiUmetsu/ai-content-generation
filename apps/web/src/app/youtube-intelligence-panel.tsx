@@ -316,8 +316,11 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
               </div>
               <p className={note}>
                 {selected.enabled ? tr("Daily automatic collection enabled", "毎日の自動収集は有効")
-                  : tr("Disabled — no automatic collection", "無効 — 自動収集は行いません")}
+                  : tr("Daily automatic collection off · manual collection available", "自動収集は無効 · 手動収集は利用可能")}
                 {" · "}{tr("Last collected:", "最終収集:")} {asLocalDate(selected.lastFinishedAt,locale)}
+                {selected.backoffUntil > Math.floor(Date.now()/1000) && <span className="text-danger">
+                  {" · "}{tr("Retry after:", "再試行可能:")} {asLocalDate(selected.backoffUntil,locale)}
+                </span>}
                 {" · "}{tr("Next eligible:", "次の予定:")} {asLocalDate(selected.nextDueAt,locale)}
                 {selected.errorCode && <span className="text-danger"> · {tr("Last error:", "直近のエラー:")} {selected.errorCode}</span>}
               </p>
@@ -336,7 +339,7 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
                   });await refresh();})}>
                   {selected.enabled ? tr("Disable", "無効化") : tr("Enable", "有効化")}
                 </Button>
-                <Button size="sm" disabled={busy || !selected.enabled || !status?.apiKeyConfigured}
+                <Button size="sm" disabled={busy || !status?.apiKeyConfigured}
                   icon={<RefreshCw className="size-4"/>}
                   onClick={()=>void perform(async()=>{await requestMarketCollection(selected.id);
                     await refresh();setMessage(tr("Collection queued locally. Results refresh automatically.","収集を開始しました。結果は自動更新されます。"));})}>
@@ -425,8 +428,8 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
 
         <Surface header={<h3 className="font-semibold">{tr("Observed public videos", "観測した公開動画")}</h3>}>
           {videos.length===0 ? <p className="text-sm text-muted-foreground">
-            {tr("No fresh observations. Enable this niche and run collection with a configured key.",
-              "新しい観測データはありません。APIキーを設定してリストを有効化してください。")}
+            {tr("No fresh observations. Run Collect now with a configured YouTube key, or enable daily collection.",
+              "新しい観測データはありません。YouTube APIキーを設定して今すぐ収集するか、毎日の自動収集を有効にしてください。")}
           </p> : <div className="grid gap-3 lg:grid-cols-2">
             {videos.map(video => <article key={video.videoId} className="rounded-surface border border-border bg-surface-subtle p-4">
               <p className="text-xs text-muted-foreground">{video.channelTitle} · {asPublished(video.publishedAt,locale)}</p>

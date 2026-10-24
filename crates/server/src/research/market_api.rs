@@ -224,12 +224,10 @@ async fn collect(
         message: "A valid YouTube key is required for collection".into(),
     })?;
     let db = state.connect().map_err(db_error)?;
-    let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
+    let run = market_store::claim_watchlist_detailed(&db, &id, epoch_now(), true)
         .map_err(market_error)?
-        .ok_or_else(|| ApiError::Conflict {
-            message:
-                "Collection is disabled, in progress, backing off, or at its daily search budget"
-                    .into(),
+        .map_err(|blocked| ApiError::Conflict {
+            message: blocked.message(),
         })?;
     let response = QueuedRun {
         run_id: run.id.clone(),

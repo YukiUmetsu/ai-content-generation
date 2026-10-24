@@ -6,11 +6,11 @@ import type { EditorialDraft } from "./editorial-brief";
 
 afterEach(() => vi.unstubAllGlobals());
 
-function fakeApi(withVideo: boolean) {
+function fakeApi(withVideo: boolean, enabled = true) {
   let watchlists: Array<Record<string, unknown>> = withVideo ? [{
     id: "watch-demo", name: "House Math", query: "heat pump cost",
     queryMode:"manual", queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump cost",
-    region: "US", language: "en", enabled: true,
+    region: "US", language: "en", enabled,
     createdAt: 123, updatedAt: 123, nextDueAt: 456,
     lastFinishedAt: 789, backoffUntil: 0, errorCode: null,
   }] : [];
@@ -30,6 +30,9 @@ function fakeApi(withVideo: boolean) {
     }
     else if (url.endsWith("/market-queries") && init?.method === "POST") {
       data={queries:["mortgage closing costs","roof replacement price","heat pump ownership cost","property tax assessment"],source:"local-model-generated"};
+    }
+    else if (url.endsWith("/collect") && init?.method === "POST") {
+      data = {runId:"run-test",state:"queued"}; status = 202;
     }
     else if (url.endsWith("/videos")) data = {videos: withVideo ? [{
       videoId:"abcABC12345",title:"Heating systems compared",channelId:"UCdemo",
@@ -78,6 +81,18 @@ describe("YouTube Intelligence", () => {
     await user.click(screen.getByRole("button",{name:/add watchlist/i}));
     await waitFor(() => expect(screen.getByText("House Math")).toBeInTheDocument());
     expect(requests).toContain("POST /api/research/market/watchlists");
+  });
+
+  it("allows Collect now without activating daily automatic collection", async () => {
+    const requests = fakeApi(true, false);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    const collect = await screen.findByRole("button",{name:/collect now/i});
+    expect(collect).toBeEnabled();
+    await user.click(collect);
+    expect(await screen.findByText(/Collection queued locally/i)).toBeInTheDocument();
+    expect(requests).toContain("POST /api/research/market/watchlists/watch-demo/collect");
+    expect(screen.getByText(/Daily automatic collection off/i)).toBeInTheDocument();
   });
 
   it("saves an original editable idea without copying competitor metrics", async () => {

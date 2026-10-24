@@ -120,6 +120,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_collection_does_not_enable_the_background_scheduler() {
+        let (_dir, state, id) = setup();
+        let db = state.connect().unwrap();
+        market_store::set_enabled(&db, &id, false, epoch_now()).unwrap();
+        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
+            .unwrap().unwrap();
+        assert!(run.allowed_while_disabled);
+        drop(db);
+        run_claim_with(state.clone(), run, |_, query| async move {
+            assert_eq!(query, "home repair");
+            Ok(vec![])
+        }).await;
+        let db = state.connect().unwrap();
+        let saved = market_store::get_watchlist(&db, &id).unwrap();
+        assert!(!saved.enabled, "one-off collection must not activate daily scheduling");
+        assert!(saved.last_finished_at.is_some());
+    }
+
+    #[tokio::test]
     async fn automatic_search_uses_the_phrase_frozen_when_the_run_was_claimed() {
         let (_dir, state, id) = setup();
         let db = state.connect().unwrap();
