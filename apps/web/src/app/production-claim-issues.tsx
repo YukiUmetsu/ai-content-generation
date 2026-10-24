@@ -9,6 +9,9 @@ interface ProductionClaimIssuesProps {
   onOpenBeat: (beatId: string) => void;
   onFindEvidence: () => void;
   onRetryRepair?: () => void;
+  reviewedClaims?: ReadonlySet<string>;
+  onMarkReviewed?: (claimId:string) => void;
+  onUndoReviewed?: (claimId:string) => void;
 }
 const label=(kind:ClaimEvidenceIssue["kind"],ja:boolean)=>({
   source_missing:ja?"出典がありません":"Missing source",
@@ -19,6 +22,7 @@ const label=(kind:ClaimEvidenceIssue["kind"],ja:boolean)=>({
 
 export function ProductionClaimIssues({
   issues,draft,locale="en",onOpenBeat,onFindEvidence,onRetryRepair,
+  reviewedClaims,onMarkReviewed,onUndoReviewed,
 }:ProductionClaimIssuesProps) {
   const ja=locale==="ja";
   if(issues.length===0)return (
@@ -36,6 +40,9 @@ export function ProductionClaimIssues({
     </div>
     {issues.map(issue=>{
       const broken=issue.kind==="source_missing"||issue.kind==="source_mismatch";
+      const reviewed=reviewedClaims?.has(issue.claimId)??false;
+      const linkedQuotes=(draft?.quotes??[]).filter(quote=>quote.claimId===issue.claimId&&
+        issue.sourceRefs.includes(quote.sourceId)&&typeof quote.quote==="string").slice(0,2);
       return <article key={issue.claimId} data-testid="claim-issue"
         className="space-y-3 rounded-control border border-border bg-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -43,9 +50,10 @@ export function ProductionClaimIssues({
             <p className="text-xs text-muted-foreground">{issue.claimId}</p>
             <p className="mt-1 text-sm font-medium leading-relaxed">{issue.claimText}</p>
           </div>
-          <span className={broken?"rounded-full bg-danger/10 px-2.5 py-1 text-xs text-danger":
+          <span className={reviewed?"rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-700":
+            broken?"rounded-full bg-danger/10 px-2.5 py-1 text-xs text-danger":
             "rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"}>
-            {label(issue.kind,ja)}
+            {reviewed?(ja?"ローカルで確認済み":"Reviewed locally"):label(issue.kind,ja)}
           </span>
         </div>
         {issue.sourceRefs.length>0&&<div className="flex flex-wrap gap-2 text-xs">
@@ -61,12 +69,29 @@ export function ProductionClaimIssues({
               </span>;
           })}
         </div>}
+        {linkedQuotes.length>0&&<div className="space-y-2 rounded-control bg-surface-subtle p-3">
+          <p className="text-xs font-semibold text-muted-foreground">{ja?"保存済みの引用":"Saved source excerpt"}</p>
+          {linkedQuotes.map((quote,index)=><blockquote key={quote.sourceId+index}
+            className="border-l-2 border-border pl-3 text-xs leading-relaxed text-foreground">
+            {quote.quote}
+          </blockquote>)}
+        </div>}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="text-muted-foreground">{ja?"使用箇所":"Used in"}:</span>
           {issue.beatIds.map(beatId=><button key={beatId} type="button" data-testid="claim-beat-link"
             className="rounded-control border border-border px-2.5 py-1.5 hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary"
             onClick={()=>onOpenBeat(beatId)}>{beatId}</button>)}
         </div>
+        {issue.kind==="needs_factual_review"&&onMarkReviewed&&draft&&linkedQuotes.length>0&&<div className="flex flex-wrap gap-2">
+          {reviewed?<button type="button" onClick={()=>onUndoReviewed?.(issue.claimId)}
+            className="rounded-control border border-border px-3 py-2 text-xs">
+            {ja?"確認を取り消す":"Undo review"}
+          </button>:<button type="button" onClick={()=>onMarkReviewed(issue.claimId)}
+            className="rounded-control border border-border px-3 py-2 text-xs font-medium">
+            {ja?"主張と出典を自分で確認しました":"I reviewed this claim and its sources"}
+          </button>}
+          <p className="self-center text-xs text-muted-foreground">{ja?"この操作は公開を承認しません。":"This does not approve publishing."}</p>
+        </div>}
         {broken&&<div className="flex flex-wrap gap-2">
           <button type="button" onClick={onFindEvidence}
             className="rounded-control bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">
