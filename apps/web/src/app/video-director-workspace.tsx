@@ -231,7 +231,8 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
           onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
         <AssetDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
-        <SfxDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
+        <SfxDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}
+          onSelectShot={id=>chooseShot(id)}/>
         <Surface header={<h2 className="font-medium">2 · Choose and edit a shot</h2>}>
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot

@@ -1,11 +1,12 @@
-import {useEffect,useState} from "react";
-import {CheckCircle2,ExternalLink,Headphones,Search,ShieldCheck,VolumeX} from "lucide-react";
+import {useEffect,useState,type KeyboardEvent} from "react";
+import {AudioLines,CheckCircle2,ExternalLink,Headphones,Layers3,LibraryBig,Search,ShieldCheck,Volume2,VolumeX} from "lucide-react";
 import {Button} from "@/components/ui/button";
 import {Surface} from "@/components/ui/surface-card";
+import {SoundAuditionControls} from "./sound-audition-controls";
 
-type Bundle={plan:{shots:Array<{id:string;family?:string;sceneRecipe?:string;subjectIds?:string[]}>;
+type Bundle={plan:{shots:Array<{id:string;purpose?:string;family?:string;sceneRecipe?:string;subjectIds?:string[]}>;
   sound?:Array<{shotId:string;sfxIntent:string|null}>;
-  teachingSequences?:Array<{technicalSubjectId:string;visualStates?:unknown;visualMechanic?:unknown;
+  teachingSequences?:Array<{technicalSubjectId?:string;visualStates?:unknown;visualMechanic?:unknown;
     phases:Array<{shotId:string;kind:string}>}>}};
 type Candidate={provider:"openverse";assetId:string;title:string;creator:string;durationSeconds:number;
   sourceUrl:string;previewUrl:string;license:"cc0";licenseUrl:string;source:string;matchCount:number;
@@ -73,7 +74,8 @@ async function localSfx(path:string,body?:unknown){
 }
 
 /** Sound search is an explicit opt-in; imported sounds are shareable across projects. */
-export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:string;bundle:Bundle;selectedShotId:string}){
+export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}:{projectId:string;bundle:Bundle;
+  selectedShotId:string;onSelectShot?:(shotId:string)=>void}){
   const [search,setSearch]=useState<{bundle:Bundle;data:SearchResult}|null>(null);
   const [library,setLibrary]=useState<Approved[]>([]);
   const [choices,setChoices]=useState<Choice[]>([]);
@@ -85,17 +87,30 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const [view,setView]=useState<"arrange"|"library">("arrange");
+  const [libraryQuery,setLibraryQuery]=useState("");
   const scene=search?.bundle===bundle?search.data.scenes.find(x=>x.shotId===selectedShotId):undefined;
   const planned=bundle.plan.sound?.find(x=>x.shotId===selectedShotId)?.sfxIntent?.trim()??"";
   const selectedShot=bundle.plan.shots.find(x=>x.id===selectedShotId);
   const visualSequence=bundle.plan.teachingSequences?.find(seq=>seq.phases.some(phase=>
     phase.shotId===selectedShotId&&["problem","mechanism","payoff"].includes(phase.kind)&&
-    !!selectedShot?.subjectIds?.includes(seq.technicalSubjectId)&&
+    typeof seq.technicalSubjectId==="string"&&!!selectedShot?.subjectIds?.includes(seq.technicalSubjectId)&&
     (seq.visualStates||seq.visualMechanic)));
   const unsupportedReveal=Boolean(selectedShot?.sceneRecipe||
     ["question","process","mechanism","summary"].includes(selectedShot?.family??"")||visualSequence);
   const choice=choices.find(x=>x.shotId===selectedShotId);
   const review=pending?.shotId===selectedShotId?pending.asset:null;
+  const shotLayers=design.layers.filter(layer=>layer.shotId===selectedShotId);
+  const listed=library.filter(asset=>`${asset.title} ${asset.creator}`.toLowerCase().includes(libraryQuery.toLowerCase()));
+
+  function tabKey(event:KeyboardEvent<HTMLButtonElement>){
+    if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+    event.preventDefault();
+    const target=event.key==="Home"?"arrange":event.key==="End"?"library":
+      view==="arrange"?"library":"arrange";
+    setView(target);
+    document.getElementById(`sound-tab-${target}`)?.focus();
+  }
 
   function showDesign(raw:unknown){
     const value=raw as Partial<SoundDesign>|null;
@@ -117,16 +132,16 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
       localSfx("sound-design",{action:"resolve",projectId,bundle})]);
     setLibrary(bank.assets as Approved[]);setChoices(resolved.scenes as Choice[]);showDesign(soundDesign);
   }
-  async function saveLayer(layer:CueDraft,layerId?:string){
+  async function saveLayer(layer:CueDraft,layerId?:string):Promise<boolean>{
     const asset=library.find(x=>x.assetId===layer.assetId);
-    if(!asset){setNotice("Choose a reviewed local sound first.");return;}
+    if(!asset){setNotice("Choose a reviewed local sound first.");return false;}
     setBusy("design");setNotice("");
     try{await localSfx("sound-design",{action:"upsert",projectId,shotId:selectedShotId,
       ...(layerId?{layerId}:{}),assetId:asset.assetId,sha256:asset.sha256,
       trigger:layer.trigger,offsetMs:layer.offsetMs,gainDb:layer.gainDb,
       fadeInMs:layer.fadeInMs,fadeOutMs:layer.fadeOutMs});
-      await reload();setNotice("Sound cue saved. Run Check again before rendering.");
-    }catch(error){setNotice(error instanceof Error?error.message:"Could not save the sound cue.");}
+      await reload();setNotice("Sound cue saved. Run Check again before rendering.");return true;
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not save the sound cue.");return false;}
     finally{setBusy("");}
   }
   async function removeLayer(layerId:string){
@@ -148,7 +163,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
     finally{setBusy("");}
   }
   async function discover(){
-    setBusy("search");setNotice("");setPending(null);
+    setView("library");setBusy("search");setNotice("");setPending(null);
     try{
       const result=await localSfx("suggest",{bundle,allowExternalSearch:true});
       setSearch({bundle,data:result as unknown as SearchResult});
@@ -166,7 +181,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
     }catch(error){setNotice(error instanceof Error?error.message:"Could not import sound.");}
     finally{setBusy("");}
   }
-  async function choose(mode:"auto"|"mute"|"pin",asset?:Approved){
+  async function choose(mode:"auto"|"mute"|"pin",asset?:Approved):Promise<boolean>{
     setBusy("choice");setNotice("");
     try{
       await localSfx("set-choice",{projectId,shotId:selectedShotId,mode,
@@ -176,7 +191,8 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
       setNotice(mode==="mute"?"This sound cue is muted.":mode==="auto"?
         "Automatically use the best matching sound from your approved library, or silence if none matches.":
         "This sound is pinned to the selected shot.");
-    }catch(error){setNotice(error instanceof Error?error.message:"Could not change scene sound.");}
+      return true;
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not change scene sound.");return false;}
     finally{setBusy("");}
   }
   async function chooseTrigger(trigger:"shot-start"|"first-visual-reveal"){
@@ -194,165 +210,267 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId}:{projectId:s
     finally{setBusy("");}
   }
 
-  return <Surface header={<h2 className="flex items-center gap-2 font-medium">
-    <Headphones className="size-4"/>Sound effects · reusable CC0 library</h2>}>
-    <div className="space-y-4 text-sm">
-      <p className="text-muted-foreground">ContentGen recommends sounds from the storyboard's explicit effect intent.
-        Approved sounds are shared across projects and reused without new downloads. Silence is always valid.</p>
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" disabled={!!busy} onClick={()=>void discover()}>
-          <Search className="mr-2 size-4"/>{busy==="search"?"Searching…":"Find CC0 sound effects"}
-        </Button>
-        <span className="text-xs text-muted-foreground">Network search only on click · Openverse · no local AI</span>
-      </div>
-      <div className="rounded-control border border-border bg-surface-subtle p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected shot · {selectedShotId}</p>
-        <p className="mt-1">{planned?<>Sound intent: <strong>{planned}</strong></>:"No sound effect requested; keep this shot quiet."}</p>
-        {choice&&<p className="mt-1 text-xs text-muted-foreground">
-          {choice.mode==="mute"?"Muted by editor":choice.assetId?
-            `${choice.mode==="pin"?"Pinned":"Automatic"}: ${choice.title}`:choice.reason}
-        </p>}
-        {choice?.sha256&&<audio className="mt-2 w-full" controls preload="none"
-          src={`/api/contentgen-sfx/preview/${choice.sha256}`} aria-label={`Listen to selected sound ${choice.title??"effect"}`}/>}
-        {planned&&<label className="mt-3 block text-xs font-medium">Sound timing
-          <select className="mt-1 w-full rounded-control border border-border bg-surface px-3 py-2"
-            aria-label="Sound timing" disabled={!!busy} value={choice?.trigger??"shot-start"}
-            onChange={e=>void chooseTrigger(e.target.value as "shot-start"|"first-visual-reveal")}>
-            <option value="shot-start">At narration shot start</option>
-            <option value="first-visual-reveal" disabled={unsupportedReveal}>At first visible element reveal</option>
-          </select>
-          <span className="mt-1 block font-normal text-muted-foreground">{unsupportedReveal?
-            "This shot uses custom or dynamic visuals without a measurable element-reveal clock. Use shot-start timing.":
-            "Reveal timing follows the first measurable on-screen element change. If none occurs, production stops with a timing error."}</span>
-        </label>}
-        {planned&&<div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("auto")}>Use approved match</Button>
-          <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("mute")}>
-            <VolumeX className="mr-1 size-3"/>Mute this shot
-          </Button>
-        </div>}
-      </div>
-      <details className="space-y-3 rounded-control border border-border p-3">
-        <summary className="cursor-pointer text-sm font-semibold">Additional sound cues · {design.layers.filter(x=>x.shotId===selectedShotId).length}</summary>
-        <p className="mt-2 text-xs text-muted-foreground">Layer up to four extra reviewed CC0 sounds on this shot. Offset is relative to your selected timing event. Sounds are remixed on export.</p>
-        {design.layers.filter(layer=>layer.shotId===selectedShotId).map(layer=><SupplementaryLayerRow
-          key={layer.layerId} layer={layer} busy={!!busy} unsupportedReveal={unsupportedReveal}
-          onSave={next=>saveLayer(next,next.layerId)} onRemove={removeLayer}/>)}
-        <div className="grid gap-2 text-xs sm:grid-cols-2">
-          <label className="sm:col-span-2">Additional cue asset
-            <select aria-label="Additional cue asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-              disabled={!!busy} value={cueDraft.assetId}
-              onChange={e=>setCueDraft(x=>({...x,assetId:e.target.value}))}>
-              <option value="">Choose from reviewed sound library</option>
-              {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
-            </select></label>
-          <label>Timing<select aria-label="Additional cue timing" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            disabled={!!busy} value={cueDraft.trigger}
-            onChange={e=>setCueDraft(x=>({...x,trigger:e.target.value as Trigger}))}>
-            <option value="shot-start">Shot start</option>
-            <option value="first-visual-reveal" disabled={unsupportedReveal}>First element reveal</option>
-          </select></label>
-          <label>Offset (ms)<input aria-label="Additional cue offset (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            type="number" min="0" max="10000" step="10" disabled={!!busy} value={cueDraft.offsetMs}
-            onChange={e=>setCueDraft(x=>({...x,offsetMs:Number(e.target.value)}))}/></label>
-          <label>Gain (dB)<input aria-label="Additional cue gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            type="number" min="-48" max="0" step="1" disabled={!!busy} value={cueDraft.gainDb}
-            onChange={e=>setCueDraft(x=>({...x,gainDb:Number(e.target.value)}))}/></label>
-          <div className="grid grid-cols-2 gap-2">
-            <label>Fade in (ms)<input aria-label="Additional cue fade in (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-              type="number" min="0" max="2000" step="10" disabled={!!busy} value={cueDraft.fadeInMs}
-              onChange={e=>setCueDraft(x=>({...x,fadeInMs:Number(e.target.value)}))}/></label>
-            <label>Fade out (ms)<input aria-label="Additional cue fade out (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-              type="number" min="0" max="2000" step="10" disabled={!!busy} value={cueDraft.fadeOutMs}
-              onChange={e=>setCueDraft(x=>({...x,fadeOutMs:Number(e.target.value)}))}/></label>
-          </div>
+  return <Surface header={<div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex items-center gap-3">
+      <div className="flex size-10 items-center justify-center rounded-control bg-primary/10 text-primary"><AudioLines className="size-5"/></div>
+      <div><h2 className="text-base font-semibold">Sound Studio</h2>
+        <p className="text-xs text-muted-foreground">Find, arrange and audition commercial-use reviewed audio.</p></div>
+    </div>
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs text-muted-foreground">
+      <ShieldCheck className="size-3.5 text-emerald-500"/>Local · CC0 reviewed sounds only
+    </span>
+  </div>}>
+    <div className="space-y-5 text-sm">
+      <section className="rounded-surface border border-border bg-surface-subtle p-4 sm:p-5">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div><p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">01 · Select</p>
+            <p className="mt-1 font-medium">Choose your scene</p></div>
+          <div><p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">02 · Arrange</p>
+            <p className="mt-1 font-medium">Layer approved sounds</p></div>
+          <div><p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">03 · Listen</p>
+            <p className="mt-1 font-medium">Audition before export</p></div>
         </div>
-        <Button size="sm" variant="outline" disabled={!!busy||!cueDraft.assetId||
-          design.layers.filter(x=>x.shotId===selectedShotId).length>=4}
-          onClick={()=>void saveLayer(cueDraft)}>Add cue</Button>
-      </details>
-      <details className="space-y-3 rounded-control border border-border p-3">
-        <summary className="cursor-pointer text-sm font-semibold">Background ambience · {design.ambience?"on":"off"}</summary>
-        <p className="mt-2 text-xs text-muted-foreground">One quiet, continuously looping CC0 recording for the full video, with a gentle start and end fade. This is independent of individual shot cues.</p>
-        <label className="block text-xs">Ambience asset
-          <select aria-label="Ambience asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            disabled={!!busy} value={ambientDraft.assetId}
-            onChange={e=>setAmbientDraft(x=>({...x,assetId:e.target.value}))}>
-            <option value="">No ambience selected</option>
-            {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
-          </select></label>
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <label>Gain (dB)<input aria-label="Ambience gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            type="number" min="-48" max="-12" step="1" disabled={!!busy} value={ambientDraft.gainDb}
-            onChange={e=>setAmbientDraft(x=>({...x,gainDb:Number(e.target.value)}))}/></label>
-          <label>Fade in (ms)<input aria-label="Ambience fade in (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            type="number" min="0" max="5000" step="100" disabled={!!busy} value={ambientDraft.fadeInMs}
-            onChange={e=>setAmbientDraft(x=>({...x,fadeInMs:Number(e.target.value)}))}/></label>
-          <label>Fade out (ms)<input aria-label="Ambience fade out (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
-            type="number" min="0" max="5000" step="100" disabled={!!busy} value={ambientDraft.fadeOutMs}
-            onChange={e=>setAmbientDraft(x=>({...x,fadeOutMs:Number(e.target.value)}))}/></label>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scene strip</h3>
+          <p className="text-xs text-muted-foreground">{bundle.plan.shots.length} scenes · {design.layers.length} added cues · ambience {design.ambience?"on":"off"}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" disabled={!!busy||!ambientDraft.assetId} onClick={()=>void saveAmbience()}>Save ambience</Button>
-          <Button size="sm" variant="ghost" disabled={!!busy||!design.ambience} onClick={()=>void saveAmbience(true)}>Disable ambience</Button>
-        </div>
-        {design.ambience&&<p className="text-xs text-muted-foreground">Current bed: {design.ambience.title} · {design.ambience.gainDb} dB</p>}
-      </details>
-      {scene&&<div className="space-y-2">
-        <p className="text-xs font-semibold">Search: {scene.query} · {scene.candidates.length} CC0 candidates</p>
-        <div className="grid gap-3 md:grid-cols-2">
-          {scene.candidates.map(asset=>{
-            const saved=library.find(x=>x.assetId===asset.assetId);
-            return <div key={asset.assetId} className="min-w-0 space-y-2 rounded-control border border-border p-3">
-              <p className="font-medium">{asset.title}</p>
-              <p className="text-xs text-muted-foreground">{asset.durationSeconds.toFixed(1)}s · {asset.creator||asset.source||"Openverse"} · CC0</p>
-              <audio className="w-full" src={saved?`/api/contentgen-sfx/preview/${saved.sha256}`:asset.previewUrl}
-                controls preload="none" aria-label={`Preview ${asset.title}`}/>
-              <div className="flex flex-wrap gap-3 text-xs">
-                <a className="underline" href={asset.sourceUrl} target="_blank" rel="noopener noreferrer">Original source <ExternalLink className="inline size-3"/></a>
-                <a className="underline" href={asset.licenseUrl} target="_blank" rel="noopener noreferrer">CC0 license</a>
-              </div>
-              {saved?<div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-xs text-emerald-500"><CheckCircle2 className="size-3"/>In local library</span>
-                <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("pin",saved)}>Use for this shot</Button>
-              </div>:<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>{
-                setPending({shotId:selectedShotId,asset});setAcknowledged(false);}}>Review and import</Button>}
-            </div>;
+        <nav aria-label="Sound scene selector" className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
+          {bundle.plan.shots.map((shot,i)=>{
+            const active=shot.id===selectedShotId,added=design.layers.filter(x=>x.shotId===shot.id).length;
+            const main=choices.find(x=>x.shotId===shot.id);
+            return <button key={shot.id} type="button" disabled={!onSelectShot||!!busy}
+              aria-label={`Select scene ${i+1}: ${shot.id}`} aria-current={active?"step":undefined}
+              onClick={()=>onSelectShot?.(shot.id)}
+              className={`group min-w-32 max-w-52 shrink-0 snap-start rounded-control border px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active?
+                "border-primary bg-primary/10 text-foreground":"border-border bg-surface hover:border-primary/40 disabled:opacity-70"}`}>
+              <span className="block text-[11px] font-semibold tabular-nums text-muted-foreground">Scene {String(i+1).padStart(2,"0")}</span>
+              <span className="mt-1 block truncate text-xs font-semibold" title={shot.purpose??shot.id}>{shot.purpose??shot.id}</span>
+              <span className="mt-2 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span className={`size-1.5 rounded-full ${main?.assetId?"bg-sky-500": "bg-muted-foreground/40"}`}/>
+                {main?.assetId?"Main cue":"Quiet"}{added?` · +${added} layers`:""}
+              </span>
+            </button>;
           })}
+        </nav>
+      </section>
+
+      <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.4fr)_minmax(320px,.9fr)]">
+        <div className="min-w-0 space-y-4">
+          <div role="tablist" aria-label="Sound Studio views" className="flex gap-1 rounded-control border border-border bg-surface-subtle p-1">
+            <button type="button" id="sound-tab-arrange" role="tab" aria-controls="sound-panel-arrange"
+              aria-selected={view==="arrange"} tabIndex={view==="arrange"?0:-1}
+              onKeyDown={tabKey} onClick={()=>setView("arrange")}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-control px-4 py-2.5 text-sm font-semibold transition-colors ${view==="arrange"?"bg-surface text-foreground shadow-sm":"text-muted-foreground hover:text-foreground"}`}>
+              <Layers3 className="size-4"/>Arrange
+            </button>
+            <button type="button" id="sound-tab-library" role="tab" aria-controls="sound-panel-library"
+              aria-selected={view==="library"} tabIndex={view==="library"?0:-1}
+              onKeyDown={tabKey} onClick={()=>setView("library")}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-control px-4 py-2.5 text-sm font-semibold transition-colors ${view==="library"?"bg-surface text-foreground shadow-sm":"text-muted-foreground hover:text-foreground"}`}>
+              <LibraryBig className="size-4"/>Library <span className="rounded-full bg-primary/10 px-1.5 text-[11px] text-primary">{library.length}</span>
+            </button>
+          </div>
+
+          {view==="arrange"&&<section id="sound-panel-arrange" role="tabpanel" aria-labelledby="sound-tab-arrange"
+            aria-label="Scene sound arrangement" className="space-y-4 rounded-surface border border-border bg-surface p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected scene</p>
+                <h3 className="mt-1 font-semibold">{selectedShot?.purpose??selectedShotId}</h3></div>
+              <Button variant="outline" size="sm" onClick={()=>setView("library")}><Search className="mr-1.5 size-3.5"/>Browse sounds</Button>
+            </div>
+            <div className="rounded-control border border-border bg-surface-subtle p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-2 font-semibold"><Volume2 className="size-4 text-primary"/>Main scene sound</p>
+                <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+                  {choice?.mode==="mute"?"Muted":choice?.assetId?choice.mode==="pin"?"Pinned":"Automatic":"Silence"}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{planned?
+                <>Story sound intent: <strong className="font-medium text-foreground">{planned}</strong></>:
+                "No planned effect for this shot. Auto selection stays silent; you can pin a sound or add a layer."}</p>
+              {choice?.assetId&&<div className="mt-3 rounded-control border border-border bg-surface p-3">
+                <p className="truncate text-xs font-semibold">{choice.title}</p>
+                {choice.sha256&&<audio className="mt-2 w-full" controls preload="none"
+                  src={`/api/contentgen-sfx/preview/${choice.sha256}`} aria-label={`Listen to selected sound ${choice.title??"effect"}`}/>}
+              </div>}
+              <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                <label className="block text-xs font-medium">Sound timing
+                  <select className="mt-1 w-full rounded-control border border-border bg-surface px-3 py-2"
+                    aria-label="Sound timing" disabled={!!busy} value={choice?.trigger??"shot-start"}
+                    onChange={e=>void chooseTrigger(e.target.value as Trigger)}>
+                    <option value="shot-start">At narration shot start</option>
+                    <option value="first-visual-reveal" disabled={unsupportedReveal}>At first visible element reveal</option>
+                  </select>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("auto")}>Auto-match</Button>
+                  <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("mute")}>
+                    <VolumeX className="mr-1.5 size-3.5"/>Mute</Button>
+                </div>
+              </div>
+              {unsupportedReveal&&<p className="mt-2 text-xs text-muted-foreground">This dynamic scene has no measured reveal marker; use shot-start timing.</p>}
+            </div>
+
+            <details className="space-y-3 rounded-control border border-border p-4">
+              <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm font-semibold">
+                <span className="flex items-center gap-2"><Layers3 className="size-4 text-primary"/>Additional sound cues · {shotLayers.length}</span>
+                <span className="text-xs font-normal text-muted-foreground">{shotLayers.length}/4</span>
+              </summary>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Layer up to four approved sounds. Fine-tune their start time, volume and fades independently.</p>
+              <div className="mt-3 space-y-3">{shotLayers.map(layer=><SupplementaryLayerRow
+                key={layer.layerId} layer={layer} busy={!!busy} unsupportedReveal={unsupportedReveal}
+                onSave={next=>saveLayer(next,next.layerId).then(()=>{})} onRemove={removeLayer}/>)}</div>
+              <div className="mt-3 grid gap-3 rounded-control bg-surface-subtle p-3 text-xs sm:grid-cols-2">
+                <label className="sm:col-span-2">Additional cue asset
+                  <select aria-label="Additional cue asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                    disabled={!!busy} value={cueDraft.assetId}
+                    onChange={e=>setCueDraft(x=>({...x,assetId:e.target.value}))}>
+                    <option value="">Select an approved sound</option>
+                    {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
+                  </select></label>
+                <label>Timing<select aria-label="Additional cue timing" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                  disabled={!!busy} value={cueDraft.trigger}
+                  onChange={e=>setCueDraft(x=>({...x,trigger:e.target.value as Trigger}))}>
+                  <option value="shot-start">Shot start</option>
+                  <option value="first-visual-reveal" disabled={unsupportedReveal}>First element reveal</option>
+                </select></label>
+                <label>Offset (ms)<input aria-label="Additional cue offset (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                  type="number" min="0" max="10000" step="10" disabled={!!busy} value={cueDraft.offsetMs}
+                  onChange={e=>setCueDraft(x=>({...x,offsetMs:Number(e.target.value)}))}/></label>
+                <label>Gain (dB)<input aria-label="Additional cue gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                  type="number" min="-48" max="0" step="1" disabled={!!busy} value={cueDraft.gainDb}
+                  onChange={e=>setCueDraft(x=>({...x,gainDb:Number(e.target.value)}))}/></label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label>Fade in (ms)<input aria-label="Additional cue fade in (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                    type="number" min="0" max="2000" step="10" disabled={!!busy} value={cueDraft.fadeInMs}
+                    onChange={e=>setCueDraft(x=>({...x,fadeInMs:Number(e.target.value)}))}/></label>
+                  <label>Fade out (ms)<input aria-label="Additional cue fade out (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                    type="number" min="0" max="2000" step="10" disabled={!!busy} value={cueDraft.fadeOutMs}
+                    onChange={e=>setCueDraft(x=>({...x,fadeOutMs:Number(e.target.value)}))}/></label>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <Button size="sm" disabled={!!busy||!cueDraft.assetId||shotLayers.length>=4}
+                  onClick={()=>void saveLayer(cueDraft)}>Add cue</Button>
+                {library.length===0&&<span className="text-xs text-muted-foreground">Start by approving sounds in the Library tab.</span>}
+              </div>
+            </details>
+          </section>}
+
+          {view==="library"&&<section id="sound-panel-library" role="tabpanel" aria-labelledby="sound-tab-library"
+            aria-label="Approved sound library" className="space-y-4 rounded-surface border border-border bg-surface p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><h3 className="font-semibold">Your sound library</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Approved sounds stay local and can be reused across projects.</p></div>
+              <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void discover()}>
+                <Search className="mr-1.5 size-3.5"/>{busy==="search"?"Searching…":"Find CC0 sound effects"}</Button>
+            </div>
+            <label className="block text-xs font-medium">Filter approved sounds
+              <input className="mt-1 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm"
+                type="search" aria-label="Filter approved sounds" placeholder="Search your local sounds…"
+                value={libraryQuery} onChange={e=>setLibraryQuery(e.target.value)}/>
+            </label>
+            <div className="space-y-2">
+              {listed.length===0&&<p className="rounded-control border border-dashed border-border bg-surface-subtle p-5 text-center text-xs leading-relaxed text-muted-foreground">
+                {libraryQuery?"No approved sounds match your search.":"Your library is empty. Find a CC0 sound, review its original source and approve it once."}</p>}
+              {listed.slice(0,80).map(asset=><div key={asset.assetId+asset.sha256}
+                className="rounded-control border border-border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0"><p className="truncate font-semibold">{asset.title}</p>
+                    <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <CheckCircle2 className="size-3 text-emerald-500"/>{asset.durationSeconds.toFixed(1)}s · reviewed CC0</p></div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" disabled={!!busy}
+                      onClick={()=>void choose("pin",asset).then(saved=>{if(saved)setView("arrange");})}>Use as main</Button>
+                    <Button size="sm" disabled={!!busy||shotLayers.length>=4}
+                      onClick={()=>void saveLayer({...cueDraft,assetId:asset.assetId}).then(saved=>{if(saved)setView("arrange");})}>Add to shot</Button>
+                  </div>
+                </div>
+                <audio className="mt-2 w-full" controls preload="none"
+                  src={`/api/contentgen-sfx/preview/${asset.sha256}`} aria-label={`Listen to ${asset.title}`}/>
+              </div>)}
+            </div>
+            {scene&&<div className="space-y-3 border-t border-border pt-4">
+              <div><h4 className="font-semibold">New CC0 candidates</h4>
+                <p className="mt-1 text-xs text-muted-foreground">{scene.query} · {scene.candidates.length} candidate sounds · review rights before import</p></div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {scene.candidates.map(asset=>{
+                  const saved=library.find(x=>x.assetId===asset.assetId);
+                  return <div key={asset.assetId} className="min-w-0 space-y-2 rounded-control border border-border p-3">
+                    <p className="font-semibold">{asset.title}</p>
+                    <p className="text-xs text-muted-foreground">{asset.durationSeconds.toFixed(1)}s · {asset.creator||asset.source||"Openverse"} · CC0 claim</p>
+                    <audio className="w-full" src={saved?`/api/contentgen-sfx/preview/${saved.sha256}`:asset.previewUrl}
+                      controls preload="none" aria-label={`Preview ${asset.title}`}/>
+                    <div className="flex flex-wrap gap-3 text-xs">
+                      <a className="underline" href={asset.sourceUrl} target="_blank" rel="noopener noreferrer">Original source <ExternalLink className="inline size-3"/></a>
+                      <a className="underline" href={asset.licenseUrl} target="_blank" rel="noopener noreferrer">CC0 license</a>
+                    </div>
+                    {saved?<span className="inline-flex items-center gap-1 text-xs text-emerald-500"><CheckCircle2 className="size-3"/>In local library</span>:
+                      <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>{
+                        setPending({shotId:selectedShotId,asset});setAcknowledged(false);}}>Review and import</Button>}
+                  </div>;
+                })}
+              </div>
+              {scene.candidates.length===0&&<p className="text-xs text-muted-foreground">No suitable CC0 sounds found. Try a more specific sound intent.</p>}
+            </div>}
+            {review&&<div className="space-y-3 rounded-control border border-primary/50 bg-primary/5 p-4">
+              <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4"/>Review rights before import</p>
+              <p>{review.title} · {review.creator||"Creator not listed"}</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">Openverse lists third-party metadata; it cannot guarantee a sound is CC0. Open the original source, confirm its license and approve the download.</p>
+              <label className="flex items-start gap-2 text-xs">
+                <input type="checkbox" className="mt-0.5" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>
+                I checked the original sound and its rights and approve this download.
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" disabled={!acknowledged||!!busy} onClick={()=>void approve()}>{busy==="approve"?"Importing…":"Approve and save"}</Button>
+                <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>setPending(null)}>Cancel</Button>
+              </div>
+            </div>}
+            {search?.bundle===bundle&&search.data.warnings.map((warning,i)=><p key={i} className="text-xs text-muted-foreground">{warning}</p>)}
+            <p className="text-xs leading-relaxed text-muted-foreground">External Openverse lookup runs only when you click Find. Downloads require explicit human review; no local model or narration provider is invoked.</p>
+          </section>}
         </div>
-        {scene.candidates.length===0&&<p className="text-xs text-muted-foreground">No suitable CC0 metadata found. Use an approved local effect or silence.</p>}
-      </div>}
-      {review&&<div className="rounded-control border border-primary/50 bg-surface-subtle p-4 space-y-3">
-        <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4"/>First-time SFX approval</p>
-        <p>{review.title} · {review.creator||"Creator not listed"}</p>
-        <p className="text-xs text-muted-foreground">Openverse cannot independently verify third-party licensing.
-          Open the source and confirm this recording is genuinely CC0 and suitable for commercial videos.
-          The approved sound will be downloaded locally and converted to WAV.</p>
-        <label className="flex items-start gap-2 text-xs">
-          <input type="checkbox" className="mt-0.5" checked={acknowledged} onChange={e=>setAcknowledged(e.target.checked)}/>
-          I checked the original sound and its rights and approve this download.
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" disabled={!acknowledged||!!busy} onClick={()=>void approve()}>
-            {busy==="approve"?"Importing…":"Approve and save"}</Button>
-          <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>setPending(null)}>Cancel</Button>
-        </div>
-      </div>}
-      {planned&&library.length>0&&<details className="rounded-control border border-border p-3">
-        <summary className="cursor-pointer text-xs font-semibold">Approved sound library · {library.length} reusable effects</summary>
-        <div className="mt-3 space-y-2">
-          {library.slice(0,80).map(asset=><div key={asset.assetId+asset.sha256}
-            className="flex flex-wrap items-center justify-between gap-2 border-t border-border py-2">
-            <div className="min-w-0 flex-1"><p className="text-xs">{asset.title}</p>
-              <audio className="mt-1 w-full max-w-xs" controls preload="none"
-                src={`/api/contentgen-sfx/preview/${asset.sha256}`} aria-label={`Listen to ${asset.title}`}/></div>
-            <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose("pin",asset)}>Pin to shot</Button>
-          </div>)}
-        </div>
-      </details>}
-      {search?.bundle===bundle&&search.data.warnings.map((warning,i)=><p key={i} className="text-xs text-muted-foreground">{warning}</p>)}
-      {notice&&<p role="status" className="rounded-control border border-border p-3 text-xs">{notice}</p>}
-      <p className="text-xs text-muted-foreground">Approved effects play in exported drafts at the narration shot start or an actual measured on-screen reveal. Silence remains valid; no timing is guessed.</p>
+
+        <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
+          <SoundAuditionControls key={selectedShotId} shotId={selectedShotId} choice={choice} layers={design.layers}
+            ambience={design.ambience} library={library}/>
+          <details className="space-y-3 rounded-surface border border-border bg-surface p-4">
+            <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm font-semibold">
+              <span className="flex items-center gap-2"><Headphones className="size-4 text-primary"/>Background ambience · {design.ambience?"on":"off"}</span>
+              <span className="rounded-full border border-border px-2 py-1 text-[11px] font-normal text-muted-foreground">Full video</span>
+            </summary>
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Add one quiet, continuously looping CC0 recording beneath the entire video.</p>
+            <label className="mt-3 block text-xs">Ambience asset
+              <select aria-label="Ambience asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                disabled={!!busy} value={ambientDraft.assetId}
+                onChange={e=>setAmbientDraft(x=>({...x,assetId:e.target.value}))}>
+                <option value="">No ambience selected</option>
+                {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
+              </select></label>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <label>Gain (dB)<input aria-label="Ambience gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                type="number" min="-48" max="-12" step="1" disabled={!!busy} value={ambientDraft.gainDb}
+                onChange={e=>setAmbientDraft(x=>({...x,gainDb:Number(e.target.value)}))}/></label>
+              <label>Fade in (ms)<input aria-label="Ambience fade in (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                type="number" min="0" max="5000" step="100" disabled={!!busy} value={ambientDraft.fadeInMs}
+                onChange={e=>setAmbientDraft(x=>({...x,fadeInMs:Number(e.target.value)}))}/></label>
+              <label>Fade out (ms)<input aria-label="Ambience fade out (ms)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+                type="number" min="0" max="5000" step="100" disabled={!!busy} value={ambientDraft.fadeOutMs}
+                onChange={e=>setAmbientDraft(x=>({...x,fadeOutMs:Number(e.target.value)}))}/></label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" disabled={!!busy||!ambientDraft.assetId} onClick={()=>void saveAmbience()}>Save ambience</Button>
+              <Button size="sm" variant="ghost" disabled={!!busy||!design.ambience} onClick={()=>void saveAmbience(true)}>Disable ambience</Button>
+            </div>
+            {design.ambience&&<p className="mt-2 text-xs text-muted-foreground">Active: {design.ambience.title} · {design.ambience.gainDb} dB</p>}
+          </details>
+          <div className="rounded-control border border-border bg-surface-subtle p-4 text-xs leading-relaxed text-muted-foreground">
+            <p className="flex items-center gap-2 font-semibold text-foreground"><ShieldCheck className="size-4 text-emerald-500"/>Ready for final mix?</p>
+            <p className="mt-2">Each saved sound change requires Video Director's <strong>Check</strong> again. Your exported draft uses measured narration timing and verified WAV hashes.</p>
+          </div>
+        </aside>
+      </div>
+      {notice&&<p role="status" className="rounded-control border border-border bg-surface-subtle p-3 text-xs">{notice}</p>}
     </div>
   </Surface>;
 }

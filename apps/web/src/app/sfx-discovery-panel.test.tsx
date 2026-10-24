@@ -98,3 +98,21 @@ it("saves and disables one independent reviewed ambience bed",async()=>{
   await user.click(screen.getByRole("button",{name:"Disable ambience"}));
   await waitFor(()=>expect(sent[1]).toMatchObject({action:"ambience",assetId:null}));
 });
+
+it("makes the selected shot and Arrange/Library workflow independently navigable",async()=>{
+  vi.stubGlobal("fetch",vi.fn(async (url:string)=>({ok:true,json:async()=>
+    String(url).endsWith("library")?{assets:[]}:
+      String(url).endsWith("choices")?{scenes:[]}:{layers:[],ambience:null}})));
+  const selectShot=vi.fn(),user=userEvent.setup();
+  render(<SfxDiscoveryPanel projectId="demo" selectedShotId="shot1" onSelectShot={selectShot}
+    bundle={{plan:{shots:[{id:"shot1"},{id:"shot2"}],sound:[]}}}/>);
+  expect(await screen.findByText(/Scene 01/i)).toBeInTheDocument();
+  expect(screen.getByRole("tab",{name:/arrange/i})).toHaveAttribute("aria-selected","true");
+  await user.click(screen.getByRole("button",{name:/select scene 2/i}));
+  expect(selectShot).toHaveBeenCalledWith("shot2");
+  await user.click(screen.getByRole("tab",{name:/library/i}));
+  expect(screen.getByRole("tab",{name:/library/i})).toHaveAttribute("aria-selected","true");
+  expect(screen.getByRole("button",{name:/find cc0 sound effects/i})).toBeInTheDocument();
+  await user.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("tab",{name:/arrange/i})).toHaveAttribute("aria-selected","true");
+});
