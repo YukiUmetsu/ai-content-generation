@@ -116,19 +116,23 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     if(beat.narrationCueId!==undefined)
       manualReview.add("Storyboard narration-cue edits are not yet imported into Director.");
     if(beat.cameraIntent)manualReview.add("Storyboard camera edits are not yet imported into Director.");
-    if(Number.isInteger(beat.durationFrames)&&beat.durationFrames!==originalDuration(plan.sound.find(v=>v.shotId===shot.id)))
+    if(beat.durationFrames!==originalDuration(plan.sound.find(v=>v.shotId===shot.id)))
       manualReview.add("Storyboard timing edits are not yet imported into Director.");
-    if(beat.teachingState&&!equivalent(
-      {before:beat.teachingState.before,action:beat.teachingState.action,after:beat.teachingState.after},
-      linked.sequence.visualStates))
-      manualReview.add("Storyboard teaching-state edits are not yet imported into Director.");
-    if(beat.teachingMechanic&&!equivalent(beat.teachingMechanic.mechanic,linked.sequence.visualMechanic))
-      manualReview.add("Storyboard semantic-mechanic edits are not yet imported into Director.");
-    if(Array.isArray(beat.semanticObjects)&&!equivalent(beat.semanticObjects,shot.subjectIds))
+    const linkedState=["problem","mechanism","payoff"].includes(linked.phase.kind)&&
+      shot.subjectIds?.includes(linked.sequence.technicalSubjectId);
+    const sourceState=linkedState?linked.sequence.visualStates:undefined;
+    const beatState=beat.teachingState?{
+      before:beat.teachingState.before,action:beat.teachingState.action,after:beat.teachingState.after}:undefined;
+    if(!equivalent(beatState,sourceState))
+      manualReview.add("Storyboard teaching-state edits or removals are not yet imported into Director.");
+    const sourceMechanic=linkedState?linked.sequence.visualMechanic:undefined;
+    if(!equivalent(beat.teachingMechanic?.mechanic,sourceMechanic))
+      manualReview.add("Storyboard semantic-mechanic edits or removals are not yet imported into Director.");
+    if(!equivalent(beat.semanticObjects,shot.subjectIds))
       manualReview.add("Storyboard semantic-object edits are not yet imported into Director.");
-    if(beat.focusTarget&&beat.focusTarget!==shot.subjectIds?.[0])
+    if(beat.focusTarget!==shot.subjectIds?.[0])
       manualReview.add("Storyboard focus changes are not yet imported into Director.");
-    if(beat.staticFallback&&beat.staticFallback!==readable(plan.shots[i].onScreenText)+" — "+plan.shots[i].visualChange)
+    if(beat.staticFallback!==readable(plan.shots[i].onScreenText)+" — "+plan.shots[i].visualChange)
       manualReview.add("Storyboard fallback-card edits are not yet imported into Director.");
   }
   if(storyboard.title!==undefined&&storyboard.title!==readable(dossier.topic.title,120))
