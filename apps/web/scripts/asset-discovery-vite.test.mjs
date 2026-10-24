@@ -37,3 +37,18 @@ test("local asset API lists project approvals, not arbitrary filesystem paths",a
     {status:200,result:{assets:[{assetId:"asset-a"}]}});
   assert.equal((await invoke("GET","/approved?projectId=../../secrets",undefined,deps)).status,422);
 });
+
+test("local asset API binds and clears a verified scene asset only through same-origin actions",async()=>{
+  const called=[];
+  const deps={selected:async ({projectId})=>({selections:[{projectId,shotId:"shot-a",sha256:"a".repeat(64)}],invalidShots:[]}),
+    select:async input=>{called.push(["select",input]);return {shotId:input.shotId,sha256:input.sha256};},
+    clear:async input=>{called.push(["clear",input]);return {cleared:true};}};
+  const ref={projectId:"p1",shotId:"shot-a",provider:"pexels",assetId:"83",sha256:"a".repeat(64)};
+  assert.equal((await invoke("GET","/selected?projectId=p1",undefined,deps)).result.selections[0].shotId,"shot-a");
+  assert.equal((await invoke("POST","/select",ref,deps,{origin:"http://localhost:5173"})).status,403);
+  assert.equal(called.length,0);
+  assert.deepEqual((await invoke("POST","/select",ref,deps)).result,{shotId:"shot-a",sha256:"a".repeat(64)});
+  assert.deepEqual((await invoke("POST","/clear",{projectId:"p1",shotId:"shot-a"},deps)).result,{cleared:true});
+  assert.deepEqual(called.map(([action])=>action),["select","clear"]);
+  assert.equal((await invoke("GET","/selected?projectId=../../etc",undefined,deps)).status,422);
+});

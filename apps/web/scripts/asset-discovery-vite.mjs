@@ -1,5 +1,6 @@
 /** Loopback-only, explicit-action bridge for per-scene asset search and approval. */
-import {approveAsset, discoverShotAssets, listApprovedAssets} from "./video-production/asset-discovery.mjs";
+import {approveAsset, clearSelectedSceneAsset, discoverShotAssets, listApprovedAssets,
+  listSelectedSceneAssets, selectApprovedSceneAsset} from "./video-production/asset-discovery.mjs";
 
 const PREFIX="/api/contentgen-assets";
 function send(res,status,payload){res.writeHead(status,{"Content-Type":"application/json; charset=utf-8",
@@ -34,11 +35,16 @@ export async function handleAssetDiscoveryRequest(req,res,deps={}){
       if(data?.confirmDownload!==true||data?.confirmRights!==true)
         throw Error("Review the provider license and approve each download first.");
       send(res,200,await (deps.approve??approveAsset)(data,opts));
-    }else if(req.method==="GET"&&url.pathname==="/approved"){
+    }else if(req.method==="POST"&&url.pathname==="/select"){
+      send(res,200,await (deps.select??selectApprovedSceneAsset)(await body(req),opts));
+    }else if(req.method==="POST"&&url.pathname==="/clear"){
+      send(res,200,await (deps.clear??clearSelectedSceneAsset)(await body(req),opts));
+    }else if(req.method==="GET"&&(url.pathname==="/approved"||url.pathname==="/selected")){
       const projectId=url.searchParams.get("projectId");
       if(!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u.test(projectId??""))
         throw Error("Invalid project identifier.");
-      send(res,200,{assets:await (deps.list??listApprovedAssets)({projectId},opts)});
+      if(url.pathname==="/approved")send(res,200,{assets:await (deps.list??listApprovedAssets)({projectId},opts)});
+      else send(res,200,await (deps.selected??listSelectedSceneAssets)({projectId},opts));
     }else send(res,404,{error:"Unknown asset route."});
   }catch(error){
     send(res,422,{error:String(error?.message??"Asset operation failed.").slice(0,270)});
