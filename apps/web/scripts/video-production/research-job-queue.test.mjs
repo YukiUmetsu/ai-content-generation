@@ -777,6 +777,21 @@ test("older completed scene checkpoints bypass the new split scene generator",as
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test("split scene jobs receive only already completed scenes as novelty context",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-scene-coverage-"));
+  const seen=[];
+  const manager=fixture(root,{scene:null,sceneStructure:async()=>({}),
+    sceneVisual:async(_story,index,phase,_structure,_previous,_d,_q,_model,options)=>{
+      if(phase===0)seen.push([index,options.priorScenes?.length??-1]);
+      return {};
+    },sceneNarration:async()=>({}),combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.deepEqual(seen,[[0,0],[1,1]]);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("manually regenerating one scene invalidates its partial pieces without rerunning a different scene",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-chunks-revision-"));
   const seen=[];
