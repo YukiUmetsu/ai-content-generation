@@ -47,6 +47,7 @@ async function optionalJson(file,limit){
 function publicState(job){
   return {jobId:job.id,status:job.status,stage:job.stage,createdAt:job.createdAt,updatedAt:job.updatedAt,
     completedScenes:job.completedScenes??0,totalScenes:job.totalScenes??0,
+    ...(job.retry?{retry:job.retry}:{}),
     ...(job.error?{error:job.error}:{}),...(job.artifactId?{artifactId:job.artifactId}:{})};
 }
 async function saveCompleted(root,job,data,plan){
@@ -89,7 +90,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     return job;
   };
   const stageFile=async(job,name)=>optionalJson(pathFor(job.id,name),name==="captures.json"?256*1024:512*1024);
-  const setStage=async(job,stage)=>{job.status="running";job.stage=stage;job.error=null;await save(job);};
+  const setStage=async(job,stage)=>{job.status="running";job.stage=stage;job.error=null;job.retry=null;await save(job);};
   const guard=signal=>{if(signal.aborted)throw signal.reason??Error("Job cancelled.");};
   const inference=async(action,signal)=>{
     const previous=inferenceTail;
@@ -101,24 +102,43 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   const attempt=async(job,call,signal)=>{
     const models=[job.models.primary,...(job.models.secondary?[job.models.secondary]:[])];
     let last;
-    for(const settings of models){
+    const maxAttempts=3;
+    for(let modelIndex=0;modelIndex<models.length;modelIndex++){
+      const settings=models[modelIndex];
       // Never use an unauthorized remote endpoint: both settings were locally validated.
       const max=/^(?:localhost|127\.0\.0\.1|\[::1\])$/u;
       if(!max.test(new URL(settings.endpoint).hostname))throw Error("Local model endpoint must use loopback.");
-      for(let n=0;n<2;n++){
+      for(let n=0;n<maxAttempts;n++){
         guard(signal);
-        try{return await inference(()=>call(settings,n===1?
-          "The previous response failed schema or provider validation. Return only the required valid JSON fields.":null),signal);}
+        try{
+          const result=await inference(()=>call(settings,n>0?
+            "The previous response was invalid. Return ONLY a complete JSON object with exactly the required fields and types; correct missing or malformed fields without inventing facts.":null),signal);
+          job.retry=null;
+          await save(job);
+          return result;
+        }
         catch(error){
           if(signal.aborted)throw error;
           last=error;
           const info=errorInfo(error);
-          if(!["model_timeout","provider_unavailable","invalid_output"].includes(info.code)||n===1)break;
-          await sleep(2500);
+          const retryable=["model_timeout","provider_unavailable","invalid_output"].includes(info.code);
+          if(retryable&&n<maxAttempts-1){
+            job.retry={stage:job.stage,attempt:n+2,maxAttempts,reason:info.code,modelIndex:modelIndex+1,totalModels:models.length};
+            await save(job);
+            console.warn("[contentgen-research-retry]",JSON.stringify({jobId:job.id,stage:job.stage,
+              errorCode:info.code,nextAttempt:n+2,maxAttempts,modelIndex:modelIndex+1}));
+            await sleep(1000*(n+1));
+          }else break;
         }
       }
-      if(settings!==models.at(-1))await sleep(2500);
+      if(modelIndex<models.length-1){
+        job.retry={stage:job.stage,attempt:1,maxAttempts,reason:errorInfo(last).code,
+          modelIndex:modelIndex+2,totalModels:models.length};
+        await save(job);
+        await sleep(2500);
+      }
     }
+    job.retry=null;
     throw last??Error("No configured local model could complete the job stage.");
   };
   const execute=async(id,controller)=>{
@@ -170,7 +190,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
       job.artifactId=artifactId;
       job.status="completed";job.stage="completed";job.error=null;await save(job);
     }catch(error){
-      if(job){job.status=signal.aborted?"cancelled":"failed";
+      if(job){job.status=signal.aborted?"cancelled":"failed";job.retry=null;
         job.error=signal.aborted?null:errorInfo(error);await save(job);
         if(job.error)console.warn("[contentgen-research-job]",JSON.stringify({
           jobId:job.id,stage:job.stage,errorCode:job.error.code,attempt:"stopped",
@@ -195,7 +215,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     const job={version:1,id:"job_"+randomBytes(12).toString("hex"),brief,searchArtifactId,
       models:{primary,secondary},status:"queued",stage:"queued",generation:0,
       completedScenes:0,totalScenes:0,sceneRevisions:{},createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
-      error:null,artifactId:null};
+      error:null,retry:null,artifactId:null};
     await save(job);start(job);
     return publicState(job);
   }
@@ -222,14 +242,14 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
         job.models=next;job.generation++;job.sceneRevisions={};job.completedScenes=0;job.totalScenes=0;
       }
     }
-    job.status="queued";job.stage="queued";job.error=null;job.artifactId=null;
+    job.status="queued";job.stage="queued";job.error=null;job.retry=null;job.artifactId=null;
     await save(job);start(job);return publicState(job);
   }
   async function cancel(id){
     const job=await read(id);
     if(job.status==="completed")throw Error("Research job already completed; its snapshot cannot be cancelled.");
     active.get(id)?.abort(Error("Job cancelled."));
-    job.status="cancelled";job.stage="cancelled";job.error=null;
+    job.status="cancelled";job.stage="cancelled";job.error=null;job.retry=null;
     await save(job);return publicState(job);
   }
   async function retryScene(id,sceneId,models){
