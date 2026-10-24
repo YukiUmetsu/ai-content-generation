@@ -14,7 +14,7 @@ const draft={artifactId:"research_sample-0123456789ab",
     snapshotSha256:"a".repeat(64)}]},
   quotes:[{claimId:"claim_02",sourceId:"source_01",
     quote:"Electrical upgrades may be required as part of the work."}],
-} as ResearchDraftResult;
+} as unknown as ResearchDraftResult;
 
 describe("local claim-review receipts",()=>{
   it("records explicit review for the exact claim and immutable source snapshot",()=>{
