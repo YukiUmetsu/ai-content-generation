@@ -47,6 +47,16 @@ function checkedQuotes(output){
   return quotes;
 }
 
+async function runLocalStage(stage, action) {
+  try { return await action(); }
+  catch (error) {
+    if (error?.name === "TimeoutError" ||
+      /operation was aborted due to timeout/iu.test(String(error?.message ?? "")))
+      throw Error(stage + " timed out after the local 3-minute inference limit. Saved source searches remain available. Choose a faster/smaller model in Settings → Local AI, then retry.");
+    throw error;
+  }
+}
+
 async function persistSnapshot(output,plan,quotes,root,searchArtifactId){
   if(!/^research_[a-z0-9_-]{1,78}$/iu.test(output.dossier.id))throw Error("Invalid research snapshot ID.");
   const document={schemaVersion:1,kind:"studio-research-snapshot",dossier:output.dossier,
@@ -79,13 +89,13 @@ export async function createStudioResearchDraft(candidate,modelSettings,deps={})
     ?await (deps.loadSearch??loadStudioSearch)(searchArtifactId,{root:deps.root??DEFAULT_ROOT})
     :null;
   if(searchSnapshot)validateStudioSearchMatch(searchSnapshot,brief);
-  const output=await (deps.research??researchVideoTopic)(brief,options,{
-    signal:deps.signal,...(searchSnapshot?{search:async()=>searchSnapshot.results}:{})});
+  const output=await runLocalStage("Research AI",()=>(deps.research??researchVideoTopic)(brief,options,{
+    signal:deps.signal,...(searchSnapshot?{search:async()=>searchSnapshot.results}:{})}));
   const quotes=checkedQuotes(output);
   const storySettings=deps.storyModelSettings
     ? validateResearchModelSettings({...deps.storyModelSettings,version:1}) : settings;
-  const plan=await (deps.generate??generatePreproductionPlan)(output.dossier,
-    {...options,model:storySettings.model,endpoint:storySettings.endpoint},{signal:deps.signal});
+  const plan=await runLocalStage("Storyboard planning AI",()=>(deps.generate??generatePreproductionPlan)(output.dossier,
+    {...options,model:storySettings.model,endpoint:storySettings.endpoint},{signal:deps.signal}));
   const saved=await (deps.persist??persistSnapshot)(output,plan,quotes,deps.root??DEFAULT_ROOT,searchArtifactId);
   return {dossier:output.dossier,plan,quotes,snapshotId:output.dossier.id,
     artifactId:typeof saved==="string"?basename(saved,".json"):undefined,
