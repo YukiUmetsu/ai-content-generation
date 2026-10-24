@@ -161,6 +161,6 @@ test("passes an explicitly saved storyboard through the deterministic Director s
   assert.equal(result.status,200);
   assert.equal(received.projectId,"project-demo");
   assert.equal(received.artifactId,artifactId);
-  assert.equal(received.storyboard,storyboard);
+  assert.deepEqual(received.storyboard,storyboard);
   assert.equal(result.result.synchronization.applied[0],"shot_one:narration");
 });
