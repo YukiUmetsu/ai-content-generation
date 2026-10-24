@@ -6,12 +6,13 @@ import {Surface} from "@/components/ui/surface-card";
 type Shot={id:string;purpose?:string;visualChange?:string;onScreenText?:string;
   visualElements?:Array<{label:string;detail:string}>};
 type Bundle={plan:{shots:Shot[]}};
-type Candidate={provider:"polyhaven"|"pexels";assetId:string;assetType:"model"|"texture"|"hdri"|"photo";
-  title:string;sourceUrl:string;previewUrl:string;license:string;licenseUrl:string;creator:string};
+type Candidate={provider:"polyhaven"|"pexels";assetId:string;assetType:"model"|"texture"|"hdri"|"photo"|"video";
+  title:string;sourceUrl:string;previewUrl:string;license:string;licenseUrl:string;creator:string;durationSeconds?:number};
 type Scene={shotId:string;query:string;strategy:"search"|"kumiki";reason:string;candidates:Candidate[]};
 type Results={scenes:Scene[];warnings:string[]};
 type Approved={shotId:string;assetId:string;provider:string;assetType:string;title:string;license:string;
-  sourceUrl:string;localPath:string;sha256:string;sizeBytes:number};
+  sourceUrl:string;localPath:string;sha256:string;sizeBytes:number;durationSeconds?:number};
+type Selected={selections:Approved[];invalidShots:string[]};
 
 async function localAssets(path:string,body?:unknown){
   const response=await fetch("/api/contentgen-assets/"+path,{
@@ -23,12 +24,13 @@ async function localAssets(path:string,body?:unknown){
   return result;
 }
 const fmt=(bytes:number)=>bytes<1024*1024?`${Math.round(bytes/1024)} KB`:`${(bytes/1024/1024).toFixed(1)} MB`;
-const key=(asset:Candidate)=>`${asset.provider}:${asset.assetId}`;
+const key=(asset:Candidate)=>`${asset.provider}:${asset.assetType}:${asset.assetId}`;
 
 /** Optional per-scene visual ingredients; does not alter the approved storyboard or renderer. */
 export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bundle;projectId:string;selectedShotId:string}){
   const [search,setSearch]=useState<{bundle:Bundle;data:Results}|null>(null);
   const [approved,setApproved]=useState<Approved[]>([]);
+  const [selected,setSelected]=useState<Selected>({selections:[],invalidShots:[]});
   const [pending,setPending]=useState<{bundle:Bundle;shotId:string;asset:Candidate}|null>(null);
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
@@ -37,12 +39,15 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
   const review=pending?.bundle===bundle&&pending.shotId===selectedShotId?pending.asset:null;
   const scene=results?.scenes.find(x=>x.shotId===selectedShotId);
   const sceneApproved=approved.filter(x=>x.shotId===selectedShotId);
+  const sceneSelected=selected.selections.find(x=>x.shotId===selectedShotId);
 
   useEffect(()=>{
     let active=true;
-    void localAssets("approved?projectId="+encodeURIComponent(projectId)).then(result=>{
-      if(active)setApproved(result.assets as Approved[]);
-    }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Could not load approved assets.");});
+    void Promise.all([
+      localAssets("approved?projectId="+encodeURIComponent(projectId)),
+      localAssets("selected?projectId="+encodeURIComponent(projectId))]).then(([assets,selection])=>{
+      if(active){setApproved(assets.assets as Approved[]);setSelected(selection as unknown as Selected);}
+    }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Could not load scene assets.");});
     return()=>{active=false;};
   },[projectId]);
   async function discover(){
@@ -63,16 +68,35 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
         assetId:asset.assetId,assetType:asset.assetType,confirmDownload:true,confirmRights:true});
       const result=await localAssets("approved?projectId="+encodeURIComponent(projectId));
       setApproved(result.assets as Approved[]);
-      setNotice("Asset saved locally with source, license and SHA-256 provenance. You can now bind it into a Kumiki scene.");
+      setNotice("Asset imported with source, license and SHA-256 provenance. Choose 'Use in scene' to pin it for a future render.");
       setPending(null);setAcknowledged(false);
     }catch(error){setNotice(error instanceof Error?error.message:"Asset could not be imported.");}
+    finally{setBusy("");}
+  }
+  async function choose(asset:Approved){
+    setBusy("selection");setNotice("");
+    try{
+      await localAssets("select",{projectId,shotId:selectedShotId,provider:asset.provider,
+        assetId:asset.assetId,sha256:asset.sha256});
+      setSelected(await localAssets("selected?projectId="+encodeURIComponent(projectId)) as unknown as Selected);
+      setNotice("Selected for this scene. The current renderer does not place this footage automatically yet.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not select scene asset.");}
+    finally{setBusy("");}
+  }
+  async function clearSelection(){
+    setBusy("selection");setNotice("");
+    try{
+      await localAssets("clear",{projectId,shotId:selectedShotId});
+      setSelected(await localAssets("selected?projectId="+encodeURIComponent(projectId)) as unknown as Selected);
+      setNotice("Scene selection cleared; imported assets remain available.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not clear scene selection.");}
     finally{setBusy("");}
   }
   return <Surface header={<h2 className="flex items-center gap-2 font-medium">
     <Search className="size-4"/>Scene asset discovery</h2>}>
     <div className="space-y-4 text-sm">
-      <p className="text-muted-foreground">Find relevant photos, 3D models and materials for each storyboard scene.
-        Search uses public Poly Haven and optional Pexels metadata; nothing is imported without your approval.</p>
+      <p className="text-muted-foreground">Find relevant video footage, photos, 3D models and materials for each storyboard scene.
+        Search uses public Poly Haven and optional <a href="https://www.pexels.com/" className="underline" target="_blank" rel="noopener noreferrer">Pexels</a> metadata; nothing is imported without your approval.</p>
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" disabled={!!busy} onClick={()=>void discover()}>
           <Search className="mr-2 size-4"/>{busy==="search"?"Searching public asset sites…":"Find assets for all scenes"}
@@ -89,13 +113,13 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
         <p className="text-xs text-muted-foreground">No confident matches. Keep the Kumiki animation or use an asset from another source manually.</p>}
       {scene&&scene.candidates.length>0&&<div className="grid gap-3 md:grid-cols-2">
         {scene.candidates.map(asset=>{
-          const existing=sceneApproved.some(x=>x.assetId===asset.assetId&&x.provider===asset.provider);
+          const existing=sceneApproved.some(x=>x.assetId===asset.assetId&&x.provider===asset.provider&&x.assetType===asset.assetType);
           return <div key={key(asset)} className="min-w-0 overflow-hidden rounded-control border border-border bg-surface">
             {asset.previewUrl&&<img src={asset.previewUrl} alt={asset.title} loading="lazy"
               referrerPolicy="no-referrer" className="h-36 w-full bg-surface-subtle object-cover"/>}
             <div className="space-y-2 p-3">
               <p className="font-semibold">{asset.title}</p>
-              <p className="text-xs text-muted-foreground">{asset.assetType} · {asset.provider==="polyhaven"?"Poly Haven":"Pexels"}
+              <p className="text-xs text-muted-foreground">{asset.assetType}{asset.durationSeconds?` · ${asset.durationSeconds}s`:""} · {asset.provider==="polyhaven"?"Poly Haven":"Pexels"}
                 {asset.creator?` · ${asset.creator}`:""}</p>
               <div className="flex flex-wrap gap-3 text-xs">
                 <a href={asset.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">View original <ExternalLink className="inline size-3"/></a>
@@ -127,15 +151,23 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
       </div>}
       {sceneApproved.length>0&&<div className="space-y-2 rounded-control border border-border p-3">
         <p className="text-xs font-semibold">Approved local assets for this scene</p>
-        {sceneApproved.map(asset=><div key={asset.provider+asset.assetId+asset.sha256} className="text-xs">
+        {sceneApproved.map(asset=><div key={asset.provider+asset.assetType+asset.assetId+asset.sha256} className="space-y-1 border-t border-border pt-2 text-xs">
           <p className="font-medium">{asset.title} · {asset.license} · {fmt(asset.sizeBytes)}</p>
           <p className="break-all text-muted-foreground">{asset.localPath}</p>
+          {sceneSelected?.sha256===asset.sha256?<span className="inline-flex items-center gap-1 text-emerald-500"><CheckCircle2 className="size-3"/>Selected for this scene</span>:
+            <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose(asset)}>Use in scene</Button>}
         </div>)}
       </div>}
+      {sceneSelected&&<div className="flex items-center justify-between gap-3 rounded-control border border-primary/30 p-3 text-xs">
+        <span>Selected: <strong>{sceneSelected.title}</strong> · {sceneSelected.assetType}</span>
+        <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void clearSelection()}>Clear selection</Button>
+      </div>}
+      {selected.invalidShots.includes(selectedShotId)&&<p role="status" className="rounded-control border border-destructive/40 p-3 text-xs">
+        Previously selected media is missing or modified. Choose a verified asset again before rendering.</p>}
       {results?.warnings?.map((warning,index)=><p className="text-xs text-muted-foreground" key={index}>{warning}</p>)}
       {notice&&<p role="status" className="rounded-control border border-border p-3 text-xs">{notice}</p>}
-      <p className="text-xs text-muted-foreground">Approved files are kept with scene-linked manifests for the Kumiki render adapter.
-        The current generic video renderer does not automatically place imported images/models yet.</p>
+      <p className="text-xs text-muted-foreground">Scene selections are saved by asset hash for the future Kumiki adapter.
+        The current generic video renderer does not automatically place imported footage, images or models yet.</p>
     </div>
   </Surface>;
 }

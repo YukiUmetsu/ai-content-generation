@@ -106,6 +106,35 @@ async function pexelsCandidates(query,opts){
       creator:visible(item.photographer,100),relevance:1,rightsStatus:"needs-human-review"}];
   });
 }
+const VIDEO_HOSTS=["videos.pexels.com","player.vimeo.com"];
+function validPexelsVideoFiles(item){
+  return (Array.isArray(item.video_files)?item.video_files:[]).filter(file=>{
+    if(file?.file_type!=="video/mp4"||file.quality!=="hd"||
+      !Number.isSafeInteger(file.width)||file.width<1280||file.width>1920||
+      !Number.isSafeInteger(file.height)||file.height<720||file.height>1080)return false;
+    try{providerUrl(file.link,VIDEO_HOSTS);return true;}catch{return false;}
+  }).sort((a,b)=>a.width*a.height-b.width*b.height);
+}
+function pexelsVideoCandidate(item){
+  if(!Number.isSafeInteger(item?.id)||item.id<1||
+    !Number.isSafeInteger(item.duration)||item.duration<1||item.duration>90||
+    !validPexelsVideoFiles(item).length)return null;
+  let source,preview;
+  try{source=providerUrl(item.url,["www.pexels.com","pexels.com"]);
+    preview=providerUrl(item.image,["images.pexels.com"]);}catch{return null;}
+  return {provider:"pexels",assetId:String(item.id),assetType:"video",
+    title:`Pexels footage ${item.id}`,previewUrl:preview,sourceUrl:source,
+    license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
+    creator:visible(item.user?.name,100),durationSeconds:item.duration,
+    relevance:1,rightsStatus:"needs-human-review"};
+}
+async function pexelsVideoCandidates(query,opts){
+  if(!opts.pexelsKey)return [];
+  const url=`https://api.pexels.com/v1/videos/search?query=${encodeURIComponent(query)}&per_page=4`;
+  const data=await getJson(url,{...opts,headers:{Authorization:opts.pexelsKey}});
+  return (Array.isArray(data.videos)?data.videos:[]).slice(0,4)
+    .map(pexelsVideoCandidate).filter(Boolean);
+}
 
 /** One user-triggered search across scenes, bounded and read-only. */
 export async function discoverShotAssets(input,opts={}){
@@ -133,8 +162,12 @@ export async function discoverShotAssets(input,opts={}){
       const queries=[...new Set(active.map(x=>x.query))].slice(0,12);
       for(let start=0;start<queries.length;start+=3){
         await Promise.all(queries.slice(start,start+3).map(async query=>{
-          try{cache.set(query,await pexelsCandidates(query,opts));}
-          catch(error){warnings.push(`Pexels ${query}: ${visible(error.message,120)}`);cache.set(query,[]);}
+          const [photos,videos]=await Promise.allSettled([
+            pexelsCandidates(query,opts),pexelsVideoCandidates(query,opts)]);
+          if(photos.status==="rejected")warnings.push(`Pexels photos ${query}: ${visible(photos.reason?.message,120)}`);
+          if(videos.status==="rejected")warnings.push(`Pexels videos ${query}: ${visible(videos.reason?.message,120)}`);
+          cache.set(query,[...(photos.status==="fulfilled"?photos.value:[]),
+            ...(videos.status==="fulfilled"?videos.value:[])]);
         }));
       }
       for(const need of active)byShot.get(need.shotId).push(...(cache.get(need.query)??[]));
@@ -177,11 +210,15 @@ function polyFilesTree(tree,assetType){
   if(!Number.isSafeInteger(total)||total>MAX_FILE)throw Error("Poly Haven asset exceeds the 80 MB import limit.");
   return files;
 }
-async function downloadFile(file,{fetchImpl=fetch,signal}={}){
-  const url=providerUrl(file.url,["dl.polyhaven.org","images.pexels.com"]);
+async function downloadFile(file,{fetchImpl=fetch,signal,provider}={}){
+  const hosts=provider==="polyhaven"?["dl.polyhaven.org"]:
+    provider==="pexels"?(file.name==="video.mp4"?VIDEO_HOSTS:["images.pexels.com"]):[];
+  const url=providerUrl(file.url,hosts);
   if(!Number.isSafeInteger(file.size)||file.size<0||file.size>MAX_FILE)throw Error("Provider asset exceeds download limit.");
   const response=await fetchImpl(url,{redirect:"error",signal:signal??AbortSignal.timeout(60000),headers:{"User-Agent":UA}});
   const bytes=await readLimited(response,MAX_FILE);
+  if(file.name==="video.mp4"&&(bytes.length<12||bytes.toString("ascii",4,8)!=="ftyp"))
+    throw Error("Provider did not return a compatible MP4 video file.");
   if(file.size&&bytes.length!==file.size)throw Error("Incomplete or modified provider download.");
   if(file.md5&&createHash("md5").update(bytes).digest("hex")!==file.md5)
     throw Error("Downloaded asset failed provider integrity check.");
@@ -208,6 +245,17 @@ async function resolveAssetFiles(input,opts){
       license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
       creator:visible(item.photographer,100)}};
   }
+  if(input.provider==="pexels"&&input.assetType==="video"){
+    if(!opts.pexelsKey)throw Error("Set PEXELS_API_KEY locally before approving Pexels media.");
+    const item=await getJson(`https://api.pexels.com/v1/videos/videos/${encodeURIComponent(input.assetId)}`,
+      {...opts,headers:{Authorization:opts.pexelsKey}});
+    if(String(item.id)!==input.assetId)throw Error("Pexels returned a different video identifier.");
+    const candidate=pexelsVideoCandidate(item);
+    if(!candidate)throw Error("Pexels video has no compatible short HD MP4 variant.");
+    const variant=validPexelsVideoFiles(item)[0];
+    const url=providerUrl(variant.link,VIDEO_HOSTS);
+    return {files:[{name:"video.mp4",url,size:0}],meta:candidate};
+  }
   throw Error("Unsupported asset type or provider.");
 }
 
@@ -218,7 +266,7 @@ export async function approveAsset(input,opts={}){
   const projectId=ident(input.projectId,"project"),shotId=ident(input.shotId,"scene"),
     assetId=ident(input.assetId,"asset");
   if(!["polyhaven","pexels"].includes(input.provider)||
-    !["texture","hdri","model","photo"].includes(input.assetType))throw Error("Unknown asset provider/type.");
+    !["texture","hdri","model","photo","video"].includes(input.assetType))throw Error("Unknown asset provider/type.");
   const {files,meta}=await resolveAssetFiles({...input,assetId},opts);
   if(!meta)throw Error("Provider asset metadata could not be verified.");
   const root=resolve(opts.root??DEFAULT_ROOT);
@@ -228,7 +276,7 @@ export async function approveAsset(input,opts={}){
   try{
     const entries=[];
     for(const file of files){
-      const bytes=await downloadFile(file,opts);
+      const bytes=await downloadFile(file,{...opts,provider:input.provider});
       await mkdir(dirname(join(temp,file.name)),{recursive:true,mode:0o700});
       await writeFile(join(temp,file.name),bytes,{flag:"wx",mode:0o600});
       entries.push({name:file.name,sha256:sha(bytes),sizeBytes:bytes.length});
@@ -239,7 +287,8 @@ export async function approveAsset(input,opts={}){
     const manifest={schemaVersion:1,kind:"contentgen-approved-asset",projectId,shotId,
       provider:input.provider,assetId,assetType:input.assetType,
       title:meta.title,sourceUrl:meta.sourceUrl,license:meta.license,licenseUrl:meta.licenseUrl,
-      creator:meta.creator,rightsStatus:"user-reviewed",approvedAt:(opts.now??(()=>new Date()))().toISOString(),
+      creator:meta.creator,...(Number.isSafeInteger(meta.durationSeconds)?{durationSeconds:meta.durationSeconds}:{}),
+      rightsStatus:"user-reviewed",approvedAt:(opts.now??(()=>new Date()))().toISOString(),
       sha256:primary.sha256,sizeBytes:entries.reduce((n,e)=>n+e.sizeBytes,0),files:entries};
     await writeFile(join(temp,"manifest.json"),JSON.stringify(manifest,null,2)+"\n",{flag:"wx",mode:0o600});
     try{await rename(temp,finalDir);}catch(error){
@@ -264,15 +313,75 @@ export async function listApprovedAssets({projectId},{root=DEFAULT_ROOT}={}){
         const path=join(dir,asset.name),raw=await readFile(join(path,"manifest.json"),"utf8");
         const meta=JSON.parse(raw);
         if(meta.kind!=="contentgen-approved-asset"||meta.projectId!==projectId||meta.shotId!==shot.name||
-          meta.rightsStatus!=="user-reviewed"||!Array.isArray(meta.files)||!meta.files.length)continue;
-        const name=meta.files[0].name;
-        if(typeof name!=="string"||name.includes("/")||name.includes("\\")||!ID.test(meta.assetId)||
-          !/^[a-f0-9]{64}$/u.test(meta.sha256))continue;
-        const localPath=join(path,basename(name));
-        if(sha(await readFile(localPath))!==meta.sha256)continue;
+          meta.rightsStatus!=="user-reviewed"||!Array.isArray(meta.files)||
+          !meta.files.length||meta.files.length>32||!ID.test(meta.assetId)||
+          !/^[a-f0-9]{64}$/u.test(meta.sha256)||meta.files[0].sha256!==meta.sha256)continue;
+        let size=0,integrity=true;
+        for(const file of meta.files){
+          if(typeof file.name!=="string"||file.name.length>240||file.name.split("/").some(part=>
+            !/^[A-Za-z0-9_.-]{1,120}$/u.test(part)||part==="."||part==="..")||
+            file.name.includes("\\")||!/^[a-f0-9]{64}$/u.test(file.sha256)||
+            !Number.isSafeInteger(file.sizeBytes)||file.sizeBytes<0){integrity=false;break;}
+          const bytes=await readFile(join(path,file.name));
+          size+=bytes.length;
+          if(bytes.length!==file.sizeBytes||sha(bytes)!==file.sha256){integrity=false;break;}
+        }
+        if(!integrity||size!==meta.sizeBytes||size>MAX_FILE)continue;
+        const localPath=join(path,basename(meta.files[0].name));
         result.push({...meta,localPath,manifestPath:join(path,"manifest.json")});
       }catch{ /* An invalid/partial imported asset cannot appear as approved. */ }
     }
   }
   return result.slice(0,1000);
+}
+
+const SELECTION_FILE="scene-media-selection.json";
+/** Pin an approved content hash, never a client URL or filesystem path. */
+export async function selectApprovedSceneAsset(input,opts={}){
+  const projectId=ident(input?.projectId,"project"),shotId=ident(input?.shotId,"scene"),
+    assetId=ident(input?.assetId,"asset");
+  if(!/^[a-f0-9]{64}$/u.test(input?.sha256??"")||
+    !["pexels","polyhaven"].includes(input?.provider))throw Error("Invalid selected asset reference.");
+  const approved=(await listApprovedAssets({projectId},opts)).find(x=>x.shotId===shotId&&
+    x.provider===input.provider&&x.assetId===assetId&&x.sha256===input.sha256);
+  if(!approved)throw Error("Cannot select an asset that is not currently approved and hash-verified for this scene.");
+  const root=resolve(opts.root??DEFAULT_ROOT),sceneDir=join(root,projectId,shotId);
+  const selection={schemaVersion:1,kind:"contentgen-scene-media-selection",
+    projectId,shotId,provider:approved.provider,assetId,assetType:approved.assetType,
+    sha256:approved.sha256,selectedAt:(opts.now??(()=>new Date()))().toISOString()};
+  const temp=await mkdtemp(join(sceneDir,".selection-"));
+  try{
+    const stage=join(temp,SELECTION_FILE);
+    await writeFile(stage,JSON.stringify(selection,null,2)+"\n",{flag:"wx",mode:0o600});
+    await rename(stage,join(sceneDir,SELECTION_FILE));
+  }finally{await rm(temp,{recursive:true,force:true});}
+  return {...approved,selectedAt:selection.selectedAt};
+}
+
+/** Invalidated selections remain visible as review-required, never accepted as media. */
+export async function listSelectedSceneAssets({projectId},{root=DEFAULT_ROOT}={}){
+  ident(projectId,"project");
+  const base=join(resolve(root),projectId);
+  const approved=await listApprovedAssets({projectId},{root});
+  const selections=[],invalidShots=[];
+  const shots=await readdir(base,{withFileTypes:true}).catch(e=>e.code==="ENOENT"?[]:Promise.reject(e));
+  for(const shot of shots){
+    if(!shot.isDirectory()||!ID.test(shot.name))continue;
+    let record;
+    try{record=JSON.parse(await readFile(join(base,shot.name,SELECTION_FILE),"utf8"));}
+    catch(e){if(e.code==="ENOENT")continue;invalidShots.push(shot.name);continue;}
+    if(record?.kind!=="contentgen-scene-media-selection"||record.schemaVersion!==1||
+      record.projectId!==projectId||record.shotId!==shot.name){invalidShots.push(shot.name);continue;}
+    const valid=approved.find(x=>x.shotId===shot.name&&x.provider===record.provider&&
+      x.assetId===record.assetId&&x.assetType===record.assetType&&x.sha256===record.sha256);
+    if(!valid){invalidShots.push(shot.name);continue;}
+    selections.push({...valid,selectedAt:record.selectedAt});
+  }
+  return {schemaVersion:1,kind:"contentgen-scene-media-selections",selections,invalidShots};
+}
+
+export async function clearSelectedSceneAsset({projectId,shotId},{root=DEFAULT_ROOT}={}){
+  const path=join(resolve(root),ident(projectId,"project"),ident(shotId,"scene"),SELECTION_FILE);
+  await rm(path,{force:true});
+  return {projectId,shotId,cleared:true};
 }
