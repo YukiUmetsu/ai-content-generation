@@ -34,7 +34,7 @@ export function inspectCapturedLinks(document) {
       issues.push({claimId:claim.id,reason:!supports.length?"quote_missing":"source_missing"});
       continue;
     }
-    if(!links.every(ref=>validIds.has(ref)) ||
+    if(!links.every(ref=>validIds.has(ref)&&supports.some(quote=>quote.sourceId===ref)) ||
       !supports.every(quote=>links.includes(quote.sourceId)&&validIds.has(quote.sourceId)&&
         validText(quote.quote)&&verified.some(capture=>capture.id===quote.sourceId &&
           capture.text.includes(quote.quote)))){
