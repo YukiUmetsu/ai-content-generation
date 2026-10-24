@@ -33,11 +33,13 @@ function IntroLens({state,motion,renderNode}:SceneDiagramsProps){
     </g>
     {all.slice(1).map((label,i)=>{
       const others=all.length-1,twoColumns=others>=3,cols=twoColumns?2:1;
-      const width=twoColumns?304:610;
+      // Named teaching notes need enough room for both title and meaning.
+      // Previous 93px question cards were too small for the new content.
+      const width=twoColumns?345:610;
       const rows=Math.ceil(others/cols),col=i%cols,row=Math.floor(i/cols);
-      const y=rows>1?654+row*115:681,x=twoColumns?1085+col*370:1128;
+      const y=rows>1?628+row*140:671,x=twoColumns?1062+col*385:1128;
       return <AnimatedNode key={i} label={label} note={state.visual.itemNotes?.[i+1]} index={i+1} x={x} y={y}
-        width={width} height={93} motion={motion} renderNode={renderNode}/>;
+        width={width} height={124} motion={motion} renderNode={renderNode}/>;
     })}
     <g opacity={1-motion.completion*.7}>
       <rect x="1354" y="304" width="145" height="47" rx="23" fill="#233743" stroke={gold} strokeWidth="2" />

@@ -232,3 +232,25 @@ describe("specific teaching details in the actual encoded video frames",()=>{
    expect(legacy).toContain("Router");
  });
 });
+
+describe("information-dense question scenes retain real teaching notes", () => {
+  it("renders named explanations in the expanded multi-column question layout", () => {
+    const notes = ["A recurring local bill", "Borrowing adds interest", "Repairs and upkeep", "Monthly utility cost"];
+    const altered: GeneralVisualPlan = {
+      ...plan,
+      chapters: plan.chapters.map((chapter, index) => index === 1 ? {
+        ...chapter,
+        intent: "general-intro",
+        visual: {
+          ...chapter.visual,
+          items: ["House price", "Property tax", "Financing", "Maintenance", "Utilities"],
+          itemNotes: ["Just the purchase price", ...notes],
+        },
+      } : chapter),
+    };
+    const html = renderToStaticMarkup(<GeneralExportScene plan={altered} frame={119} />);
+    for (const line of notes) expect(html).toContain(line);
+    expect(html).toContain('data-semantic-layout="question-lens"');
+    expect(html.match(/data-teaching-detail=""/g)?.length).toBeGreaterThanOrEqual(5);
+  });
+});

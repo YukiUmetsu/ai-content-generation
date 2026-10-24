@@ -1,4 +1,5 @@
 import { fitSvgText } from "../../scripts/video-production/text-layout.mjs";
+import { layoutTeachingCard } from "../../scripts/video-production/teaching-card-layout.mjs";
 import { getGeneralFrame } from "../../scripts/video-production/general-visual-plan.mjs";
 import type { GeneralFrame, GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
 import { useMemo } from "react";
@@ -24,16 +25,18 @@ const turquoise = "#81C4BF";
 const palette = [turquoise, accent, "#A89CD5", "#B4D99B", "#D98D9C"];
 
 function Node({ x, y, width, height, label, note, index, highlight = false }: { x: number; y: number; width: number; height: number; label: string; note?: string; index: number; highlight?: boolean }) {
-  const text = fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
-  const detail = note?fitSvgText(note,{maxWidthPx:width-54,preferredSize:height<115?17:21,minSize:width<350?13:14,maxLines:width<350?4:height<115?3:2}):null;
+  // Named explanatory notes share one height budget with their titles.
+  // Legacy cards without notes keep their original typography and placement.
+  const card = note ? layoutTeachingCard({ label, note, width, height }) : null;
+  const title = card?.title ?? fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
   return <g data-general-node={index}>
     <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
     <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
-    {text.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5}
-      y={detail ? y+height*.25+i*(height<115?22:26) : y + height / 2 - (text.lines.length - 1) * 18 + i * 36 + 11}
-      fontSize={detail?Math.min(text.fontSize,28):text.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
-    {detail?.lines.map((line,i)=><text data-teaching-detail="" key={i} x={x+width/2+5}
-      y={y+(height<115?height*.63:height*.58)+i*(height<115?14:width<350?17:22)} fontSize={detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
+    {title.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5}
+      y={card ? y + card.title.baselines[i] : y + height / 2 - (title.lines.length - 1) * 18 + i * 36 + 11}
+      fontSize={title.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
+    {card?.detail.lines.map((line, i) => <text data-teaching-detail="" key={i} x={x + width / 2 + 5}
+      y={y + card.detail.baselines[i]} fontSize={card.detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
   </g>;
 }
 
