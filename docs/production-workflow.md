@@ -29,6 +29,14 @@ A paused evidence-repair job can be explicitly retried, which re-captures public
 
 For an existing storyboard, Production offers **Auto-fix safe source links** when unresolved claims and the matching saved research draft are available. It can restore missing source IDs on exact, unedited claims from the same research artifact, but does not replace nonempty user-edited references or approve factual truth.
 
+## Saved research into Video Director
+
+From **Visuals**, **Audio**, or **Preview & Export**, Production sends the selected project's matching immutable research artifact ID to Video Director. A same-origin, user-triggered `POST /api/contentgen-director/compile-saved-research` loads the snapshot on the local server, checks dossier/plan lineage and compiles the ordinary fingerprinted preproduction bundle. It never calls a model, searches the web, or changes the stored research. The destination opens actual rendered visuals, voice settings or render controls respectively; a preview/plan failure is shown honestly.
+
+If a storyboard has no matching stored research, Production opens the manual Video Director setup rather than selecting another project's last snapshot. A changed source remains explicitly subject to storyboard/evidence review; generating a Director bundle never approves claims or rights.
+
+The Video Director editor currently keeps in-progress shot edits in its mounted session; use **Save project** to download the editable JSON before leaving the editor. The generated preview is not itself a saved MP4, and a readiness check is not rendered audio. Visual, audio and export stage indicators therefore stay **Not started** until a durable project-bound media artifact is implemented; do not infer completion from a button click, a plan or a source snapshot.
+
 ## Resume and existing tools
 
 The page reuses the current project catalog, browser-local storyboard, last saved research pointers, durable local research jobs, and existing editor routes. Selected step is a UI preference, not a second copy of the content. Research snapshots are immutable. Changing an upstream research artifact makes derived storyboard/visual/audio/export stages stale when their stored lineage can be compared; prior edits must be preserved.
