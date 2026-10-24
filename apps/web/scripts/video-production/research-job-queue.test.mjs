@@ -26,6 +26,42 @@ async function settled(manager,id){for(let n=0;n<200;n++){
   await later(5);
 }throw Error("Job did not settle in time.");}
 
+test("evidence repair is checkpointed before outlining and visible in job status",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-repair-checkpoint-"));
+  let repairs=0;
+  const manager=fixture(root,{repair:async input=>{
+    repairs++;
+    return {document:input,autoFixed:1,unresolved:[],proposals:[],audit:[{claimId:"claim_01",reason:"exact_quote_relink"}]};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const complete=await settled(manager,jobId);
+    assert.equal(complete.status,"completed");
+    assert.equal(complete.evidenceRepair.autoFixed,1);
+    assert.equal(complete.evidenceRepair.needsReview,0);
+    const checkpoint=JSON.parse(await readFile(join(root,"jobs",jobId,"evidence_repair_0.json"),"utf8"));
+    assert.equal(checkpoint.autoFixed,1);
+    assert.equal(repairs,1);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("unresolved evidence pauses the job without discarding saved work",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-repair-review-"));
+  const manager=fixture(root,{repair:async input=>({
+    document:input,autoFixed:0,unresolved:[{claimId:"claim_01",reason:"quote_mismatch"}],
+    proposals:[],audit:[],
+  })});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    const paused=await settled(manager,jobId);
+    assert.equal(paused.status,"paused");
+    assert.equal(paused.stage,"evidence-repair");
+    assert.equal(paused.evidenceRepair.needsReview,1);
+    assert.equal(paused.artifactId,undefined);
+    assert.equal((await manager.get(jobId)).evidenceRepair.issues[0].reason,"quote_mismatch");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("retry resumes from completed scene, not source capture or outline",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   let captures=0,outlines=0,sceneOne=0,sceneTwo=0;
