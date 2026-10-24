@@ -14,7 +14,7 @@ Each stage is navigable. Its status comes from saved project/storyboard or resea
 ## Evidence is not approval
 
 - A search result alone is not a captured citation.
-- A valid captured quote links a claim to a particular source snapshot. It **does not verify the factual claim**.
+- A valid captured quote links a claim to a particular source snapshot. It **does not verify the factual claim**. Quotes are shown only when the storyboard is bound to that exact saved research artifact (legacy boards may use a matching immutable snapshot ID).
 - Imported storyboard claims stay `unverified` until a person reviews them.
 - Missing source references, invalid quote/source mappings, and human fact review have separate labels. The claim review panel groups repeated references across beats by unique claim ID.
 - Production displays the saved quotation beside the claim and allows a person to explicitly record or undo local review. A receipt is tied to the exact claim wording, cited source IDs, source snapshot hashes and research artifact ID; edited or replaced evidence invalidates that receipt.
