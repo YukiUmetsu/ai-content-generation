@@ -188,6 +188,27 @@ test("restart recovers a queued job as paused instead of displaying queued forev
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test("changing saved generation limits does not invalidate a resumable job's completed scenes",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
+  let scenes=0;
+  const limits={outlineTokens:1024,sceneTokens:3072,timeoutSeconds:360};
+  const manager=fixture(root,{scene:async(_outline,index)=>{
+    scenes++;
+    if(index===1&&scenes<=4)throw Error("Invalid scene JSON");
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:{...model,generation:limits}});
+    assert.equal((await settled(manager,jobId)).status,"failed");
+    assert.equal(scenes,4);
+    await manager.resume(jobId,{primary:{...model,generation:{...limits,sceneTokens:6144}}});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(scenes,5);
+    const manifest=JSON.parse(await readFile(join(root,"jobs",jobId,"manifest.json"),"utf8"));
+    assert.deepEqual(manifest.models.primary.generation,limits);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("explicit secondary local model is used only after primary inference failure",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   const used=[];
