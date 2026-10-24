@@ -128,6 +128,74 @@ test("retry uses the validated field path and reports it without private model o
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test("duplicate payoff learningChange retries with a different phase-specific learning goal",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-duplicate-payoff-"));
+  const feedback=[];
+  const structure={subject:"Heat pump",parts:["Equipment","Labor"],operator:"split",
+    before:"Only equipment visible",action:"Add installation work",after:"Complete cost visible"};
+  const manager=fixture(root,{scene:null,sceneStructure:async()=>structure,sceneVisual:null,
+    sceneDirection:async(_outline,index,phase,_s,_prev,_d,_q,_model,options)=>{
+      if(index===0&&phase===2){
+        feedback.push(options.feedback);
+        if(feedback.length===1)throw Object.assign(Error("Do not log source context"),{
+          code:"schema_invalid",field:"learningChange",schemaIssue:"duplicate_previous"});
+      }
+      return {visualAction:`Different action for scene ${index} phase ${phase}`,
+        learningChange:`New insight for scene ${index} phase ${phase}`,onScreenText:"Cost breakdown"};
+    },
+    sceneElements:async()=>({visualElements:[{label:"Hardware",detail:"Physical heat pump"},
+      {label:"Installation",detail:"Labor needed to install"}]}),
+    combineVisual:(direction,elements)=>({...direction,...elements}),
+    sceneNarration:async()=>({narration:"Equipment and labor contribute to installation cost."}),
+    combineScene:()=>({})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(feedback.length,2);
+    assert.equal(feedback[0],null);
+    assert.match(feedback[1],/payoff/i);
+    assert.match(feedback[1],/different|new|distinct/i);
+    assert.match(feedback[1],/not paraphrase|do not paraphrase/i);
+    assert.doesNotMatch(feedback[1],/Do not log source context/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("visualElements shape error gives a two-object repair instruction",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-elements-repair-"));
+  const feedback=[];
+  const manager=fixture(root,{scene:async(_outline,index,_d,_q,_model,options)=>{
+    if(index===0){
+      feedback.push(options.feedback);
+      if(feedback.length===1)throw Object.assign(Error("Untrusted source should stay private"),{
+        code:"schema_invalid",field:"visualElements",schemaIssue:"wrong_shape"});
+    }
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.match(feedback[1],/exactly two|exactly 2/i);
+    assert.match(feedback[1],/label.*detail/i);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("provider 5xx retry keeps the original input instead of adding schema repair hints",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-provider-retry-"));
+  const feedback=[];
+  const manager=fixture(root,{scene:async(_outline,index,_d,_q,_model,options)=>{
+    if(index===0){
+      feedback.push(options.feedback);
+      if(feedback.length===1)throw Error("Local model HTTP 503");
+    }
+    return {index};
+  }});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.deepEqual(feedback,[null,null]);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("invalid before receives field-specific state constraints on retry",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   const feedback=[];
