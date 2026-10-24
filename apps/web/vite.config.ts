@@ -5,9 +5,10 @@ import { defineConfig } from "vitest/config";
 import { researchModelSettingsPlugin } from "./scripts/research-model-vite.mjs";
 import { directorStudioPlugin } from "./scripts/director-studio-vite.mjs";
 import { directorProductionPlugin } from "./scripts/director-production-vite.mjs";
+import { assetDiscoveryPlugin } from "./scripts/asset-discovery-vite.mjs";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), researchModelSettingsPlugin(), directorStudioPlugin(), directorProductionPlugin()],
+  plugins: [react(), tailwindcss(), researchModelSettingsPlugin(), directorStudioPlugin(), directorProductionPlugin(), assetDiscoveryPlugin()],
   input: {
     studio: fileURLToPath(new URL("./index.html", import.meta.url)),
     headlessVideo: fileURLToPath(new URL("./video-export.html", import.meta.url)),
