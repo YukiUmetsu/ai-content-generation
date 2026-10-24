@@ -114,14 +114,18 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   }, [readinessAttempt]);
 
   const blockedForReadiness = checkingReadiness || (readiness !== null && (
-    readiness.search.state !== "ready" ||
+    (!searchResult && readiness.search.state !== "ready") ||
     [readiness.researchModel, readiness.storyModel].some(service =>
       service.state === "not_configured" || service.state === "model_missing" || service.state === "unavailable")));
-  const blockedForSearch = checkingReadiness || (readiness !== null && readiness.search.state !== "ready");
+  const blockedForSearch = checkingReadiness || (readiness !== null &&
+    ["not_configured","unavailable"].includes(readiness.search.state));
 
   function readinessInstruction() {
     if (checkingReadiness) return tr("Checking SearXNG and local AI before you start.", "開始前に SearXNG とローカル AI を確認しています。");
     if (readinessError || !readiness) return tr("Couldn't verify local services. You can retry or continue with caution.", "ローカルサービスを確認できませんでした。再確認するか、注意して続行できます。");
+    if (readiness.search.state !== "ready" && searchResult)
+      return tr("SearXNG is unavailable, but this saved search can still be used to generate a storyboard with local AI.",
+        "SearXNG は利用できませんが、保存済みの検索結果からローカル AI で構成案を作成できます。");
     if (readiness.search.state === "not_configured") return tr("Set up local search: pnpm --dir apps/web research:up, then pnpm --dir apps/web research:check.",
       "ローカル検索を設定してください：pnpm --dir apps/web research:up、続けて pnpm --dir apps/web research:check。");
     if (readiness.search.state !== "ready") return tr("SearXNG is not responding. Run pnpm --dir apps/web research:status, then research:check.",
