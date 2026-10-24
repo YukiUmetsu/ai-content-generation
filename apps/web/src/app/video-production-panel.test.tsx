@@ -117,7 +117,7 @@ describe("visual-first editing in normal Studio",()=>{
   });
 });
 
-test("opens narration controls for the guided Audio stage using the saved bundle",async()=>{
+it("opens narration controls for the guided Audio stage using the saved bundle",async()=>{
   const paths:string[]=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
     paths.push(String(url));
