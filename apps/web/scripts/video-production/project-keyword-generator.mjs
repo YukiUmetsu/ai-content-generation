@@ -74,7 +74,7 @@ export function qualityKeywordSuggestions(rows,{name,existing=[],accepted=[]}) {
   return {suggestions,rejected};
 }
 
-async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,signal,sleep=wait,lens="",requestSize=3,
+async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,signal,sleep=wait,lens="",requestSize=2,
   requestedBefore=[],requestCounter}={}) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) ||
     Object.keys(candidate).some(key => !["name","description","keywords"].includes(key)))
@@ -100,11 +100,11 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
     if (signal?.aborted) throw signal.reason ?? Error("Keyword generation cancelled.");
     if(requestCounter?.calls>=12)throw Error("Local keyword inference request budget reached.");
     try {
-      const requested=Math.min(requestSize,[3,2,1][attempt]);
+      const requested=Math.min(requestSize,[2,1,1][attempt]);
       if(requestCounter)requestCounter.calls++;
       const {response,raw} = await withLocalInferenceResponse(()=>transport(endpoint,{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({model:modelSettings.model,temperature:0.2,stream:false,response_format:{type:"json_object"},
-          max_tokens:1300,messages:[{role:"system",content:[...system,`FOCUS: ${lens}`,`Propose ${requested} distinct suggestions, with short text and rationale. No other keys.`].join("\n")},
+          max_tokens:600,messages:[{role:"system",content:[...system,`FOCUS: ${lens}`,`Propose ${requested} distinct suggestions, with short text and rationale. No other keys.`].join("\n")},
             {role:"user",content:JSON.stringify({name,description,existingKeywords:keywords,alreadySuggested:requestedBefore,
               ...(attempt?{feedback:`Prior JSON was incomplete or invalid. Reply with only ${requested} complete entries in one JSON object.`}:{})})}]}),
         signal:signal?AbortSignal.any([signal,AbortSignal.timeout(90000)]):AbortSignal.timeout(90000)}),signal);
@@ -153,17 +153,19 @@ export async function generateProjectKeywords(candidate,options={}) {
   const suggestions=[],counter={calls:0};
   const quality={modelRequests:0,batches:0,proposed:0,rejected:0,partial:false,evidence:"unverified"};
   let lastError=null;
-  for(const lens of TOPIC_LENSES) {
+  for(const [index,lens] of TOPIC_LENSES.entries()) {
     if(suggestions.length>=target||counter.calls>=12)break;
     if(options.signal?.aborted)throw options.signal.reason??Error("Keyword generation cancelled.");
+    let additions=[];
     try{
-      const rows=await generateKeywordBatch(candidate,{...options,lens,requestSize:Math.min(3,target-suggestions.length),
+      const rows=await generateKeywordBatch(candidate,{...options,lens,requestSize:Math.min(2,target-suggestions.length),
         requestedBefore:suggestions.map(item=>item.text),requestCounter:counter});
       quality.proposed+=rows.length;
       const screened=qualityKeywordSuggestions(rows,{name:candidate.name.trim(),existing:candidate.keywords??[],accepted:suggestions});
       quality.rejected+=screened.rejected;
       if(screened.suggestions.length){
-        suggestions.push(...screened.suggestions.slice(0,target-suggestions.length));
+        additions=screened.suggestions.slice(0,target-suggestions.length);
+        suggestions.push(...additions);
         quality.batches++;
       }
     }catch(error){
@@ -172,6 +174,11 @@ export async function generateProjectKeywords(candidate,options={}) {
         error.message==="Local model response exceeds limit."))throw error;
       lastError=error;
     }
+    quality.modelRequests=counter.calls;
+    // Emit the independently useful result immediately. Empty batches still
+    // advance honest progress; a broken later request cannot erase prior work.
+    await options.onBatch?.({suggestions:additions,quality:{...quality,partial:suggestions.length<target},
+      step:index+1,totalSteps:TOPIC_LENSES.length});
   }
   quality.modelRequests=counter.calls;
   if(options.signal?.aborted)throw options.signal.reason??Error("Keyword generation cancelled.");

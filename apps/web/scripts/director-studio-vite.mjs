@@ -100,6 +100,30 @@ export async function handleDirectorRequest(req,res,deps={}){
       const model=await (deps.model??resolveModelForTask)("research");
       const generated=await (deps.projectKeywords??generateProjectKeywords)(input,{modelSettings:model});
       send(res,200,generated);
+    }else if(req.method==="POST"&&route==="/project-keyword-suggestions/stream"){
+      const input=await readBody(req);
+      const model=await (deps.model??resolveModelForTask)("research");
+      if(!model?.model)throw Error("Choose an installed local research model in Settings.");
+      const controller=new AbortController();
+      const disconnected=()=>controller.abort(Error("Keyword review connection closed."));
+      res.on("close",disconnected);
+      res.writeHead(200,{"Content-Type":"application/x-ndjson; charset=utf-8",
+        "Cache-Control":"no-store, no-transform","X-Content-Type-Options":"nosniff",
+        "Referrer-Policy":"no-referrer","X-Accel-Buffering":"no"});
+      const emit=frame=>{
+        if(controller.signal.aborted||res.writableEnded)throw Error("Keyword review connection closed.");
+        res.write(JSON.stringify(frame)+"\n");
+      };
+      try{
+        const result=await (deps.projectKeywords??generateProjectKeywords)(input,{modelSettings:model,
+          signal:controller.signal,onBatch:batch=>emit({type:"batch",...batch})});
+        if(!controller.signal.aborted){emit({type:"done",quality:result.quality});res.end();}
+      }catch(error){
+        if(!controller.signal.aborted&&!res.writableEnded){
+          emit({type:"error",message:error instanceof Error?error.message:"Local keyword generation failed."});
+          res.end();
+        }
+      }finally{res.off("close",disconnected);}
     }else if(req.method==="POST"&&route==="/project-discovery"){
       const input=await readBody(req);
       const model=await discoveryJobModels(deps);

@@ -112,6 +112,73 @@ export async function suggestProjectKeywords(project: LocalProject, activeKeywor
   return {suggestions:data.suggestions,quality:data.quality};
 }
 
+export type KeywordBatchProgress = {suggestions:KeywordSuggestion[];quality:KeywordSuggestionQuality;
+  step:number;totalSteps:number};
+
+/** Read independently useful local batches as they arrive; never write keywords implicitly. */
+export async function streamProjectKeywords(project:LocalProject,activeKeywords:string[],{
+  onBatch,signal}:{onBatch:(batch:KeywordBatchProgress)=>void;signal?:AbortSignal}
+):Promise<KeywordSuggestionQuality> {
+  const response=await fetch("/api/contentgen-director/project-keyword-suggestions/stream",{
+    method:"POST",credentials:"same-origin",signal,
+    headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
+    body:JSON.stringify({name:project.name,description:project.notes,keywords:activeKeywords}),
+  });
+  if(!response.ok){
+    const error=await response.json().catch(()=>null) as {error?:string}|null;
+    throw Error(error?.error??`Local keyword stream returned ${response.status}. Restart the Studio server if it is outdated.`);
+  }
+  if(!response.body||!response.headers.get("content-type")?.includes("application/x-ndjson"))
+    throw Error("Local keyword streaming is unavailable. Restart the Studio server.");
+  const reader=response.body.getReader(),decoder=new TextDecoder();
+  let buffer="",bytes=0,final:KeywordSuggestionQuality|null=null;
+  const validQuality=(value:unknown):value is KeywordSuggestionQuality=>{
+    const q=value as Partial<KeywordSuggestionQuality>|null;
+    return !!q&&[q.modelRequests,q.batches,q.proposed,q.rejected].every(n=>typeof n==="number"&&Number.isInteger(n)&&n>=0)&&
+      typeof q.partial==="boolean"&&q.evidence==="unverified";
+  };
+  const acceptLine=(line:string)=>{
+    if(!line.trim())return;
+    let event:Record<string,unknown>;
+    try{event=JSON.parse(line) as Record<string,unknown>;}catch{throw Error("Invalid local keyword progress data.");}
+    if(!event||typeof event!=="object"||Array.isArray(event))throw Error("Invalid local keyword progress data.");
+    if(event.type==="error")throw Error(typeof event.message==="string"?event.message:"Local keyword generation failed.");
+    if(event.type==="done"&&validQuality(event.quality)){final=event.quality;return;}
+    if(event.type==="batch"&&validQuality(event.quality)&&Array.isArray(event.suggestions)&&
+      event.suggestions.length<=2&&Number.isInteger(event.step)&&Number.isInteger(event.totalSteps)){
+      const entries=event.suggestions as unknown[];
+      if(!entries.every(value=>{
+        const item=value as Partial<KeywordSuggestion>|null;
+        return !!item&&typeof item.text==="string"&&item.text.length<=160&&item.text.length>=2&&
+          ["topic","query","exclusion"].includes(String(item.kind))&&
+          typeof item.rationale==="string"&&item.rationale.length<=240;
+      }))throw Error("Invalid local keyword progress data.");
+      if(final)throw Error("Unexpected keyword data after completion.");
+      onBatch({suggestions:entries as KeywordSuggestion[],quality:event.quality,
+        step:event.step as number,totalSteps:event.totalSteps as number});return;
+    }
+    throw Error("Invalid local keyword progress data.");
+  };
+  try{
+    while(true){
+      const {done,value}=await reader.read();
+      if(done)break;
+      bytes+=value.byteLength;
+      if(bytes>100000)throw Error("Local keyword progress exceeded the size limit.");
+      buffer+=decoder.decode(value,{stream:true});
+      if(buffer.length>20000&&!buffer.includes("\n"))throw Error("Local keyword progress frame is too large.");
+      let end;
+      while((end=buffer.indexOf("\n"))>=0){
+        acceptLine(buffer.slice(0,end));buffer=buffer.slice(end+1);
+      }
+    }
+    buffer+=decoder.decode();
+    if(buffer.trim())acceptLine(buffer);
+    if(!final)throw Error("Keyword stream ended incomplete. Earlier suggestions are still available.");
+    return final;
+  }finally{reader.releaseLock();}
+}
+
 export function loadProjectGraphOverview(projectId: string): Promise<GraphOverview> {
   return request(`/projects/${encodeURIComponent(projectId)}/graph`);
 }
