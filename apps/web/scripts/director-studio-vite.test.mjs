@@ -80,6 +80,16 @@ test("research job routes start immediately and support durable progress, resume
   ]);
 });
 
+test("a user can retry only an existing evidence repair job through the local route",async()=>{
+  const jobId="job_"+"a".repeat(24);
+  let called=0;
+  const response=await post("/research-jobs/"+jobId+"/repair",{},{
+    jobs:{retryEvidence:async id=>{called++;assert.equal(id,jobId);return {jobId,status:"queued",stage:"queued"};}},
+  });
+  assert.equal(response.status,202);
+  assert.equal(response.result.jobId,jobId);
+  assert.equal(called,1);
+});
 test("research job only receives a secondary local model when fallback was explicitly configured",async()=>{
   let seen;
   const deps={model:async()=>({model:"primary",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
