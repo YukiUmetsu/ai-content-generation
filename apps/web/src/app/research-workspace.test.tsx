@@ -58,12 +58,12 @@ describe("Research workspace navigation", () => {
 
     await user.type(screen.getByRole("textbox", { name: "Research topic" }), "heat pump cost");
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    expect(screen.getByRole("textbox", { name: "Search stored evidence" })).toHaveValue("");
-    await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "home insurance");
+    expect(screen.getByRole("searchbox", { name: "Search stored evidence" })).toHaveValue("");
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "home insurance");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByRole("textbox", { name: "Research topic" })).toHaveValue("heat pump cost");
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    expect(screen.getByRole("textbox", { name: "Search stored evidence" })).toHaveValue("home insurance");
+    expect(screen.getByRole("searchbox", { name: "Search stored evidence" })).toHaveValue("home insurance");
   });
 });
 
@@ -113,7 +113,7 @@ describe("automatic local video context in Studio Research", () => {
     await user.click(screen.getByText("YouTube inspiration (optional)"));
     await waitFor(() => expect(requests.some(url => url.includes("topic=foundation%20repair%20costs"))).toBe(true));
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "home insurance");
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "home insurance");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByRole("textbox", { name: "Research topic" })).toHaveValue("foundation repair costs");
     expect(requests.every(url => url === readinessPath || url.startsWith("/api/research/market/related"))).toBe(true);
@@ -184,7 +184,7 @@ describe("Studio Research to source-backed story", () => {
     await user.click(screen.getByRole("button", { name: /research.*generate/i }));
     expect(await screen.findByText("Insulation resists heat flow.")).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Evidence Library" }));
-    await user.type(screen.getByRole("textbox", { name: "Search stored evidence" }), "different heating costs");
+    await user.type(screen.getByRole("searchbox", { name: "Search stored evidence" }), "different heating costs");
     await user.click(screen.getByRole("tab", { name: "Research" }));
     expect(screen.getByText("Insulation resists heat flow.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /create editable sourced storyboard/i })).toBeInTheDocument();
