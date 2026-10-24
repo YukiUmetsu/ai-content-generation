@@ -78,6 +78,13 @@ describe("research to editable semantic storyboard",()=>{
     expect(shown).toContain("wall");
     expect(shown).not.toContain("$12,400");
   });
+  it("retains the source artifact ID to detect downstream staleness",()=>{
+    const fixture=structuredClone(researchedFixture);
+    fixture.artifactId="research_home-123456789abc";
+    const board=researchToStoryboard(fixture,"project-revision","en");
+    expect(board.assumptions).toContain("Research artifact: research_home-123456789abc");
+    expect(board.claims[0].status).toBe("unverified");
+  });
   it("accepts descriptive source-backed visual states beyond the former 48/90-character targets",()=>{
     const fixture=structuredClone(researchedFixture);
     fixture.plan.teachingSequences[0].visualStates={
