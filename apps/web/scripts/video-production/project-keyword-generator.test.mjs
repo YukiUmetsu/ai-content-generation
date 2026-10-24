@@ -116,16 +116,19 @@ test("quality gate does not let exclusion suggestions crowd out useful topics",(
 
 test("local keyword expansion accumulates 12 distinct specific ideas across topic lenses",async()=>{
   const batches=[
-    ["Why homeowner insurance premiums increase","What changes a property tax assessment","What determines an HVAC replacement quote"],
-    ["How much should a home emergency fund contain","What causes roof replacement estimates to differ","Why foundation repair prices vary"],
-    ["Rent versus buy closing costs compared","Gas furnace versus heat pump lifetime expenses","New windows versus attic insulation payback"],
-    ["Unexpected fees when refinancing a mortgage","Avoiding hidden costs of an older house","What a home inspection cannot reveal"],
+    ["Why homeowner insurance premiums increase","What changes a property tax assessment"],
+    ["What determines an HVAC replacement quote","How much should a home emergency fund contain"],
+    ["What causes roof replacement estimates to differ","Why foundation repair prices vary"],
+    ["Rent versus buy closing costs compared","Gas furnace versus heat pump lifetime expenses"],
+    ["New windows versus attic insulation payback","Unexpected fees when refinancing a mortgage"],
+    ["Avoiding hidden costs of an older house","What a home inspection cannot reveal"],
   ];
   const facets=[];
   const transport=async(_url,options)=>{
     const request=JSON.parse(options.body);
     const instructions=request.messages[0].content;
     facets.push(instructions);
+    assert.match(instructions,/Propose 2 distinct suggestions/i);
     assert.match(request.messages[1].content,/owning and maintaining a home/i);
     const suggestions=batches[facets.length-1]??[];
     return reply(suggestions.map(text=>item(text,text.startsWith("What")||text.startsWith("Why")?"query":"topic")));
@@ -133,8 +136,8 @@ test("local keyword expansion accumulates 12 distinct specific ideas across topi
   const result=await generateProjectKeywords({name:"House Math",description:"The economics of owning and maintaining a home",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,sleep:async()=>{}});
   assert.equal(result.suggestions.length,12);
-  assert.equal(facets.length,4);
-  assert.equal(new Set(facets).size,4,"each request should explore a distinct intent lens");
+  assert.equal(facets.length,6);
+  assert.equal(new Set(facets).size,6,"each request should explore a distinct intent lens");
   assert.equal(result.quality.partial,false);
   assert.equal(result.quality.evidence,"unverified");
 });
@@ -156,6 +159,35 @@ test("invalid local keyword batch retries without discarding earlier accepted su
   assert.equal(result.suggestions.length,5);
   assert.equal(result.suggestions[0].text,"Property tax increases after a home purchase");
   assert.equal(result.quality.modelRequests,3);
+});
+
+test("local keyword generator publishes two useful entries before the next inference finishes",async()=>{
+  let releaseSecond, calls=0;
+  const gate=new Promise(resolve=>{releaseSecond=resolve;});
+  const updates=[];
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    calls++;
+    assert.match(request.messages[0].content,/Propose 2 distinct suggestions/i);
+    if(calls===2)await gate;
+    return reply(calls===1?[
+      item("Why homeowner insurance premiums rise"),item("How property tax reassessment changes annual bills")
+    ]:[item("Heat pump versus gas furnace lifetime costs"),item("How roof material choices affect installation quotes")]);
+  };
+  const pending=generateProjectKeywords({name:"House Math",description:"Costs of maintaining and insuring a home",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,
+      targetCount:4,sleep:async()=>{},onBatch:batch=>updates.push(batch)});
+  try{
+    for(let i=0;i<25&&calls<2;i++)await new Promise(resolve=>setTimeout(resolve,1));
+    assert.equal(calls,2,"The second model call should be pending");
+    assert.equal(updates.length,1,"The first verified batch must be delivered before the second response");
+    assert.deepEqual(updates[0].suggestions.map(row=>row.text),[
+      "Why homeowner insurance premiums rise","How property tax reassessment changes annual bills"]);
+    assert.equal(updates[0].quality.modelRequests,1);
+  }finally{releaseSecond();}
+  const result=await pending;
+  assert.equal(result.suggestions.length,4);
+  assert.equal(updates.at(-1).quality.modelRequests,2);
 });
 
 test("keyword batches never fabricate fillers when all local responses are generic",async()=>{
