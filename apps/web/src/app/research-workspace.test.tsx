@@ -211,7 +211,7 @@ describe("Studio Research to source-backed story", () => {
   it("restores the last immutable research draft without re-running the public search or model", async () => {
     localStorage.setItem("contentgen:studio-research:latest:v1", JSON.stringify({ topic: "Why insulation saves energy", artifactId: "research_home-123456789abc" }));
     const requests: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL, options?:RequestInit) => {
+    vi.stubGlobal("fetch", vi.fn(async (url: RequestInfo | URL) => {
       requests.push(String(url));
       if (readinessResponse(String(url))) return readinessResponse(String(url))!;
       if (String(url) === "/api/contentgen-director/research-draft/research_home-123456789abc")
