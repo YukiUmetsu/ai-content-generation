@@ -94,7 +94,9 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
     return {id:shot.id,role:roleFor(shot,i,plan.shots.length-1),
       objective:phase?.learningChange||learning.after,narration:voice.narration,
       onScreenText:readable(shot.onScreenText),visualIntent:intentFor(shot.family,i,plan.shots.length-1),
-      visualObjective:[shot.visualChange,phase?.visualAction].filter(Boolean).join("; "),
+      visualObjective:shot.visualChange.trim()===phase?.visualAction?.trim()
+        ? shot.visualChange.trim()
+        : [shot.visualChange,phase?.visualAction].filter(Boolean).join("; "),
       semanticObjects:[...shot.subjectIds],focusTarget:shot.subjectIds[0],durationFrames,
       claimRefs:[...shot.claimIds],namedEvents:isFirst?[semanticEvents[0].id]:isLast?[semanticEvents[1].id]:[],
       staticFallback:`${readable(shot.onScreenText)} — ${shot.visualChange}`,
