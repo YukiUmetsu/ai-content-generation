@@ -49,6 +49,10 @@ pub struct YoutubeClient {
 impl YoutubeClient {
     pub fn from_env() -> Result<Self, YoutubeError> {
         let key = std::env::var("CONTENTGEN_YOUTUBE_API_KEY").unwrap_or_default();
+        Self::from_key(key)
+    }
+
+    pub fn from_key(key: String) -> Result<Self, YoutubeError> {
         if key.trim().is_empty() {
             return Err(YoutubeError::MissingKey);
         }
@@ -76,12 +80,11 @@ impl YoutubeClient {
         endpoint: &str,
         params: &[(&str, String)],
     ) -> Result<Value, YoutubeError> {
-        let mut query = params.to_vec();
-        query.push(("key", self.key.clone()));
         let response = self
             .http
             .get(format!("{}/{endpoint}", self.base))
-            .query(&query)
+            .header("x-goog-api-key", &self.key)
+            .query(params)
             .send()
             .await
             .map_err(|_| YoutubeError::Unavailable)?;
@@ -313,6 +316,7 @@ mod tests {
     use super::*;
     use axum::Json;
     use axum::Router;
+    use axum::http::{HeaderMap, Uri};
     use axum::routing::get;
     use serde_json::json;
 
@@ -327,7 +331,9 @@ mod tests {
     #[tokio::test]
     async fn collects_public_video_details_and_keeps_missing_counts_unknown() {
         let app = Router::new()
-            .route("/youtube/v3/search", get(|| async {
+            .route("/youtube/v3/search", get(|headers: HeaderMap, uri: Uri| async move {
+                assert_eq!(headers.get("x-goog-api-key").unwrap(), "synthetic-key");
+                assert!(!uri.query().unwrap_or("").contains("synthetic-key"));
                 Json(json!({"items":[
                     {"id":{"videoId":"abcABC12345"}},
                     {"id":{"videoId":"defDEF67890"}}

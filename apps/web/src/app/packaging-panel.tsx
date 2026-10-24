@@ -477,6 +477,15 @@ export function PackagingPanel({ locale }: PackagingPanelProps) {
         </div>
       )}
 
+      {!loading && !error && !cancelled && !set && (
+        <EmptyState
+          title={locale === "ja" ? "保存済みのパッケージ案はありません" : "No saved packaging concepts yet"}
+          description={locale === "ja"
+            ? "このタブにはローカルデータベースに保存された構成・サムネイル・導入案が表示されます。生成・承認機能は今後の実装対象です。サンプルデータは自動表示しません。"
+            : "This tab shows actual title, thumbnail, and opening hypotheses saved in your local database. Packaging authoring and approval are still upcoming; sample concepts are never substituted for your work."}
+        />
+      )}
+
       {set && !loading && !error && (
         <div className="grid gap-4">
           <Surface

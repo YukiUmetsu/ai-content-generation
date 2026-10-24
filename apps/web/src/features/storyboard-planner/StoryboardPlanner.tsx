@@ -14,6 +14,8 @@ import {
   insertBeat,
   moveBeat,
   updateBeat,
+  updateTeachingState,
+  updateTeachingMechanic,
 } from "./model/edit";
 import { HVAC_EXAMPLE } from "./model/hvac-example";
 import {
@@ -114,6 +116,14 @@ export function StoryboardPlanner({
 
   function updateSelected(patch: Partial<StoryboardBeat>) {
     if (!selectedBeat) return;
+    if(patch.teachingMechanic&&selectedBeat.teachingMechanic){
+      updateBoard(updateTeachingMechanic(board,selectedBeat.id,patch.teachingMechanic));
+      return;
+    }
+    if (patch.teachingState && selectedBeat.teachingState) {
+      updateBoard(updateTeachingState(board,selectedBeat.id,patch.teachingState));
+      return;
+    }
     updateBoard(updateBeat(board, selectedBeat.id, patch));
   }
 

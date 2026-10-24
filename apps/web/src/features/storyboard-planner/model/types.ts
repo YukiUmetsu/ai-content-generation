@@ -6,6 +6,8 @@
  * implemented `Storyboard` / `StoryboardShot` contract. Time is integer frames
  * at a rational FPS and every range is end-exclusive.
  */
+import {validateVisualMechanic} from "../../../../scripts/video-production/semantic-mechanic.mjs";
+import type {VisualMechanicV1} from "../../../../scripts/video-production/semantic-mechanic.mjs";
 
 export type Locale = "en" | "ja";
 
@@ -63,6 +65,51 @@ export interface StoryboardQuestion {
   text: string;
 }
 
+/** Reviewable concept transition, never an inferred measured value. */
+export interface TeachingVisualState {
+  phase: "problem" | "mechanism" | "payoff";
+  subjectId: string;
+  /** Stable ID shared by the problem, mechanism and payoff beats. */
+  sequenceId?: string;
+  before: string;
+  action: string;
+  after: string;
+}
+
+/** Research mechanic is copied into each phase with an immutable sequence ID. */
+export interface TeachingMechanicPlan {
+  sequenceId?:string;
+  phase:"problem"|"mechanism"|"payoff";
+  mechanic:VisualMechanicV1;
+}
+
+export function isTeachingMechanicPlan(value:unknown):value is TeachingMechanicPlan {
+  if(value===null||typeof value!=="object"||Array.isArray(value))return false;
+  const obj=value as Record<string,unknown>;
+  if(Object.keys(obj).some(x=>!["phase","sequenceId","mechanic"].includes(x))||
+    !["problem","mechanism","payoff"].includes(String(obj.phase))||
+    obj.sequenceId!==undefined&&(typeof obj.sequenceId!=="string"||!/^[a-z][a-z0-9_-]{0,80}$/iu.test(obj.sequenceId)))return false;
+  const mechanic=obj.mechanic as VisualMechanicV1;
+  const claimRefs=Array.isArray(mechanic?.actors)?mechanic.actors.flatMap(a=>Array.isArray(a?.claimIds)?a.claimIds:[]):[];
+  return validateVisualMechanic(mechanic,{technicalSubjectId:mechanic?.subjectId,
+    knownClaimIds:new Set(claimRefs),knownAssetKeys:new Set()}).ok;
+}
+
+export function isTeachingVisualState(value: unknown): value is TeachingVisualState {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const state = value as Record<string, unknown>;
+  const fields = ["phase", "subjectId", "sequenceId", "before", "action", "after"];
+  if (![5,6].includes(Object.keys(state).length) || Object.keys(state).some(key => !fields.includes(key)) ||
+    (state.sequenceId !== undefined &&
+      (typeof state.sequenceId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.sequenceId))) ||
+    typeof state.phase !== "string" || !["problem", "mechanism", "payoff"].includes(state.phase) ||
+    typeof state.subjectId !== "string" || !/^[a-z][a-z0-9_-]{0,80}$/iu.test(state.subjectId)) return false;
+  const copy = [state.before, state.action, state.after];
+  if (copy.some((text, i) => typeof text !== "string" || text.trim().length < 8 ||
+    text.length > (i === 1 ? 90 : 48) || Array.from(text).some(char => char.charCodeAt(0) < 32))) return false;
+  return new Set(copy.map(text => (text as string).trim().toLowerCase())).size === 3;
+}
+
 export interface StoryboardBeat {
   /** Stable, author-owned id. Reordering never changes it. */
   id: string;
@@ -88,6 +135,10 @@ export interface StoryboardBeat {
   namedEvents: string[];
   /** Useful still / reduced-motion substitute. */
   staticFallback: string;
+  /** Optional source-linked before/change/after authored with this technical subject. */
+  teachingState?: TeachingVisualState;
+  /** Bounded, source-linked 2D operation; a planning instruction, not a video renderer. */
+  teachingMechanic?:TeachingMechanicPlan;
   /** Question opened by this beat (must be declared in `questions`). */
   opensQuestion?: string;
   /** Question answered by this beat. */

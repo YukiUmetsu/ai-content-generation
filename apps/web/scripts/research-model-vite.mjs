@@ -1,7 +1,10 @@
 /** Vite-only same-origin localhost Settings API. No Docker/model starts or paid requests. */
 import { readResearchModelSettings, saveResearchModelSettings, discoverResearchModels,
   DEFAULT_MODEL_ENDPOINT } from "./video-production/research-model-settings.mjs";
+import { readModelProfiles, saveModelProfiles, modelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
+import { checkLocalSearch } from "./video-production/searxng-docker.mjs";
+import { inspectResearchReadiness } from "./research-readiness.mjs";
 
 const PREFIX = "/api/local-research-model";
 function output(res, status, body) {
@@ -19,7 +22,9 @@ async function requestBody(req) {
 }
 export async function handleResearchSettings(req, res, deps = {}) {
   const { read = readResearchModelSettings, save = saveResearchModelSettings,
-    models = discoverResearchModels, searchEndpoint = configuredSearchEndpoint } = deps;
+    readProfiles = readModelProfiles, saveProfiles = saveModelProfiles,
+    models = discoverResearchModels, searchEndpoint = configuredSearchEndpoint,
+    selectModel = modelForTask, probeSearch = checkLocalSearch } = deps;
   const host = req.headers.host ?? "";
   const origin = req.headers.origin;
   if (!/^(127\.0\.0\.1|localhost):\d+$/u.test(host) ||
@@ -40,6 +45,16 @@ export async function handleResearchSettings(req, res, deps = {}) {
         settings: settings ?? { version: 1, endpoint: DEFAULT_MODEL_ENDPOINT, model: "" },
         configured: !!settings, searchEndpoint: searchEndpoint(),
       });
+    } else if (req.method === "GET" && route === "/profiles") {
+      output(res, 200, { profiles: await readProfiles(), searchEndpoint: searchEndpoint() });
+    } else if (req.method === "GET" && route === "/readiness") {
+      output(res, 200, await inspectResearchReadiness({
+        profiles: await readProfiles(), endpoint: searchEndpoint(), modelForTask: selectModel,
+        checkSearch: probeSearch, listModels: models,
+      }));
+    } else if (req.method === "POST" && route === "/profiles/save") {
+      const profiles = await saveProfiles(await requestBody(req));
+      output(res, 200, { profiles, saved: true });
     } else if (req.method === "POST" && route === "/models") {
       const { endpoint } = await requestBody(req);
       const ids = await models(endpoint);

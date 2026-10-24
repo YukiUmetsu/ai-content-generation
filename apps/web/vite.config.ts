@@ -22,12 +22,19 @@ export default defineConfig({
     port: 5173,
     strictPort: false,
     proxy: {
-      // The public market collector lives in the Rust ContentGen server,
-      // unlike the existing evidence Research service on port 8788.
+      // Evidence search, market observations, jobs and saved packaging all
+      // live in the Rust ContentGen server (default 127.0.0.1:8787).
+      // The director and model-setting Vite plugins expose their own routes.
       "/api/research/market": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
-      "/api/research": process.env.CONTENTGEN_RESEARCH_ORIGIN ?? "http://127.0.0.1:8788",
+      "/api/research": process.env.CONTENTGEN_RESEARCH_ORIGIN ?? process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
       "/api/jobs": process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
-      "/api/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
+      // Preserve the browser Host for the Rust credential Origin guard.
+      // Vite URL-string proxy shorthand otherwise rewrites Host to :8787.
+      "/api/settings": {
+        target: process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
+        changeOrigin: false,
+      },
+      "/api/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787",
       "/v1/creative": process.env.CONTENTGEN_CREATIVE_ORIGIN ?? "http://127.0.0.1:8789",
     },
   },

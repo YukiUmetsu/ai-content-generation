@@ -1,6 +1,6 @@
 /** Generate alternative hook scripts and first-frame treatments from an installed local LLM only. */
 import { localChatEndpoint } from "./topic-generator.mjs";
-import { readResearchModelSettings } from "./research-model-settings.mjs";
+import { resolveModelForTask } from "./model-profiles.mjs";
 import { resolveStagePrompt } from "./prompt-profiles.mjs";
 import { validateHookCandidates } from "./video-revisions.mjs";
 import { createHash } from "node:crypto";
@@ -35,7 +35,7 @@ export async function generateHookVariants({dossier,bundle,shotId,count=3}, {
   const sha=x=>createHash("sha256").update(JSON.stringify(x)).digest("hex");
   if(bundle.researchSha256!==sha(dossier)||bundle.planSha256!==sha(bundle.plan))
     throw Error("Research or plan does not match the validated bundle.");
-  const settings=modelSettings??await readResearchModelSettings();
+  const settings=modelSettings??await resolveModelForTask("hooks");
   if(!settings?.model)throw Error("Select a local model in Studio Settings first.");
   const endpoint=localChatEndpoint(settings.endpoint);
   const hook=bundle.plan.shots.find(x=>x.id===(shotId??bundle.plan.shots[0].id));

@@ -1,4 +1,5 @@
 import type { SceneMotion } from "./scene-motion.mjs";
+import type { VisualMechanicV1 } from "./semantic-mechanic.mjs";
 export interface QuantitativeChart {
   kind: "quantitative-chart-v1";
   categories: string[];
@@ -15,7 +16,7 @@ export interface GeneralVisualPlan {
   title: string;
   locale?: "en-US" | "ja-JP";
   manifest: { schemaVersion: 1; id: string; durationFrames: number; width: number; height: number; fps: { num: number; den: number }; preset: "youtube" | "youtube-shorts" | "instagram-reels" | "tiktok" };
-  chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; visual: { headline: string; subhead: string; emphasis: string; items: string[]; itemNotes?: string[]; chart?: QuantitativeChart; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe"; motion?: SceneMotion; sceneRecipe?: "home-cost-story-v1"; direction?: { phase: "problem" | "analogy" | "mechanism" | "payoff" | "none"; subjectIds: string[]; visualAction: string; learningChange: string } }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
+  chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; visual: { headline: string; subhead: string; emphasis: string; items: string[]; itemNotes?: string[]; chart?: QuantitativeChart; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe"; motion?: SceneMotion; sceneRecipe?: "home-cost-story-v1"; direction?: { phase: "problem" | "analogy" | "mechanism" | "payoff" | "none"; subjectIds: string[]; visualAction: string; learningChange: string; transformation?: {subjectId:string;before:string;action:string;after:string}; visualMechanic?:VisualMechanicV1 } }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
   claims: Array<{ id: string; status: "verified" | "unverified" | "illustrative" | "disputed"; text: string; sourceRefs?: string[] }>;
   evidence: Array<{ id: string; title: string; sourceUri: string; retrievedAt: string; passageLocator: string; snapshotSha256: string }>;
   events: Record<string, number>;

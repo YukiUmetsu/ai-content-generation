@@ -18,7 +18,7 @@ import { localSpeechEndpoint } from "./video-production/local.mjs";
 import { researchVideoTopic } from "./video-production/research-agent.mjs";
 import { generatePreproductionPlan } from "./video-production/preproduction-generator.mjs";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
-import { readResearchModelSettings } from "./video-production/research-model-settings.mjs";
+import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
@@ -96,7 +96,7 @@ export function createDirectorProduction(deps={}){
   const compileLive=deps.compileLive??compileLiveVisualPreview;
   const research=deps.research??researchVideoTopic;
   const generateStory=deps.generateStory??generatePreproductionPlan;
-  const loadModel=deps.readModel??readResearchModelSettings;
+  const loadModel=deps.readModel??resolveModelForTask;
   const searchEndpoint=deps.searchEndpoint??configuredSearchEndpoint;
   const build=deps.build??(()=>run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024}));
   const browser=deps.findBrowser??findChromium;
@@ -147,7 +147,7 @@ export function createDirectorProduction(deps={}){
           if(typeof brief?.[name]!=="string"||!brief[name].trim()||brief[name].length>240)
             throw Error("Research requires a topic, question and audience.");
         }
-        const saved=await loadModel();
+        const saved=await loadModel("research");
         if(!saved?.model)throw Error("Configure an installed local research model in Settings first.");
         const endpoint=searchEndpoint();
         if(!endpoint)throw Error("Local SearXNG is not set up. Run pnpm research:up once in apps/web.");
@@ -157,13 +157,14 @@ export function createDirectorProduction(deps={}){
           const result=await research(brief,{provider:"searxng",searchEndpoint:endpoint,
             model:saved.model,endpoint:saved.endpoint,allowNetwork:true,maxSources:4});
           status={...status,state:"idle",phase:"research",message:"Research draft captured. Review sources; claims remain unverified."};
-          respond(res,200,{dossier:result.dossier,warnings:result.warnings});
+          respond(res,200,{dossier:result.dossier,quotePreviews:result.quotePreviews??[],
+            warnings:result.warnings});
         }finally{busy=false;}
         return;
       }
       if(route==="/story"){
         const input=await readBody(req);
-        const saved=await loadModel();
+        const saved=await loadModel("story");
         if(!saved?.model)throw Error("Configure an installed local research model in Settings first.");
         busy=true;
         status={...status,state:"planning",phase:"story",message:"Drafting a research-linked visual teaching storyboard."};

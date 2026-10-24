@@ -14,6 +14,7 @@ import { VideoDirectorWorkspace } from "./video-director-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
+import type { ResearchDraftResult } from "./researched-storyboard";
 
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -54,9 +55,9 @@ export function Shell() {
     if (saved) setActiveSection("content");
     return saved;
   }, [catalog, saveCatalog]);
-  const startEditorialStoryboard = useCallback((draft: EditorialDraft): boolean => {
+  const startEditorialStoryboard = useCallback((draft: EditorialDraft, research?: ResearchDraftResult): boolean => {
     try {
-      const next = createEditorialProject(catalog, draft, locale);
+      const next = createEditorialProject(catalog, draft, locale, research);
       setCatalog(next);
       setCatalogError(null);
       setActiveFeatureId("storyboard-planner");

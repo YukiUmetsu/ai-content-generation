@@ -4,7 +4,8 @@ import { mkdtemp, readFile, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSearchManagerArgs, ensureLocalSecret, composeArgs, checkLocalSearch,
-  manageLocalSearch, SEARCH_IMAGE, COMPOSE_FILE } from "./searxng-docker.mjs";
+  manageLocalSearch, SEARCH_IMAGE } from "./searxng-docker.mjs";
+import { COMPOSE_FILE } from "./local-search-config.mjs";
 
 const SEARCH_URL = "http://127.0.0.1:58023";
 const commands = () => {
@@ -45,7 +46,7 @@ test("bootstrap creates private secret once, never overwrites existing or unusua
   t.after(() => rm(root, { recursive: true, force: true }));
   const path = join(root, ".env");
   const random = () => Buffer.alloc(32, 0x2b);
-  assert.equal(await ensureLocalSecret({ file: path, random }), "created");
+  assert.equal(await ensureLocalSecret({ file: path, random, pickPort: async () => 55021 }), "created");
   const original = await readFile(path, "utf8");
   assert.match(original, new RegExp("^SEARXNG_SECRET=" + "2b".repeat(32) + "\\nSEARXNG_PORT=\\d{5}\\n$"));
   assert.equal((await stat(path)).mode & 0o077, 0);
@@ -122,13 +123,14 @@ test("existing image starts without pull; occupied port is refused", async () =>
   };
   const result = await manageLocalSearch(["up"], {
     command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}),
+    portAvailable: async () => true,
     check: async () => started ? { ok: true } : { ok: false, reason: "ECONNREFUSED" },
     log: () => {},
   });
   assert.equal(result.ok, true);
   assert.equal(received.some(args => args[0] === "pull"), false);
   await assert.rejects(manageLocalSearch(["up"], {
-    command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}), portAvailable: async () => true, check: async () => ({ ok: false, reason: "Configured search port is occupied by a different HTTP server." }),
+    command: cmd, secret: async () => ({port:55021,endpoint:"http://127.0.0.1:55021/search"}), portAvailable: async () => false, check: async () => ({ ok: false, reason: "Configured search port is occupied by a different HTTP server." }),
     log: () => {},
   }), /occupied/);
 });

@@ -9,7 +9,9 @@ function request(method,path,body,headers={}){
   Object.assign(req,{method,url:path,headers:{host:"127.0.0.1:5173",...(method==="POST"
     ?{origin:"http://127.0.0.1:5173","x-contentgen-director":"local-only"}:{}),...headers}});
   let status=0,result="",head={};
-  const res={writeHead(code,headers){status=code;head=headers;},end(bytes){result+=bytes??"";}};
+  const listeners=new Map();
+  const res={writeHead(code,headers){status=code;head=headers;},end(bytes){result+=bytes??"";},
+    on(name,fn){listeners.set(name,fn);},emitClose(){listeners.get("close")?.();}};
   return {req,res,result:()=>({status,head,data:JSON.parse(result)})};
 }
 test("same-origin-only Director API blocks unrelated hosts, origins and silent cross-site prompts",async()=>{
@@ -87,4 +89,90 @@ test("original brief alternatives require explicit local action and exclude YouT
   await handleDirectorRequest(rejected.req,rejected.res,{editorial:async()=>{called++;}});
   assert.equal(rejected.result().status,403);
   assert.equal(called,1);
+});
+test("YouTube niche query planning is same-origin, optional, and uses the research model",async()=>{
+  const p=request("POST","/market-queries",{niche:"House Math",region:"US",language:"en"});
+  let called=0;
+  await handleDirectorRequest(p.req,p.res,{
+    model:async role=>{assert.equal(role,"research");return {model:"local-research"};},
+    marketQueries:async(payload,options)=>{
+      called++;assert.equal(payload.name,"House Math");assert.equal(options.modelSettings.model,"local-research");
+      return ["mortgage closing costs","roof replacement cost","heat pump installation cost","property tax increases"];
+    }
+  });
+  assert.equal(p.result().status,200);
+  assert.equal(p.result().data.queries.length,4);
+  const blocked=request("POST","/market-queries",{niche:"House Math"},{origin:"https://elsewhere.test"});
+  await handleDirectorRequest(blocked.req,blocked.res,{marketQueries:async()=>{called++;}});
+  assert.equal(blocked.result().status,403);
+  const noModel=request("POST","/market-queries",{niche:"House Math"});
+  await handleDirectorRequest(noModel.req,noModel.res,{model:async()=>null,marketQueries:async()=>{called++;}});
+  assert.equal(noModel.result().status,422);
+  assert.equal(called,1);
+});
+test("Studio research draft requires deliberate same-origin POST and an installed local model",async()=>{
+  const body={title:"Heat pump lifecycle cost",viewerQuestion:"Which parts change the total cost?",audience:"Homeowners",locale:"en-US"};
+  let called=0;
+  const requestItem=request("POST","/research-draft",body);
+  await handleDirectorRequest(requestItem.req,requestItem.res,{
+    model:async()=>({model:"installed-local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
+    researchDraft:async (payload,settings)=>{
+      called++;assert.deepEqual(payload,body);assert.equal(settings.model,"installed-local");
+      return {dossier:{id:"research_abc"},plan:{shots:[]},quotes:[],snapshotId:"research_abc"};
+    }
+  });
+  assert.equal(requestItem.result().status,200);
+  assert.equal(requestItem.result().data.snapshotId,"research_abc");
+  const none=request("POST","/research-draft",body);
+  await handleDirectorRequest(none.req,none.res,{model:async()=>null,researchDraft:async()=>{called++;}});
+  assert.equal(none.result().status,422);
+  const cross=request("POST","/research-draft",body,{origin:"https://evil.example"});
+  await handleDirectorRequest(cross.req,cross.res,{researchDraft:async()=>{called++;}});
+  assert.equal(cross.result().status,403);
+  assert.equal(called,1);
+});
+test("Studio runs at most one expensive research/model draft at a time",async()=>{
+  let release;
+  const pause=new Promise(resolve=>{release=resolve;});
+  let entered=0;
+  const settings={model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};
+  const deps={model:async()=>settings,researchDraft:async()=>{entered++;await pause;return {dossier:{id:"research_one"},plan:{shots:[]},quotes:[]};}};
+  const input={title:"Insulation",viewerQuestion:"What changes heat transfer?",audience:"Homeowners",locale:"en-US"};
+  const a=request("POST","/research-draft",input),b=request("POST","/research-draft",input);
+  const running=handleDirectorRequest(a.req,a.res,deps);
+  await new Promise(resolve=>setImmediate(resolve));
+  await handleDirectorRequest(b.req,b.res,deps);
+  assert.equal(b.result().status,409);
+  assert.equal(entered,1);
+  release();await running;
+  assert.equal(a.result().status,200);
+});
+test("closing an in-flight research response aborts the public capture and local model signal",async()=>{
+  const a=request("POST","/research-draft",{title:"Insulation",viewerQuestion:"How does it work?",audience:"Homeowners",locale:"en-US"});
+  let active;
+  const running=handleDirectorRequest(a.req,a.res,{
+    model:async()=>({model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
+    researchDraft:async(_brief,_model,options)=>{
+      if(!options?.signal)throw Error("Missing abort signal.");
+      active=options.signal;
+      await new Promise((_,reject)=>options.signal.addEventListener("abort",()=>reject(Error("Research cancelled.")),{once:true}));
+    },
+  });
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(active.aborted,false);
+  a.res.emitClose();
+  await running;
+  assert.equal(active.aborted,true);
+});
+test("cached research drafts can be viewed through a bounded local GET without new provider calls",async()=>{
+  const p=request("GET","/research-draft/research_abc-123456789abc");
+  await handleDirectorRequest(p.req,p.res,{loadResearch:async id=>{
+    assert.equal(id,"research_abc-123456789abc");
+    return {snapshotId:"research_abc",artifactId:id,quotes:[]};
+  }});
+  assert.equal(p.result().status,200);
+  assert.equal(p.result().data.snapshotId,"research_abc");
+  const invalid=request("GET","/research-draft/../../etc/passwd");
+  await handleDirectorRequest(invalid.req,invalid.res,{loadResearch:async()=>{throw Error("bad");}});
+  assert.equal(invalid.result().status,404);
 });

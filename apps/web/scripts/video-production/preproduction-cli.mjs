@@ -5,22 +5,22 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { generatePreproductionPlan } from "./preproduction-generator.mjs";
 import { compilePreproductionBundle, parseResearchDossier } from "./preproduction.mjs";
-import { readResearchModelSettingsSync } from "./research-model-settings.mjs";
+import { resolveModelForTaskSync } from "./model-profiles.mjs";
 
 export function parsePreproductionArgs(argv) {
   const {values}=parseArgs({args:argv,strict:true,allowPositionals:false,options:{
     help:{type:"boolean",default:false},research:{type:"string"},plan:{type:"string"},
-    model:{type:"string"},endpoint:{type:"string",default:"http://127.0.0.1:11434/v1/chat/completions"},
+    model:{type:"string"},endpoint:{type:"string"},
     out:{type:"string"}, "require-ready":{type:"boolean",default:false}
   }});
   if(values.help)return {help:true};
   if(!values.research||!values.out||!values.out.endsWith(".json"))throw Error("Specify --research and a new --out *.json path.");
-  const saved = readResearchModelSettingsSync();
+  const saved = resolveModelForTaskSync("story");
   if (values.plan && values.model) throw Error("Choose only one of --plan or --model.");
   const model = values.plan ? undefined : (values.model || saved?.model);
   if(Boolean(values.plan)===Boolean(model))throw Error("Specify --plan existing-plan.json or choose a local model in Studio Settings / --model.");
   return {research:resolve(values.research),plan:values.plan?resolve(values.plan):null,model,
-    endpoint:values.endpoint === "http://127.0.0.1:11434/v1/chat/completions" ? (saved?.endpoint ?? values.endpoint) : values.endpoint,
+    endpoint:values.endpoint ?? saved.endpoint,
     out:resolve(values.out),requireReady:values["require-ready"]};
 }
 export async function runPreproductionCli(argv,{generate=generatePreproductionPlan,log=console.log}={}){

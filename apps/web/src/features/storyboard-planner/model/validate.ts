@@ -8,8 +8,10 @@
  */
 
 import { estimateNarration } from "./timeline";
+import {validateVisualMechanic} from "../../../../scripts/video-production/semantic-mechanic.mjs";
 import {
   MAX_ON_SCREEN_CHARS,
+  isTeachingVisualState,
   isPositiveInteger,
   type SemanticStoryboard,
   type StoryboardBeat,
@@ -67,6 +69,8 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
     beats.map((beat) => beat.answersQuestion).filter((id): id is string => hasText(id))
   );
   const seenBeatIds = new Set<string>();
+  const teachingSequences = new Map<string,{subjectId:string;before:string;action:string;after:string}>();
+  const teachingMechanics=new Map<string,string>();
 
   const addForBeat = (
     beat: StoryboardBeat,
@@ -139,6 +143,41 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
       addForBeat(beat, "storyboard-static-fallback-missing", "warning", `${path}.staticFallback`, {
         id: beat.id,
       });
+    }
+
+    if (beat.teachingState !== undefined) {
+      if (!isTeachingVisualState(beat.teachingState) ||
+        !beat.semanticObjects.includes(beat.teachingState.subjectId)) {
+        addForBeat(beat, "storyboard-teaching-state-invalid", "error", `${path}.teachingState`);
+      } else if (beat.teachingState.sequenceId) {
+        const {sequenceId,subjectId,before,action,after}=beat.teachingState;
+        const expected=teachingSequences.get(sequenceId);
+        if(expected && (expected.subjectId!==subjectId || expected.before!==before ||
+          expected.action!==action || expected.after!==after))
+          addForBeat(beat, "storyboard-teaching-state-diverged", "error", `${path}.teachingState`);
+        else if(!expected)teachingSequences.set(sequenceId,{subjectId,before,action,after});
+      }
+    }
+
+    if(beat.teachingMechanic!==undefined){
+      const authored=beat.teachingMechanic,mechanic=authored.mechanic;
+      const result=validateVisualMechanic(mechanic,{
+        technicalSubjectId:mechanic?.subjectId,
+        knownClaimIds:new Set(board.claims.map(c=>c.id)),knownAssetKeys:new Set()
+      });
+      for(const issue of result.findings)
+        addForBeat(beat,`storyboard-${issue.code}`,"error",`${path}.teachingMechanic.${issue.path}`);
+      if(!["problem","mechanism","payoff"].includes(authored.phase)||
+        !beat.semanticObjects.includes(mechanic?.subjectId)||
+        !Array.isArray(mechanic?.actors)||
+        !mechanic.actors.some(a=>a.claimIds?.some(c=>beat.claimRefs.includes(c))))
+        addForBeat(beat,"storyboard-mechanic-unlinked","error",`${path}.teachingMechanic`);
+      if(authored.sequenceId){
+        const key=JSON.stringify(mechanic),previous=teachingMechanics.get(authored.sequenceId);
+        if(previous!==undefined&&previous!==key)
+          addForBeat(beat,"storyboard-mechanic-diverged","error",`${path}.teachingMechanic`);
+        else if(previous===undefined)teachingMechanics.set(authored.sequenceId,key);
+      }
     }
 
     for (const objectId of beat.semanticObjects) {

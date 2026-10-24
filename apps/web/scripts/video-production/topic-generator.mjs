@@ -14,8 +14,9 @@ export function localChatEndpoint(candidate) {
   try { url = new URL(candidate); }
   catch { fail("local model endpoint must be an HTTP loopback chat-completions URL"); }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
-    !url.port || url.username || url.password || url.search || url.hash || url.pathname !== "/v1/chat/completions") {
-    fail("local model endpoint must be http://127.0.0.1:PORT/v1/chat/completions (no credentials, queries or redirects)");
+    !url.port || url.username || url.password || url.search || url.hash ||
+    !["/v1/chat/completions", "/inference/v1/chat/completions"].includes(url.pathname)) {
+    fail("local model endpoint must be an HTTP loopback OpenAI-compatible chat URL (/v1/chat/completions or /inference/v1/chat/completions), with no credentials or query");
   }
   return url.href;
 }

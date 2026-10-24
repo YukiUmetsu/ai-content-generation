@@ -578,6 +578,13 @@ const LayerStack = forwardRef<HTMLDivElement, LayerStackProps>(function LayerSta
     };
     if (layer.opacity !== 1) style.opacity = layer.opacity;
     if (layer.blend !== "normal") style.mixBlendMode = layer.blend;
+    const shadow = layer.appearance?.dropShadow;
+    if (shadow) {
+      const red = parseInt(shadow.color.slice(1, 3), 16);
+      const green = parseInt(shadow.color.slice(3, 5), 16);
+      const blue = parseInt(shadow.color.slice(5, 7), 16);
+      style.filter = `drop-shadow(${shadow.dx}px ${shadow.dy}px ${shadow.blur}px rgba(${red}, ${green}, ${blue}, ${shadow.opacity}))`;
+    }
 
     const rotation = layer.transform.rotation;
     if (rotation) {

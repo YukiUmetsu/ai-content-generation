@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { copy } from "../i18n";
 import { formatTimecode, type BeatTiming } from "../model/timeline";
 import type { Locale, SemanticStoryboard, StoryboardBeat } from "../model/types";
+import {compileSemanticMechanic} from "../../../video-export/semantic-mechanic-compiler";
 
 interface ScenePreviewProps {
   board: SemanticStoryboard;
@@ -450,6 +451,88 @@ function TakeawayScene({
   );
 }
 
+/** Research/custom storyboards must NEVER inherit the synthetic HVAC example's numbers.
+ * This is an editorial still, not a claim of animated/FFmpeg output.
+ */
+function SourceDerivedScene({board,beat,title,kicker}:{
+  board:SemanticStoryboard;beat:StoryboardBeat;title:string;kicker:string;
+}){
+  const state=beat.teachingState;
+  const subject=objectLabel(board,state?.subjectId??beat.focusTarget);
+  const resultVisible=state?.phase==="payoff";
+  const showAction=state?.phase==="mechanism"||resultVisible;
+  const left=state?.before??beat.objective;
+  const right=resultVisible&&state?state.after:state?"?":beat.visualObjective;
+  const lines=(value:string,maxChars:number)=>{
+    const words=Array.from(value.trim());
+    if(words.length<=maxChars)return [value.trim()];
+    const cut=value.lastIndexOf(" ",maxChars);
+    const at=cut>maxChars*.8 && value.slice(cut).trim().length<=maxChars?cut:maxChars;
+    return [value.slice(0,at).trim(),value.slice(at).trim()];
+  };
+  return <Frame label={title} kicker={kicker} title={title}
+    footer={`Focus: ${subject} · ${beat.claimRefs.length} research claim reference(s)`}>
+    <g data-source-derived-scene={state?.phase??"schematic"}>
+      <rect x="64" y="131" width="832" height="48" rx="10" className="sp-svg-panel"/>
+      <text x="90" y="163" className="sp-svg-accent">{clip(subject,45)}</text>
+      <rect x="64" y="204" width="360" height="153" rx="15" className="sp-svg-panel-strong"/>
+      <text x="85" y="237" className="sp-svg-small">{state?"BEFORE":"QUESTION"}</text>
+      <g role="group" aria-label={left}>{lines(clip(left,52),27).map((part,i)=><text key={i}
+        x="85" y={285+i*30} className="sp-svg-accent">{part}</text>)}</g>
+      <path d="M440 275 H514" className="sp-svg-flow"/>
+      <rect x="531" y="204" width="365" height="153" rx="15" className="sp-svg-panel-strong"/>
+      <text x="554" y="237" className="sp-svg-small">{resultVisible?"AFTER":state?"RESULT HELD":"VISUAL DIRECTION"}</text>
+      <g role="group" aria-label={right}>{lines(clip(right,52),27).map((part,i)=><text key={i}
+        x="554" y={285+i*30} className="sp-svg-accent">{part}</text>)}</g>
+      {showAction&&state&&<g data-source-derived-action="">
+        <text x="84" y="407" className="sp-svg-small">ACTION</text>
+        <g role="group" aria-label={state.action}>{lines(clip(state.action,90),46).map((part,i)=><text key={i}
+          x="200" y={404+i*27} className="sp-svg-accent">{part}</text>)}</g>
+      </g>}
+      {!state&&<text x="84" y="410" className="sp-svg-small">Planning sketch from the authored brief</text>}
+    </g>
+  </Frame>;
+}
+
+/** Honest editorial still using the exact operator and actor layout grammar.
+ * The MP4 remains the Video Director's separately evaluated Kumiki scene.
+ */
+function MechanicPlanningScene({beat,title,kicker}:{
+  beat:StoryboardBeat;title:string;kicker:string;
+}){
+  const visual=beat.teachingMechanic!;
+  let pose:ReturnType<typeof compileSemanticMechanic>;
+  try{
+    pose=compileSemanticMechanic(visual.mechanic,{phase:visual.phase,progress:1,payoffLocked:false,reducedMotion:true});
+  }catch{
+    return <Frame label={title} kicker={kicker} title={title} footer="Cannot preview: edit the semantic operation and resolve blocking validation errors.">
+      <text x="90" y="290" className="sp-svg-accent">Unsupported semantic operation or actor relationship</text>
+    </Frame>;
+  }
+  return <Frame label={title} kicker={kicker} title={title}
+    footer={`Planning still · ${pose.operator} · ${beat.claimRefs.length} research claim reference(s)`}>
+    <g data-source-derived-mechanic={pose.operator} data-planning-still="true">
+      <text x="65" y="122" className="sp-svg-small">{pose.operator.toUpperCase()} · {visual.mechanic.subjectId}</text>
+      {pose.operator==="transfer"&&<path d="M170 322 H792" className="sp-svg-flow"/>}
+      {pose.operator==="compare"&&<path d="M95 420 H865" className="sp-svg-flow"/>}
+      {pose.operator==="accumulate"&&<path d="M510 185 V442" className="sp-svg-flow"/>}
+      {pose.actors.filter(a=>a.opacity>.05).map(actor=>{
+        const x=66+(actor.x-1040)*.95,y=145+(actor.y-230)*.41;
+        const width=actor.width*.95,height=Math.max(40,actor.height*.41);
+        return <g key={actor.id} data-planned-actor={actor.id}>
+          {actor.role==="source"||actor.role==="destination"
+            ?<circle cx={x+width/2} cy={y+height/2} r={Math.min(width,height)*.44}
+              fill="#263D48" stroke="#85C9C7" strokeWidth="3"/>
+            :<rect x={x} y={y} width={width} height={height} rx="14" fill="#284252"
+              stroke={actor.role==="result"?"#EAC28C":"#82C8C4"} strokeWidth="2.5"/>}
+          <text x={x+width/2} y={y+height/2+7} fill="#FCF5EE" fontSize="20" fontWeight="650"
+            textAnchor="middle">{clip(actor.label,20)}</text>
+        </g>;
+      })}
+    </g>
+  </Frame>;
+}
+
 export function ScenePreview({ board, beat, timing, locale }: ScenePreviewProps) {
   const t = copy(locale);
   const title = clip(beat.onScreenText.trim() || beat.objective.trim() || board.title, 46);
@@ -463,7 +546,12 @@ export function ScenePreview({ board, beat, timing, locale }: ScenePreviewProps)
     : null;
 
   let scene: ReactNode;
-  switch (beat.visualIntent) {
+  // Fixed example amounts are licensed only to the dedicated synthetic demo.
+  if(beat.teachingMechanic){
+    scene=<MechanicPlanningScene beat={beat} title={title} kicker={kicker}/>;
+  }else if(board.id!=="storyboard-hvac-replacement-cost"||!board.illustrativeData){
+    scene=<SourceDerivedScene board={board} beat={beat} title={title} kicker={kicker}/>;
+  }else switch (beat.visualIntent) {
     case "question":
       scene = <QuestionScene board={board} title={title} focus={focus} kicker={kicker} />;
       break;

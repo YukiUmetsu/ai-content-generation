@@ -27,6 +27,11 @@ const SYSTEM = [
   "continuity:[{fromShotId,toShotId,technique,subjectIds,reason}] for each pair of adjacent shots.",
   "sound:[{shotId,narration,delivery,energy,pauseAfterMs,sfxIntent}] exactly one per shot.",
   "REQUIRED teachingSequences: nonempty array of {id,mode,question,technicalSubjectId,analogy,claimIds,phases}.",
+  "REQUIRED in EACH teaching sequence: visualStates:{before,action,after}. Before/after are 8–48 characters each; action is 8–90 characters. Describe visible subject states and operation, not topic headings.",
+  "REQUIRED in EACH teaching sequence: visualMechanic:{version:1,operator,subjectId,actors,operands,outcomeId} for an actual animated demonstration; if no operator fits, do not invent objects, ask for editorial revision.",
+  "Choose operator from split, assemble, transfer, accumulate, compare, reveal. subjectId MUST equal technicalSubjectId. actors: [{id,label,role,claimIds,assetKey?}], roles subject|part|source|destination|result. The subject actor MUST have id=subjectId and role=subject. Each actor cites valid sequence claimIds, with short plain noun labels (no digits, prices, code or URLs). For now omit assetKey entirely; only safe procedural SVG shapes exist.",
+  "Specify 2–6 distinct operands referencing actor IDs. split: operands are 2+ parts, outcomeId=subjectId. assemble/accumulate: operands are 2+ parts, outcomeId a result actor. compare: operands are 2+ parts, outcomeId=subjectId; do not imply magnitude or rank. transfer: operands=[source actor,destination actor], outcomeId=subjectId; the same subject token travels. reveal: operands=[source occluder,part hidden beneath], outcomeId=the hidden part. No model-authored geometry or quantities.",
+  "Before and after must be observably different for the SAME technicalSubjectId; action explains precisely which visible part changes and why, grounded only in supplied claim IDs. Never invent numbers or measurements.",
   "For a sequence, mode is direct or analogy. Direct: analogy=null; phases exactly problem→mechanism→payoff.",
   "Analogy mode: phases exactly problem→analogy→mechanism→payoff. analogy={familiarSystem,technicalSystem,analogySubjectId,mappings:[{familiar,technical}],breaksAt}; include at least two genuine distinct correspondences.",
   "Each phase={kind,shotId,visualAction,learningChange}. Every phase must link to a DIFFERENT already-declared shot, in chronological order.",
@@ -90,5 +95,9 @@ export async function generatePreproductionPlan(dossier, options, {transport=fet
     throw Error("Planning output rejected: every shot requires visible teaching elements. Regenerate the storyboard; generic subject-ID boxes are not accepted.");
   if(!Array.isArray(result.teachingSequences)||!result.teachingSequences.length)
     throw Error("Planning output rejected: missing research-grounded teachingSequences. Regenerate or edit the draft; no automatic retry.");
+  if(result.teachingSequences.some(seq=>!seq.visualStates))
+    throw Error("Planning output rejected: each teaching sequence needs concrete visualStates before/action/after. Regenerate or edit the draft; no automatic retry.");
+  if(result.teachingSequences.some(seq=>!seq.visualMechanic))
+    throw Error("Planning output rejected: each new teaching sequence needs an evidence-linked visualMechanic. Regenerate or edit the draft; no automatic retry.");
   return result;
 }

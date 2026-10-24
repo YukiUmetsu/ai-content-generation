@@ -17,6 +17,8 @@ import {
   type StoryboardBeat,
 } from "../model/types";
 import { diagnosticsForBeat, type StoryboardDiagnostic } from "../model/validate";
+import {VISUAL_OPERATORS} from "../../../../scripts/video-production/semantic-mechanic.mjs";
+import type {VisualMechanicV1} from "../../../../scripts/video-production/semantic-mechanic.mjs";
 
 interface SceneEditorProps {
   board: SemanticStoryboard;
@@ -33,12 +35,14 @@ function TextAreaField({
   onChange,
   hint,
   rows = 3,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   hint?: string;
   rows?: number;
+  maxLength?: number;
 }) {
   const generated = useId();
   const hintId = hint ? `${generated}-hint` : undefined;
@@ -51,6 +55,7 @@ function TextAreaField({
         id={generated}
         className="sp-textarea"
         rows={rows}
+        maxLength={maxLength}
         value={value}
         aria-describedby={hintId}
         onChange={(event) => onChange(event.target.value)}
@@ -255,6 +260,53 @@ export function SceneEditor({
             onChange={(visualObjective) => onChange({ visualObjective })}
             rows={3}
           />
+
+          {beat.teachingState && <div data-teaching-state-editor="" className="sp-field">
+            <p className="sp-label">{t.teachingStateLabel} · {beat.teachingState.subjectId} · {beat.teachingState.phase}</p>
+            <p className="sp-hint">{t.teachingStateHint}</p>
+            {(["before","action","after"] as const).map(key=><TextAreaField key={key}
+              label={key==="before"?t.teachingStateBefore:key==="action"?t.teachingStateAction:t.teachingStateAfter}
+              value={beat.teachingState![key]} rows={2}
+              maxLength={key==="action"?90:48}
+              onChange={text=>onChange({teachingState:{...beat.teachingState!,[key]:text}})}/>) }
+          </div>}
+
+          {beat.teachingMechanic && <div data-semantic-mechanic-editor="" className="sp-field">
+            <p className="sp-label">{t.mechanicLabel} · {beat.teachingMechanic.mechanic.subjectId}</p>
+            <p className="sp-hint">{t.mechanicHint}</p>
+            <SelectField label={t.mechanicOperator} value={beat.teachingMechanic.mechanic.operator}
+              options={VISUAL_OPERATORS.map(x=>({value:x,label:x}))}
+              onChange={value=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                ...beat.teachingMechanic!.mechanic,operator:value as VisualMechanicV1["operator"]}}})}/>
+            {beat.teachingMechanic.mechanic.actors.map((actor,index)=><details key={actor.id} data-semantic-actor-editor={actor.id} className="sp-field">
+              <summary className="sp-label">{actor.label||actor.id} · {actor.id}</summary>
+              <TextAreaField label={`${t.mechanicActor}: ${actor.id}`} value={actor.label} rows={1} maxLength={42}
+                onChange={label=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                  ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{...a,label}:a)}}})}/>
+              <SelectField label={t.mechanicRole} value={actor.role}
+                options={["subject","part","source","destination","result"].map(value=>({value,label:value}))}
+                onChange={role=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                  ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{
+                    ...a,role:role as typeof a.role}:a)}}})}/>
+              <CheckGroup legend={t.mechanicClaims}
+                options={board.claims.map(claim=>({id:claim.id,label:`${claim.id}: ${claim.note.slice(0,45)}`}))}
+                selected={actor.claimIds}
+                onToggle={(id,checked)=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                  ...beat.teachingMechanic!.mechanic,actors:beat.teachingMechanic!.mechanic.actors.map((a,i)=>i===index?{
+                    ...a,claimIds:checked?[...a.claimIds,id]:a.claimIds.filter(c=>c!==id)}:a)}}})}/>
+            </details>)}
+            <CheckGroup legend={t.mechanicOperands}
+              options={beat.teachingMechanic.mechanic.actors.map(x=>({id:x.id,label:x.label||x.id}))}
+              selected={beat.teachingMechanic.mechanic.operands}
+              onToggle={(id,checked)=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                ...beat.teachingMechanic!.mechanic,operands:checked
+                  ?[...beat.teachingMechanic!.mechanic.operands,id]
+                  :beat.teachingMechanic!.mechanic.operands.filter(x=>x!==id)}}})}/>
+            <SelectField label={t.mechanicOutcome} value={beat.teachingMechanic.mechanic.outcomeId}
+              options={beat.teachingMechanic.mechanic.actors.map(x=>({value:x.id,label:x.label||x.id}))}
+              onChange={outcomeId=>onChange({teachingMechanic:{...beat.teachingMechanic!,mechanic:{
+                ...beat.teachingMechanic!.mechanic,outcomeId}}})}/>
+          </div>}
 
           <CheckGroup
             legend={t.objectsLabel}

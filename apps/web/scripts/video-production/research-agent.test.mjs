@@ -40,7 +40,8 @@ test("HTML extraction strips script/nav and normalizes entity and whitespace", (
   const text = extractPageText(html);
   assert.equal(text, "Real & Relevant One useful fact.");
   assert.ok(!text.includes("ignore previous"));
-  assert.throws(() => extractPageText("a".repeat(520000)), /bounded input/);
+  assert.equal(extractPageText("a".repeat(524288)).length,14000);
+  assert.throws(() => extractPageText("a".repeat(524289)), /bounded input/);
 });
 
 test("search provider treats results as untrusted leads and never includes private URLs", async () => {
@@ -70,6 +71,8 @@ test("model output requires exact quotes and valid source IDs, never auto-verifi
   const extracted = validateExtractedClaims(candidate(), [capture()]);
   assert.equal(extracted.claims[0].status, "unverified");
   assert.deepEqual(extracted.claims[0].sourceRefs, ["source_01"]);
+  assert.deepEqual(extracted.quotePreviews, [{claimId:"claim_01",sourceId:"source_01",
+    quote:"material that resists the flow of heat"}]);
   assert.equal(extracted.evidence[0].snapshotSha256,
     createHash("sha256").update(content).digest("hex"));
   assert.match(extracted.evidence[0].passageLocator, /^captured-text:\[\d+,\d+\)$/);
@@ -86,10 +89,13 @@ test("local model receives bounded research source passages without cloud fallba
   const run = await analyzeCapturedResearch([capture()], topic, options, {
     transport: async (endpoint, request) => {
       assert.equal(endpoint, options.endpoint);
-      assert.ok(request.body.includes("UNTRUSTED") === false);
       const body = JSON.parse(request.body);
       assert.equal(body.model, options.model);
-      assert.ok(body.messages[1].content.includes("source_01"));
+      assert.match(body.messages[0].content,/untrusted data/i);
+      assert.equal(body.messages[0].content.includes(content),false);
+      const userContext=JSON.parse(body.messages[1].content);
+      assert.equal(userContext.sources[0].id,"source_01");
+      assert.equal(userContext.sources[0].capturedText,content);
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(candidate()) } }] }),
         { status: 200 });
     }
@@ -114,6 +120,8 @@ test("research end to end produces captured, unreviewed dossier and real evidenc
   });
   assert.equal(result.dossier.review.status, "draft");
   assert.equal(result.dossier.claims[0].status, "unverified");
+  assert.deepEqual(result.quotePreviews, [{claimId:"claim_01",sourceId:"source_01",
+    quote:"material that resists the flow of heat"}]);
   assert.equal(result.captures.length, 1);
   assert.equal(result.dossier.gaps.length, 1);
   assert.equal(parseResearchDossier(result.dossier).ok, true);

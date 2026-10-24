@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { Archive, Check, Download, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
+import { Tabs } from "@/components/ui/tabs";
 import type { Locale } from "@/features/registry";
 import type { SectionId } from "./navigation";
 import { sectionLabel } from "./navigation";
@@ -15,6 +16,7 @@ import {
 import { usePreferences } from "./use-preferences";
 import { ResearchModelSettings } from "./research-model-settings";
 import { PromptStudio } from "./prompt-studio";
+import { ProviderConnections } from "./provider-connections";
 
 interface Props {
   section: SectionId;
@@ -252,18 +254,58 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
     }catch(error){setStatus(error instanceof Error?error.message:"Import failed.");}
   }
   return <>
-    <SectionIntro section="settings" locale={locale} description="Studio appearance and local metadata management. The Fish API key and the video-renderer configuration are not stored in this catalog."/>
-    <div className="grid gap-4 lg:grid-cols-2">
-      <Surface header={<h2 className="font-medium">Appearance & language</h2>}>
+    <SectionIntro section="settings" locale={locale} description={localMessage(locale,
+      "Configure local models, provider connections and your Studio workspace. API keys are not included in browser storage or catalog backups.",
+      "ローカルモデル、API 接続、Studio の設定を管理します。API キーはブラウザーやバックアップに保存されません。")}/>
+    <Tabs defaultActiveIndex={0} label={localMessage(locale,"Settings sections","設定項目")}
+      className="flex min-w-0 flex-col gap-4">
+      <Tabs.List className="w-fit max-w-full" aria-label={localMessage(locale,"Settings sections","設定項目")}>
+        <Tabs.Tab value={0} className="h-10">{localMessage(locale,"AI models","AI モデル")}</Tabs.Tab>
+        <Tabs.Tab value={1} className="h-10">{localMessage(locale,"Connections","API 接続")}</Tabs.Tab>
+        <Tabs.Tab value={2} className="h-10">{localMessage(locale,"Appearance","表示")}</Tabs.Tab>
+        <Tabs.Tab value={3} className="h-10">{localMessage(locale,"Prompts","プロンプト")}</Tabs.Tab>
+        <Tabs.Tab value={4} className="h-10">{localMessage(locale,"Data & privacy","データとプライバシー")}</Tabs.Tab>
+      </Tabs.List>
+
+      <Tabs.Panel value={0} keepMounted className="mt-0 min-w-0 space-y-3">
+        <p className="text-sm text-muted-foreground">{localMessage(locale,
+          "Choose your local AI providers, model profiles, and task-by-task assignments.",
+          "ローカル AI プロバイダー、モデルプロファイル、タスク別の割り当てを管理します。")}</p>
+        <ResearchModelSettings locale={locale}/>
+      </Tabs.Panel>
+
+      <Tabs.Panel value={1} className="mt-0 min-w-0 space-y-3">
+        <p className="text-sm text-muted-foreground">{localMessage(locale,
+          "Connect external providers. Secrets stay in your operating system's credential store where supported.",
+          "外部サービスと接続します。対応環境ではシークレットを OS の資格情報ストアに保存します。")}</p>
+        <ProviderConnections locale={locale}/>
+      </Tabs.Panel>
+
+      <Tabs.Panel value={2} className="mt-0 min-w-0 space-y-3">
+        <p className="text-sm text-muted-foreground">{localMessage(locale,
+          "Customize how ContentGen looks and reads on this device.",
+          "この端末での ContentGen の表示と言語を設定します。")}</p>
+        <Surface header={<h2 className="font-medium">{localMessage(locale,"Appearance & language","表示と言語")}</h2>}>
         <div className="flex flex-col gap-3">
-          <Dropdown name="Theme" selected={appearance} choices={["light","dark"] as const} onSelect={setAppearance}/>
-          <Dropdown name="Density" selected={density} choices={["compact","spacious"] as const} onSelect={setDensity}/>
-          <Dropdown name="Language" selected={locale} choices={["en","ja"] as const} onSelect={setLocale}/>
+          <Dropdown name={localMessage(locale,"Theme","テーマ")} selected={appearance} choices={["light","dark"] as const} onSelect={setAppearance}/>
+          <Dropdown name={localMessage(locale,"Density","表示密度")} selected={density} choices={["compact","spacious"] as const} onSelect={setDensity}/>
+          <Dropdown name={localMessage(locale,"Language","言語")} selected={locale} choices={["en","ja"] as const} onSelect={setLocale}/>
         </div>
-      </Surface>
-      <ResearchModelSettings locale={locale} />
-      <PromptStudio locale={locale} />
-      <Surface header={<h2 className="font-medium">Local backup</h2>}>
+        </Surface>
+      </Tabs.Panel>
+
+      <Tabs.Panel value={3} className="mt-0 min-w-0 space-y-3">
+        <p className="text-sm text-muted-foreground">{localMessage(locale,
+          "Advanced: edit generation-stage instructions when the defaults do not fit your workflow.",
+          "詳細設定: 既定の設定が合わない場合、生成ステージごとの指示を編集します。")}</p>
+        <Surface><PromptStudio locale={locale}/></Surface>
+      </Tabs.Panel>
+
+      <Tabs.Panel value={4} className="mt-0 min-w-0 space-y-3">
+        <p className="text-sm text-muted-foreground">{localMessage(locale,
+          "Export your local project catalog before changing devices or resetting it.",
+          "端末の変更やリセットの前にローカルカタログをエクスポートできます。")}</p>
+        <Surface header={<h2 className="font-medium">{localMessage(locale,"Local catalog backup","ローカルカタログのバックアップ")}</h2>}>
         <div className="flex flex-col gap-3 text-sm">
           <p className="text-muted-foreground">Export or import the project catalog for this browser. Backups include names, editorial stages and asset license notes, not actual media files or voice credentials.</p>
           <Button icon={<Download className="size-4"/>} onClick={download}>Download catalog JSON</Button>
@@ -277,8 +319,9 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
           </Button>
           {status&&<p role="status" className="text-xs text-muted-foreground">{status}</p>}
         </div>
-      </Surface>
-    </div>
+        </Surface>
+      </Tabs.Panel>
+    </Tabs>
   </>;
 }
 export function CatalogWorkspace(props:Props) {

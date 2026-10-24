@@ -43,6 +43,11 @@ describe("fetchPackagingHypothesisSet", () => {
     ]);
   });
 
+  it("treats HTTP 204 as no locally saved packaging without substituting a fixture", async () => {
+    mockFetch(204, "");
+    await expect(fetchPackagingHypothesisSet()).resolves.toBeNull();
+  });
+
   it("rejects an unsupported schema version", async () => {
     await expect(
       parse({ ...cloneFixture(), schemaVersion: 2 }),
