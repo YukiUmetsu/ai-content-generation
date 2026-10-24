@@ -204,23 +204,44 @@ test("Qwen-specific no-thinking hint is not sent to unrelated local models",asyn
     return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(structure)}}]})};
   };
   await generateSceneStructure(outline,0,dossier,quotes,settings,{transport});
-  await generateSceneStructure(outline,0,dossier,quotes,{...settings,model:"qwen3.5:9b"},{transport});
+  await generateSceneStructure(outline,0,dossier,quotes,{...settings,model:"qwen3:8b"},{transport});
   assert.doesNotMatch(systems[0],/\/no_think/u);
   assert.match(systems[1],/\/no_think/u);
 });
 
-test("outline truncation retry narrows output to two short beats and discourages Qwen thinking",async()=>{
-  const prompts=[];
+test("Qwen3.5 outline and scene microjobs disable thinking through the provider template",async()=>{
+  const configured={...settings,model:"qwen3.5-9b:gguf:q4"};
+  const {phases,before,action,after,...core}=unit("Complete installed cost");
+  const replies=[{pattern:outline.pattern,premise:outline.premise,hook:outline.hook,beatCount:2},core];
+  const requests=[];
+  const transport=async(_endpoint,options)=>{
+    requests.push(JSON.parse(options.body));
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:"stop",message:{content:JSON.stringify(replies[requests.length-1])}}]})};
+  };
+  await generateOutlineSkeleton(dossier,quotes,configured,{transport});
+  await generateSceneCore(outline,0,dossier,quotes,configured,{transport});
+  assert.equal(requests.length,2);
+  for(const request of requests){
+    assert.deepEqual(request.chat_template_kwargs,{enable_thinking:false});
+    assert.doesNotMatch(request.messages[0].content,/\/no_think/u);
+  }
+});
+
+test("outline truncation retry narrows output while Qwen3.5 thinking is disabled",async()=>{
+  const requests=[];
   const transport=async(_url,options)=>{
-    prompts.push(JSON.parse(options.body).messages[0].content);
+    requests.push(JSON.parse(options.body));
     return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify(outline)}}]})};
   };
   const qwen={...settings,model:"Qwen3.5 9B (Q4)"};
   await generateOutline(dossier,quotes,qwen,{transport});
   await generateOutline(dossier,quotes,qwen,{transport,feedback:"The previous JSON was cut off at the output limit. Keep every required field but use shorter text."});
-  assert.match(prompts[0],/\/no_think/u);
-  assert.match(prompts[1],/exactly (?:2|two) (?:short|concise) beats/i);
-  assert.doesNotMatch(prompts[0],/exactly (?:2|two) (?:short|concise) beats/i);
+  assert.deepEqual(requests[0].chat_template_kwargs,{enable_thinking:false});
+  assert.deepEqual(requests[1].chat_template_kwargs,{enable_thinking:false});
+  assert.doesNotMatch(requests[0].messages[0].content,/\/no_think/u);
+  assert.match(requests[1].messages[0].content,/exactly (?:2|two) (?:short|concise) beats/i);
+  assert.doesNotMatch(requests[0].messages[0].content,/exactly (?:2|two) (?:short|concise) beats/i);
 });
 
 test("small local outline jobs assemble source-backed story without any full outline response",async()=>{
