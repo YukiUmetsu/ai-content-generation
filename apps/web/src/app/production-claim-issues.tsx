@@ -83,10 +83,10 @@ export function ProductionClaimIssues({
             onClick={()=>onOpenBeat(beatId)}>{beatId}</button>)}
         </div>
         {issue.kind==="needs_factual_review"&&onMarkReviewed&&draft&&linkedQuotes.length>0&&<div className="flex flex-wrap gap-2">
-          {reviewed?<button type="button" onClick={()=>onUndoReviewed?.(issue.claimId)}
+          {reviewed?(onUndoReviewed?<button type="button" onClick={()=>onUndoReviewed(issue.claimId)}
             className="rounded-control border border-border px-3 py-2 text-xs">
             {ja?"確認を取り消す":"Undo review"}
-          </button>:<button type="button" onClick={()=>onMarkReviewed(issue.claimId)}
+          </button>:null):<button type="button" onClick={()=>onMarkReviewed(issue.claimId)}
             className="rounded-control border border-border px-3 py-2 text-xs font-medium">
             {ja?"主張と出典を自分で確認しました":"I reviewed this claim and its sources"}
           </button>}
