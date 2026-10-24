@@ -309,7 +309,7 @@ mod explore_tests {
     fn explore_rejects_empty_unsafe_or_excessively_long_queries() {
         assert_eq!(validate_explore_query("  heat pump cost  ").unwrap(), "heat pump cost");
         assert!(validate_explore_query("ab").is_err());
-        assert!(validate_explore_query("bad\\nquery").is_err());
+        assert!(validate_explore_query("bad\nquery").is_err());
         assert!(validate_explore_query(&"q".repeat(161)).is_err());
     }
 }
