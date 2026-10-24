@@ -16,7 +16,7 @@ const LATEST_SEARCH_KEY="contentgen:studio-search:latest:v1";
 const LATEST_JOB_KEY="contentgen:studio-research-job:latest:v1";
 interface RecentResearch {topic:string;artifactId:string}
 interface ResearchJobStatus {jobId:string;status:"queued"|"running"|"paused"|"failed"|"cancelled"|"completed";
-  stage:string;completedScenes:number;totalScenes:number;artifactId?:string;
+  stage:string;currentStep?:string;completedScenes:number;totalScenes:number;artifactId?:string;
   error?:{code:string;message:string;detailCode?:string;field?:string};
   retry?:{stage:string;attempt:number;maxAttempts:number;reason:string;modelIndex:number;totalModels:number;detailCode?:string;field?:string}}
 type ResearchJobResponse=Omit<ResearchJobStatus,"error">&{error?:string|{code:string;message:string}};
@@ -582,7 +582,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
               {researchBusy&&<p role="status" className="text-sm text-muted-foreground">{restoring?tr("Restoring saved research…","保存済みの調査を読み込み中…"):searchBusy?tr("Searching SearXNG and saving sources…","SearXNG を検索して出典候補を保存中…"):tr("Using saved search results to capture public pages and draft teaching shots. No media is rendered yet.","保存済みの検索結果から公開ページを取得し、解説ショットを生成しています。映像はまだ生成されません。")}</p>}
               {researchJob&&<div role="status" className="mt-3 rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm">
                 <p className="font-semibold text-foreground">{tr("Research production job","調査・構成作成ジョブ")} · {researchJob.status}</p>
-                <p className="mt-1 text-muted-foreground">{researchJob.stage} · {researchJob.totalScenes?`${researchJob.completedScenes}/${researchJob.totalScenes} ${tr("teaching units saved","解説単位を保存")}`:tr("Preparing evidence and outline","出典と構成案を準備中")}</p>
+                <p className="mt-1 text-muted-foreground">{researchJob.stage}{researchJob.currentStep&&` · ${researchJob.currentStep}`} · {researchJob.totalScenes?`${researchJob.completedScenes}/${researchJob.totalScenes} ${tr("teaching units saved","解説単位を保存")}`:tr("Preparing evidence and outline","出典と構成案を準備中")}</p>
                 {researchJob.retry&&<p className="mt-2 text-sm text-status-warning">{tr("Local model retry","ローカルモデルの再試行")} {researchJob.retry.attempt}/{researchJob.retry.maxAttempts} · {researchJob.retry.detailCode??(researchJob.retry.reason==="invalid_output"?tr("Invalid structured response","構造化された応答が無効です"):researchJob.retry.reason==="model_timeout"?tr("Model timed out","モデルがタイムアウトしました"):tr("Provider temporarily unavailable","モデルに一時的に接続できません"))} {researchJob.retry.field&&`· ${researchJob.retry.field}`} {researchJob.retry.totalModels>1&&`· ${tr("Model","モデル")} ${researchJob.retry.modelIndex}/${researchJob.retry.totalModels}`}</p>}
                 <p className="mt-1 text-xs text-muted-foreground">{tr("Progress survives page refreshes. Completed stages are reused on retry.","ページを更新しても進行状況は保存されます。再試行時は完了済みの工程を再利用します。")}</p>
               </div>}
