@@ -184,7 +184,7 @@ async function send(path: string, method = "GET", payload?: unknown, options?: {
       ? envelope.error as Record<string, unknown> : {};
     if (typeof error.message === "string" && error.message.trim()) throw Error(error.message);
     const plainText = (response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/plain")
-      ? bodyText.replace(/[\\r\\n\\t]+/g, " ").trim().slice(0, 280) : "";
+      ? bodyText.replace(/[\r\n\t]+/g, " ").trim().slice(0, 280) : "";
     const detail = plainText ? ` ${plainText}` : "";
     if (response.status === 422) {
       throw Error(`Watchlist request rejected (HTTP 422).${detail} The local Rust API may be outdated. Rebuild and restart the ContentGen backend, then retry.`);

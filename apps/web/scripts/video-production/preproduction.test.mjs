@@ -108,6 +108,14 @@ test("local planner never invents source IDs or retries rejected model output",a
     {label:"Ownership costs",detail:"Other costs can occur during ownership"},
     {label:"Conditions",detail:"Financing and time change the picture"}
   ];
+  valid.teachingSequences[0].visualStates={before:"The list price stands alone",
+    action:"Reveal borrowing and recurring costs",after:"The home has multiple cost categories"};
+  valid.teachingSequences[0].visualMechanic={version:1,operator:"accumulate",subjectId:"house",
+    actors:[{id:"house",label:"Home ownership",role:"subject",claimIds:["claim_illustration"]},
+      {id:"tax",label:"Property tax",role:"part",claimIds:["claim_illustration"]},
+      {id:"insurance",label:"Home insurance",role:"part",claimIds:["claim_illustration"]},
+      {id:"total",label:"Ownership cost",role:"result",claimIds:["claim_illustration"]}],
+    operands:["tax","insurance"],outcomeId:"total"};
   const transport=async(url,request)=>{calls++;
     assert.match(url,/127\.0\.0\.1/);
     assert.match(request.body,/research_home_cost/);

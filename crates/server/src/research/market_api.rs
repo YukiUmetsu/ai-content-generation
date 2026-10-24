@@ -39,7 +39,9 @@ fn market_error(error: MarketError) -> ApiError {
     }
 }
 
-fn parse_watchlist_json(payload: Result<Json<MarketWatchlistDraft>, JsonRejection>) -> Result<MarketWatchlistDraft, ApiError> {
+fn parse_watchlist_json(
+    payload: Result<Json<MarketWatchlistDraft>, JsonRejection>,
+) -> Result<MarketWatchlistDraft, ApiError> {
     payload.map(|Json(draft)| draft).map_err(|rejection| ApiError::MalformedJson {
         message: format!(
             "Invalid watchlist request JSON: {}. Make sure the browser and local Rust server are from the same build.",

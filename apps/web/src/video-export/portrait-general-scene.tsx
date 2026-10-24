@@ -4,9 +4,9 @@ import { fitSvgText } from "../../scripts/video-production/text-layout.mjs";
 import { getGeneralFrame } from "../../scripts/video-production/general-visual-plan.mjs";
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
 import { ShortSafeFrame } from "@/components/visual/short-safe-frame";
-import { safeFrameProfileFromInset, type SafeFrameItem } from "@/components/visual/safe-frame";
-import { videoPlatformPreset } from "@/components/video/platform-presets";
+import type { SafeFrameItem } from "@/components/visual/safe-frame";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
+import { portraitProfile } from "./portrait-profile";
 
 const colors = ["#8CDAD2", "#EFC08B", "#BCAEF0", "#D6E9AC", "#F3ACC4"];
 const bg = "#101D2D", ink = "#F8F6F0", muted = "#C0CDD6", accent = "#EFC08B";
@@ -16,14 +16,6 @@ const contentBoxes: SafeFrameItem[] = [
   { id: "subheading", kind: "text", rect: { x: .108, y: .326, width: .72, height: .071 } },
   { id: "semantic-diagram", kind: "subject", critical: true, rect: { x: .108, y: .438, width: .723, height: .328 } },
 ];
-
-/** Reserved overlay regions are approximate preset authoring guidance, not official UI guarantees. */
-export function portraitProfile(preset: "youtube-shorts" | "instagram-reels" | "tiktok") {
-  const item = videoPlatformPreset(preset);
-  return safeFrameProfileFromInset({
-    id: preset, label: item.label, width: item.width, height: item.height, inset: item.safeInset,
-  });
-}
 
 function PortraitCard({ label, index, x, y, width, height, emphasized }: {
   label: string; index: number; x: number; y: number; width: number; height: number; emphasized: boolean;

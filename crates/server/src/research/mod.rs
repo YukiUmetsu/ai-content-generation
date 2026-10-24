@@ -10,8 +10,12 @@ use serde_json::Value;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-pub mod market_api;
+pub mod discovery_api;
+pub mod discovery_projects;
+pub mod discovery_store;
 pub mod evidence_api;
+pub mod graph_store;
+pub mod market_api;
 pub mod market_store;
 pub mod market_worker;
 pub mod youtube_api;
@@ -21,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/research/evidence", get(evidence_not_implemented))
         .nest("/api/research", evidence_api::router())
         .nest("/api/research/market", market_api::router())
+        .nest("/api/research/discovery", discovery_api::router())
 }
 
 async fn evidence_not_implemented() -> Result<Json<Value>, ApiError> {

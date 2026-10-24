@@ -42,6 +42,31 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0004_youtube_auto_discovery",
         sql: include_str!("../../../migrations/0004_youtube_auto_discovery.sql"),
     },
+    Migration {
+        version: 5,
+        name: "0005_project_discovery",
+        sql: include_str!("../../../migrations/0005_project_discovery.sql"),
+    },
+    Migration {
+        version: 6,
+        name: "0006_project_graph",
+        sql: include_str!("../../../migrations/0006_project_graph.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "0007_discovery_ideas",
+        sql: include_str!("../../../migrations/0007_discovery_ideas.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "0008_discovery_run_artifacts",
+        sql: include_str!("../../../migrations/0008_discovery_run_artifacts.sql"),
+    },
+    Migration {
+        version: 9,
+        name: "0009_project_graph_guards",
+        sql: include_str!("../../../migrations/0009_project_graph_guards.sql"),
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -8,13 +8,15 @@ import { usePreferences } from "./use-preferences";
 import { Workspace } from "./workspace";
 import { CatalogWorkspace } from "./catalog-workspace";
 import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type StudioCatalog } from "./catalog-model";
-import { ResearchWorkspace } from "./research-workspace";
+import { ResearchWorkspace, type ResearchIdeaHandoff } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
+import { deleteDiscoveryProject, syncDiscoveryProject } from "@/lib/api/discovery";
+import { enqueueProjectDeletion, flushProjectDeletions, pendingProjectDeletions } from "./project-deletion-queue";
 
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -30,6 +32,38 @@ export function Shell() {
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
   const [catalogError, setCatalogError] = useState<string | null>(initialCatalog.warning);
+  const [discoverySync, setDiscoverySync] = useState<"syncing" | "synced" | "offline">("syncing");
+  const [researchHandoff,setResearchHandoff] = useState<ResearchIdeaHandoff|null>(null);
+  const [discoveryVisit, setDiscoveryVisit] = useState(0);
+  useEffect(() => {
+    const visit = () => { if (document.visibilityState === "visible") setDiscoveryVisit(value => value + 1); };
+    document.addEventListener("visibilitychange", visit);
+    return () => document.removeEventListener("visibilitychange", visit);
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setDiscoverySync("syncing");
+      void (async () => {
+        try {
+          const ordered = [...catalog.projects].sort((a,b) => Number(b.id === catalog.activeProjectId) - Number(a.id === catalog.activeProjectId));
+          for (const project of ordered) await syncDiscoveryProject(project, catalog.content, controller.signal);
+          if (controller.signal.aborted) return;
+          await flushProjectDeletions(window.localStorage,new Set(catalog.projects.map(project=>project.id)),deleteDiscoveryProject);
+          if (!controller.signal.aborted) {
+            setDiscoverySync("synced");
+            const outstanding=pendingProjectDeletions(window.localStorage);
+            setCatalogError(previous=>outstanding>0?previous??"Server cleanup for deleted projects is queued until the local Rust server responds.":
+              previous?.startsWith("Server cleanup for deleted projects")?null:previous);
+          }
+        } catch {
+          // Server may be stopped; the local catalog is saved independently.
+          if (!controller.signal.aborted) setDiscoverySync("offline");
+        }
+      })();
+    }, 600);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [catalog, discoveryVisit]);
   const saveCatalog = useCallback((next: StudioCatalog): boolean => {
     try {
       persistCatalog(next);
@@ -41,6 +75,10 @@ export function Shell() {
       return false;
     }
   }, []);
+  const queueProjectDeletion = useCallback((projectId:string):boolean=>{
+    try{enqueueProjectDeletion(window.localStorage,projectId);return true;}
+    catch(error){setCatalogError(error instanceof Error?error.message:"Could not queue server cleanup for this project.");return false;}
+  },[]);
   const saveVideoIdea = useCallback((idea: {title: string; sourceUrl: string}): boolean => {
     const item: LocalContent = {
       id: makeCatalogId("item"),
@@ -155,7 +193,8 @@ export function Shell() {
           ) : activeSection === "video-director" ? (
             <VideoDirectorWorkspace locale={locale}/>
           ) : activeSection === "research" ? (
-            <ResearchWorkspace key={catalog.activeProjectId} locale={locale} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}
+            <ResearchWorkspace key={catalog.activeProjectId+":"+(researchHandoff?.title??"")} locale={locale}
+              handoff={researchHandoff} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}
               projectTopic={catalog.content.filter(item=>item.projectId===catalog.activeProjectId && item.kind==="video").at(-1)?.name ??
                 (catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name === "My project" ? "" :
                   catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "")}/>
@@ -168,7 +207,14 @@ export function Shell() {
               locale={locale}
               catalog={catalog}
               save={saveCatalog}
+              onDeleteProject={queueProjectDeletion}
               onCreate={() => setActiveSection("create")}
+              onResearchIdea={(idea,sources)=>{
+                setResearchHandoff({title:idea.title,hook:idea.hook,premise:idea.premise,
+                  sourceLeads:sources.map(source=>({title:source.title,url:source.url,evidenceState:source.evidenceState}))});
+                setActiveSection("research");
+              }}
+              discoverySync={discoverySync}
             />
           )}
 

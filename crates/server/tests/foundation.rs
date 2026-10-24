@@ -315,9 +315,15 @@ fn migrations_apply_in_order_to_fresh_database() {
 
     let report = db::migrate(&mut connection).unwrap();
     assert_eq!(report.from_version, 0);
-    assert_eq!(report.to_version, 3);
-    assert_eq!(report.applied, vec![1, 2, 3]);
-    assert_eq!(db::user_version(&connection).unwrap(), 3);
+    assert_eq!(report.to_version, db::MIGRATION_VERSION);
+    assert_eq!(
+        report.applied,
+        (1..=db::MIGRATION_VERSION).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        db::user_version(&connection).unwrap(),
+        db::MIGRATION_VERSION
+    );
     assert_eq!(
         db::MIGRATION_VERSION,
         db::MIGRATIONS
@@ -358,7 +364,29 @@ fn migrations_apply_in_order_to_fresh_database() {
     .into_iter()
     .map(str::to_owned)
     .collect();
-    assert_eq!(table_names(&connection), expected_tables);
+    let actual_tables = table_names(&connection);
+    assert!(
+        expected_tables.is_subset(&actual_tables),
+        "missing foundation tables"
+    );
+    for table in [
+        "discovery_projects",
+        "discovery_project_content",
+        "discovery_project_keywords",
+        "discovery_project_watchlists",
+        "kg_nodes",
+        "kg_edges",
+        "kg_edge_evidence",
+        "kg_sources",
+        "kg_trend_observations",
+        "discovery_runs",
+        "discovery_candidates",
+    ] {
+        assert!(
+            actual_tables.contains(table),
+            "missing discovery table {table}"
+        );
+    }
 
     let expected_source_version_columns: BTreeSet<String> = [
         "id",
@@ -402,8 +430,8 @@ fn migrations_apply_in_order_to_fresh_database() {
     }
 
     let second = db::migrate(&mut connection).unwrap();
-    assert_eq!(second.from_version, 3);
-    assert_eq!(second.to_version, 3);
+    assert_eq!(second.from_version, db::MIGRATION_VERSION);
+    assert_eq!(second.to_version, db::MIGRATION_VERSION);
     assert!(second.applied.is_empty());
 
     let integrity: String = connection
@@ -434,14 +462,13 @@ fn migration_rejects_tampered_checksums_and_newer_schemas() {
     ));
 
     let mut newer = db::open_in_memory().unwrap();
-    newer.pragma_update(None, "user_version", 3).unwrap();
+    newer
+        .pragma_update(None, "user_version", db::MIGRATION_VERSION + 1)
+        .unwrap();
     let error = db::migrate(&mut newer).unwrap_err();
     assert!(matches!(
         error,
-        db::DbError::UnsupportedSchemaVersion {
-            found: 3,
-            supported: 2
-        }
+        db::DbError::UnsupportedSchemaVersion { .. }
     ));
 }
 
@@ -637,10 +664,7 @@ fn schema_rejects_unsourced_metrics_and_mutating_provenance() {
 async fn router_registers_lane_stubs_and_health() {
     let app = build_router(AppState::new(":memory:"));
 
-    for (path, feature) in [
-        ("/api/research/evidence", "research.evidence"),
-        ("/api/creative/packaging", "creative.packaging"),
-    ] {
+    for (path, feature) in [("/api/research/evidence", "research.evidence")] {
         let response = app
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())

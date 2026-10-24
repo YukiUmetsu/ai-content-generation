@@ -7,6 +7,26 @@ import { CATALOG_KEY, parseCatalog } from "./catalog-model";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Studio shell", () => {
+  it("enables the real Projects discovery controls after the browser catalog syncs", async () => {
+    localStorage.removeItem(CATALOG_KEY);
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      const data = path.endsWith("/sync") ? {id:"server-project",snapshotRevision:1,contentCount:0}
+        : path.endsWith("/keywords") ? {keywords:[]}
+          : path.endsWith("/graph") ? {nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+            : path.endsWith("/watchlists") ? {watchlists:[],watchlistIds:[]}
+              : path.endsWith("/runs") ? {runs:[]} : null;
+      if (!data) throw Error(`Unexpected discovery request: ${path}`);
+      return new Response(JSON.stringify(data),{status:200,headers:{"content-type":"application/json"}});
+    }));
+    const user=userEvent.setup();
+    render(<App/>);
+    await user.click(screen.getByRole("link",{name:"Projects"}));
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Discover 5 Ideas"})).toBeEnabled());
+    await user.type(screen.getByRole("textbox",{name:"Keyword or search phrase"}),"Home insurance premiums");
+    expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled();
+  });
+
   it("opens directly into a focused create workspace with a real preview and a tool guide", async () => {
     render(<App />);
 
@@ -84,7 +104,7 @@ describe("Studio shell", () => {
         : url.endsWith("/watchlists")
           ? {watchlists:[{id:"watch-demo",name:"House Math",query:"heat pump savings",queryMode:"manual",queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump savings",region:"US",language:"en",enabled:true,createdAt:1,updatedAt:1,nextDueAt:1,lastFinishedAt:1,backoffUntil:0,errorCode:null}]}
           : url.endsWith("/videos")
-            ? {videos:[{videoId:"abcABC12345",title:"Competitor video",channelId:"UCdemo",channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:60,viewCount:1234,likeCount:null,commentCount:null,subscriberCount:null,sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",provider:"youtube-data-api",observedAt:1,expiresAt:9999999999}]}
+            ? {videos:[{videoId:"abcABC12345",title:"Competitor video",channelId:"UCdemo",channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:60,viewCount:123400,likeCount:null,commentCount:null,subscriberCount:null,sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",provider:"youtube-data-api",observedAt:1,expiresAt:9999999999}]}
             : null;
       if (!data) throw Error("Unexpected route: " + url);
       return new Response(JSON.stringify(data),{headers:{"content-type":"application/json"}});
