@@ -11,16 +11,20 @@ const txt=(v,min,max)=>typeof v==="string"&&v.trim().length>=min&&v.length<=max&
 const noQuantity=v=>txt(v,2,42)&&v.trim()===v&&
   !/[\p{C}\p{N}$€£¥%<>`{}\\]/u.test(v)&&!/https?:|www\.|data:|javascript:|\/\//iu.test(v);
 const genericState=/^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu;
-const visibleStateIssue=(value,min,max)=>{
+// Scene states are editorial descriptions, not literal on-screen labels.
+// The 48/90-character targets remain prompt guidance; only a generous bound
+// protects checkpoints from pathological model output.
+const MAX_STATE_TEXT=500;
+const visibleStateIssue=(value,min)=>{
   if(value===undefined||value===null)return "missing";
   if(typeof value!=="string")return "wrong_type";
   if(genericState.test(value.trim()))return "placeholder";
   if(value.trim().length<min)return "too_short";
-  if(value.length>max)return "too_long";
+  if(value.length>MAX_STATE_TEXT)return "too_long";
   if(/[\u0000-\u001f]/u.test(value))return "control_char";
   return null;
 };
-const visibleState=(value,min,max)=>visibleStateIssue(value,min,max)===null;
+const visibleState=(value,min)=>visibleStateIssue(value,min)===null;
 const patterns=new Set(["investigation","misconception","mechanism","cost-dissection","decision","failure","scale"]);
 const qwen35Model=model=>/qwen3[._-]5\b/iu.test(model);
 export const RESEARCH_MODEL_LIMITS=Object.freeze({...DEFAULT_RESEARCH_GENERATION,timeoutMs:DEFAULT_RESEARCH_GENERATION.timeoutSeconds*1000});
@@ -198,9 +202,9 @@ function validateUnit(unit){
   for(let i=0;i<2;i++)requireField(noQuantity(unit.parts[i]),`parts[${i}]`,"use a concrete noun without quantities");
   requireField(unit.parts[0]!==unit.parts[1],"parts","use two distinct parts");
   requireField(["compare","split"].includes(unit.operator),"operator","use split or compare");
-  requireField(visibleState(unit.before,8,48),"before","describe a concrete visible state in 8–48 characters");
-  requireField(visibleState(unit.action,8,90),"action","describe a concrete visible action in 8–90 characters");
-  requireField(visibleState(unit.after,8,48),"after","describe a concrete visible state in 8–48 characters");
+  requireField(visibleState(unit.before,8),"before","describe a concise, concrete visible state");
+  requireField(visibleState(unit.action,8),"action","describe a concise, concrete visible action");
+  requireField(visibleState(unit.after,8),"after","describe a concise, concrete visible state");
   requireField(new Set([unit.before,unit.action,unit.after].map(s=>s.toLowerCase())).size===3,
     "before/action/after","describe three different states");
   requireField(Array.isArray(unit.phases)&&unit.phases.length===3,"phases","provide exactly three phases");
@@ -240,9 +244,9 @@ function validateSceneStructure(structure){
   for(let i=0;i<2;i++)requireField(noQuantity(structure.parts[i]),`parts[${i}]`,"use a concrete noun without quantities");
   requireField(structure.parts[0]!==structure.parts[1],"parts","use two distinct parts");
   requireField(["compare","split"].includes(structure.operator),"operator","use split or compare");
-  requireField(visibleState(structure.before,8,48),"before","describe a concrete visible state in 8–48 characters");
-  requireField(visibleState(structure.action,8,90),"action","describe a concrete visible action in 8–90 characters");
-  requireField(visibleState(structure.after,8,48),"after","describe a concrete visible state in 8–48 characters");
+  requireField(visibleState(structure.before,8),"before","describe a concise, concrete visible state");
+  requireField(visibleState(structure.action,8),"action","describe a concise, concrete visible action");
+  requireField(visibleState(structure.after,8),"after","describe a concise, concrete visible state");
   requireField(new Set([structure.before,structure.action,structure.after].map(s=>s.toLowerCase())).size===3,
     "before/action/after","describe three different states");
   return {subject:structure.subject,parts:structure.parts,operator:structure.operator,
@@ -283,14 +287,14 @@ function validateSceneCore(core){
   return {subject:core.subject,parts:core.parts,operator:core.operator};
 }
 function validateSceneStates(states){
-  const requireState=(value,field,min,max,kind)=>{
-    const schemaIssue=visibleStateIssue(value,min,max);
+  const requireState=(value,field,kind)=>{
+    const schemaIssue=visibleStateIssue(value,8);
     if(schemaIssue)throw Object.assign(outputError("schema_invalid",field,
-      `Invalid ${field}: describe a concrete visible ${kind} in ${min}–${max} characters.`),{schemaIssue});
+      `Invalid ${field}: describe a concise, single-line visible ${kind}.`),{schemaIssue});
   };
-  requireState(states?.before,"before",8,48,"state");
-  requireState(states.action,"action",8,90,"action");
-  requireState(states.after,"after",8,48,"state");
+  requireState(states?.before,"before","state");
+  requireState(states.action,"action","action");
+  requireState(states.after,"after","state");
   requireField(new Set([states.before,states.action,states.after].map(text=>text.toLowerCase())).size===3,
     "before/action/after","describe distinct states");
   return {before:states.before,action:states.action,after:states.after};
