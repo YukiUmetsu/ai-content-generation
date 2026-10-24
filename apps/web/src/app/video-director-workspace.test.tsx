@@ -245,6 +245,18 @@ describe("saved research to Video Director handoff",()=>{
     expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Approved local draft edit");
     sessionStorage.removeItem(sessionKey);
   });
+  it("does not restore draft edits from a different research fingerprint",async()=>{
+    const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
+    const savedBundle={...structuredClone(bundle),researchSha256:"0".repeat(64),planSha256:"c".repeat(64)};
+    savedBundle.plan.shots[0].onScreenText="Wrong source edits";
+    sessionStorage.setItem(sessionKey,JSON.stringify({version:1,artifactId,dossier,bundle:savedBundle}));
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
+      artifactId,dossier,bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)},
+    }),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+    sessionStorage.removeItem(sessionKey);
+  });
   it("rejects a result from a different saved artifact",async()=>{
     vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
       artifactId:"research_other-123456789abc",dossier,bundle,
