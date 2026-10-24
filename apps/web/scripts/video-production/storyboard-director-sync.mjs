@@ -150,7 +150,7 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
     manualReview.add("Storyboard locale changes are not yet imported into Director.");
   if(storyboard.illustrativeData)
     manualReview.add("Storyboard illustrative-data changes need review before Director or publication.");
-  const originalObjects=[...new Set(plan.shots.flatMap(x=>x.subjectIds))].map(id=>
+  const originalObjects=[...new Set(plan.shots.flatMap(x=>x.subjectIds??[]))].map(id=>
     ({id,label:id.replace(/[_-]/gu," ")}));
   if(!equivalent(storyboard.semanticObjects,originalObjects))
     manualReview.add("Storyboard semantic-object catalog edits are not yet imported into Director.");
