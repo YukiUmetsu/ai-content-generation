@@ -3,6 +3,7 @@ import { Clapperboard, ExternalLink, Plus, RefreshCw, Sparkles, Trash2, Video } 
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import { marketErrorHint } from "./market-error-hint";
+import { rankMarketVideos, type MarketVideoMode } from "./market-video-ranking";
 import type { Locale } from "@/features/registry";
 import {
   createMarketWatchlist, deleteMarketWatchlist, loadMarketStatus,
@@ -40,6 +41,8 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
   const [watchlists, setWatchlists] = useState<MarketWatchlist[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [videoResult, setVideoResult] = useState<{watchlistId: string; rows: MarketVideo[]} | null>(null);
+  const [videoMode, setVideoMode] = useState<MarketVideoMode>("established");
+  const [minViews, setMinViews] = useState(10_000);
   const [newName, setNewName] = useState("");
   const [newQuery, setNewQuery] = useState("");
   const [newPlanText, setNewPlanText] = useState("");
@@ -118,6 +121,8 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
     finally{setGeneratingQueries(false);}
   }
   const videos = videoResult?.watchlistId === selectedId ? videoResult.rows : [];
+  const allDistinctVideos = rankMarketVideos(videos, "all", minViews, Date.now());
+  const shownVideos = rankMarketVideos(videos, videoMode, minViews, Date.now());
   const loadedDraft = useMemo(() => {
     const watch = watchlists.find(x => x.id === selectedId);
     return watch ? loadEditorialDraft(watch.id, watch.query || watch.name) : null;
@@ -428,17 +433,48 @@ export function YoutubeIntelligencePanel({locale, onUseVideo, onCreateStoryboard
         </Surface>}
 
         <Surface header={<h3 className="font-semibold">{tr("Observed public videos", "観測した公開動画")}</h3>}>
-          {videos.length===0 ? <p className="text-sm text-muted-foreground">
+          <div className="mb-3 grid gap-3 sm:grid-cols-2">
+            <label className={label}>{tr("Find useful examples", "参考になる動画を探す")}
+              <select className={input} aria-label="Video performance filter" value={videoMode}
+                onChange={e=>setVideoMode(e.target.value as MarketVideoMode)}>
+                <option value="established">{tr("Established high-view videos", "実績のある高再生数動画")}</option>
+                <option value="fast-starters">{tr("Promising new videos", "新しい注目動画")}</option>
+                <option value="all">{tr("All collected videos", "収集したすべての動画")}</option>
+              </select>
+            </label>
+            {videoMode==="established" && <label className={label}>{tr("Minimum views", "最低再生回数")}
+              <select className={input} aria-label="Minimum views" value={minViews} onChange={e=>setMinViews(Number(e.target.value))}>
+                {[10000,25000,50000,100000].map(count=><option value={count} key={count}>{formatViews(count,locale)}+</option>)}
+              </select>
+            </label>}
+          </div>
+          <p className={note+" mb-3"}>
+            {videoMode==="established"
+              ? tr("At least 7 days old and above your view threshold; ranked by total views.", "公開から7日以上かつ設定した再生数以上の動画を、総再生数順に表示します。")
+              : videoMode==="fast-starters"
+                ? tr("Published 1–14 days ago, at least 1,000 views and 500 lifetime-average views/day. This is not measured recent growth.", "公開1～14日、再生数1,000回以上、公開後の平均500回/日以上。最近の伸び率を計測したものではありません。")
+                : tr("Unfiltered results, including new or low-view videos. Ranked by total views.", "再生数の少ない動画や新しい動画も含め、総再生数順に表示します。")}
+            {" · "}{tr("Showing", "表示")} {shownVideos.length} / {allDistinctVideos.length}
+          </p>
+          {allDistinctVideos.length===0 ? <p className="text-sm text-muted-foreground">
             {tr("No fresh observations. Run Collect now with a configured YouTube key, or enable daily collection.",
               "新しい観測データはありません。YouTube APIキーを設定して今すぐ収集するか、毎日の自動収集を有効にしてください。")}
+          </p> : shownVideos.length===0 ? <p className="text-sm text-muted-foreground">
+            {tr("No videos match this performance filter. Try All collected videos or lower the view threshold. Your collected videos are still saved.",
+              "この条件に一致する動画はありません。すべての動画を表示するか、再生数条件を下げてください。収集データは保存されています。")}
           </p> : <div className="grid gap-3 lg:grid-cols-2">
-            {videos.map(video => <article key={video.videoId} className="rounded-surface border border-border bg-surface-subtle p-4">
-              <p className="text-xs text-muted-foreground">{video.channelTitle} · {asPublished(video.publishedAt,locale)}</p>
+            {shownVideos.map(({video, ageDays, lifetimeAvgViewsPerDay}) => <article key={video.videoId} className="rounded-surface border border-border bg-surface-subtle p-4">
+              <p className="text-xs text-muted-foreground">{video.channelTitle} · {asPublished(video.publishedAt,locale)}
+                {ageDays !== null && <> · {ageDays<1 ? tr("Published today", "公開当日") : tr(`${Math.floor(ageDays)} days old`, `公開から${Math.floor(ageDays)}日`)}</>}
+              </p>
               <h4 className="mt-1 text-base font-semibold leading-snug">{video.title}</h4>
               <p className="mt-2 text-sm text-muted-foreground">
                 {tr("Public views:", "公開再生数:")} {formatViews(video.viewCount,locale)}
                 {" · "}{tr("Duration:", "長さ:")} {video.durationSeconds==null ? "—" : Math.floor(video.durationSeconds/60)+"m "+video.durationSeconds%60+"s"}
               </p>
+              {lifetimeAvgViewsPerDay !== null && <p className={note+" mt-1"}>
+                {tr("Lifetime average:", "公開後の平均:")} ~{formatViews(Math.round(lifetimeAvgViewsPerDay),locale)} {tr("views/day (not recent growth)", "再生/日（直近の伸び率ではありません）")}
+              </p>}
               <p className={note+" mt-2"}>{video.provider} · {tr("Observed:", "観測日時:")} {asLocalDate(video.observedAt,locale)}</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a className="inline-flex items-center gap-1 text-xs font-semibold text-primary underline-offset-4 hover:underline"
