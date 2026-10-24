@@ -37,7 +37,7 @@ function fakeApi(withVideo: boolean, enabled = true) {
     else if (url.endsWith("/videos")) data = {videos: withVideo ? [{
       videoId:"abcABC12345",title:"Heating systems compared",channelId:"UCdemo",
       channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:320,
-      viewCount:1200,likeCount:null,commentCount:null,subscriberCount:null,
+      viewCount:120000,likeCount:null,commentCount:null,subscriberCount:null,
       sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",
       provider:"youtube-data-api",observedAt:123,expiresAt:1234567
     }] : []};
@@ -96,6 +96,23 @@ describe("YouTube Intelligence", () => {
     expect(screen.getByText(/Daily automatic collection off/i)).toBeInTheDocument();
   });
 
+  it("defaults to established videos and lets users show all observations without another API call", async () => {
+    const requests=fakeApi(true);
+    const user=userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    const filter = await screen.findByRole("combobox",{name:"Video performance filter"});
+    expect(filter).toHaveValue("established");
+    expect(await screen.findByText(/120,000/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox",{name:"Minimum views"}),"100000");
+    expect(screen.getByText(/120,000/)).toBeInTheDocument();
+    await user.selectOptions(filter,"all");
+    expect(screen.getByText(/120,000/)).toBeInTheDocument();
+    const requestsBefore=requests.filter(x=>x.endsWith("/videos")).length;
+    await user.selectOptions(filter,"fast-starters");
+    expect(screen.getByText(/No videos match this performance filter/)).toBeInTheDocument();
+    expect(requests.filter(x=>x.endsWith("/videos"))).toHaveLength(requestsBefore);
+  });
+
   it("saves an original editable idea without copying competitor metrics", async () => {
     fakeApi(true);
     const onUseVideo=vi.fn(() => true);
@@ -130,7 +147,7 @@ describe("YouTube Intelligence", () => {
     expect(draft.selectedId).toBe("comparison");
     expect(draft.input.audience).toBe("Homeowners comparing heating systems");
     expect(draft.approaches[2].hook).toBe("Before replacing a furnace, what needs comparing?");
-    expect(JSON.stringify(draft)).not.toContain("1200");
+    expect(JSON.stringify(draft)).not.toContain("120000");
   });
 
   it("keeps observed video links as inspiration only rather than factual evidence", async () => {

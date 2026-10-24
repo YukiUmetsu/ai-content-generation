@@ -191,7 +191,7 @@ impl YoutubeClient {
                     ("type", "video".into()),
                     ("q", query.into()),
                     ("maxResults", "25".into()),
-                    ("order", "date".into()),
+                    ("order", "relevance".into()),
                     ("regionCode", region.into()),
                     ("relevanceLanguage", language.into()),
                 ],
@@ -453,6 +453,7 @@ mod tests {
             .route("/youtube/v3/search", get(|headers: HeaderMap, uri: Uri| async move {
                 assert_eq!(headers.get("x-goog-api-key").unwrap(), "synthetic-key");
                 assert!(!uri.query().unwrap_or("").contains("synthetic-key"));
+                assert!(uri.query().unwrap_or("").contains("order=relevance"));
                 Json(json!({"items":[
                     {"id":{"videoId":"abcABC12345"}},
                     {"id":{"videoId":"defDEF67890"}}
