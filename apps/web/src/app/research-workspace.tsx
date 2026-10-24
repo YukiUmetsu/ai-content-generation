@@ -12,7 +12,18 @@ import { createDraft, starterApproaches, validateEditorialDraft, type EditorialD
 import type { ResearchDraftResult } from "./researched-storyboard";
 
 const LATEST_RESEARCH_KEY="contentgen:studio-research:latest:v1";
+const LATEST_SEARCH_KEY="contentgen:studio-search:latest:v1";
 interface RecentResearch {topic:string;artifactId:string}
+interface SearchLead {title:string;url:string;snippet:string}
+interface SavedSearch {
+  artifactId:string;schemaVersion:1;kind:"studio-search-snapshot";
+  topic:string;query:string;audience:string;locale:"en-US"|"ja-JP";
+  provider:"searxng";searchedAt:string;results:SearchLead[];
+}
+interface SavedSearchSummary {
+  artifactId:string;topic:string;query:string;audience:string;locale:string;
+  searchedAt:string;resultCount:number;
+}
 type ReadinessState = "not_configured" | "unavailable" | "unverified" | "model_missing" | "ready";
 interface ServiceReadiness { state: ReadinessState; model?: string; detail?: string }
 interface ResearchReadiness {
@@ -34,6 +45,16 @@ function savedResearchFor(projectTopic:string):RecentResearch|null {
     if(!stored||typeof stored!=="object"||!("topic" in stored)||!("artifactId" in stored))return null;
     if(stored.topic!==projectTopic.trim()||typeof stored.artifactId!=="string"||
       !/^research_[a-z0-9_-]{1,78}-[a-f0-9]{12}$/iu.test(stored.artifactId))return null;
+    return {topic:stored.topic,artifactId:stored.artifactId};
+  }catch{return null;}
+}
+function savedSearchFor(projectTopic:string):RecentResearch|null {
+  if(!projectTopic.trim())return null;
+  try{
+    const stored:unknown=JSON.parse(localStorage.getItem(LATEST_SEARCH_KEY)||"null");
+    if(!stored||typeof stored!=="object"||!("topic" in stored)||!("artifactId" in stored))return null;
+    if(stored.topic!==projectTopic.trim()||typeof stored.artifactId!=="string"||
+      !/^search_\d{8}T\d{9}Z-[a-f0-9]{12}$/u.test(stored.artifactId))return null;
     return {topic:stored.topic,artifactId:stored.artifactId};
   }catch{return null;}
 }
@@ -62,6 +83,12 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   const [restoring, setRestoring] = useState(Boolean(recentResearch));
   const [researchResult, setResearchResult] = useState<ResearchDraftResult | null>(null);
   const [researchError, setResearchError] = useState("");
+  const [recentSearch] = useState(()=>savedSearchFor(projectTopic));
+  const [searchResult, setSearchResult] = useState<SavedSearch|null>(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [savedSearches, setSavedSearches] = useState<SavedSearchSummary[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [readiness, setReadiness] = useState<ResearchReadiness | null>(null);
   const [readinessError, setReadinessError] = useState(false);
   const [checkingReadiness, setCheckingReadiness] = useState(true);
@@ -90,6 +117,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     readiness.search.state !== "ready" ||
     [readiness.researchModel, readiness.storyModel].some(service =>
       service.state === "not_configured" || service.state === "model_missing" || service.state === "unavailable")));
+  const blockedForSearch = checkingReadiness || (readiness !== null && readiness.search.state !== "ready");
 
   function readinessInstruction() {
     if (checkingReadiness) return tr("Checking SearXNG and local AI before you start.", "開始前に SearXNG とローカル AI を確認しています。");
@@ -134,6 +162,25 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     return ()=>{cancelled=true;controller.abort();};
   },[projectTopic,recentResearch]);
 
+  useEffect(()=>{
+    if(!recentSearch||recentSearch.topic!==projectTopic.trim())return;
+    const controller=new AbortController(),current=revision.current;
+    void fetch("/api/contentgen-director/research-search/"+recentSearch.artifactId,{signal:controller.signal})
+      .then(async response=>{
+        if(!response.ok)throw Error("Saved search is no longer available.");
+        return await response.json() as SavedSearch;
+      })
+      .then(result=>{
+        if(!controller.signal.aborted&&current===revision.current&&result.topic===projectTopic.trim())
+          setSearchResult(result);
+      })
+      .catch(error=>{
+        if(!controller.signal.aborted&&current===revision.current)
+          setSearchError(error instanceof Error?error.message:"Could not restore saved search.");
+      });
+    return ()=>controller.abort();
+  },[projectTopic,recentSearch]);
+
   function invalidateResearch() {
     pending.current?.abort();
     revision.current++;
@@ -141,6 +188,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     setRestoring(false);
     setResearchResult(null);
     setResearchError("");
+    setSearchBusy(false);
+    setSearchResult(null);
+    setSearchError("");
     setProjectError("");
   }
 
@@ -155,6 +205,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     revision.current++;
     pending.current=null;
     setResearchBusy(false);
+    setSearchBusy(false);
     setRestoring(false);
     setResearchError("");
   }
@@ -171,18 +222,90 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     return validateEditorialDraft({...seed,input,approaches:starterApproaches(input),selectedId:approach});
   }
 
+  function searchMatches(search:SavedSearch,draft:EditorialDraft){
+    return search.topic===draft.input.topic&&search.query===draft.input.viewerQuestion&&
+      search.audience===draft.input.audience&&search.locale===(locale==="ja"?"ja-JP":"en-US");
+  }
+
+  async function searchAndSave(draft:EditorialDraft,controller:AbortController,current:number):Promise<SavedSearch>{
+    const response=await fetch("/api/contentgen-director/research-search",{
+      method:"POST",signal:controller.signal,
+      headers:{"Content-Type":"application/json","x-contentgen-director":"local-only"},
+      body:JSON.stringify({title:draft.input.topic,viewerQuestion:draft.input.viewerQuestion,
+        audience:draft.input.audience,locale:locale==="ja"?"ja-JP":"en-US"}),
+    });
+    const payload=await response.json() as SavedSearch&{error?:string};
+    if(!response.ok)throw Error(payload.error||`Search failed (HTTP ${response.status}).`);
+    if(!payload.artifactId||!Array.isArray(payload.results)||!payload.results.length||
+      !searchMatches(payload,draft))throw Error("Saved search response did not match the current brief.");
+    if(current===revision.current){
+      setSearchResult(payload);
+      try{localStorage.setItem(LATEST_SEARCH_KEY,JSON.stringify({topic:draft.input.topic,artifactId:payload.artifactId}));}
+      catch{/* The saved server artifact remains available in Saved searches. */}
+    }
+    return payload;
+  }
+
+  async function searchOnly(){
+    if(searchBusy||researchBusy||blockedForSearch||topic.trim().length<3||topic.trim().length>160)return;
+    const current=++revision.current,controller=new AbortController();
+    pending.current=controller;
+    setSearchBusy(true);setSearchError("");setResearchError("");setResearchResult(null);
+    try{await searchAndSave(editorialDraft(),controller,current);}
+    catch(error){if(current===revision.current)setSearchError(error instanceof Error?error.message:"Search failed.");}
+    finally{if(current===revision.current){setSearchBusy(false);pending.current=null;}}
+  }
+
+  async function loadSavedSearch(artifactId:string){
+    if(searchBusy||researchBusy)return;
+    invalidateResearch();
+    const current=revision.current,controller=new AbortController();
+    pending.current=controller;setSearchBusy(true);
+    try{
+      const response=await fetch("/api/contentgen-director/research-search/"+artifactId,{signal:controller.signal});
+      const item=await response.json() as SavedSearch&{error?:string};
+      if(!response.ok)throw Error(item.error||"Cannot load saved search.");
+      if(current===revision.current){
+        setTopic(item.topic);setViewerQuestion(item.query);setAudience(item.audience);
+        setSearchResult(item);
+        try{localStorage.setItem(LATEST_SEARCH_KEY,JSON.stringify({topic:item.topic,artifactId:item.artifactId}));}catch{/* Optional browser pointer. */}
+      }
+    }catch(error){if(current===revision.current)setSearchError(error instanceof Error?error.message:"Could not load search.");}
+    finally{if(current===revision.current){setSearchBusy(false);pending.current=null;}}
+  }
+
+  async function loadSavedSearchHistory(){
+    if(historyBusy)return;
+    setHistoryBusy(true);
+    try{
+      const response=await fetch("/api/contentgen-director/research-search");
+      if(!response.ok)throw Error("Could not list saved searches.");
+      const body=await response.json() as {items:SavedSearchSummary[]};
+      setSavedSearches(Array.isArray(body.items)?body.items:[]);
+    }catch(error){setSearchError(error instanceof Error?error.message:"Could not list saved searches.");}
+    finally{setHistoryBusy(false);}
+  }
+
   async function researchAndGenerate(){
-    if(researchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160)return;
+    if(researchBusy||searchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160)return;
     setResearchBusy(true);setResearchError("");setResearchResult(null);
     const current=++revision.current;
     const controller=new AbortController();pending.current=controller;
     try{
       const editorial=editorialDraft();
+      let saved=searchResult;
+      if(!saved||!searchMatches(saved,editorial)){
+        setSearchBusy(true);
+        saved=await searchAndSave(editorial,controller,current);
+        if(current===revision.current)setSearchBusy(false);
+      }
+      if(current!==revision.current||controller.signal.aborted)return;
       const response=await fetch("/api/contentgen-director/research-draft",{
         method:"POST",signal:controller.signal,
         headers:{"Content-Type":"application/json","x-contentgen-director":"local-only"},
         body:JSON.stringify({title:editorial.input.topic,viewerQuestion:editorial.input.viewerQuestion,
-          audience:editorial.input.audience,locale:locale==="ja"?"ja-JP":"en-US"}),
+          audience:editorial.input.audience,locale:locale==="ja"?"ja-JP":"en-US",
+          searchArtifactId:saved.artifactId}),
       });
       const payload=await response.json() as ResearchDraftResult & {error?:string};
       if(!response.ok)throw Error(payload.error||`Research failed (HTTP ${response.status}).`);
@@ -196,7 +319,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     }catch(error){
       if(current===revision.current)setResearchError(error instanceof Error?error.message:"Research failed.");
     }finally{
-      if(current===revision.current){setResearchBusy(false);pending.current=null;}
+       if(current===revision.current){setResearchBusy(false);setSearchBusy(false);pending.current=null;}
     }
   }
 
@@ -295,8 +418,8 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 </Button>}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {tr("Research drafts stay separate from the saved Evidence Library until an indexing workflow is added.",
-                  "調査の下書きは、索引機能が追加されるまで根拠ライブラリとは別に保存されます。")}
+                {tr("Searches are saved locally. Search leads are separate from captured, verified Evidence Library passages.",
+                  "検索結果はローカルに保存されます。検索候補は、取得・検証された根拠ライブラリの文章とは別です。")}
               </p>
             </header>
             <Surface variant="solid" className="gap-0 [&>div]:!p-0">
@@ -348,18 +471,69 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 </details>
               </div>
               <div className="flex flex-wrap items-center gap-3 border-t border-border bg-surface-subtle px-5 py-5 sm:px-8">
-                <Button size="lg" onClick={()=>void researchAndGenerate()} disabled={!onCreateStoryboard||researchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160}>
-                  {researchBusy?tr("Researching…","調査中…"):tr("Research & generate storyboard","調査して構成案を生成")}
+                <Button size="lg" variant="outline" onClick={()=>void searchOnly()}
+                  disabled={searchBusy||researchBusy||blockedForSearch||topic.trim().length<3||topic.trim().length>160}>
+                  {searchBusy?tr("Searching…","検索中…"):tr("Search & save sources","出典候補を検索・保存")}
                 </Button>
-                {researchBusy&&<Button variant="outline" onClick={cancelResearch}>{tr("Cancel","中止")}</Button>}
-                <Button variant="subtle" onClick={createFromResearch} disabled={!onCreateStoryboard||researchBusy||topic.trim().length<3||topic.trim().length>160}>
+                <Button size="lg" onClick={()=>void researchAndGenerate()} disabled={!onCreateStoryboard||searchBusy||researchBusy||blockedForReadiness||topic.trim().length<3||topic.trim().length>160}>
+                  {researchBusy?tr("Researching…","調査中…"):searchResult?tr("Retry storyboard generation","構成案を再生成"):tr("Research & generate storyboard","調査して構成案を生成")}
+                </Button>
+                {(researchBusy||searchBusy)&&<Button variant="outline" onClick={cancelResearch}>{tr("Cancel","中止")}</Button>}
+                <Button variant="subtle" onClick={createFromResearch} disabled={!onCreateStoryboard||researchBusy||searchBusy||topic.trim().length<3||topic.trim().length>160}>
                   {tr("Create unresearched outline","未調査の構成案を作成")}
                 </Button>
                 {selectedUrls.length>0&&<span className="text-xs text-muted-foreground">{tr(`${selectedUrls.length} inspiration links`, `参考リンク ${selectedUrls.length} 件`)}</span>}
               </div>
               <div className="px-5 pb-6 pt-4 sm:px-8">
-              {researchBusy&&<p role="status" className="text-sm text-muted-foreground">{restoring?tr("Restoring saved research…","保存済みの調査を読み込み中…"):tr("Capturing public sources and drafting teaching shots. This may take a few minutes; no media is rendered yet.","公開情報を取得し、解説ショットを生成しています。数分かかる場合があります。動画はまだ生成されません。")}</p>}
+              {researchBusy&&<p role="status" className="text-sm text-muted-foreground">{restoring?tr("Restoring saved research…","保存済みの調査を読み込み中…"):searchBusy?tr("Searching SearXNG and saving sources…","SearXNG を検索して出典候補を保存中…"):tr("Using saved search results to capture public pages and draft teaching shots. No media is rendered yet.","保存済みの検索結果から公開ページを取得し、解説ショットを生成しています。映像はまだ生成されません。")}</p>}
+              {searchBusy&&!researchBusy&&<p role="status" className="text-sm text-muted-foreground">{tr("Searching SearXNG and saving sources locally…","SearXNG を検索して出典候補をローカルに保存中…")}</p>}
+              {searchError&&<p role="alert" className="rounded-control border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{searchError}</p>}
               {researchError&&<p role="alert" className="rounded-control border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{researchError}</p>}
+              <details className="mt-3 rounded-control border border-border bg-surface"
+                onToggle={event=>{if(event.currentTarget.open)void loadSavedSearchHistory();}}>
+                <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground">{tr("Saved searches","保存済みの検索")}</summary>
+                <div className="border-t border-border p-3">
+                  {historyBusy?<p className="text-xs text-muted-foreground">{tr("Loading saved searches…","保存済みの検索を読み込み中…")}</p>:
+                    savedSearches.length?(
+                      <ul className="grid gap-2">{savedSearches.map(item=><li key={item.artifactId}>
+                        <Button variant="subtle" size="sm" disabled={searchBusy||researchBusy} onClick={()=>void loadSavedSearch(item.artifactId)}>
+                          {item.topic} · {tr(`${item.resultCount} sources`,`${item.resultCount} 件`)}
+                        </Button>
+                        <span className="ms-2 text-xs text-muted-foreground">{new Date(item.searchedAt).toLocaleString(locale==="ja"?"ja-JP":"en-US")}</span>
+                      </li>)}</ul>
+                    ):<p className="text-xs text-muted-foreground">{tr("No saved searches found yet.","保存済みの検索はまだありません。")}</p>}
+                </div>
+              </details>
+              {searchResult&&searchResult.topic===topic.trim()&&<section aria-label={tr("Saved source search results","保存済みの検索結果")}
+                className="mt-4 rounded-surface border border-border bg-surface-subtle p-4 sm:p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-base font-semibold text-foreground">{tr("Saved search results","保存済みの検索結果")}</h4>
+                    <p className="mt-1 text-xs text-muted-foreground">{tr(`${searchResult.results.length} sources · ${searchResult.query}`,`${searchResult.results.length} 件・${searchResult.query}`)}</p>
+                  </div>
+                  <span className="rounded-full border border-border bg-surface px-3 py-1 text-xs font-semibold text-foreground">{tr("Saved locally","ローカルに保存済み")}</span>
+                </div>
+                <p className="mt-3 text-xs leading-5 text-status-warning">{tr(
+                  "Search leads are not verified evidence. Open and review each source before trusting claims or numbers.",
+                  "検索候補は検証済みの根拠ではありません。主張や数値を信頼する前に各出典を確認してください。")}</p>
+                <ol className="mt-3 grid gap-2">
+                  {searchResult.results.map((result,i)=><li key={result.url} className="rounded-control border border-border bg-surface px-3 py-3">
+                    <div className="flex items-start gap-3">
+                      <span className="pt-0.5 text-xs tabular-nums text-muted-foreground">{String(i+1).padStart(2,"0")}</span>
+                      <div className="min-w-0 flex-1">
+                        <a href={result.url} target="_blank" rel="noopener noreferrer"
+                          className="break-words text-sm font-semibold text-primary underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+                          {result.title} ↗
+                        </a>
+                        <p className="mt-0.5 break-all text-xs text-muted-foreground">{new URL(result.url).hostname}</p>
+                        {result.snippet&&<p className="mt-2 text-sm leading-6 text-foreground">{result.snippet}</p>}
+                      </div>
+                    </div>
+                  </li>)}
+                </ol>
+                <p className="mt-3 text-xs text-muted-foreground">{tr(`SearXNG · searched ${new Date(searchResult.searchedAt).toLocaleString("en-US")}`,
+                  `SearXNG・検索日時 ${new Date(searchResult.searchedAt).toLocaleString("ja-JP")}`)}</p>
+              </section>}
               {researchResult&&researchResult.dossier.topic.title===topic.trim()&&<div className="grid gap-4 border-t border-border pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -436,3 +610,4 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
     </section>
   );
 }
+
