@@ -214,13 +214,13 @@ async fn explore(
     let client = YoutubeClient::from_key(key).map_err(|_| ApiError::Unavailable {
         message: "A valid YouTube API key is required for search".into(),
     })?;
-    let _permit = state
-        .market_semaphore()
-        .acquire_owned()
-        .await
-        .map_err(|_| ApiError::Unavailable {
-            message: "Local YouTube search is temporarily unavailable".into(),
-        })?;
+    let _permit =
+        state
+            .market_semaphore()
+            .try_acquire_owned()
+            .map_err(|_| ApiError::RateLimited {
+                message: "Another YouTube collection is running; try again shortly".into(),
+            })?;
     {
         let db = state.connect().map_err(db_error)?;
         if !market_store::reserve_explore_search(&db, epoch_now()).map_err(market_error)? {
