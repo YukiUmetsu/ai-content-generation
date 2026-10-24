@@ -194,7 +194,10 @@ export async function searchCandidates(query, options, { transport = fetch, sign
       if (unique.has(url)) return [];
       unique.add(url);
       const title = String(item.title ?? "").replace(/<[^>]+>/gu, "").trim();
-      return title && title.length <= 240 ? [{ url, title }] : [];
+      const snippet = String(item.content ?? item.description ?? "")
+        .replace(/<[^>]+>/gu, " ").replace(/[\u0000-\u001f\u007f]+/gu, " ")
+        .replace(/\s+/gu, " ").trim().slice(0, 500);
+      return title && title.length <= 240 ? [{ url, title, ...(snippet ? { snippet } : {}) }] : [];
     } catch { return []; }
   }).slice(0, 10);
 }
@@ -322,3 +325,4 @@ export async function researchVideoTopic(brief, options = {}, deps = {}) {
     warnings: ["All extracted claims are unverified until human source review.",
       "Captured passages may be incomplete or contain misleading source text."] };
 }
+
