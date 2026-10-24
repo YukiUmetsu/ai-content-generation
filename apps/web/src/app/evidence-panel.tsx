@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, FileDigit, Hash, Info, Scale, Search, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Database, ExternalLink, Info, Scale, Search, X } from "lucide-react";
 import { ApiErrorNotice } from "./api-error-notice";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/input";
 import { Surface } from "@/components/ui/surface-card";
-import { EmptyState } from "@/app/empty-state";
 import { translate, formatDateTimeUTC, formatNumber, formatBytes, shortHash } from "@/i18n/messages";
 import { searchEvidence, ApiError } from "@/lib/api/client";
 import type {
@@ -27,6 +26,15 @@ interface EvidencePanelProps {
 }
 
 const MAX_QUERY_LENGTH = 500;
+
+function safeExternalSourceUrl(uri: string): string | null {
+  try {
+    const url = new URL(uri);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 
 function formatLocator(locator: PassageLocator, locale: Locale): string {
   switch (locator.kind) {
@@ -190,89 +198,79 @@ function ResultCard({
   showRank?: boolean;
   showMatchedPill?: boolean;
 }) {
+  const sourceUrl = safeExternalSourceUrl(result.source.canonicalUri);
   return (
-    <Surface variant="solid" className="gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {showRank && (
-          <span className="rounded-full bg-track px-2 py-0.5 text-sm font-medium text-muted-foreground">
-            {translate(locale, "evidenceRank", { rank: result.rank })}
-          </span>
-        )}
-        {showMatchedPill && result.matched === false && (
-          <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-sm text-status-warning">
-            {translate(locale, "evidenceMatchedOnly")}
-          </span>
-        )}
+    <Surface variant="solid" className="gap-0 shadow-sm">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        {showRank && <span className="rounded-full bg-track px-2.5 py-1 font-semibold text-foreground">
+          {translate(locale, "evidenceRank", { rank: result.rank })}
+        </span>}
+        <span className="rounded-full border border-border px-2.5 py-1 capitalize">{result.source.sourceKind}</span>
+        <span>{formatLocator(result.locator, locale)}</span>
       </div>
-
-      <p className="whitespace-pre-wrap text-foreground">{result.excerpt}</p>
-
-      <div className="mt-2 grid gap-3 text-sm">
-        <div className="grid gap-1">
-          <p className="font-medium text-foreground">{translate(locale, "evidenceSource")}</p>
-          <p className="text-muted-foreground">{result.source.title}</p>
-          <p className="text-muted-foreground">
-            {result.source.sourceKind}
-            {result.source.publisher && ` · ${result.source.publisher}`}
+      {showMatchedPill && result.matched === false && (
+        <p className="mt-3 text-xs text-status-warning">{translate(locale, "evidenceMatchedOnly")}</p>
+      )}
+      <p className="mt-4 whitespace-pre-wrap text-base leading-7 text-foreground">{result.excerpt}</p>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+        <div className="min-w-0 flex-1">
+          <p className="break-words text-sm font-semibold text-foreground">{result.source.title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {[result.source.publisher, formatDateTimeUTC(result.version.retrievedAt)].filter(Boolean).join(" · ")}
           </p>
-          <p className="break-all text-muted-foreground">{result.source.canonicalUri}</p>
         </div>
-
-        <div className="grid gap-1">
-          <p className="font-medium text-foreground">{translate(locale, "evidenceVersion")}</p>
-          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
-            <span>{translate(locale, "evidenceVersionId")}</span>
-            <span className="break-all">{result.version.id}</span>
-            <span>{translate(locale, "evidenceHash")}</span>
-            <span className="break-all" title={result.version.contentSha256}>
+        {sourceUrl && <a href={sourceUrl} target="_blank" rel="noopener noreferrer"
+          aria-label={translate(locale, "evidenceOpenSource")}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-control px-2 py-2 text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {translate(locale, "evidenceOpenSource")}
+          <ExternalLink aria-hidden className="size-3.5" />
+        </a>}
+      </div>
+      <details className="group mt-3 rounded-control border border-border bg-surface-subtle">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {translate(locale, "evidenceSourceDetails")}
+          <span aria-hidden className="ms-2 text-muted-foreground group-open:hidden">+</span>
+          <span aria-hidden className="ms-2 hidden text-muted-foreground group-open:inline">−</span>
+        </summary>
+        <div className="grid gap-5 border-t border-border px-4 py-4 text-sm">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-[9rem_minmax(0,1fr)] sm:gap-x-4">
+            <span className="text-muted-foreground">{translate(locale, "evidenceVersionId")}</span>
+            <span className="break-all font-mono text-xs">{result.version.id}</span>
+            <span className="text-muted-foreground">{translate(locale, "evidenceHash")}</span>
+            <span className="break-all font-mono text-xs" title={result.version.contentSha256}>
               {shortHash(result.version.contentSha256)}
             </span>
-            <span>{translate(locale, "evidenceRetrieved")}</span>
-            <span>{formatDateTimeUTC(result.version.retrievedAt)}</span>
-            <span>{translate(locale, "evidenceParser")}</span>
+            <span className="text-muted-foreground">{translate(locale, "evidenceParser")}</span>
             <span>{result.version.parserVersion}</span>
-            <span>{translate(locale, "status")}</span>
-            <span>{rightsLabel(result.provenance.rightsStatus, locale)}</span>
-            {result.provenance.licenseNote && (
-              <>
-                <span>{translate(locale, "evidenceLicense")}</span>
-                <span>{result.provenance.licenseNote}</span>
-              </>
-            )}
-            <span>{translate(locale, "evidenceSize")}</span>
+            <span className="text-muted-foreground">{translate(locale, "evidenceSize")}</span>
             <span>{formatBytes(result.version.byteSize, locale)}</span>
-            <span>{translate(locale, "evidenceLocator")}</span>
-            <span>{formatLocator(result.locator, locale)}</span>
+            <span className="text-muted-foreground">{translate(locale, "evidenceRights")}</span>
+            <span>{rightsLabel(result.provenance.rightsStatus, locale)}</span>
+            {result.provenance.licenseNote && <>
+              <span className="text-muted-foreground">{translate(locale, "evidenceLicense")}</span>
+              <span className="break-words">{result.provenance.licenseNote}</span>
+            </>}
+            <span className="text-muted-foreground">{translate(locale, "evidenceSource")}</span>
+            <span className="break-all">{result.source.canonicalUri}</span>
           </div>
-        </div>
-
-        {result.claims.length > 0 && (
-          <div className="grid gap-1">
-            <p className="font-medium text-foreground">{translate(locale, "evidenceClaims")}</p>
-            <ul className="list-disc space-y-1 ps-4 text-muted-foreground">
-              {result.claims.map((claim) => (
-                <li key={claim.claimKey}>
-                  <span className="font-medium">{claim.claimKey}</span>{" "}
-                  <span className="text-foreground">({stanceLabel(claim.stance, locale)})</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {result.numericValues.length > 0 ? (
-          <div className="grid gap-2">
-            <p className="font-medium text-foreground">{translate(locale, "evidenceNumbers")}</p>
-            <div className="grid gap-2">
-              {result.numericValues.map((value, index) => (
-                <MetricValue key={index} value={value} locale={locale} />
-              ))}
+          {result.claims.length > 0 && (
+            <div>
+              <h4 className="mb-2 font-semibold">{translate(locale, "evidenceClaims")}</h4>
+              <ul className="list-disc space-y-1 ps-5 text-muted-foreground">
+                {result.claims.map((claim) => <li key={claim.claimKey}>
+                  <span className="text-foreground">{claim.claimKey}</span> · {stanceLabel(claim.stance, locale)}
+                </li>)}
+              </ul>
             </div>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">{translate(locale, "evidenceNoNumbers")}</p>
-        )}
-      </div>
+          )}
+          {result.numericValues.length > 0 && (
+            <div className="grid gap-2">
+              <h4 className="font-semibold">{translate(locale, "evidenceNumbers")}</h4>
+              {result.numericValues.map((value, index) => <MetricValue key={index} value={value} locale={locale} />)}
+            </div>
+          )}
+        </div>
+      </details>
     </Surface>
   );
 }
@@ -411,37 +409,51 @@ export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }:
   const indexEmpty = response != null && response.index.indexedPassageCount === 0;
   const hasResults = response != null && response.results.length > 0;
   const hasContradictions = response != null && response.contradictions.length > 0;
+  const isDegraded = response?.degradation != null &&
+    response.degradation.reason !== "index_empty" && response.degradation.reason !== "no_matches";
 
   return (
-    <div className="grid gap-4">
-      <Surface variant="ghost">
-        <p className="text-muted-foreground">{translate(locale, "evidenceIntro")}</p>
+    <div className="grid gap-5">
+      <header className="px-1 pt-4 sm:pt-6">
+        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          {translate(locale, "evidenceLibraryEyebrow")}
+        </p>
+        <h2 className="mt-2 font-serif text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+          {translate(locale, "evidenceLibraryHeading")}
+        </h2>
+        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+          {translate(locale, "evidenceLibraryDescription")}
+        </p>
+      </header>
+
+      <Surface variant="solid" className="gap-3 shadow-sm">
+        <form onSubmit={handleSubmit} role="search" className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Field
+            label={translate(locale, "evidenceQueryLabel")}
+            placeholder={translate(locale, "evidenceQueryPlaceholder")}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            error={validation ?? undefined}
+            className="flex-1"
+            containerClassName="min-w-0 flex-1"
+          />
+          <Button
+            type="submit"
+            isLoading={loading}
+            loadingLabel={translate(locale, "evidenceSearching")}
+            icon={<Search aria-hidden className="size-4" />}
+            className="w-full sm:w-auto"
+          >
+            {translate(locale, "evidenceSearch")}
+          </Button>
+        </form>
+        <p className="text-xs leading-5 text-muted-foreground">{translate(locale, "evidenceSearchHelp")}</p>
       </Surface>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <Field
-          label={translate(locale, "evidenceQueryLabel")}
-          placeholder={translate(locale, "evidenceQueryPlaceholder")}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          error={validation ?? undefined}
-          className="flex-1"
-          containerClassName="flex-1"
-        />
-        <Button
-          type="submit"
-          isLoading={loading}
-          loadingLabel={translate(locale, "evidenceSearching")}
-          icon={<Search aria-hidden className="size-4" />}
-          className="w-full sm:w-auto"
-        >
-          {translate(locale, "evidenceSearch")}
-        </Button>
-      </form>
-
       {loading && (
-        <Surface variant="outline" className="items-center justify-center py-8 text-center">
-          <p className="text-foreground">{translate(locale, "evidenceSearching")}</p>
+        <Surface variant="outline" className="items-center justify-center gap-3 py-10 text-center" role="status">
+          <div aria-hidden className="size-7 animate-pulse rounded-full bg-track" />
+          <p className="text-sm font-medium text-foreground">{translate(locale, "evidenceSearching")}</p>
           {slow && (
             <div className="mt-2 grid gap-2">
               <p className="text-sm text-muted-foreground">{translate(locale, "slow")}</p>
@@ -459,32 +471,26 @@ export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }:
 
       {response && !loading && (
         <>
-          <Surface variant="outline">
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span className="inline-flex items-center gap-1.5">
-                <FileDigit aria-hidden className="size-4 text-muted-foreground" />
-                <span className="font-medium">{translate(locale, "evidenceIndexState")}:</span>
-                <span>{indexStateLabel(response.index.state, locale)}</span>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <span className="inline-flex items-center gap-2 font-medium text-foreground">
+                <Database aria-hidden className="size-4 text-muted-foreground" />
+                {translate(locale, "evidenceIndexState")}: {indexStateLabel(response.index.state, locale)}
               </span>
-              <span className="inline-flex items-center gap-1.5">
-                <Hash aria-hidden className="size-4 text-muted-foreground" />
-                <span>
-                  {translate(locale, "evidenceIndexCounts", {
-                    indexed: response.index.indexedPassageCount,
-                    total: response.index.sourcePassageCount,
-                  })}
-                </span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                <Info aria-hidden className="size-4" />
-                <span>
-                  {translate(locale, "evidenceTokenizer")}: <span className="font-mono">{response.tokenizer}</span>
-                </span>
+              <span className="text-muted-foreground">
+                {translate(locale, "evidenceIndexCounts", {
+                  indexed: response.index.indexedPassageCount,
+                  total: response.index.sourcePassageCount,
+                })}
               </span>
             </div>
-          </Surface>
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Info aria-hidden className="size-3.5" />
+              {translate(locale, "evidenceTokenizer")}: <span className="font-mono">{response.tokenizer}</span>
+            </span>
+          </div>
 
-          {response.degradation && (
+          {isDegraded && response.degradation && (
             <Surface variant="outline" className="border-status-warning/40 bg-status-warning/5">
               <div className="flex items-start gap-3">
                 <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-status-warning" />
@@ -512,27 +518,38 @@ export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }:
           )}
 
           {indexEmpty && !hasResults && (
-            <EmptyState
-              title={translate(locale, "evidenceIndexEmptyTitle")}
-              description={translate(locale, "evidenceIndexEmptyBody")}
-            />
+            <div className="rounded-surface border border-dashed border-border bg-surface px-6 py-12 text-center sm:py-16">
+              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-track text-muted-foreground">
+                <BookOpen aria-hidden className="size-6" />
+              </div>
+              <h3 className="mt-5 font-serif text-xl font-semibold text-foreground">
+                {translate(locale, "evidenceLibraryEmptyTitle")}
+              </h3>
+              <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
+                {translate(locale, "evidenceLibraryEmptyBody")}
+              </p>
+              <p className="mx-auto mt-4 max-w-lg rounded-control bg-surface-subtle p-3 text-xs leading-5 text-muted-foreground">
+                {translate(locale, "evidenceLibraryDraftNote")}
+              </p>
+            </div>
           )}
 
           {!indexEmpty && !hasResults && (
-            <EmptyState
-              title={translate(locale, "evidenceEmptyTitle")}
-              description={translate(locale, "evidenceEmptyBody")}
-            />
+            <div className="rounded-surface border border-dashed border-border px-6 py-12 text-center">
+              <Search aria-hidden className="mx-auto size-7 text-muted-foreground" />
+              <h3 className="mt-4 font-serif text-xl font-semibold text-foreground">{translate(locale, "evidenceEmptyTitle")}</h3>
+              <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted-foreground">{translate(locale, "evidenceEmptyBody")}</p>
+            </div>
           )}
 
           {hasResults && (
-            <div className="grid gap-3">
-              <h3 className="font-medium text-foreground">
+            <div className="grid gap-4">
+              <h3 className="text-sm font-semibold text-foreground">
                 {response.results.length === 1
                   ? translate(locale, "evidenceResultCountOne")
                   : translate(locale, "evidenceResultCount", { count: response.results.length })}
               </h3>
-              <div className="grid gap-4">
+              <div className="grid gap-3">
                 {response.results.map((result) => (
                   <ResultCard key={result.passageId} result={result} locale={locale} />
                 ))}
@@ -543,7 +560,11 @@ export function EvidencePanel({ locale, query: controlledQuery, onQueryChange }:
       )}
 
       {!response && !loading && !error && (
-        <EmptyState title={translate(locale, "emptyTitle")} description={translate(locale, "evidenceEnterQuery")} />
+        <div className="rounded-surface border border-dashed border-border bg-surface-subtle px-6 py-12 text-center">
+          <Search aria-hidden className="mx-auto size-7 text-muted-foreground" />
+          <h3 className="mt-4 font-serif text-xl font-semibold text-foreground">{translate(locale, "evidenceLibraryInitialTitle")}</h3>
+          <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted-foreground">{translate(locale, "evidenceLibraryInitialBody")}</p>
+        </div>
       )}
     </div>
   );
