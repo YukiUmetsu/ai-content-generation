@@ -62,6 +62,28 @@ test("unresolved evidence pauses the job without discarding saved work",async()=
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test("explicit evidence retry refreshes captured sources without destroying older checkpoints",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"research-repair-refresh-"));
+  let captures=0,repairs=0;
+  const manager=fixture(root,{capture:async()=>{captures++;return capture;},
+    repair:async input=>({document:input,autoFixed:0,
+      unresolved:++repairs===1?[{claimId:"claim_01",reason:"quote_mismatch"}]:[],
+      proposals:[],audit:[]})});
+  try{
+    const {jobId}=await manager.create(brief,{primary:model});
+    assert.equal((await settled(manager,jobId)).status,"paused");
+    assert.equal(captures,1);
+    await manager.retryEvidence(jobId);
+    assert.equal((await settled(manager,jobId)).status,"completed");
+    assert.equal(captures,2);
+    assert.equal(repairs,2);
+    await readFile(join(root,"jobs",jobId,"captures.json"),"utf8");
+    await readFile(join(root,"jobs",jobId,"captures_repair_1.json"),"utf8");
+    await readFile(join(root,"jobs",jobId,"evidence_repair_0.json"),"utf8");
+    await readFile(join(root,"jobs",jobId,"evidence_repair_1.json"),"utf8");
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
 test("retry resumes from completed scene, not source capture or outline",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-jobs-"));
   let captures=0,outlines=0,sceneOne=0,sceneTwo=0;
