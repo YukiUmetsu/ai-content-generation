@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url";
 import {validateStudioBrief} from "./studio-research.mjs";
 import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
+import {repairCapturedLinks} from "./evidence-link-repair.mjs";
 import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedOutline,validateSavedOutlineSkeleton,validateSavedOutlineBeat,validateSavedSceneStructure,validateSavedSceneVisual,validateSavedSceneUnit,validateSavedSceneCore,validateSavedSceneStates,validateSavedSceneDirection,validateSavedSceneElements,validateSavedSceneNarration} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
 import {withModelDebugContext} from "./research-ai-debug.mjs";
@@ -14,7 +15,7 @@ const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",impo
 const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
+const safeName=name=>/^(?:manifest|captures|evidence|evidence_repair_\d+|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
 const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const safeSchemaIssue=issue=>["missing","wrong_type","too_short","too_long","placeholder","control_char",
   "wrong_shape","invalid_element","duplicate_previous"].includes(issue)?issue:null;
@@ -86,7 +87,8 @@ function publicState(job){
     completedScenes:job.completedScenes??0,totalScenes:job.totalScenes??0,
     ...(job.currentStep?{currentStep:job.currentStep}:{}),
     ...(job.retry?{retry:job.retry}:{}),
-    ...(job.error?{error:job.error}:{}),...(job.artifactId?{artifactId:job.artifactId}:{})};
+    ...(job.error?{error:job.error}:{}),...(job.artifactId?{artifactId:job.artifactId}:{}),
+    ...(job.evidenceRepair?{evidenceRepair:job.evidenceRepair}:{})};
 }
 async function saveCompleted(root,job,data,plan){
   const {dossier,quotes,captures,warnings}=data;
@@ -113,7 +115,7 @@ async function optionalText(file){
 
 /** Instances allow isolated tests; the real Vite process uses exactly one shared manager. */
 export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudioSearch,
-  capture=captureSavedSources,evidence=buildDeterministicDossier,outline=null,
+  capture=captureSavedSources,evidence=buildDeterministicDossier,repair=null,outline=null,
   outlineSkeleton=generateOutlineSkeleton,outlineBeat=generateOutlineBeat,combineOutline=assembleOutline,
   scene=null,sceneStructure=null,sceneCore=generateSceneCore,sceneStates=generateSceneStates,
   combineStructure=assembleSceneStructure,sceneVisual=null,sceneDirection=generateSceneDirection,
@@ -251,6 +253,33 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
         await setStage(job,"evidence");
         data=evidence(job.brief,captures.captures,captures.gaps);
         guard(signal);await write(job,"evidence.json",data);
+      }
+      // Repair only existing captured source IDs and verbatim passages.
+      // Injected legacy evidence producers remain unchanged unless they opt in.
+      const repairStep=repair??(evidence===buildDeterministicDossier?repairCapturedLinks:null);
+      if(repairStep){
+        const filename=`evidence_repair_${job.evidenceRepairRevision??0}.json`;
+        let checkpoint=await stageFile(job,filename);
+        if(!checkpoint){
+          await setStage(job,"evidence-repair");
+          const repaired=await repairStep({dossier:data.dossier,quotes:data.quotes,
+            captures:data.captures,plan:null},{signal});
+          guard(signal);
+          checkpoint={dossier:repaired.document.dossier,quotes:repaired.document.quotes,
+            autoFixed:repaired.autoFixed,unresolved:repaired.unresolved,
+            proposals:repaired.proposals,audit:repaired.audit};
+          await write(job,filename,checkpoint);
+        }
+        data={...data,dossier:checkpoint.dossier,quotes:checkpoint.quotes};
+        job.evidenceRepair={status:checkpoint.unresolved.length?"needs_review":"complete",
+          autoFixed:checkpoint.autoFixed,needsReview:checkpoint.unresolved.length,
+          issues:checkpoint.unresolved.slice(0,16).map(item=>({
+            claimId:String(item.claimId).slice(0,80),reason:String(item.reason).slice(0,40)}))};
+        await save(job);
+        if(checkpoint.unresolved.length){
+          job.status="paused";job.stage="evidence-repair";job.currentStep=null;
+          job.error=null;await save(job);return;
+        }
       }
       let story=await stageFile(job,`outline_${job.generation}.json`);
       const checkOutline=(validator)=>{
@@ -469,6 +498,15 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     job.status="queued";job.stage="queued";job.currentStep=null;job.error=null;job.retry=null;job.artifactId=null;
     await save(job);start(job);return publicState(job);
   }
+  async function retryEvidence(id){
+    const job=await read(id);
+    if(active.has(id))throw Error("Evidence repair is already active.");
+    if(job.status!=="paused"||job.stage!=="evidence-repair")
+      throw Error("Only a paused evidence-repair job can be retried.");
+    job.evidenceRepairRevision=(job.evidenceRepairRevision??0)+1;
+    job.status="queued";job.stage="queued";job.evidenceRepair=null;job.error=null;
+    await save(job);start(job);return publicState(job);
+  }
   async function cancel(id){
     const job=await read(id);
     if(job.status==="completed")throw Error("Research job already completed; its snapshot cannot be cancelled.");
@@ -486,7 +524,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     job.status="failed";job.artifactId=null;
     await save(job);return await resume(id,models);
   }
-  return {create,get,resume,cancel,retryScene};
+  return {create,get,resume,cancel,retryScene,retryEvidence};
 }
 
 export const researchJobManager=createResearchJobManager();
