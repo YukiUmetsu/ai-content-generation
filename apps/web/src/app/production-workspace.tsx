@@ -84,8 +84,8 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const video=catalog.content.filter(item=>item.projectId===projectId&&item.kind==="video").at(-1);
   const topic=video?.name??(project?.name==="My project"?"":project?.name??"");
   const [step,setStep]=useState<ProductionStageId>(()=>previousStep(projectId));
-  const [board,setBoard]=useState(()=>loadProjectStoryboard(projectId).board);
-  const [boardError,setBoardError]=useState<string|null>(()=>loadProjectStoryboard(projectId).warning);
+  const [board]=useState(()=>loadProjectStoryboard(projectId).board);
+  const [boardError]=useState<string|null>(()=>loadProjectStoryboard(projectId).warning);
   const [jobId,setJobId]=useState<string|null>(()=>storedForTopic(lastJobKey,topic,"jobId"));
   const [researchArtifactId,setResearchArtifactId]=useState<string|null>(()=>
     storedForTopic(lastResearchKey,topic,"artifactId"));
@@ -94,14 +94,6 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const [error,setError]=useState("");
   const [retryBusy,setRetryBusy]=useState(false);
 
-  useEffect(()=>{
-    setStep(previousStep(projectId));
-    const loaded=loadProjectStoryboard(projectId);
-    setBoard(loaded.board);setBoardError(loaded.warning);
-    setJob(null);setDraft(null);setError("");
-    setJobId(storedForTopic(lastJobKey,topic,"jobId"));
-    setResearchArtifactId(storedForTopic(lastResearchKey,topic,"artifactId"));
-  },[projectId,topic]);
   useEffect(()=>{
     const refresh=()=>{
       const currentJob=storedForTopic(lastJobKey,topic,"jobId");
@@ -136,7 +128,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   },[jobId]);
   const artifactId=job?.artifactId??researchArtifactId;
   useEffect(()=>{
-    if(!artifactId){setDraft(null);return;}
+    if(!artifactId)return;
     const controller=new AbortController();
     void fetch("/api/contentgen-director/research-draft/"+encodeURIComponent(artifactId),{
       signal:controller.signal,
