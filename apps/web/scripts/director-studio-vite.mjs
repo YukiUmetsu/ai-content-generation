@@ -5,6 +5,7 @@ import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
+import { searchStudioSources, loadStudioSearch, listStudioSearches } from "./video-production/studio-search.mjs";
 import { generateMarketQueries } from "./video-production/market-query-generator.mjs";
 
 const PREFIX="/api/contentgen-director";
@@ -63,6 +64,19 @@ export async function handleDirectorRequest(req,res,deps={}){
       const queries=await (deps.marketQueries??generateMarketQueries)({name:request.niche,description:request.description},
         {modelSettings:settings});
       send(res,200,{queries,source:"local-model-generated"});
+    }else if(req.method==="GET"&&route==="/research-search"){
+      send(res,200,{items:await (deps.listSearch??listStudioSearches)()});
+    }else if(req.method==="GET"&&/^\/research-search\/[^/]+$/u.test(route)){
+      send(res,200,await (deps.loadSearch??loadStudioSearch)(route.slice("/research-search/".length)));
+    }else if(req.method==="POST"&&route==="/research-search"){
+      const controller=new AbortController();
+      let responded=false;
+      req.on?.("aborted",()=>controller.abort());
+      res.on?.("close",()=>{if(!responded)controller.abort();});
+      const request=await readBody(req);
+      const result=await (deps.searchSources??searchStudioSources)(request,{signal:controller.signal});
+      responded=true;
+      send(res,200,result);
     }else if(req.method==="POST"&&route==="/research-draft"){
       if(researchDraftRunning){send(res,409,{error:"Research is already running. Wait for the current draft or cancel it."});return;}
       researchDraftRunning=true;
@@ -97,3 +111,4 @@ export function directorStudioPlugin(){
     configurePreviewServer(server){server.middlewares.use(PREFIX,(req,res)=>{void handleDirectorRequest(req,res);});}
   };
 }
+

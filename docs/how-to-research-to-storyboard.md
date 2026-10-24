@@ -2,6 +2,15 @@
 
 This flow creates an **unapproved, editable video draft** from an original topic. It does not publish, synthesize a voice, approve facts, or claim any YouTube performance outcome.
 
+## Research tab: search, save, then generate
+
+1. Enter a research topic and (optionally) adjust the audience and viewer question in the **Research** tab.
+2. Click **Search & save sources** to ask local SearXNG for public-source leads and save the result list immediately. **This does not require or invoke a local AI model.** You can open each result, see its title, URL and available search excerpt, and inspect the search time. Results are *discovery leads*, not verified citations or fetched pages.
+3. Open **Saved searches** to restore a previous query and its links after refreshing the page. Each immutable bounded search snapshot is stored under local `data/studio-research`, separate from the Evidence Library's full-text SQLite index.
+4. Click **Research & generate storyboard** to capture selected pages, ask the local research model for claim/quote candidates and generate the story plan. If you skipped step 2, this action searches and saves first before it starts the models. The saved list appears on screen as soon as search succeeds.
+5. If the model times out, produces a non-verbatim source quote, or story planning fails, **the saved search survives**. Review the links and click **Retry storyboard generation** to reuse the same search leads without another SearXNG request. Saved-search generation also works if the SearXNG service later goes offline, provided the required local models remain available. Editing the topic/audience/question invalidates the selected saved search for the new brief, but does not delete it.
+6. Only successfully captured, exact-quote-backed, still-unverified claims can enter a generated research dossier and editable storyboard. Do not treat SearXNG snippets as citations; opening a source is not the same as independently fact-checking it.
+
 1. Start the Rust API and `apps/web` Studio as usual. In `apps/web`, run `pnpm research:up` once if local SearXNG is not configured, and select an already-installed local research model in Settings.
 2. Open **Video Director**. Enter a topic, viewer question, audience and narration language.
 3. Check **Allow public web research** to explicitly permit local SearXNG searches and public HTTPS page capture. Click **Research & generate draft** once.
@@ -30,3 +39,4 @@ If the local planning model fails after source capture, the page keeps the resea
 - The review quote previews are transient UI context derived from exact captured passages, not a durable, full-text snapshot viewer. The research dossier retains source IDs, URLs, capture hashes and locators; the existing preproduction bundle retains claim IDs.
 - External page capture requires explicit consent each time. The installed LLM handles evidence and story generation locally.
 - An unreviewed draft stays `draft-needs-review`. The existing render preflight and separate voice/rights consent gates still apply before any MP4 can be made.
+

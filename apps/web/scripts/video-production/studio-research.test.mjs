@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./studio-research.mjs";
+import { searchStudioSources, loadStudioSearch } from "./studio-search.mjs";
 
 const capturedText="Insulation resists the flow of heat in a building envelope. Insulation resists heat flow so heating loads can change with installation and weather. ";
 const dossier={schemaVersion:1,kind:"research-dossier",id:"research_proof",topic:{title:"Insulation",viewerQuestion:"Why use it?",audience:"Homeowners",locale:"en-US"},
@@ -82,3 +83,59 @@ test("research-to-story Studio pipeline uses separate selected text models",asyn
   assert.deepEqual(calls,[["research","local","http://127.0.0.1:11434/v1/chat/completions"],
     ["story","story-model","http://127.0.0.1:10100/inference/v1/chat/completions"]]);
 });
+
+test("storyboard generation reuses matching saved leads and keeps them after a quote failure",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-search-reuse-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const snapshot=await searchStudioSources(brief,{root,searchEndpoint:"http://127.0.0.1:58023/search",
+    search:async()=>[{title:"Energy department",url:"https://www.energy.gov/",snippet:"Facts must be checked."}]});
+  let reused=0;
+  const request={...brief,searchArtifactId:snapshot.artifactId};
+  await assert.rejects(createStudioResearchDraft(request,settings,{root,
+    searchEndpoint:"http://127.0.0.1:58023/search",
+    research:async(_brief,_options,dependencies)=>{
+      reused++;
+      assert.deepEqual(await dependencies.search(),snapshot.results);
+      throw Error("Claim 3 has an unsupported or non-verbatim source quote.");
+    },
+  }),/Claim 3/);
+  assert.equal(reused,1);
+  assert.deepEqual(await loadStudioSearch(snapshot.artifactId,{root}),snapshot);
+  const good=await createStudioResearchDraft(request,settings,{root,
+    searchEndpoint:"http://127.0.0.1:58023/search",
+    research:async(_brief,_options,dependencies)=>{
+      reused++;
+      assert.deepEqual(await dependencies.search(),snapshot.results);
+      return research;
+    },generate:async()=>plan});
+  assert.equal(reused,2);
+  assert.equal(good.searchArtifactId,snapshot.artifactId);
+  assert.equal((await loadStudioResearchDraft(good.artifactId,{root})).searchArtifactId,snapshot.artifactId);
+});
+
+test("saved search must match the entire research brief before generation",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-search-mismatch-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const snapshot=await searchStudioSources(brief,{root,searchEndpoint:"http://127.0.0.1:58023/search",
+    search:async()=>[{title:"Energy department",url:"https://www.energy.gov/"}]});
+  let reachedModel=false;
+  await assert.rejects(createStudioResearchDraft(
+    {...brief,viewerQuestion:"Different",searchArtifactId:snapshot.artifactId},settings,
+    {root,searchEndpoint:"http://127.0.0.1:58023/search",
+      research:async()=>{reachedModel=true;return research;}}),/does not match/i);
+  assert.equal(reachedModel,false);
+});
+
+test("generating from a saved search does not require a live SearXNG endpoint",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"cg-search-offline-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const saved=await searchStudioSources(brief,{root,searchEndpoint:"http://127.0.0.1:58023/search",
+    search:async()=>[{title:"DOE",url:"https://www.energy.gov/"}]});
+  const result=await createStudioResearchDraft({...brief,searchArtifactId:saved.artifactId},settings,
+    {root,searchEndpoint:"",research:async(_brief,_options,deps)=>{
+      assert.deepEqual(await deps.search(),saved.results);
+      return research;
+    },generate:async()=>plan});
+  assert.equal(result.searchArtifactId,saved.artifactId);
+});
+
