@@ -32,6 +32,16 @@ describe("StoryboardPlanner", () => {
     expect(screen.getByText(/A \$12,400 quote/)).toBeInTheDocument();
   });
 
+  it("opens a requested beat linked from the Production issue list",async()=>{
+    const projectId="project-focus-test";
+    sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,"beat-installation");
+    const spy=vi.fn();
+    try{
+      render(<StoryboardPlanner locale="en" projectId={projectId} onPreviewChange={spy}/>);
+      await waitFor(()=>expect(lastPreview(spy)?.props.beat.id).toBe("beat-installation"));
+    }finally{sessionStorage.removeItem("contentgen:storyboard-focus-beat:v1:"+projectId);}
+  });
+
   it("publishes the selected scene and updates the shared preview", async () => {
     const user = userEvent.setup();
     const spy = vi.fn();
