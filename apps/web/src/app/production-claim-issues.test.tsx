@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ProductionClaimIssues } from "./production-claim-issues";
 import type { ClaimEvidenceIssue } from "./claim-evidence";
+import type { ResearchDraftResult } from "./researched-storyboard";
 
 const issues:ClaimEvidenceIssue[] = [
   {claimId:"claim_02",claimText:"Permits increase the project cost.",
@@ -27,7 +28,9 @@ describe("Production claim issues",()=>{
   });
   it("lets a person explicitly record and undo review without hiding the claim",()=>{
     const onMarkReviewed=vi.fn(),onUndoReviewed=vi.fn();
-    const props={issues:[issues[0]],onOpenBeat:()=>{},onFindEvidence:()=>{},
+    const draft={quotes:[{claimId:"claim_02",sourceId:"source_01",
+      quote:"A saved report excerpt confirms what the source said."}],dossier:{evidence:[]}} as ResearchDraftResult;
+    const props={issues:[issues[0]],draft,onOpenBeat:()=>{},onFindEvidence:()=>{},
       onMarkReviewed,onUndoReviewed};
     const view=render(<ProductionClaimIssues {...props} reviewedClaims={new Set<string>()}/>);
     fireEvent.click(screen.getByRole("button",{name:/I reviewed this claim and its sources/i}));
