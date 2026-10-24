@@ -111,6 +111,7 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
     semanticObjects,semanticEvents,illustrativeData:false,
     assumptions:["Research-grounded editorial draft only. Exact source quotes are NOT independent fact verification.",
       `Immutable research snapshot: ${result.snapshotId}. Human review required before final production.`,
+      ...(result.artifactId?[`Research artifact: ${result.artifactId}`]:[]),
       ...dossier.evidence.map(s=>`Source ${s.id}: ${s.title} — ${s.sourceUri} (captured ${s.retrievedAt}; SHA-256 ${s.snapshotSha256}).`),
       ...dossier.gaps.map(g=>`Research gap: ${g}`)],
   };
