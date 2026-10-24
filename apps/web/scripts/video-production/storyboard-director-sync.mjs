@@ -56,8 +56,8 @@ export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,story
       const value=beat.visualObjective.trim(),at=value.indexOf("; ");
       const description=at<0?value:value.slice(0,at);
       const action=at<0?value:value.slice(at+2);
-      if(!bounded(description,650)||!bounded(action,650))
-        reject("visual objective for "+shot.id+" must fit 'shot description; visible action' (650 characters each).");
+      if(!bounded(description,650)||!bounded(action,600))
+        reject("visual objective for "+shot.id+" must fit 'shot description; visible action' (650/600 characters).");
       shot.visualChange=description;linked.phase.visualAction=action;
       applied.push(shot.id+":visualObjective");
       if(at<0)manualReview.add("A single visual objective was applied to both shot and motion descriptions; inspect this movement.");
