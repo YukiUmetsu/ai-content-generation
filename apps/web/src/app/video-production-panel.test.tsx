@@ -116,3 +116,16 @@ describe("visual-first editing in normal Studio",()=>{
     expect(screen.queryByRole("button",{name:"Render unverified draft MP4"})).not.toBeInTheDocument();
   });
 });
+
+test("opens narration controls for the guided Audio stage using the saved bundle",async()=>{
+  const paths:string[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
+    paths.push(String(url));
+    if(String(url).endsWith("/plan"))return new Response(JSON.stringify(preview),{status:200});
+    throw Error("Unexpected request "+url);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} focusStage="audio"/>);
+  expect(await screen.findByLabelText("Production voice provider")).toBeInTheDocument();
+  expect(paths).toEqual(["/api/contentgen-video/plan"]);
+  expect(screen.queryByText("New draft video · inspect before publishing")).not.toBeInTheDocument();
+});
