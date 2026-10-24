@@ -661,10 +661,15 @@ mod explore_tests {
         }
         assert!(!reserve_explore_search(&db, now).unwrap());
         assert_eq!(used_search_calls(&db, now).unwrap(), MAX_SEARCH_CALLS);
-        let saved: i64 = db.query_row("SELECT COUNT(*) FROM market_watchlists", [], |r| r.get(0)).unwrap();
+        let saved: i64 = db
+            .query_row("SELECT COUNT(*) FROM market_watchlists", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(saved, 0);
         assert!(reserve_explore_search(&db, now + DAILY_SECONDS + 1).unwrap());
-        assert_eq!(used_search_calls(&db, now + DAILY_SECONDS + 1).unwrap(), 1);
+        assert_eq!(
+            used_search_calls(&db, now + DAILY_SECONDS + 1).unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -672,11 +677,21 @@ mod explore_tests {
         let mut db = db::open_in_memory().unwrap();
         db::migrate(&mut db).unwrap();
         let now = 1_800_000_000;
-        let watch = create_watchlist(&db, MarketWatchlistDraft {
-            name: "House Math".into(), query:"home repairs".into(),
-            region:"US".into(), language:"en".into(), enabled:true,
-            query_mode:"manual".into(), query_plan:vec![], query_plan_source:"user-edited".into()
-        }, now).unwrap();
+        let watch = create_watchlist(
+            &db,
+            MarketWatchlistDraft {
+                name: "House Math".into(),
+                query: "home repairs".into(),
+                region: "US".into(),
+                language: "en".into(),
+                enabled: true,
+                query_mode: "manual".into(),
+                query_plan: vec![],
+                query_plan_source: "user-edited".into(),
+            },
+            now,
+        )
+        .unwrap();
         let claimed = claim_watchlist(&db, &watch.id, now, true).unwrap();
         assert!(claimed.is_some());
         for _ in 1..MAX_SEARCH_CALLS {
