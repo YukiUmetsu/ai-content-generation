@@ -205,45 +205,57 @@ async fn explore(
 ) -> Result<Json<ExploreResults>, ApiError> {
     require_editor_header(&headers)?;
     let query = validate_explore_query(&request.query)?;
-    let key = state.credentials().youtube_key().map_err(|_| ApiError::Unavailable {
-        message: "Configure your YouTube API key in local Settings before searching".into(),
-    })?;
+    let key = state
+        .credentials()
+        .youtube_key()
+        .map_err(|_| ApiError::Unavailable {
+            message: "Configure your YouTube API key in local Settings before searching".into(),
+        })?;
     let client = YoutubeClient::from_key(key).map_err(|_| ApiError::Unavailable {
         message: "A valid YouTube API key is required for search".into(),
     })?;
-    let _permit = state.market_semaphore().acquire_owned().await.map_err(|_| ApiError::Unavailable {
-        message: "Local YouTube search is temporarily unavailable".into(),
-    })?;
+    let _permit = state
+        .market_semaphore()
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::Unavailable {
+            message: "Local YouTube search is temporarily unavailable".into(),
+        })?;
     {
         let db = state.connect().map_err(db_error)?;
         if !market_store::reserve_explore_search(&db, epoch_now()).map_err(market_error)? {
             return Err(ApiError::RateLimited {
-                message: "The shared YouTube search budget is exhausted (20 searches / 24h)".into(),
+                message: "The shared YouTube search budget is exhausted (20 searches / 24h)"
+                    .into(),
             });
         }
     }
-    let observations = client.collect(query, "US", "en").await.map_err(|error| {
-        use super::youtube_api::YoutubeError;
-        match error {
-            YoutubeError::Quota | YoutubeError::RateLimited => ApiError::RateLimited {
-                message: error.to_string(),
-            },
-            _ => ApiError::Unavailable {
-                message: error.to_string(),
-            },
-        }
-    })?;
+    let observations = client
+        .collect(query, "US", "en")
+        .await
+        .map_err(|error| {
+            use super::youtube_api::YoutubeError;
+            match error {
+                YoutubeError::Quota | YoutubeError::RateLimited => ApiError::RateLimited {
+                    message: error.to_string(),
+                },
+                _ => ApiError::Unavailable {
+                    message: error.to_string(),
+                },
+            }
+        })?;
     let now = epoch_now();
     Ok(Json(ExploreResults {
-        videos: observations.into_iter().map(|video| {
-            market_store::MarketVideoRecord {
+        videos: observations
+            .into_iter()
+            .map(|video| market_store::MarketVideoRecord {
                 source_url: format!("https://www.youtube.com/watch?v={}", video.video_id),
                 provider: "youtube-data-api",
                 video,
                 observed_at: now,
                 expires_at: now + 86_400,
-            }
-        }).collect(),
+            })
+            .collect(),
     }))
 }
 
@@ -307,7 +319,10 @@ mod explore_tests {
 
     #[test]
     fn explore_rejects_empty_unsafe_or_excessively_long_queries() {
-        assert_eq!(validate_explore_query("  heat pump cost  ").unwrap(), "heat pump cost");
+        assert_eq!(
+            validate_explore_query("  heat pump cost  ").unwrap(),
+            "heat pump cost"
+        );
         assert!(validate_explore_query("ab").is_err());
         assert!(validate_explore_query("bad\nquery").is_err());
         assert!(validate_explore_query(&"q".repeat(161)).is_err());
