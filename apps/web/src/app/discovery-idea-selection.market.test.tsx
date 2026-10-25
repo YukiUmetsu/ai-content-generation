@@ -64,6 +64,36 @@ describe("per-idea YouTube market evidence", () => {
     expect(await screen.findByText(/Missing market data queued for background collection/)).toBeInTheDocument();
   });
 
+  it("automatically queues saved failed and unavailable provider observations", async () => {
+    const failedYoutube = { ...assessment("long", null), state: "failed" as const,
+      errorCode: "provider_unavailable", sampleSize: 0, videos: [] };
+    const unavailableTrends = { state: "unavailable" as const,
+      query: "home energy costs", region: "US", observedAt: null,
+      recentMean: null, previousMean: null, changePercent: null, points: 0,
+      metricVersion: "google-trends-momentum-v1", errorCode: "provider_unavailable" };
+    const {backfills} = serve([{...idea("idea-1", failedYoutube), googleTrends: unavailableTrends}],
+      {backfillState: "queued"});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
+      locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    await waitFor(() => expect(backfills).toHaveLength(1));
+    expect(await screen.findByText(/Missing market data queued for background collection/))
+      .toBeInTheDocument();
+  });
+
+  it("explains cooldown instead of claiming collection is running", async () => {
+    const failedYoutube = { ...assessment("long", null), state: "failed" as const,
+      errorCode: "rate_limited", sampleSize: 0, videos: [] };
+    const {backfills} = serve([idea("idea-1", failedYoutube)], {backfillState:"no_pending"});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
+      locale="en" onStartProduction={()=>{}} />);
+    await waitFor(() => expect(backfills).toHaveLength(1));
+    expect(await screen.findByText(/Waiting to retry market collection/))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/Collecting missing YouTube and Google Trends observations/))
+      .not.toBeInTheDocument();
+  });
+
   it("shows the saved partial market collection summary even when Discovery completed", async () => {
     serve([idea("idea-1")], {lastRun:{
       id:"discover_"+"a".repeat(24), projectId:"project-1", inputRevision:"revision",
