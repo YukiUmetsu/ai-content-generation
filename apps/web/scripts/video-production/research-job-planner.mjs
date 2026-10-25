@@ -108,8 +108,9 @@ function validateBeat(beat,known,field="",previous=[]){
     path("claimIds"),"use 1–3 distinct provided claim IDs");
   requireField(!previous.some(other=>normalizedIdea(other.question)===normalizedIdea(beat.question)),
     path("question"),"ask a different question than earlier beats");
-  requireField(!previous.some(other=>normalizedIdea(other.payoff)===normalizedIdea(beat.payoff)),
-    path("payoff"),"deliver a new learning outcome, not an earlier beat reworded");
+  if(previous.some(other=>normalizedIdea(other.payoff)===normalizedIdea(beat.payoff)))
+    throw Object.assign(outputError("schema_invalid",path("payoff"),
+      "Deliver a new learning outcome, not an earlier payoff reworded."),{schemaIssue:"duplicate_previous"});
   return {question:beat.question,claimIds:beat.claimIds,purpose:beat.purpose,payoff:beat.payoff};
 }
 function validateOutline(outline,dossier){
