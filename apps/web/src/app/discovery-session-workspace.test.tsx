@@ -195,6 +195,22 @@ describe("Select idea", () => {
     expect(screen.getByText("Why home insurance keeps rising")).toBeInTheDocument();
   });
 
+  it("highlights three explainable evidence-backed picks while retaining every idea", async () => {
+    const scored = ideas.map((idea, index) => index < 4 ? { ...idea,
+      opportunityScore: [78, 70, 60, 55][index], scoreVersion: "evidence-readiness-v1",
+      scoreInputs: { capturedPassages: 2, sourcePoints: 40, audienceDemand: "unknown" },
+    } : idea);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input =>
+      new Response(JSON.stringify(String(input).endsWith("/ideas") ? { ideas: scored } : session), { status: 200 }));
+    render(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    expect(await screen.findByText("Original housing question 7")).toBeInTheDocument();
+    expect(screen.getAllByText("Top 3 recommendation")).toHaveLength(3);
+    expect(screen.getByText("78/100")).toBeInTheDocument();
+    expect(screen.getAllByText("Not measured")).toHaveLength(3);
+    await userEvent.setup().click(screen.getAllByRole("button", { name: "Explain this score" })[0]);
+    expect(screen.getByText(/Audience Demand: unknown/)).toBeInTheDocument();
+  });
+
   it("lets the creator revise an AI idea and send an approved brief under the original session", async () => {
     const handle = vi.fn<(idea: DiscoverySessionIdea, brief: DiscoveryIdeaBrief) => void>();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
