@@ -6,6 +6,7 @@ use super::discovery_projects::DiscoveryError;
 use super::discovery_store::{self, Candidate, CandidateDraft, DiscoveryRun};
 use super::idea_market::{self, IdeaMarketAssessment};
 use super::idea_trends::{self, GoogleTrendsAssessment};
+use super::viral_potential::{self, ViralPotential};
 
 /// Keep v1 semantics unchanged for saved runs; newer formulas must use a new
 /// version and a separate evaluator rather than reinterpreting old scores.
@@ -68,6 +69,8 @@ pub struct SessionIdea {
     pub evidence: Vec<SessionEvidence>,
     pub market_assessment: Option<IdeaMarketAssessment>,
     pub google_trends: Option<GoogleTrendsAssessment>,
+    /// Evidence-only estimate. Never derived from opportunity_score (editorial readiness).
+    pub viral_potential: ViralPotential,
 }
 
 pub(crate) fn random_id(prefix: &str) -> Result<String, DiscoveryError> {
@@ -367,6 +370,7 @@ pub fn list_ideas(
                 score_inputs,platform_fit:serde_json::json!({}),sources,evidence,
                 market_assessment:None,
                 google_trends:None,
+                viral_potential: viral_potential::assess(None, None),
             });
         }
     }
@@ -381,6 +385,7 @@ pub fn list_ideas(
         idea.google_trends = idea_trends::latest_assessment(
             db, &idea.candidate.id, super::market_api::epoch_now(),
         ).map_err(|_| DiscoveryError::Invalid("Saved Google Trends assessment unavailable".into()))?;
+        idea.viral_potential = viral_potential::assess(idea.market_assessment.as_ref(), idea.google_trends.as_ref());
     }
     Ok(ideas)
 }
