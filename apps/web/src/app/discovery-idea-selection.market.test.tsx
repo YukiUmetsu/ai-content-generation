@@ -48,6 +48,28 @@ function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boo
 }
 
 describe("per-idea YouTube market evidence", () => {
+  it("shows readiness and why older ideas have no automatic market observations", async () => {
+    serve([idea("idea-1")], {keyConfigured:false});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    const card = (await screen.findByText("Question idea-1")).closest("article")!;
+    expect(within(card).getByText("Research readiness: 77/100")).toBeInTheDocument();
+    expect(within(card).getByText(/Add a YouTube API key in Settings/)).toBeInTheDocument();
+    expect(within(card).getByText(/No saved observation. New Discovery runs attempt Trends automatically/)).toBeInTheDocument();
+  });
+
+  it("shows the exact saved provider failure categories without expanding details", async () => {
+    const unavailable = {...assessment("long", null), state:"failed" as const,
+      errorCode:"budget_exhausted", sampleSize:0, distinctChannels:0, videos:[]};
+    const trend = {state:"unavailable" as const, query:"home energy costs", region:"US", observedAt:null,
+      recentMean:null, previousMean:null, changePercent:null, points:0,
+      metricVersion:"google-trends-momentum-v1", errorCode:"collection_limit"};
+    serve([{...idea("idea-1", unavailable), googleTrends:trend}]);
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    const card = (await screen.findByText("Question idea-1")).closest("article")!;
+    expect(within(card).getByText(/20 calls per 24 hours/)).toBeInTheDocument();
+    expect(within(card).getByText(/Google Trends collection limit/)).toBeInTheDocument();
+  });
+
   it("renders automatically saved YouTube and Google Trends signals without requesting a new collection", async () => {
     const trend = { state: "succeeded" as const, query: "home energy costs", region: "US", observedAt: 1760000000,
       recentMean: 62.4, previousMean: 40.0, changePercent: 56.0, points: 52,
