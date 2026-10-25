@@ -1,4 +1,5 @@
 import type { LocalContent, LocalProject } from "@/app/catalog-model";
+import { parseDiscoveryProviderHealth, type DiscoveryProviderHealth } from "@/app/discovery-provider-health";
 
 export type KeywordKind = "topic" | "query" | "exclusion";
 export type KeywordOrigin = "manual" | "model";
@@ -24,7 +25,7 @@ export type DiscoveryRun = { id: string; projectId: string; inputRevision: strin
   inputSnapshot?: {version:number;projectName:string;description:string;content:{name:string;stage:string}[];
     keywords:ProjectKeyword[];projectRevision:number;graphRevision:number;researchFreshness:number};
   status: "queued" | "running" | "paused" | "completed" | "insufficient_evidence" | "failed" | "cancelled";
-  stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: Record<string,unknown>;
+  stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: DiscoveryProviderHealth;
   candidates: DiscoveryCandidate[] };
 const PREFIX = "/api/research/discovery";
 
@@ -46,7 +47,7 @@ function requireDiscoveryRun(value: unknown): DiscoveryRun {
     (data.providerHealth !== undefined && !object(data.providerHealth))) {
     throw Error("Invalid discovery run response. Restart or rebuild the local server, then retry.");
   }
-  return { ...data, providerHealth: data.providerHealth ?? {} } as DiscoveryRun;
+  return { ...data, providerHealth: parseDiscoveryProviderHealth(data.providerHealth) } as DiscoveryRun;
 }
 
 async function request<T>(path: string, method = "GET", data?: object, signal?: AbortSignal): Promise<T> {
