@@ -25,8 +25,21 @@ function opportunityText(idea: DiscoverySessionIdea, locale: Locale): string {
   return idea.opportunityScore === null ? tr(locale, "Not measured", "未測定") : `${Math.round(idea.opportunityScore)}/100`;
 }
 
-function inputLabel(key: string): string {
-  return key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, value => value.toUpperCase());
+function inputLabel(key: string, locale: Locale): string {
+  const labels: Record<string, [string, string]> = {
+    capturedPassages: ["Captured passages", "取得済みの引用"],
+    publicVideoLeads: ["Public video leads", "公開動画の手掛かり"],
+    sourcePoints: ["Source points", "出典の点数"],
+    candidateConfidence: ["Draft confidence", "下書きの確度"],
+    confidencePoints: ["Confidence points", "確度の点数"],
+    editorialReadinessPoints: ["Story completeness points", "構成の完成度"],
+    audienceDemand: ["Audience demand", "視聴者の需要"],
+    searchVolume: ["Search volume", "検索ボリューム"],
+    scoreMeaning: ["Score interpretation", "点数の意味"],
+  };
+  const known = labels[key];
+  return known ? known[locale === "ja" ? 1 : 0]
+    : key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, value => value.toUpperCase());
 }
 
 export interface DiscoveryIdeaSelectionProps {
@@ -92,7 +105,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
 
   // The shortlist is based on the full saved session, not the current search
   // or sort filter; otherwise a filtered-out idea would change the top picks.
-  const topPicks = useMemo(() => new Set(ideas.filter(idea => idea.opportunityScore !== null)
+  const topPicks = useMemo(() => new Set(ideas.filter(idea => idea.opportunityScore !== null &&
+    (idea.decision === null || idea.decision === "saved"))
     .sort((a, b) => (b.opportunityScore ?? 0) - (a.opportunityScore ?? 0) || a.rank - b.rank)
     .slice(0, 3).map(idea => idea.id)), [ideas]);
 
@@ -162,7 +176,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         <span className="relative block"><ArrowUpDown className="pointer-events-none absolute bottom-3 left-3 size-4" aria-hidden="true" />
           <select className={`${fieldClass} pl-10`} value={sort} onChange={event => setSort(event.target.value as Sort)}>
             <option value="opportunity">{tr(locale, "Research readiness / rank", "調査準備度・順位")}</option>
-            <option value="sources">{tr(locale, "Most supporting sources", "根拠の出典数")}</option>
+            <option value="sources">{tr(locale, "Most source references", "参照元の数")}</option>
             <option value="title">{tr(locale, "Title A–Z", "タイトル順")}</option>
           </select>
         </span>
@@ -201,18 +215,22 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-        <span>{tr(locale, "Evidence confidence", "根拠の確度")}: {idea.confidence}</span>
+        <span>{tr(locale, "Draft confidence (AI-assigned)", "下書きの確度（AI による判断）")}: {idea.confidence}</span>
         {idea.whyNow && <span>{tr(locale, "Why consider", "選定理由")}: {idea.whyNow}</span>}
       </div>
       {(idea.scoreVersion || Object.keys(idea.scoreInputs).length > 0) && <div className="mt-3">
         <button className="text-xs font-medium text-primary underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={expandedScoreId === idea.id}
+          aria-controls={expandedScoreId === idea.id ? `score-details-${idea.id}` : undefined}
           onClick={() => setExpandedScoreId(value => value === idea.id ? null : idea.id)}>
           {expandedScoreId === idea.id ? tr(locale, "Hide score details", "評価の詳細を閉じる") : tr(locale, "Explain this score", "評価の根拠を確認")}
         </button>
-        {expandedScoreId === idea.id && <div className="mt-2 rounded-control bg-muted/30 p-3 text-xs text-muted-foreground">
+        {expandedScoreId === idea.id && <div id={`score-details-${idea.id}`} className="mt-2 rounded-control bg-muted/30 p-3 text-xs text-muted-foreground">
           <p>{tr(locale, "Formula revision", "計算式の版")}: {idea.scoreVersion ?? tr(locale, "not recorded", "記録なし")}</p>
           {Object.entries(idea.scoreInputs).slice(0, 12).map(([key, value]) => <p key={key} className="mt-1 break-words">
-            {inputLabel(key)}: {value === null ? tr(locale, "unknown", "不明") : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>)}
+            {inputLabel(key, locale)}: {key === "scoreMeaning" && locale === "ja" ? "調査準備度のみ。動画の成果予測ではありません"
+              : value === "unknown" ? tr(locale, "unknown", "不明")
+                : value === null ? tr(locale, "unknown", "不明") : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>)}
         </div>}
       </div>}
       <div className="mt-4 rounded-control border border-border-subtle bg-surface-subtle p-3">
