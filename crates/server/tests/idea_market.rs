@@ -418,6 +418,36 @@ fn successful_but_sparsely_sampled_youtube_queues_one_broader_job() {
 }
 
 #[test]
+fn completed_discovery_with_successful_sparse_youtube_auto_enqueues_score_repair() {
+    let (mut db, session, idea) = seeded();
+    let now = 1_792_886_400;
+    let first = idea_market::claim_assessment(
+        &mut db, "brand", &session, &idea, "roof repair costs much", "long", now,
+    ).unwrap();
+    idea_market::complete_assessment(&db, &first.id, &[], now + 5).unwrap();
+    // A fresh Trends rate limit is not eligible; only the missing Viral Score
+    // can cause the session's market job to be queued.
+    contentgen_server::research::idea_trends::record_unavailable_assessment(
+        &mut db, &idea, "roof repair costs much", "rate_limited", now,
+    ).unwrap();
+    db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                WHERE session_id=?1", [&session]).unwrap();
+    assert!(discovery_store::queue_missing_market_runs(
+        &mut db, Some(("brand", &session)), now + 60, true,
+    ).unwrap().is_empty(), "cooldown prevents immediate duplicate paid calls");
+    let queued = discovery_store::queue_missing_market_runs(
+        &mut db, Some(("brand", &session)), now + 3_606, true,
+    ).unwrap();
+    assert_eq!(queued.len(), 1);
+    let run = discovery_store::get_run(&db, "brand", &queued[0]).unwrap();
+    assert_eq!(run.status, "running");
+    assert_eq!(run.stage, "measure_market");
+    assert!(discovery_store::queue_missing_market_runs(
+        &mut db, Some(("brand", &session)), now + 3_606, true,
+    ).unwrap().is_empty(), "one active SQLite job per session");
+}
+
+#[test]
 fn qualified_youtube_sample_does_not_requery_just_because_cohort_is_too_small() {
     let (mut db, session, idea) = seeded();
     let now = 1_792_886_400;
