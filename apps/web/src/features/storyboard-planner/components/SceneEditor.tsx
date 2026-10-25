@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/input";
 import { copy, describeDiagnostic } from "../i18n";
@@ -145,6 +145,7 @@ export function SceneEditor({
   locale,
 }: SceneEditorProps) {
   const t = copy(locale);
+  const [showAdvanced,setShowAdvanced]=useState(false);
   const beatDiagnostics = diagnosticsForBeat(diagnostics, beat.id);
   const estimate = estimateNarration(beat, board.fps, board.locale);
   const units =
@@ -216,14 +217,7 @@ export function SceneEditor({
 
       <div className="sp-editor-sections">
         <fieldset className="sp-section">
-          <legend>{t.narrativeSection}</legend>
-          <SelectField
-            label={t.roleLabel}
-            value={beat.role}
-            onChange={(role) => onChange({ role: role as StoryboardBeat["role"] })}
-            options={roleOptions}
-          />
-
+          <legend>{locale==="ja"?"シーンの基本編集":"Scene essentials"}</legend>
           <TextAreaField
             label={t.objectiveLabel}
             value={beat.objective}
@@ -241,6 +235,68 @@ export function SceneEditor({
           <p className="sp-estimate" data-status={estimate.status}>
             {estimateLine}
           </p>
+          <Field
+            label={t.onScreenTextLabel}
+            hint={t.characters(onScreenCount, MAX_ON_SCREEN_CHARS)}
+            value={beat.onScreenText}
+            aria-invalid={onScreenCount > MAX_ON_SCREEN_CHARS || undefined}
+            onChange={(event) => onChange({ onScreenText: event.target.value })}
+          />
+          <TextAreaField
+            label={t.visualObjectiveLabel}
+            value={beat.visualObjective}
+            onChange={(visualObjective) => onChange({ visualObjective })}
+            rows={3}
+          />
+          <div className="sp-duration">
+            <Field
+              label={t.durationLabel}
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              className="sp-number"
+              containerClassName="sp-duration-field"
+              value={Number.isFinite(beat.durationFrames) ? beat.durationFrames : 0}
+              aria-invalid={!isPositiveInteger(beat.durationFrames) || undefined}
+              hint={t.durationHint}
+              onChange={(event) => onChange({ durationFrames: Number(event.target.value) })}
+            />
+            <div className="sp-nudge" role="group" aria-label={t.durationLabel}>
+              {[-30, -15, 15, 30].map((frames) => (
+                <Button
+                  key={frames}
+                  variant="outline"
+                  size="sm"
+                  aria-label={`${t.durationLabel} ${frames > 0 ? "+" : ""}${frames}`}
+                  onClick={() => nudge(frames)}
+                >
+                  {frames > 0 ? `+${frames}` : frames}
+                </Button>
+              ))}
+            </div>
+            <p className="sp-duration-readout">
+              {isPositiveInteger(beat.durationFrames)
+                ? `${t.frames(beat.durationFrames)} · ${formatRuntime(beat.durationFrames, board.fps, locale)}`
+                : t.invalidDurationShort}
+            </p>
+          </div>
+        </fieldset>
+        <button type="button" aria-expanded={showAdvanced} onClick={()=>setShowAdvanced(value=>!value)}
+          className="flex w-full items-center justify-between rounded-control border border-border bg-surface-subtle px-4 py-3 text-left text-sm font-semibold hover:bg-muted">
+          {locale==="ja"?"詳細設定":"Advanced scene controls"} <span aria-hidden="true">{showAdvanced?"−":"+"}</span>
+        </button>
+        {showAdvanced&&<>
+
+        <fieldset className="sp-section">
+          <legend>{t.narrativeSection}</legend>
+          <SelectField
+            label={t.roleLabel}
+            value={beat.role}
+            onChange={(role) => onChange({ role: role as StoryboardBeat["role"] })}
+            options={roleOptions}
+          />
+
         </fieldset>
 
         <fieldset className="sp-section">
@@ -254,12 +310,6 @@ export function SceneEditor({
             options={intentOptions}
           />
 
-          <TextAreaField
-            label={t.visualObjectiveLabel}
-            value={beat.visualObjective}
-            onChange={(visualObjective) => onChange({ visualObjective })}
-            rows={3}
-          />
 
           {beat.teachingState && <div data-teaching-state-editor="" className="sp-field">
             <p className="sp-label">{t.teachingStateLabel} · {beat.teachingState.subjectId} · {beat.teachingState.phase}</p>
@@ -359,13 +409,6 @@ export function SceneEditor({
 
         <fieldset className="sp-section">
           <legend>{t.copySection}</legend>
-          <Field
-            label={t.onScreenTextLabel}
-            hint={t.characters(onScreenCount, MAX_ON_SCREEN_CHARS)}
-            value={beat.onScreenText}
-            aria-invalid={onScreenCount > MAX_ON_SCREEN_CHARS || undefined}
-            onChange={(event) => onChange({ onScreenText: event.target.value })}
-          />
 
           <CheckGroup
             legend={t.claimsLabel}
@@ -428,39 +471,6 @@ export function SceneEditor({
             </div>
           </div>
 
-          <div className="sp-duration">
-            <Field
-              label={t.durationLabel}
-              type="number"
-              min={1}
-              step={1}
-              inputMode="numeric"
-              className="sp-number"
-              containerClassName="sp-duration-field"
-              value={Number.isFinite(beat.durationFrames) ? beat.durationFrames : 0}
-              aria-invalid={!isPositiveInteger(beat.durationFrames) || undefined}
-              hint={t.durationHint}
-              onChange={(event) => onChange({ durationFrames: Number(event.target.value) })}
-            />
-            <div className="sp-nudge" role="group" aria-label={t.durationLabel}>
-              {[-30, -15, 15, 30].map((frames) => (
-                <Button
-                  key={frames}
-                  variant="outline"
-                  size="sm"
-                  aria-label={`${t.durationLabel} ${frames > 0 ? "+" : ""}${frames}`}
-                  onClick={() => nudge(frames)}
-                >
-                  {frames > 0 ? `+${frames}` : frames}
-                </Button>
-              ))}
-            </div>
-            <p className="sp-duration-readout">
-              {isPositiveInteger(beat.durationFrames)
-                ? `${t.frames(beat.durationFrames)} · ${formatRuntime(beat.durationFrames, board.fps, locale)}`
-                : t.invalidDurationShort}
-            </p>
-          </div>
 
           <TextAreaField
             label={t.staticFallbackLabel}
@@ -470,6 +480,7 @@ export function SceneEditor({
             rows={2}
           />
         </fieldset>
+        </>}
       </div>
 
       <div className="sp-claim-summary">
