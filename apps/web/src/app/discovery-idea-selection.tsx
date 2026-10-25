@@ -144,7 +144,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       if (++attempts > 360) { window.clearInterval(timer); setPollTimedOut(true); return; }
       inFlight = true;
       void Promise.all([listSessionIdeas(projectId, sessionId), listSessionRuns(projectId, sessionId)])
-        .then(([latest, runs]) => {
+        .then(async ([latest, runs]) => {
           if (!alive) return;
           setIdeas(latest);
           const activeBackfill = runs.some(run => run.status === "running" &&
@@ -152,7 +152,16 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           const marketRun = runs.find(run => run.providerHealth?.market);
           if (marketRun) setRunMarketHealth(marketRun.providerHealth.market);
           if (backfillState === "queued" || backfillState === "running") {
-            setBackfillState(activeBackfill ? "running" : "no_pending");
+            if (activeBackfill) {
+              setBackfillState("running");
+            } else if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
+              // A session can have several completed runs. Queue the next
+              // missing run only after the previous one releases its lease.
+              const next = await queueMissingMarketEvidence(projectId, sessionId);
+              if (alive) setBackfillState(next.state);
+            } else {
+              setBackfillState("no_pending");
+            }
           }
           if (collectingId && latest.some(idea => idea.id === collectingId &&
             idea.marketAssessment && idea.marketAssessment.state !== "running")) setCollectingId(null);
