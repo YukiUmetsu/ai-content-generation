@@ -5,7 +5,7 @@ use axum::routing::{get,post};
 use axum::{Json,Router};
 use serde::{Deserialize,Serialize};
 
-use super::{discovery_api::{editor_header,map_error},sessions_store};
+use super::{discovery_api::{editor_header,map_error},discovery_store,sessions_store};
 use super::{idea_market::{self,IdeaMarketError},youtube_api::YoutubeClient};
 use super::market_api::epoch_now;
 use crate::error::ApiError;
@@ -18,6 +18,7 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{id}/sessions/{session_id}/discover",post(discover))
         .route("/projects/{id}/sessions/{session_id}/runs",get(runs))
         .route("/projects/{id}/sessions/{session_id}/ideas",get(ideas))
+        .route("/projects/{id}/sessions/{session_id}/market/backfill",post(backfill_market))
         .route("/projects/{id}/sessions/{session_id}/ideas/{idea_id}/decision",post(decide))
         .route("/projects/{id}/sessions/{session_id}/ideas/{idea_id}/market",post(measure_market))
 }
@@ -87,6 +88,40 @@ async fn ideas(Path((id,session_id)):Path<(String,String)>,State(state):State<Ap
     -> Result<Json<Ideas>,ApiError> {
     let db=state.connect().map_err(|_|ApiError::Internal{message:"Discovery DB unavailable".into()})?;
     Ok(Json(Ideas{ideas:sessions_store::list_ideas(&db,&id,&session_id).map_err(map_error)?}))
+}
+
+/// Idempotent local request to start missing-observation collection immediately.
+/// The periodic worker also queues the same work for sessions never opened in UI.
+async fn backfill_market(
+    Path((id, session_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<(axum::http::StatusCode, Json<serde_json::Value>), ApiError> {
+    editor_header(&headers)?;
+    let mut db = state.connect().map_err(|_| ApiError::Internal {
+        message: "Discovery DB unavailable".into(),
+    })?;
+    let queued = discovery_store::queue_missing_market_runs(
+        &mut db, Some((&id, &session_id)), epoch_now(),
+    ).map_err(map_error)?;
+    let active: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM discovery_runs
+         WHERE project_id=?1 AND session_id=?2 AND status='running'
+           AND stage IN ('measure_market','measure_market_collecting'))",
+        rusqlite::params![id, session_id],
+        |row| row.get(0),
+    ).map_err(|_| ApiError::Internal {
+        message: "Cannot read Discovery market job status".into(),
+    })?;
+    let status = if !queued.is_empty() { "queued" }
+        else if active != 0 { "running" }
+        else { "no_pending" };
+    drop(db);
+    if !queued.is_empty() {
+        tokio::spawn(super::discovery_market_worker::process_pending(state));
+    }
+    Ok((axum::http::StatusCode::ACCEPTED,
+        Json(serde_json::json!({"state":status,"queuedRunIds":queued}))))
 }
 
 #[derive(Deserialize)]
