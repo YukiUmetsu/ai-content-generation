@@ -30,6 +30,7 @@ describe("script-to-storyboard editable handoff",()=>{
   });
 
   it("refuses to replace anything from an unapproved or empty script",()=>{
-    expect(()=>scriptToStoryboard({...approvedScript(),status:"draft",approvedAt:null},evidence)).toThrow(/approved/i);
+    expect(()=>scriptToStoryboard({...approvedScript(),status:"draft",approvedAt:null},evidence)).toThrow(/approve a complete script/i);
   });
 });
+

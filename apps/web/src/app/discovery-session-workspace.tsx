@@ -35,8 +35,20 @@ export interface DiscoverySessionWorkspaceProps {
   onSelectSession: (sessionId: string) => void;
 }
 
+interface ActiveSessionDetails {
+  sessionId: string;
+  run: DiscoveryRun | null;
+  runHistory: DiscoveryRun[];
+  candidateCount: number | null;
+}
+
 /** The Discover stage owns session choice and resumable collection, not a second video Project. */
-export function DiscoverySessionWorkspace({ project, platforms, content = [], locale, selectedSessionId, onSelectSession }:
+export function DiscoverySessionWorkspace(props: DiscoverySessionWorkspaceProps) {
+  // Each brand owns an independent selection and discovery state lifecycle.
+  return <ProjectDiscoverySessions key={props.project.id} {...props} />;
+}
+
+function ProjectDiscoverySessions({ project, platforms, content = [], locale, selectedSessionId, onSelectSession }:
   DiscoverySessionWorkspaceProps) {
   const [sessions, setSessions] = useState<DiscoverySession[]>([]);
   const [localSelection, setLocalSelection] = useState<string | null>(null);
@@ -48,12 +60,16 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
-  const [run, setRun] = useState<DiscoveryRun | null>(null);
-  const [runHistory, setRunHistory] = useState<DiscoveryRun[]>([]);
-  const [candidateCount, setCandidateCount] = useState<number | null>(null);
+  const [activeDetails, setActiveDetails] = useState<ActiveSessionDetails | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const currentId = selectedSessionId ?? localSelection;
+  // An external selection can change without a click in this component.
+  // Do not display the previous session's run while the new one is fetched.
+  const currentDetails = activeDetails?.sessionId === currentId ? activeDetails : null;
+  const run = currentDetails?.run ?? null;
+  const runHistory = currentDetails?.runHistory ?? [];
+  const candidateCount = currentDetails?.candidateCount ?? null;
   const selected = useMemo(() => sessions.find(item => item.id === currentId) ?? null, [currentId, sessions]);
   const visibleSessions = useMemo(() => sessions.filter(item => showArchived || item.archivedAt === null), [sessions, showArchived]);
   const archivedCount = sessions.filter(item => item.archivedAt !== null).length;
@@ -66,12 +82,6 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setSessions([]);
-    setLocalSelection(null);
-    setRun(null);
-    setCandidateCount(null);
-    setError(null);
     void listDiscoverySessions(project.id).then(saved => {
       if (!alive) return;
       setSessions(saved);
@@ -94,13 +104,12 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
       : (await listSessionIdeas(project.id, sessionId, signal)).length;
     if (signal?.aborted) return;
     setSessions(previous => previous.map(item => item.id === detail.id ? detail : item));
-    setRunHistory(runs);
-    setRun(runs[0] ?? detail.lastRun ?? null);
-    setCandidateCount(count);
+    setActiveDetails({ sessionId, runHistory: runs, run: runs[0] ?? detail.lastRun ?? null,
+      candidateCount: count });
   }, [project.id]);
 
   useEffect(() => {
-    if (!currentId) { setRun(null); setCandidateCount(null); return; }
+    if (!currentId) return;
     let alive = true;
     const controller = new AbortController();
     const load = async () => {
@@ -112,11 +121,9 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
     return () => { alive = false; controller.abort(); window.clearInterval(timer); };
   }, [currentId, refreshActive]);
 
-  const useSession = (sessionId: string) => {
+  const selectSession = (sessionId: string) => {
     setLocalSelection(sessionId);
-    setRun(null);
-    setRunHistory([]);
-    setCandidateCount(null);
+    setActiveDetails(null);
     setNotice("");
     setError(null);
     onSelectSession(sessionId);
@@ -129,7 +136,7 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
         { name: name.trim(), platforms, settingsSnapshot: { version: 1, resultBudget } });
       setSessions(items => [created, ...items.filter(item => item.id !== created.id)]);
       setShowCreate(false); setName("");
-      useSession(created.id);
+      selectSession(created.id);
       setNotice(tr(locale, "Session saved. You can start discovery now.", "セッションを保存しました。調査を開始できます。"));
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not create session."); }
     finally { setBusy(false); }
@@ -169,8 +176,13 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
         { projectName: project.name, description: project.notes,
           resultBudget: Number.isInteger(budget) && budget >= 3 && budget <= 30 ? budget : 12,
           content: content.filter(item => item.projectId === project.id).map(({name,stage}) => ({name,stage})) });
-      setRun(started);
-      setRunHistory(items => [started, ...items.filter(item => item.id !== started.id)]);
+      setActiveDetails(current => ({
+        sessionId: selected.id,
+        run: started,
+        runHistory: [started, ...(current?.sessionId === selected.id
+          ? current.runHistory.filter(item => item.id !== started.id) : [])],
+        candidateCount: current?.sessionId === selected.id ? current.candidateCount : null,
+      }));
       await refreshList();
       setNotice(tr(locale, "Discovery job started. Collected results are saved as they arrive.",
         "調査ジョブを開始しました。収集済みの結果は順次保存されます。"));
@@ -188,8 +200,10 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
           { projectName: project.name, description: project.notes,
             resultBudget: Number.isInteger(budget) && budget >= 3 && budget <= 30 ? budget : 12,
             content: content.filter(item => item.projectId === project.id).map(({name,stage}) => ({name,stage})) });
-      setRun(updated);
-      setRunHistory(items => items.map(item => item.id === updated.id ? updated : item));
+      setActiveDetails(current => current?.sessionId === selected.id ? {
+        ...current, run: updated,
+        runHistory: current.runHistory.map(item => item.id === updated.id ? updated : item),
+      } : current);
       setNotice(action === "cancel" ? tr(locale, "Run cancelled. Saved ideas and evidence were kept.",
         "ジョブを中止しました。保存済みのアイデアと根拠は保持されます。") :
         tr(locale, "Resuming the saved discovery job.", "保存済みジョブを再開中です。"));
@@ -260,7 +274,7 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
         {loading && <p role="status" className="text-sm text-muted-foreground">{tr(locale, "Loading sessions…", "読み込み中…")}</p>}
         {!loading && visibleSessions.length === 0 && <p className="rounded-control bg-muted/30 px-4 py-6 text-sm text-muted-foreground">{tr(locale,
           "No sessions yet. Start with one topic area or let the AI explore your brand's niche.", "セッションはまだありません。ブランドの分野から探索しましょう。")}</p>}
-        <div className="space-y-2">{visibleSessions.map(item => <button key={item.id} type="button" onClick={() => useSession(item.id)}
+        <div className="space-y-2">{visibleSessions.map(item => <button key={item.id} type="button" onClick={() => selectSession(item.id)}
           aria-current={currentId === item.id ? "true" : undefined}
           className={`w-full rounded-control border px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${currentId === item.id ? "border-primary bg-primary/5" : "border-border hover:bg-surface-subtle"} ${item.archivedAt !== null ? "opacity-65" : ""}`}>
           <span className="flex items-start justify-between gap-2">
@@ -341,3 +355,4 @@ export function DiscoverySessionWorkspace({ project, platforms, content = [], lo
     {error && <p role="alert" className="text-sm text-danger">{error}</p>}
   </section>;
 }
+

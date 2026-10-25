@@ -43,7 +43,7 @@ export function validateProjectPalette(value: unknown): ProjectPalette {
   const names = new Set(PROJECT_COLOR_ROLES.map(role => role.toLowerCase()));
   const custom = source.custom.map((raw, index) => {
     const item = object(raw, ["name", "hex"], [], "custom color " + index);
-    if (typeof item.name !== "string" || !/^[\p{L}\p{N}][\p{L}\p{N} ._\-]{0,31}$/u.test(item.name.trim())) {
+    if (typeof item.name !== "string" || !/^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,31}$/u.test(item.name.trim())) {
       throw new Error("Custom color name must be 1–32 plain characters.");
     }
     const name = item.name.trim();
@@ -137,3 +137,4 @@ export function toThumbnailPalette(palette: ProjectPalette): ThumbnailPalette {
     },
   };
 }
+

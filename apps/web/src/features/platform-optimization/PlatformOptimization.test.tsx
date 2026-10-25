@@ -32,7 +32,8 @@ describe("PlatformOptimization", () => {
     expect(title.value).toContain("$500,000 house");
     fireEvent.change(title, { target: { value: "The Hidden Cost of Homeownership" } });
     fireEvent.click(screen.getByRole("tab", { name: /TikTok/ }));
-    expect((screen.getByLabelText("Post caption") as HTMLTextAreaElement).value).toContain("mortgage is only one part");
+    expect((screen.getByRole("textbox", { name: "Post caption" }) as HTMLTextAreaElement).value).toContain("mortgage is only one part");
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /^YouTube\b/ }));
     expect((screen.getByLabelText("Upload title") as HTMLInputElement).value).toBe("The Hidden Cost of Homeownership");
     view.unmount();
@@ -40,11 +41,53 @@ describe("PlatformOptimization", () => {
     expect((screen.getByLabelText("Upload title") as HTMLInputElement).value).toBe("The Hidden Cost of Homeownership");
   });
 
-  it("marks the review pending if a final video is not available instead of implying upload", () => {
+  it("approves reviewed metadata without media while keeping upload readiness blocked", () => {
     render(<PlatformOptimization input={{ ...input, assets: [] }} />);
     expect(screen.getByText(/attach a rendered destination-ready video/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Approve package/i })).toBeDisabled();
+    const approve = screen.getByRole("button", { name: "Approve metadata" });
+    expect(approve).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Made for children?" }), { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /I checked this platform's current requirements/i }));
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+    expect(screen.getByText("Metadata approved", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText(/cannot be uploaded yet/i)).toBeInTheDocument();
     expect(screen.getByText(/No upload, scheduling, or publishing/i)).toBeInTheDocument();
+  });
+
+  it("keeps each field's label separate from its restore and copy actions", () => {
+    render(<PlatformOptimization input={input} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Upload title" }), { target: { value: "A human title" } });
+    expect(screen.getByRole("textbox", { name: "Upload title" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore suggestion" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Video description" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+  });
+
+  it("keeps a failed local save editable without reporting it as persisted approval", () => {
+    const onManifestChange = vi.fn();
+    render(<PlatformOptimization input={input} onManifestChange={onManifestChange} />);
+    const initialNotifications = onManifestChange.mock.calls.length;
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw Error("Browser quota exceeded"); });
+    fireEvent.change(screen.getByRole("textbox", { name: "Upload title" }),
+      { target: { value: "My unsaved local title" } });
+    expect(screen.getByRole("textbox", { name: "Upload title" })).toHaveValue("My unsaved local title");
+    expect(screen.getByText(/Browser quota exceeded/i)).toBeInTheDocument();
+    expect(onManifestChange).toHaveBeenCalledTimes(initialNotifications);
+  });
+
+  it("never confirms a saved approval when browser storage rejects the write", () => {
+    const onManifestChange = vi.fn();
+    render(<PlatformOptimization input={input} onManifestChange={onManifestChange} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Made for children?" }),
+      { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /I checked this platform's current requirements/i }));
+    const notificationsBeforeApproval = onManifestChange.mock.calls.length;
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw Error("Storage disabled"); });
+    fireEvent.click(screen.getByRole("button", { name: "Approve metadata" }));
+    expect(screen.getByText(/was not saved/i)).toBeInTheDocument();
+    expect(screen.getByText(/Storage disabled/i)).toBeInTheDocument();
+    expect(onManifestChange).toHaveBeenCalledTimes(notificationsBeforeApproval);
   });
 
   it("does not silently overwrite manually reviewed titles when the source script changes", () => {
@@ -55,3 +98,4 @@ describe("PlatformOptimization", () => {
     expect(screen.getByText(/script, palette or assets changed/i)).toBeInTheDocument();
   });
 });
+

@@ -80,7 +80,13 @@ describe("AI-first script revision model", () => {
   it("blocks approval while any section is empty and validates exact versioned documents", () => {
     expect(() => approveScriptDraft(createScriptDraft(context, timestamp), timestamp)).toThrow(/complete/i);
     expect(approveScriptDraft(filled(), timestamp).status).toBe("approved");
-    expect(validateScriptDraft({ ...filled(), unknown: true })).toThrow(/unknown/i);
+    expect(() => validateScriptDraft({ ...filled(), unknown: true })).toThrow(/unknown/i);
+  });
+
+  it("rejects nonprinting control characters but retains ordinary narration line breaks", () => {
+    expect(() => createScriptDraft({ ...context, title: "Bad\u0007 title" }, timestamp)).toThrow(/invalid title/i);
+    expect(createScriptDraft({ ...context, title: "First line\nSecond line" }, timestamp).input.title)
+      .toBe("First line\nSecond line");
   });
 
   it("rebases only a pristine empty draft when captured evidence arrives after mount", () => {

@@ -50,7 +50,7 @@ function BrandSample({kind,palette,name}: {kind:Preview;palette:ProjectPalette;n
     <p className="text-xs font-bold uppercase tracking-[.2em] opacity-80">{name} · example motion graphic</p>
     <h4 className="mt-4 font-serif text-2xl font-bold">Understanding rising costs</h4>
     <div className="mt-5 flex h-36 items-end gap-3 border-b border-white/25 px-3 pb-2" aria-label="Illustrative ascending bars; no numeric data">
-      {[28,43,51,70,86].map((height,i)=><div key={i} className="min-w-0 flex-1 rounded-t-md" style={{height:`${height}%`,background:i===4?palette.accent:palette.secondary}}/>)
+      {[28,43,51,70,86].map((height,i)=><div key={i} className="min-w-0 flex-1 rounded-t-md" style={{height:`${height}%`,background:i===4?palette.accent:palette.secondary}}/>)}
     </div>
     <p className="mt-2 text-xs opacity-75">Visual style sample · illustrative only</p>
   </div>;
@@ -199,3 +199,4 @@ export function ProjectBrandAppearancePanel({project,locale,onSave}:Props) {
     </div>
   </div>;
 }
+

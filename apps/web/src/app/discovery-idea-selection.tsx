@@ -33,7 +33,12 @@ export interface DiscoveryIdeaSelectionProps {
 }
 
 /** Compare dated opportunities and inspect preserved source leads before production handoff. */
-export function DiscoveryIdeaSelection({ projectId, sessionId, locale, onStartProduction }: DiscoveryIdeaSelectionProps) {
+export function DiscoveryIdeaSelection(props: DiscoveryIdeaSelectionProps) {
+  // Search, review drafts and loaded ideas are specific to one saved session.
+  return <SessionIdeaSelection key={`${props.projectId}:${props.sessionId}`} {...props} />;
+}
+
+function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction }: DiscoveryIdeaSelectionProps) {
   const [ideas, setIdeas] = useState<DiscoverySessionIdea[]>([]);
   const [sessionPlatforms, setSessionPlatforms] = useState<DiscoveryPlatform[]>([]);
   const [search, setSearch] = useState("");
@@ -50,7 +55,6 @@ export function DiscoveryIdeaSelection({ projectId, sessionId, locale, onStartPr
 
   useEffect(() => {
     let alive = true;
-    setLoading(true); setIdeas([]); setEditingId(null); setBrief(null); setError(null); setSearch("");
     void Promise.allSettled([
       listSessionIdeas(projectId, sessionId),
       getDiscoverySession(projectId, sessionId),
@@ -271,3 +275,4 @@ export function DiscoveryIdeaSelection({ projectId, sessionId, locale, onStartPr
     {error && <p role="alert" className="text-sm text-danger">{error}</p>}
   </section>;
 }
+

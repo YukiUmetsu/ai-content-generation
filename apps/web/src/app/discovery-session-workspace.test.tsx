@@ -139,6 +139,35 @@ describe("Content discovery sessions", () => {
     expect(cancelled).toBe(true);
     expect(await screen.findByText("Insurance costs")).toBeInTheDocument();
   });
+
+  it("does not show the prior session's run while a newly selected session is loading", async () => {
+    const secondSession = { ...session, id: "session-2", name: "Retirement questions" };
+    const firstRun = { id: "discover_" + "a".repeat(24), projectId: "brand-1", sessionId: "session-1",
+      inputRevision: "revision", status: "running", stage: "refresh_sources", createdAt: 1760000000,
+      updatedAt: 1760000000, errorCode: null, providerHealth: {}, candidates: [] };
+    let finishSecondRun: ((response: Response) => void) | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = String(input);
+      if (path.endsWith("/sessions")) return new Response(JSON.stringify({ sessions: [session, secondSession] }), { status: 200 });
+      if (path.endsWith("/session-1")) return new Response(JSON.stringify({ ...session, ideaCount: 2 }), { status: 200 });
+      if (path.endsWith("/session-2")) return new Response(JSON.stringify({ ...secondSession, ideaCount: 3 }), { status: 200 });
+      if (path.endsWith("/session-1/runs")) return new Response(JSON.stringify({ runs: [firstRun] }), { status: 200 });
+      if (path.endsWith("/session-2/runs")) return new Promise<Response>(resolve => { finishSecondRun = resolve; });
+      throw Error(`Unexpected discovery route ${path}`);
+    });
+    const onSelectSession = vi.fn();
+    const { rerender } = render(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+      selectedSessionId="session-1" onSelectSession={onSelectSession} />);
+    expect(await screen.findByText("Latest job: running")).toBeInTheDocument();
+
+    rerender(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+      selectedSessionId="session-2" onSelectSession={onSelectSession} />);
+    expect(screen.queryByText("Latest job: running")).not.toBeInTheDocument();
+    await waitFor(() => expect(finishSecondRun).toBeDefined());
+    finishSecondRun!(new Response(JSON.stringify({ runs: [] }), { status: 200 }));
+    await waitFor(() => expect(screen.getByText("Saved ideas").parentElement).toHaveTextContent("3"));
+    expect(screen.queryByText("Latest job: running")).not.toBeInTheDocument();
+  });
 });
 
 describe("Select idea", () => {
@@ -184,4 +213,31 @@ describe("Select idea", () => {
     expect(handle.mock.calls[0][0].sessionId).toBe("session-1");
     expect(handle.mock.calls[0][1]).toMatchObject({ title: "The hidden cost of insurance" });
   });
+
+  it("starts a new session with fresh filters instead of hiding its ideas with the prior session's filter", async () => {
+    const nextIdea = { ...ideas[0], id: "idea-next", sessionId: "session-2", title: "Planning for a new career" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = String(input);
+      if (path.endsWith("/session-1/ideas")) return new Response(JSON.stringify({ ideas: [ideas[0]] }), { status: 200 });
+      if (path.endsWith("/session-2/ideas")) return new Response(JSON.stringify({ ideas: [nextIdea] }), { status: 200 });
+      if (path.endsWith("/session-1")) return new Response(JSON.stringify(session), { status: 200 });
+      if (path.endsWith("/session-2")) return new Response(JSON.stringify({ ...session, id: "session-2" }), { status: 200 });
+      throw Error(`Unexpected discovery route ${path}`);
+    });
+    const onStartProduction = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-1" locale="en"
+      onStartProduction={onStartProduction} />);
+    expect(await screen.findByText("Why home insurance keeps rising")).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Status" }), "saved");
+    await user.type(screen.getByRole("searchbox", { name: "Search ideas" }), "insurance");
+
+    rerender(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-2" locale="en"
+      onStartProduction={onStartProduction} />);
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("all");
+    expect(screen.getByRole("searchbox", { name: "Search ideas" })).toHaveValue("");
+    expect(await screen.findByText("Planning for a new career")).toBeInTheDocument();
+    expect(screen.queryByText("Why home insurance keeps rising")).not.toBeInTheDocument();
+  });
 });
+

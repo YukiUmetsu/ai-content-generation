@@ -156,6 +156,10 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   },[researchArtifactId,projectId,acceptProject]);
   useEffect(()=>{
     if(researchArtifactId||!projectId?.startsWith("production-"))return;
+    let active=true;
+    // A browser-session handoff is external state. Load it after render and
+    // cancel a pending handoff if the selected project changes.
+    queueMicrotask(()=>{if(!active)return;
     try{
       const raw=sessionStorage.getItem("contentgen:director-approved-script:v1:"+projectId);
       if(!raw)return;
@@ -175,6 +179,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       setStatus(resumed?"Resumed your saved edits from this approved script revision. Factual review and rights remain outstanding.":
         "Imported approved script narration and captured citations. Visuals are schematic drafts; edit the scenes before previewing.");
     }catch(reason){setLoadError(reason instanceof Error?reason.message:"Cannot open approved script in Director.");}
+    });
+    return ()=>{active=false;};
   },[researchArtifactId,projectId,acceptProject]);
   useEffect(()=>{
     if(!projectId||!sourceArtifactId||!dossier||!bundle||

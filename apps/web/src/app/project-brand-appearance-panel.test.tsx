@@ -9,7 +9,7 @@ const project: LocalProject = {id:"project-atlas",name:"Margin Atlas",notes:"",c
 
 describe("Project Brand & Appearance", () => {
   it("edits each main color in a single control and previews thumbnail, motion and blog", async () => {
-    const onSave = vi.fn((_draft:ProjectAppearanceDraft) => true);
+    const onSave = vi.fn<(draft:ProjectAppearanceDraft) => boolean>(() => true);
     const user = userEvent.setup();
     render(<ProjectBrandAppearancePanel project={project} locale="en" onSave={onSave}/>);
     expect(screen.getAllByRole("group",{name:/Primary color|Secondary color|Accent color|Background color|Text color/})).toHaveLength(5);
@@ -23,7 +23,7 @@ describe("Project Brand & Appearance", () => {
   });
 
   it("saves a custom color with a persistent project-scoped draft and allows restoring revisions", async () => {
-    const onSave=vi.fn((_draft:ProjectAppearanceDraft)=>true);
+    const onSave=vi.fn<(draft:ProjectAppearanceDraft) => boolean>(() => true);
     const user=userEvent.setup();
     const {rerender}=render(<ProjectBrandAppearancePanel project={project} locale="en" onSave={onSave}/>);
     await user.click(screen.getByRole("button",{name:"Add custom color"}));
@@ -40,7 +40,7 @@ describe("Project Brand & Appearance", () => {
   });
 
   it("blocks invalid colors and reports contrast without discarding typed input", async () => {
-    const onSave=vi.fn((_draft:ProjectAppearanceDraft)=>true);
+    const onSave=vi.fn<(draft:ProjectAppearanceDraft) => boolean>(() => true);
     const user=userEvent.setup();
     render(<ProjectBrandAppearancePanel project={project} locale="en" onSave={onSave}/>);
     const field=within(screen.getByRole("group",{name:"Accent color"}));
@@ -52,3 +52,4 @@ describe("Project Brand & Appearance", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 });
+

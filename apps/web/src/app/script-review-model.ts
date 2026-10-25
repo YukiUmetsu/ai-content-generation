@@ -91,8 +91,13 @@ export function scriptDraftKey(productionId: string, platform: ScriptPlatform): 
 }
 
 function text(value: unknown, field: string, max: number, min = 0): string {
-  if (typeof value !== "string" || value.trim().length < min || value.length > max ||
-      /[\u0000-\u0008\u000e-\u001f]/u.test(value)) throw Error(`Invalid ${field} (limit ${max} characters).`);
+  if (typeof value !== "string" || value.trim().length < min || value.length > max)
+    throw Error(`Invalid ${field} (limit ${max} characters).`);
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 8 || (code >= 14 && code <= 31))
+      throw Error(`Invalid ${field} (limit ${max} characters).`);
+  }
   return value.trim();
 }
 function refs(value: unknown, label: string): string[] {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useState } from "react";
 import { AlertCircle, Check, CheckCircle2, ChevronDown, ClipboardCopy, Download, FileText, Image, RefreshCcw, Video } from "lucide-react";
 import {
   PLATFORM_NAMES, approvePlatformPackage, composedPlatformCaption, createPlatformOptimizationManifest,
@@ -133,52 +133,66 @@ function SectionHeading({ children, note }: { children: React.ReactNode; note?: 
 /** Keep the raw comma-separated input while typing; commit a parsed array on blur. */
 function KeywordEditor({ value, label, splitWords = false, onCommit }: { value: string[]; label: string; splitWords?: boolean; onCommit: (items: string[]) => void }) {
   const joined = value.join(", ");
-  const [draft, setDraft] = useState(joined);
-  const [editing, setEditing] = useState(false);
-  useEffect(() => { if (!editing) setDraft(joined); }, [joined, editing]);
-  return <input aria-label={label} className={inputClass} value={draft}
-    onFocus={() => setEditing(true)} onChange={(event) => setDraft(event.target.value)}
+  const [draft, setDraft] = useState<string | null>(null);
+  return <input aria-label={label} className={inputClass} value={draft ?? joined}
+    onFocus={() => setDraft(joined)} onChange={(event) => setDraft(event.target.value)}
     onBlur={() => {
-      setEditing(false);
-      onCommit([...new Set(draft.split(splitWords ? /[\s,]+/ : /,/).map((tag) => tag.trim()).filter(Boolean))]);
+      onCommit([...new Set((draft ?? joined).split(splitWords ? /[\s,]+/ : /,/).map((tag) => tag.trim()).filter(Boolean))]);
+      setDraft(null);
     }} />;
 }
 
 export function PlatformOptimization({ input, onManifestChange }: PlatformOptimizationProps) {
+  return <PlatformOptimizationEditor key={JSON.stringify([input.productionId, input.projectId])}
+    input={input} onManifestChange={onManifestChange} />;
+}
+
+function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimizationProps) {
   const incomingSignature = sourceSignature(input);
   const targets = input.platforms.map(normalizeTarget).filter((target): target is PlatformTarget => target !== null);
   const targetKey = [...new Set(targets)].join("|");
-  const [manifest, setManifest] = useState<PlatformOptimizationManifest>(() => initialDocument(input).manifest);
+  const [snapshot, setSnapshot] = useState(() => ({
+    manifest: initialDocument(input).manifest, signature: incomingSignature, targetKey, persisted: true,
+  }));
   const [warning, setWarning] = useState<string | null>(() => initialDocument(input).warning);
   const [selected, setSelected] = useState<PlatformTarget>(() => targets[0] ?? "youtube");
   const [notice, setNotice] = useState("");
-  const onManifestChangeRef = useRef(onManifestChange);
-  onManifestChangeRef.current = onManifestChange;
+  const titleInputId = useId();
+  const descriptionInputId = useId();
+
+  // React can restart this render immediately: no stale production is shown or
+  // saved while changing destinations, and manual fields survive source updates.
+  if (snapshot.signature !== incomingSignature || snapshot.targetKey !== targetKey) {
+    setSnapshot({
+      manifest: reconcilePlatformOptimizationManifest(snapshot.manifest, input),
+      signature: incomingSignature, targetKey, persisted: false,
+    });
+  }
+  const manifest = snapshot.manifest;
+
+  const announceManifest = useEffectEvent((current: PlatformOptimizationManifest) => {
+    onManifestChange?.(current);
+  });
 
   useEffect(() => {
-    const loaded = initialDocument(input);
-    setManifest(loaded.manifest);
-    setWarning(loaded.warning);
-    setSelected((target) => loaded.manifest.packages.some((pkg) => pkg.platform === target) ? target : (loaded.manifest.packages[0]?.platform ?? "youtube"));
-    // Identity/revision only; parent components may construct a new input object each render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [input.productionId, input.projectId]);
+    if(snapshot.persisted)announceManifest(manifest);
+  }, [snapshot, manifest]);
 
-  useEffect(() => {
-    setManifest((previous) => reconcilePlatformOptimizationManifest(previous, input));
-    // Reconcile when the actual source changes, without resetting hand-edited fields.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [incomingSignature, targetKey]);
-
-  useEffect(() => {
+  const setManifest = (update: (current: PlatformOptimizationManifest) => PlatformOptimizationManifest): boolean => {
+    const next = update(manifest);
+    let persisted = false;
     try {
-      savePlatformOptimization(manifest);
+      savePlatformOptimization(next);
       setWarning(null);
-      onManifestChangeRef.current?.(manifest);
+      persisted = true;
     } catch (error) {
       setWarning(error instanceof Error ? error.message : "Could not save local platform draft.");
     }
-  }, [manifest]);
+    // Retain the unsaved edit on screen, but never tell the parent an approval
+    // was saved if browser storage rejected it.
+    setSnapshot({ manifest: next, signature: incomingSignature, targetKey, persisted });
+    return persisted;
+  };
 
   const pkg = manifest.packages.find((item) => item.platform === selected) ?? manifest.packages[0];
   const platform = pkg?.platform;
@@ -260,18 +274,18 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
         <div className="space-y-4">
           <div className={`${cardClass} space-y-4`}>
             <SectionHeading note="Auto-prepared · all fields editable">Discoverability</SectionHeading>
-            {showUploadTitle && <label className="block text-xs font-medium text-muted-foreground">
+            {showUploadTitle && <div className="block text-xs font-medium text-muted-foreground">
               <span className="mb-1.5 flex items-center justify-between gap-2">
-                {isBlog(platform) ? "Article title" : isYoutube(platform) ? "Upload title" : "Post title"}
+                <label htmlFor={titleInputId}>{isBlog(platform) ? "Article title" : isYoutube(platform) ? "Upload title" : "Post title"}</label>
                 {pkg.manualFields.includes("title") && <button type="button" className="text-[11px] text-primary hover:underline" onClick={() => restore("title")}>Restore suggestion</button>}
               </span>
-              <input aria-label={isYoutube(platform) ? "Upload title" : isBlog(platform) ? "Article title" : "Post title"}
+              <input id={titleInputId}
                 className={inputClass} value={pkg.fields.title} onChange={(event) => change("title", event.target.value)} />
               {isYoutube(platform) && <span className="mt-1 block text-right text-[11px]">{pkg.fields.title.length}/100</span>}
-            </label>}
-            <label className="block text-xs font-medium text-muted-foreground">
+            </div>}
+            <div className="block text-xs font-medium text-muted-foreground">
               <span className="mb-1.5 flex items-center justify-between gap-2">
-                <span>{isBlog(platform) ? "Article summary" : isYoutube(platform) ? "Video description" : "Post caption"}</span>
+                <label htmlFor={descriptionInputId}>{isBlog(platform) ? "Article summary" : isYoutube(platform) ? "Video description" : "Post caption"}</label>
                 <span className="flex items-center gap-3">
                   {pkg.manualFields.includes("description") && <button type="button" className="text-[11px] text-primary hover:underline" onClick={() => restore("description")}>Restore suggestion</button>}
                   <button type="button" className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline" onClick={() => void copyDescription()}>
@@ -279,9 +293,9 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
                   </button>
                 </span>
               </span>
-              <textarea rows={7} aria-label={isBlog(platform) ? "Article summary" : isYoutube(platform) ? "Video description" : "Post caption"}
+              <textarea id={descriptionInputId} rows={7}
                 className={`${inputClass} resize-y leading-relaxed`} value={pkg.fields.description} onChange={(event) => change("description", event.target.value)} />
-            </label>
+            </div>
             {(isYoutube(platform) || isBlog(platform)) && <label className="block text-xs font-medium text-muted-foreground">
               <span className="mb-1.5 block">Search tags <span className="font-normal">(comma-separated; optional)</span></span>
               <KeywordEditor value={pkg.fields.tags} label="Search tags"
@@ -415,7 +429,11 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
             <div className="space-y-2 border-t border-border pt-3">
               <button type="button" disabled={!review.metadataReady || pkg.status === "approved"}
                 onClick={() => {
-                  try { setManifest((current) => approvePlatformPackage(current, platform, input)); setNotice("Metadata approved. File, rights and disclosure checks still control upload readiness."); }
+                  try {
+                    const saved = setManifest((current) => approvePlatformPackage(current, platform, input));
+                    setNotice(saved ? "Metadata approved and saved. File, rights and disclosure checks still control upload readiness." :
+                      "Metadata review is visible here but was not saved. Restore browser storage before leaving this page.");
+                  }
                   catch (error) { setNotice(error instanceof Error ? error.message : "Could not approve package."); }
                 }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-45">
                 <Check className="size-4" aria-hidden /> Approve metadata

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScriptReviewWorkspace } from "./script-review-workspace";
-import { createScriptDraft, fillScriptSection, loadScriptDraft, saveScriptDraft, type ScriptDraft, type ScriptEvidence } from "./script-review-model";
+import { createScriptDraft, fillScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
+  type ScriptDraft, type ScriptEvidence } from "./script-review-model";
 
 const evidence: ScriptEvidence[] = [{ claimId: "cost", claimText: "Repairs can affect insurance risk estimates.",
   sourceId: "insurance-study", sourceUrl: "https://example.org/study", quote: "Cost and exposure inform risk estimates.", reviewStatus: "verified" }];
@@ -10,7 +11,9 @@ const base = { productionId: "production-first", projectId: "brand-house", platf
   audience: "Homeowners", angle: "Explain repair prices and changing risk", brandVoice: "Calm, direct", evidence, onApprove: vi.fn() };
 const timestamp = "2026-10-25T00:00:00.000Z";
 function saved(platform: "youtube" | "tiktok" = "youtube"): ScriptDraft {
-  let draft = createScriptDraft({ ...base, platform, evidenceSnapshotId: "evidence-1" }, timestamp);
+  const { productionId, projectId, locale, title, viewerQuestion, audience, angle, brandVoice } = base;
+  let draft = createScriptDraft({ productionId, projectId, platform, locale, title, viewerQuestion,
+    audience, angle, brandVoice, evidenceSnapshotId: scriptEvidenceFingerprint(evidence) }, timestamp);
   for (const section of draft.sections) draft = fillScriptSection(draft, section.id, {
     narration: `The ${section.heading.toLowerCase()} explains how insurance works for a homeowner.`,
     claimRefs: ["cost"], sourceRefs: ["insurance-study"] }, 0, timestamp);
@@ -75,6 +78,21 @@ describe("AI-first script review UI", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("starts first-draft generation when evidence arrives after the editor mounts", async () => {
+    const fetcher = vi.fn(async () => ({ ok: true, json: async () => ({
+      narration: "The captured source helps explain insurance pricing for the homeowner.",
+      claimRefs: ["cost"], sourceRefs: ["insurance-study"],
+    }) }));
+    vi.stubGlobal("fetch", fetcher);
+    const { rerender } = render(<ScriptReviewWorkspace {...base} evidence={[]} />);
+    rerender(<ScriptReviewWorkspace {...base} />);
+    await waitFor(() => expect(loadScriptDraft(base.productionId, "youtube").draft?.sections[0].text)
+      .toContain("captured source"));
+    expect(fetcher).toHaveBeenCalled();
+    expect(loadScriptDraft(base.productionId, "youtube").draft?.input.evidenceSnapshotId)
+      .toBe(scriptEvidenceFingerprint(evidence));
+  });
+
   it("full regeneration requires confirmation and leaves every accepted section unchanged until accepted", async () => {
     const before = saved();
     let calls = 0;
@@ -95,3 +113,4 @@ describe("AI-first script review UI", () => {
     expect(Object.keys(after.pending)).toHaveLength(5);
   });
 });
+

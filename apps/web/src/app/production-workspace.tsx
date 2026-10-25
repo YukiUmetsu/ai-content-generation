@@ -36,6 +36,12 @@ interface JobState {
     issues?:{claimId:string;reason:string}[]};
   error?: {message?:string};
 }
+interface MediaSnapshot {
+  productionId:string;
+  status:"loading"|"ready"|"error";
+  assets:PlatformAsset[];
+  error?:string;
+}
 interface Props {
   locale: Locale;
   catalog: StudioCatalog;
@@ -122,7 +128,10 @@ function StatusIcon({status}:{status:ProductionStageStatus}){
   if(status==="stale")return <RotateCcw className="size-4 text-status-warning" aria-hidden/>;
   return <Circle className="size-4 text-muted-foreground" aria-hidden/>;
 }
-export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenStoryboard,
+export function ProductionWorkspace(props:Props){
+  return <ProductionWorkspaceProject key={props.catalog.activeProjectId} {...props}/>;
+}
+function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenStoryboard,
   onOpenVisuals,onOpenAudio,onOpenExport,onOpenNav}:Props){
   const ja=locale==="ja";
   const tr=(en:string,jp:string)=>ja?jp:en;
@@ -132,20 +141,26 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
   const [flow,setFlow]=useState<FlowSelection>(()=>loadFlowSelection(projectId));
   const {platforms,sessionId,production}=flow;
   const [selectedIdea,setSelectedIdea]=useState<DiscoverySessionIdea|null>(null);
+  const currentIdea=selectedIdea?.id===production?.ideaId?selectedIdea:null;
   const [,refreshScriptState]=useState(0);
-  const [optimizationReady,setOptimizationReady]=useState(false);
-  const [savedProductions,setSavedProductions]=useState<DiscoveryProduction[]>([]);
-  const [loadingProductions,setLoadingProductions]=useState(false);
+  const [loadedProductions,setLoadedProductions]=useState<{
+    projectId:string;productionId:string|undefined;items:DiscoveryProduction[];
+  }|null>(null);
+  const savedProductions=loadedProductions?.projectId===projectId?loadedProductions.items:[];
+  const loadingProductions=Boolean(projectId&&(loadedProductions?.projectId!==projectId||
+    loadedProductions.productionId!==production?.id));
   const [startingProduction,setStartingProduction]=useState(false);
   const [openingDirector,setOpeningDirector]=useState(false);
   const [mediaRefresh,setMediaRefresh]=useState(0);
-  const [mediaSnapshot,setMediaSnapshot]=useState<{productionId:string;status:"loading"|"ready"|"error";assets:PlatformAsset[];error?:string}|null>(null);
+  const [mediaResult,setMediaResult]=useState<(MediaSnapshot&{refresh:number})|null>(null);
+  const mediaSnapshot:MediaSnapshot|null=production?
+    mediaResult?.productionId===production.id&&mediaResult.refresh===mediaRefresh?mediaResult:
+      {productionId:production.id,status:"loading",assets:[]}:null;
   const productionKey=production?.id??projectId;
   const renderAssets=mediaSnapshot?.productionId===production?.id&&mediaSnapshot.status==="ready"?mediaSnapshot.assets:[];
   useEffect(()=>{
     if(!production)return;
     const controller=new AbortController();
-    setMediaSnapshot({productionId:production.id,status:"loading",assets:[]});
     void fetch("/api/contentgen-video/assets/"+encodeURIComponent(production.id),{signal:controller.signal,
       credentials:"same-origin",cache:"no-store"}).then(async response=>{
       if(!response.ok)throw Error(`Rendered-file lookup failed (HTTP ${response.status}).`);
@@ -157,14 +172,14 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
         ["video","captions","thumbnail","hero"].includes((value as PlatformAsset).kind)&&
         typeof (value as PlatformAsset).downloadUrl==="string"&&
         (value as PlatformAsset).downloadUrl!.startsWith("/api/contentgen-video/media/"));
-      if(!controller.signal.aborted)setMediaSnapshot({productionId:production.id,status:"ready",assets});
+      if(!controller.signal.aborted)setMediaResult({productionId:production.id,refresh:mediaRefresh,status:"ready",assets});
     }).catch(reason=>{
-      if(!controller.signal.aborted)setMediaSnapshot({productionId:production.id,status:"error",assets:[],
+      if(!controller.signal.aborted)setMediaResult({productionId:production.id,refresh:mediaRefresh,status:"error",assets:[],
         error:reason instanceof Error?reason.message:"Could not read rendered files."});
     });
     return ()=>controller.abort();
   },[production?.id,mediaRefresh]);
-  const allScriptsApproved=()=>Boolean(production&&selectedIdea?.id===production.ideaId)&&
+  const allScriptsApproved=()=>Boolean(production&&currentIdea)&&
     platforms.length>0&&platforms.every(platform=>{
       const saved=loadScriptDraft(production!.id,platform).draft;
       return saved?.status==="approved"&&isScriptContextCurrent(saved,{
@@ -172,13 +187,13 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
         title:production!.brief.title,viewerQuestion:production!.brief.topic||production!.brief.title,
         audience:project?.notes?.trim()||"English-speaking learners",
         angle:production!.brief.angle??"",brandVoice:project?.notes??"",
-        evidenceSnapshotId:scriptEvidenceFingerprint(selectedIdea?.evidence??[]),
+        evidenceSnapshotId:scriptEvidenceFingerprint(currentIdea?.evidence??[]),
       });
     });
   const scriptApproved=allScriptsApproved();
   const anyApprovedScript=Boolean(production&&platforms.some(platform=>
     loadScriptDraft(production.id,platform).draft?.status==="approved"));
-  const scriptStale=anyApprovedScript&&!scriptApproved&&selectedIdea?.id===production?.ideaId;
+  const scriptStale=anyApprovedScript&&!scriptApproved&&Boolean(currentIdea);
   const platformScripts:Record<string,{id:string;heading:string;text:string}[]>=
     Object.fromEntries(platforms.flatMap(platform=>{
       const saved=production?loadScriptDraft(production.id,platform).draft:null;
@@ -203,6 +218,18 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
     try{return Boolean(localStorage.getItem(storyboardBackupKey(productionKey)));}catch{return false;}
   });
   const [claimReviews,setClaimReviews]=useState(()=>loadClaimReviews(productionKey));
+  const [previousProductionKey,setPreviousProductionKey]=useState(productionKey);
+  // Reinitialize production-scoped editor state before React commits a new production.
+  if(previousProductionKey!==productionKey){
+    const saved=loadProjectStoryboard(productionKey);
+    setPreviousProductionKey(productionKey);
+    setBoard(saved.board);setBoardError(saved.warning);
+    setClaimReviews(loadClaimReviews(productionKey));
+    setConfirmStoryboardRefresh(false);
+    try{setHasStoryboardBackup(Boolean(localStorage.getItem(storyboardBackupKey(productionKey))));}
+    catch{setHasStoryboardBackup(false);}
+    setStep(previousStep(productionKey));
+  }
   // A landscape YouTube film is the Director's currently supported media
   // format; never silently source its storyboard from a Shorts/blog script.
   const primaryPlatform=platforms.includes("youtube")?"youtube":platforms[0]??"youtube";
@@ -224,16 +251,10 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
     sourceRevision:`project-palette-${appearance.revision};scripts-${platforms.map(platform=>
       loadScriptDraft(production?.id??projectId,platform).draft?.updatedAt??"none").join("|")}`,
   };
-  const optimizationSignature=sourceSignature(optimizationInput);
-  useEffect(()=>{
-    if(!production){setOptimizationReady(false);return;}
-    const saved=loadPlatformOptimization(production.id,projectId).manifest;
-    setOptimizationReady(Boolean(saved?.packages.length===platforms.length&&
-      saved.packages.every(item=>item.status==="approved"&&!item.stale&&
-        item.sourceSignature===sourceSignature(optimizationInput,item.platform))));
-    // Re-evaluate stored approvals when returning to a step or source identity changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[production?.id,projectId,step,optimizationSignature]);
+  const savedOptimization=production?loadPlatformOptimization(production.id,projectId).manifest:null;
+  const optimizationReady=Boolean(savedOptimization?.packages.length===platforms.length&&
+    savedOptimization.packages.every(item=>item.status==="approved"&&!item.stale&&
+      item.sourceSignature===sourceSignature(optimizationInput,item.platform)));
 
   function updateFlow(next:FlowSelection){
     try{localStorage.setItem(flowKey(projectId),JSON.stringify(next));}
@@ -241,24 +262,13 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
     setFlow(next);
   }
   useEffect(()=>{
-    const saved=loadProjectStoryboard(productionKey);
-    setBoard(saved.board);setBoardError(saved.warning);
-    setClaimReviews(loadClaimReviews(productionKey));
-    setConfirmStoryboardRefresh(false);
-    try{setHasStoryboardBackup(Boolean(localStorage.getItem(storyboardBackupKey(productionKey))));}
-    catch{setHasStoryboardBackup(false);}
-    refreshScriptState(value=>value+1);
-    setStep(previousStep(productionKey));
-  },[productionKey]);
-  useEffect(()=>{
     if(!projectId)return;
     const controller=new AbortController();
-    setLoadingProductions(true);
     void listProductions(projectId).then(items=>{
-      if(!controller.signal.aborted)setSavedProductions(items);
+      if(!controller.signal.aborted)setLoadedProductions({projectId,productionId:production?.id,items});
     }).catch(()=>{
-      if(!controller.signal.aborted)setSavedProductions([]);
-    }).finally(()=>{if(!controller.signal.aborted)setLoadingProductions(false);});
+      if(!controller.signal.aborted)setLoadedProductions({projectId,productionId:production?.id,items:[]});
+    });
     return ()=>controller.abort();
   },[projectId,production?.id]);
   useEffect(()=>{
@@ -365,7 +375,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
       const response=await fetch("/api/contentgen-director/compile-approved-script",{
         method:"POST",headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
         body:JSON.stringify({productionId:production.id,script:videoScript,
-          evidence:selectedIdea?.evidence??[],sources:selectedIdea?.sources??[],storyboard:board}),
+          evidence:currentIdea?.evidence??[],sources:currentIdea?.sources??[],storyboard:board}),
         signal:AbortSignal.timeout(20000),
       });
       const result=await response.json() as Record<string,unknown>;
@@ -435,7 +445,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
   function createStoryboardOutline(script:ScriptDraft){
     if(board){setError("An editable storyboard already exists. Review it before importing a different script revision.");return;}
     try{
-      const next=scriptToStoryboard(script,selectedIdea?.evidence??[]);
+      const next=scriptToStoryboard(script,currentIdea?.evidence??[]);
       saveProjectStoryboard(productionKey,next);
       saveClaimReviews(productionKey,{});
       setBoard(next);setError("");
@@ -444,7 +454,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
   function refreshStoryboardOutline(){
     if(!board||!primaryScript||primaryScript.status!=="approved"||!scriptApproved)return;
     try{
-      const next=scriptToStoryboard(primaryScript,selectedIdea?.evidence??[]);
+      const next=scriptToStoryboard(primaryScript,currentIdea?.evidence??[]);
       // Existing hand-edited scenes are recoverable; refuse to overwrite if
       // the backup cannot be persisted.
       localStorage.setItem(storyboardBackupKey(productionKey),JSON.stringify(board));
@@ -589,7 +599,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
             <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("discover")}>{tr("Go to Discover","テーマ発見へ")}</button>
           </div>)}
           {step==="script"&&(production?<div className="space-y-4">
-            {selectedIdea&&selectedIdea.sources.length>0&&!selectedIdea.evidence?.length&&<p role="status" className="rounded-control border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm">
+            {currentIdea&&currentIdea.sources.length>0&&!currentIdea.evidence?.length&&<p role="status" className="rounded-control border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm">
               {tr("The idea has source leads but no captured passages yet. Complete evidence collection in Discover before generating factual narration.","出典候補はありますが引用文が未収集です。台本の前に出典を補完してください。")}
               <button type="button" className="ml-2 underline" onClick={()=>selectStep("discover")}>{tr("Review sources","出典を確認")}</button>
             </p>}
@@ -597,8 +607,8 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
             productionId={production.id} projectId={projectId} platforms={platforms} locale={locale}
             title={production.brief.title} viewerQuestion={production.brief.topic||production.brief.title}
             audience={project?.notes?.trim()||"English-speaking learners"} angle={production.brief.angle??""}
-            brandVoice={project?.notes??""} evidence={selectedIdea?.evidence??[]}
-            onDraftChange={()=>{refreshScriptState(value=>value+1);setOptimizationReady(false);}}
+            brandVoice={project?.notes??""} evidence={currentIdea?.evidence??[]}
+            onDraftChange={()=>refreshScriptState(value=>value+1)}
             onApprove={()=>{refreshScriptState(value=>value+1);
               const ready=allScriptsApproved();
               if(ready){
@@ -721,11 +731,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
             {platforms.includes("blog")&&<p className="mt-4 text-sm text-muted-foreground">{tr("For blog content, keep the researched script as an article draft until a dedicated article export is available.","ブログ記事は記事の書き出しに対応するまで台本を保存してください。")}</p>}
           </div>}
           {step==="optimize"&&(production&&mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready"?
-            <PlatformOptimization input={optimizationInput} onManifestChange={(manifest)=>{
-            setOptimizationReady(manifest.packages.length===platforms.length &&
-              manifest.packages.every(item=>item.status==="approved"&&!item.stale&&
-                item.sourceSignature===sourceSignature(optimizationInput,item.platform)));
-          }}/>:<div className={contentCard}>
+            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>:<div className={contentCard}>
             <p className="text-sm text-muted-foreground">{!production?
               tr("Select an idea and create a production to prepare platform metadata.","制作するアイデアを選んでください。"):
               mediaSnapshot?.status==="error"?
@@ -734,7 +740,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
             {production?<button type="button" className={secondaryButton+" mt-4"} onClick={()=>setMediaRefresh(value=>value+1)}>
               Retry rendered-file lookup</button>:
               <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select idea","テーマを選択")}</button>}
-          </div>}
+          </div>)}
           {step==="export"&&<div className={contentCard}>
             <h3 className="font-serif text-xl font-semibold">{tr("Preview before exporting","書き出し前に確認")}</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
@@ -756,11 +762,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenProjec
               The render catalog is loading or unavailable. Retry from Produce; previous metadata is preserved.</p>}
           </div>}
           {step==="export"&&production&&mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready"&&
-            <PlatformOptimization input={optimizationInput} onManifestChange={(manifest)=>{
-              setOptimizationReady(manifest.packages.length===platforms.length&&
-                manifest.packages.every(item=>item.status==="approved"&&!item.stale&&
-                  item.sourceSignature===sourceSignature(optimizationInput,item.platform)));
-            }}/>}
+            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>}
         </div>
     </main>
   </section>;

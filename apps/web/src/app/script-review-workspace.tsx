@@ -36,17 +36,29 @@ const secondary = "rounded-control border border-border bg-surface px-3 py-2 tex
 const duration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 const outputId = (productionId: string, platform: ScriptPlatform) => `${productionId}:${platform}`;
 
-export function ScriptReviewWorkspace({ productionId, projectId, platforms: targetPlatforms, locale, title,
-  viewerQuestion, audience, angle, brandVoice, evidence, onApprove, onDraftChange }: ScriptReviewWorkspaceProps) {
+export function ScriptReviewWorkspace(props: ScriptReviewWorkspaceProps) {
+  const { productionId, platforms: targetPlatforms } = props;
   const allowed = targetPlatforms.filter(platform => Object.hasOwn(platforms, platform));
   const first = allowed[0] ?? "youtube";
-  const [platform, setPlatform] = useState<ScriptPlatform>(first);
+  const [selection, setSelection] = useState({ productionId, platform: first });
+  const platform = selection.productionId === productionId && allowed.includes(selection.platform) ? selection.platform : first;
+  return <ScriptReviewEditor key={outputId(productionId, platform)} {...props} allowed={allowed} platform={platform}
+    onSelectPlatform={target => setSelection({ productionId, platform: target })} />;
+}
+
+interface ScriptReviewEditorProps extends ScriptReviewWorkspaceProps {
+  allowed: ScriptPlatform[];
+  platform: ScriptPlatform;
+  onSelectPlatform: (platform: ScriptPlatform) => void;
+}
+
+function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSelectPlatform, locale, title,
+  viewerQuestion, audience, angle, brandVoice, evidence, onApprove, onDraftChange }: ScriptReviewEditorProps) {
   const snapshotId = scriptEvidenceFingerprint(evidence);
   const context = useMemo(() => ({ productionId, projectId, platform, locale, title, viewerQuestion,
     audience, angle, brandVoice, evidenceSnapshotId: snapshotId }),
     [productionId, projectId, platform, locale, title, viewerQuestion, audience, angle, brandVoice, snapshotId]);
   const contextRef = useRef(context);
-  contextRef.current = context;
   const open = (): ViewState => {
     const saved = loadScriptDraft(productionId, platform);
     return saved.draft || saved.warning ? saved : { draft: createScriptDraft(context), warning: null };
@@ -66,39 +78,15 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
   const [editingId, setEditingId] = useState<ScriptRole | null>(null);
   const [editedText, setEditedText] = useState("");
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
-  const draft = view.draft;
+  // A pristine first draft can adopt evidence arriving after mount. Authored drafts
+  // retain their original context until the editor explicitly reviews and adopts it.
+  const draft = useMemo(() => view.draft ? rebindEmptyScriptEvidence(view.draft, snapshotId) : null,
+    [view.draft, snapshotId]);
 
-  useEffect(() => {setPlatform(first);}, [productionId, first]);
-
-  // Preserve per-platform draft and abort a previous platform's expensive local generation.
-  useEffect(() => {
-    const identity = outputId(productionId, platform);
-    ownerRef.current = identity;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    busyRef.current = false;
-    failuresRef.current.clear();
-    const next = open();
-    viewRef.current = next;
-    setView(next);
-    setBusy(null); setError(""); setRegenerateId(null); setEditingId(null);
-    setFullRewriteOpen(false); setBatchBusy(false); setReviewConfirmed(false);
-    return () => {abortRef.current?.abort();};
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productionId, platform]);
-
-  useEffect(() => { viewRef.current = view; }, [view]);
-
-  useEffect(() => {
-    // Evidence may load after the component. Rebind a completely blank first draft only.
-    // Never silently update the evidence lineage of accepted/generated text.
-    const current = viewRef.current.draft;
-    if (!current || current.input.productionId !== productionId || current.input.platform !== platform ||
-        current.input.evidenceSnapshotId === snapshotId) return;
-    const rebound = rebindEmptyScriptEvidence(current, snapshotId);
-    if (rebound !== current) persist(rebound);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productionId, platform, snapshotId]);
+  useEffect(() => { viewRef.current = { ...view, draft }; }, [view, draft]);
+  useEffect(() => { contextRef.current = context; }, [context]);
+  // The editor is keyed by output identity: switching outputs remounts the local state.
+  useEffect(() => () => { abortRef.current?.abort(); }, []);
 
   const persist = (next: ScriptDraft): boolean => {
     try {
@@ -257,7 +245,7 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
       </div>
     </div>}>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Platform script versions">
-        {allowed.map(target => <button key={target} type="button" onClick={() => setPlatform(target)}
+        {allowed.map(target => <button key={target} type="button" onClick={() => onSelectPlatform(target)}
           aria-pressed={target === platform} className={`${secondary} ${target === platform ? "border-primary bg-primary/10 text-primary" : ""}`}>
           {platforms[target]}
         </button>)}
