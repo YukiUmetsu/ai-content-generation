@@ -204,12 +204,24 @@ pub fn record_unavailable_assessment(
     if exists == 0 {
         return Err(IdeaMarketError::NotFound);
     }
-    let prior: i64 = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM idea_market_runs WHERE idea_id=?1)",
-        [idea], |row| row.get(0),
-    )?;
-    if prior != 0 {
-        return Ok(());
+    let prior: Option<(String, Option<String>, i64)> = tx.query_row(
+        "SELECT state,error_code,started_at FROM idea_market_runs WHERE idea_id=?1
+         ORDER BY started_at DESC,id DESC LIMIT 1",
+        [idea], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional()?;
+    if let Some((state, previous_reason, started)) = prior {
+        // Never hide real measurements or a running paid reservation.
+        if matches!(state.as_str(), "succeeded" | "running") {
+            return Ok(());
+        }
+        // Preserve a recent reason unless the blocker changed (e.g. a key
+        // was configured, but Google's quota is now exhausted). That new
+        // reason must receive its own durable cooldown.
+        if previous_reason.as_deref() == Some(error_code)
+            && now < started.saturating_add(6 * 3_600)
+        {
+            return Ok(());
+        }
     }
     let mut bytes = [0u8; 12];
     getrandom::getrandom(&mut bytes).map_err(|_| IdeaMarketError::Identifier)?;
