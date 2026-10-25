@@ -23,6 +23,7 @@ pub mod market_worker;
 pub mod youtube_api;
 pub mod idea_market;
 pub mod idea_trends;
+pub mod viral_potential;
 pub mod discovery_market_worker;
 
 pub fn router() -> Router<AppState> {
