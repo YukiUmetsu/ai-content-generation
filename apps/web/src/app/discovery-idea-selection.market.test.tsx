@@ -112,7 +112,7 @@ describe("per-idea YouTube market evidence", () => {
         distinctChannels:5, comparisonCohortSize:3,
         youtubeObservedAt:1760000000, trendsObservedAt:null},
     });
-    serve([withScore("idea-1", 30), withScore("idea-2", 80), withScore("idea-3", null)]);
+    serve([withScore("idea-1", 25), withScore("idea-2", 75), withScore("idea-3", null)]);
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
       locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
