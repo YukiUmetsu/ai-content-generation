@@ -251,7 +251,7 @@ const compactRetry=feedback=>typeof feedback==="string"&&/truncat|cut off|output
 /** Bounded editorial memory: summaries only, never full prior scene JSON or source captures. */
 function priorScenesForModel(deps){
   if(!Array.isArray(deps.priorScenes))return [];
-  return deps.priorScenes.slice(-3).map(value=>{
+  return deps.priorScenes.slice(-2).map(value=>{
     const unit=validateUnit(value);
     return {subject:unit.subject,
       learningOutcomes:unit.phases.map(phase=>phase.learningChange.slice(0,120)),
