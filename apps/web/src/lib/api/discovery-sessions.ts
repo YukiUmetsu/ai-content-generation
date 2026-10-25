@@ -230,15 +230,20 @@ function parseViralPotential(raw: unknown): ViralPotential | null {
   const percent = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
   if (!(score === null || Number.isInteger(score) && percent(score)) ||
     !numberOrNull(raw.youtubeScore) || !numberOrNull(raw.trendScore) ||
-    !numberOrNull(raw.trendChangePercent) || !percent(raw.coveragePercent) ||
+    !numberOrNull(raw.trendChangePercent) || !count(raw.coveragePercent) || raw.coveragePercent > 100 ||
     !count(raw.sampleSize) || !count(raw.distinctChannels) || !count(raw.comparisonCohortSize) ||
     !numberOrNull(raw.youtubeObservedAt) || !numberOrNull(raw.trendsObservedAt) ||
     raw.youtubeScore !== null && !percent(raw.youtubeScore) ||
     raw.trendScore !== null && !percent(raw.trendScore) ||
     (score === null) !== (raw.state === "insufficient_data") ||
     (score !== null && (raw.youtubeScore === null || raw.format === null)) ||
-    (raw.state === "measured" && (raw.youtubeScore === null || raw.trendScore === null)) ||
-    (raw.state === "partial" && (raw.youtubeScore === null || raw.trendScore !== null))) return null;
+    (raw.state === "measured" && (raw.youtubeScore === null || raw.trendScore === null ||
+      raw.coveragePercent !== 100)) ||
+    (raw.state === "partial" && (raw.youtubeScore === null || raw.trendScore !== null ||
+      raw.coveragePercent !== 75)) ||
+    (raw.state === "insufficient_data" && raw.youtubeScore !== null) ||
+    (raw.youtubeScore !== null && (raw.sampleSize < 8 || raw.distinctChannels < 3 ||
+      raw.comparisonCohortSize < 3))) return null;
   return raw as unknown as ViralPotential;
 }
 
