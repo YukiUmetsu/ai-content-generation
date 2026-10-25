@@ -30,8 +30,6 @@ function SupplementaryLayerRow({layer,busy,unsupportedReveal,onSave,onRemove}:{l
   unsupportedReveal:boolean;onSave:(layer:SoundLayer)=>Promise<void>;onRemove:(layerId:string)=>Promise<void>}){
   const [draft,setDraft]=useState({trigger:layer.trigger,offsetMs:layer.offsetMs,gainDb:layer.gainDb,
     fadeInMs:layer.fadeInMs,fadeOutMs:layer.fadeOutMs});
-  useEffect(()=>setDraft({trigger:layer.trigger,offsetMs:layer.offsetMs,gainDb:layer.gainDb,
-    fadeInMs:layer.fadeInMs,fadeOutMs:layer.fadeOutMs}),[layer]);
   const change=(values:Partial<typeof draft>)=>setDraft(current=>({...current,...values}));
   return <div className="rounded-control border border-border p-3 space-y-2">
     <p className="text-xs font-medium">{layer.title} · {layer.shotId}</p>
@@ -58,7 +56,7 @@ function SupplementaryLayerRow({layer,busy,unsupportedReveal,onSave,onRemove}:{l
     </div>
     <div className="flex flex-wrap gap-2">
       <Button size="sm" variant="outline" disabled={busy} onClick={()=>void onSave({...layer,...draft})}>Save cue</Button>
-      <Button size="sm" variant="ghost" disabled={busy} onClick={()=>void onRemove(layer.layerId)}>Remove cue</Button>
+      <Button size="sm" variant="subtle" disabled={busy} onClick={()=>void onRemove(layer.layerId)}>Remove cue</Button>
     </div>
   </div>;
 }
@@ -318,7 +316,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
               </summary>
               <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Layer up to four approved sounds. Fine-tune their start time, volume and fades independently.</p>
               <div className="mt-3 space-y-3">{shotLayers.map(layer=><SupplementaryLayerRow
-                key={layer.layerId} layer={layer} busy={!!busy} unsupportedReveal={unsupportedReveal}
+                key={[layer.layerId,layer.assetId,layer.sha256,layer.trigger,layer.offsetMs,layer.gainDb,layer.fadeInMs,layer.fadeOutMs].join(":")} layer={layer} busy={!!busy} unsupportedReveal={unsupportedReveal}
                 onSave={next=>saveLayer(next,next.layerId).then(()=>{})} onRemove={removeLayer}/>)}</div>
               <div className="mt-3 grid gap-3 rounded-control bg-surface-subtle p-3 text-xs sm:grid-cols-2">
                 <label className="sm:col-span-2">Additional cue asset
@@ -432,7 +430,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
         </div>
 
         <aside className="min-w-0 space-y-4 xl:sticky xl:top-4">
-          <SoundAuditionControls key={selectedShotId} shotId={selectedShotId} choice={choice} layers={design.layers}
+          <SoundAuditionControls key={JSON.stringify([selectedShotId,choice,design.layers,design.ambience,library])} shotId={selectedShotId} choice={choice} layers={design.layers}
             ambience={design.ambience} library={library}/>
           <details className="space-y-3 rounded-surface border border-border bg-surface p-4">
             <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm font-semibold">
@@ -460,7 +458,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button size="sm" variant="outline" disabled={!!busy||!ambientDraft.assetId} onClick={()=>void saveAmbience()}>Save ambience</Button>
-              <Button size="sm" variant="ghost" disabled={!!busy||!design.ambience} onClick={()=>void saveAmbience(true)}>Disable ambience</Button>
+              <Button size="sm" variant="subtle" disabled={!!busy||!design.ambience} onClick={()=>void saveAmbience(true)}>Disable ambience</Button>
             </div>
             {design.ambience&&<p className="mt-2 text-xs text-muted-foreground">Active: {design.ambience.title} · {design.ambience.gainDb} dB</p>}
           </details>
