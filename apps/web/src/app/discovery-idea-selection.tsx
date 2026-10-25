@@ -302,6 +302,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+        <span>{tr(locale, "Research readiness", "調査準備度")}: {opportunityText(idea, locale)}</span>
         <span>{tr(locale, "Draft confidence (AI-assigned)", "下書きの確度（AI による判断）")}: {idea.confidence}</span>
         {idea.whyNow && <span>{tr(locale, "Why consider", "選定理由")}: {idea.whyNow}</span>}
       </div>
