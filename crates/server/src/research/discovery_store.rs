@@ -143,6 +143,7 @@ pub fn start_or_get_active_for_session(
     let frozen_revision = if pinned { session_settings.pointer("/project/revision").and_then(serde_json::Value::as_i64) } else { None };
     let frozen_keywords = if pinned { session_settings.pointer("/project/keywords").cloned() } else { None };
     let snapshot = serde_json::json!({"version":1,"projectName":frozen_name,
+        "ideaScoreVersion":super::sessions_store::IDEA_SCORE_VERSION_V1,
         "description":frozen_description,
         "content":content,"keywords":frozen_keywords.unwrap_or_else(||serde_json::json!(keywords)),
         "projectRevision":frozen_revision.unwrap_or(revision),
