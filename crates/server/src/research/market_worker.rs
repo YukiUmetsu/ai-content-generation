@@ -15,6 +15,8 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
         if let Ok(db) = state.connect() {
             let _ = market_store::prune_expired(&db, epoch_now());
             let _ = market_store::reconcile_orphaned_runs(&db, epoch_now());
+            let _ = super::idea_market::prune_expired(&db, epoch_now());
+            let _ = super::idea_market::reconcile_interrupted(&db, epoch_now());
         }
         let mut ticks = tokio::time::interval(Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -29,6 +31,7 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let Ok(db) = state.connect() else { continue };
             let now = epoch_now();
             let _ = market_store::prune_expired(&db, now);
+            let _ = super::idea_market::prune_expired(&db, now);
             let Ok(due) = market_store::list_due_watchlist_ids(&db, now) else {
                 continue;
             };

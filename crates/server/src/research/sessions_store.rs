@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use super::discovery_projects::DiscoveryError;
 use super::discovery_store::{self, Candidate, CandidateDraft, DiscoveryRun};
+use super::idea_market::{self, IdeaMarketAssessment};
 
 /// Keep v1 semantics unchanged for saved runs; newer formulas must use a new
 /// version and a separate evaluator rather than reinterpreting old scores.
@@ -64,6 +65,7 @@ pub struct SessionIdea {
     pub platform_fit: serde_json::Value,
     pub sources: Vec<IdeaSource>,
     pub evidence: Vec<SessionEvidence>,
+    pub market_assessment: Option<IdeaMarketAssessment>,
 }
 
 pub(crate) fn random_id(prefix: &str) -> Result<String, DiscoveryError> {
@@ -361,8 +363,18 @@ pub fn list_ideas(
                 candidate,session_id:session_id.to_owned(),run_id:run.id.clone(),
                 opportunity_score,score_version:Some(score_version.into()),
                 score_inputs,platform_fit:serde_json::json!({}),sources,evidence,
+                market_assessment:None,
             });
         }
+    }
+    // Historical evidence-readiness values above remain unchanged. Market
+    // ranking is separately dated and only comparable within this session.
+    let mut assessments = ideas.iter().map(|idea| {
+        idea_market::latest_assessment(db, &idea.candidate.id, super::market_api::epoch_now())
+    }).collect::<Result<Vec<_>,_>>().map_err(|_| DiscoveryError::Invalid("Saved market assessments unavailable".into()))?;
+    idea_market::assign_session_percentiles(&mut assessments);
+    for (idea, assessment) in ideas.iter_mut().zip(assessments) {
+        idea.market_assessment = assessment;
     }
     Ok(ideas)
 }

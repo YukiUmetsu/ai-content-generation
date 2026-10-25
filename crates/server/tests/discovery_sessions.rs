@@ -50,7 +50,7 @@ fn migration_preserves_legacy_run_idea_and_reuses_its_active_run() {
 
     let report = db::migrate(&mut conn).unwrap();
     assert_eq!(report.from_version,9);
-    assert_eq!(report.to_version,10);
+    assert_eq!(report.to_version,11);
     assert_eq!(discovery_store::get_run(&conn,"project-old","old-active").unwrap().candidates[0].id,"old-idea");
     let same = discovery_store::start_or_get_active(&mut conn,"project-old","old",10).unwrap();
     assert_eq!(same.id,"old-active","the legacy discover route must resume pre-migration active work");
