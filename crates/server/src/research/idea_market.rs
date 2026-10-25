@@ -127,7 +127,7 @@ pub fn claim_assessment(
             "SELECT state,started_at,
              EXISTS(SELECT 1 FROM market_search_budget WHERE run_id=idea_market_runs.id)
              FROM idea_market_runs WHERE idea_id=?1
-         ORDER BY started_at DESC,id DESC LIMIT 1",
+         ORDER BY started_at DESC,rowid DESC LIMIT 1",
             [idea],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -206,7 +206,7 @@ pub fn record_unavailable_assessment(
     }
     let prior: Option<(String, Option<String>, i64)> = tx.query_row(
         "SELECT state,error_code,started_at FROM idea_market_runs WHERE idea_id=?1
-         ORDER BY started_at DESC,id DESC LIMIT 1",
+         ORDER BY started_at DESC,rowid DESC LIMIT 1",
         [idea], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional()?;
     if let Some((state, previous_reason, started)) = prior {
@@ -375,7 +375,7 @@ pub fn latest_assessment(
     let latest: Option<StoredAssessment> = db
         .query_row(
             "SELECT id,state,query,format,metric_version,region,language,started_at,finished_at,error_code,searched_videos
-        FROM idea_market_runs WHERE idea_id=?1 ORDER BY started_at DESC,id DESC LIMIT 1",
+        FROM idea_market_runs WHERE idea_id=?1 ORDER BY started_at DESC,rowid DESC LIMIT 1",
             [idea],
             |r| {
                 Ok((
