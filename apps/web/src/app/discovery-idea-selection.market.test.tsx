@@ -84,7 +84,7 @@ describe("per-idea YouTube market evidence", () => {
     const card = (await screen.findByText("Question idea-1")).closest("article")!;
     expect(within(card).getByText("Research readiness: 77/100")).toBeInTheDocument();
     expect(within(card).getByText(/Add a YouTube API key in Settings/)).toBeInTheDocument();
-    expect(within(card).getByText(/No saved observation. New Discovery runs attempt Trends automatically/)).toBeInTheDocument();
+    expect(within(card).getByText(/No saved observation. Missing Trends data is queued for background collection when eligible/)).toBeInTheDocument();
   });
 
   it("shows the exact saved provider failure categories without expanding details", async () => {
