@@ -31,6 +31,8 @@ const phaseRepairHint=step=>{
       "Show a genuinely different teaching operation for this phase.";
 };
 const repairHint=(failure,step)=>{
+  if(failure.schemaIssue==="duplicate_previous"&&failure.field==="payoff")
+    return " An earlier beat already delivered this takeaway. Choose a new, evidence-supported payoff, not a paraphrase or extra invented fact.";
   if(failure.schemaIssue==="duplicate_previous"&&["visualAction","learningChange"].includes(failure.field))
     return ` ${phaseRepairHint(step)} The ${failure.field} exactly repeated an accepted previousVisuals value. `+
       `Do not paraphrase or rename a prior action or insight. Choose a different ${failure.field==="visualAction"?
