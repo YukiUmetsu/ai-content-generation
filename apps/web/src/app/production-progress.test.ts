@@ -42,4 +42,10 @@ describe("guided production stage progression", () => {
     expect(stages[4].status).toBe("stale");
     expect(stages[5].status).toBe("stale");
   });
+  it("keeps saved but repetitive storyboards in editorial review",()=>{
+    const stage=getProductionStages({briefReady:true,storyboardReady:true,
+      storyboardEditorialWarnings:2}).find(item=>item.id==="storyboard");
+    expect(stage?.status).toBe("needs_review");
+    expect(stage?.reason).toMatch(/2 scenes/);
+  });
 });
