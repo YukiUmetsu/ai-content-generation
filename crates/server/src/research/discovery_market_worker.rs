@@ -699,6 +699,11 @@ mod tests {
             "UPDATE idea_trends_runs SET started_at=?1 WHERE state='failed'",
             [epoch_now() - 7 * 3_600],
         ).unwrap();
+        db.execute(
+            "UPDATE discovery_runs SET provider_health_json=json_set(
+                provider_health_json,'$.marketBackfill','completed') WHERE id=?1",
+            [&run_id],
+        ).unwrap();
         let queued = discovery_store::queue_missing_market_runs(
             &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap();
