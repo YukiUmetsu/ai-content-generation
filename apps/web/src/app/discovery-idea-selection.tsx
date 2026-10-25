@@ -8,6 +8,7 @@ import {
 } from "@/lib/api/discovery-sessions";
 import { loadMarketStatus, type MarketStatus } from "@/lib/api/market";
 import { IdeaMarketEvidence } from "./idea-market-evidence";
+import { formatDiscoveryProviderHealth } from "./discovery-provider-health";
 import { usableComparison, type IdeaVideoFormat } from "./idea-market-comparison";
 
 const tr = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : en;
@@ -73,6 +74,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [sort, setSort] = useState<Sort>("market");
   const [compareFormat, setCompareFormat] = useState<IdeaVideoFormat>("long");
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
+  const [runMarketHealth, setRunMarketHealth] = useState<unknown>(null);
   const [marketStatusError, setMarketStatusError] = useState<string | null>(null);
   const [collectingId, setCollectingId] = useState<string | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
@@ -94,7 +96,10 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       if (!alive) return;
       if (ideaResult.status === "fulfilled") setIdeas(ideaResult.value);
       else setError(ideaResult.reason instanceof Error ? ideaResult.reason.message : "Could not load saved ideas.");
-      if (sessionResult.status === "fulfilled") setSessionPlatforms(sessionResult.value.platforms);
+      if (sessionResult.status === "fulfilled") {
+        setSessionPlatforms(sessionResult.value.platforms);
+        setRunMarketHealth(sessionResult.value.lastRun?.providerHealth.market ?? null);
+      }
       setLoading(false);
     });
     return () => { alive = false; };
@@ -269,6 +274,9 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       </label>
     </div>
 
+    {runMarketHealth !== null && <p role="status" className="text-xs text-muted-foreground">
+      {tr(locale, "Discovery market collection", "調査時の市場データ収集")}: {formatDiscoveryProviderHealth(runMarketHealth, locale)}
+    </p>}
     {ideas.length > 0 && <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
       <button type="button" onClick={() => void refreshMarket()}
         className="rounded-lg px-2 py-1 text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -302,6 +310,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+        <span>{tr(locale, "Research readiness", "調査準備度")}: {opportunityText(idea, locale)}</span>
         <span>{tr(locale, "Draft confidence (AI-assigned)", "下書きの確度（AI による判断）")}: {idea.confidence}</span>
         {idea.whyNow && <span>{tr(locale, "Why consider", "選定理由")}: {idea.whyNow}</span>}
       </div>

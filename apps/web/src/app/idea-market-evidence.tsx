@@ -26,8 +26,16 @@ const trendAvailability = (errorCode: string | null, locale: Locale) => {
       return tr(locale, "Google Trends blocked this request.", "Google Trends がアクセスをブロックしました。");
     case "timeout":
       return tr(locale, "Google Trends did not respond in time.", "Google Trends の応答がタイムアウトしました。");
-    case "no_data": case "insufficient_data":
-      return tr(locale, "Not enough weekly interest data for this phrase.", "検索語の週次データが不足しています。");
+    case "no_data": case "insufficient_data": case "invalid_payload": case "insufficient_sample":
+      return tr(locale, "Google Trends returned too little usable weekly data or an invalid response.", "Google Trends の週次データが不足しているか、応答が不正でした。");
+    case "budget_exhausted":
+      return tr(locale, "The local Google Trends limit (12 requests per day) was reached.", "Google Trends のローカル上限（1日12回）に達しました。");
+    case "collection_limit":
+      return tr(locale, "This Discovery run reached its Google Trends collection limit.", "この調査で Google Trends の収集上限に達しました。");
+    case "network_error": case "provider_unavailable":
+      return tr(locale, "Google Trends could not be reached. Its unofficial endpoint may be unavailable.", "Google Trends に接続できません。非公式エンドポイントが利用できない可能性があります。");
+    case "interrupted":
+      return tr(locale, "Google Trends collection was interrupted before results were saved.", "Google Trends の収集が結果保存前に中断されました。");
     default:
       return tr(locale, "Google Trends was unavailable during Discovery.", "発見中に Google Trends を利用できませんでした。");
   }
@@ -122,6 +130,16 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
         {finished && <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
           {tr(locale, `${matching.sampleSize} videos · ${matching.distinctChannels} channels`,
             `動画 ${matching.sampleSize}件 · チャンネル ${matching.distinctChannels}件`)}</p>}
+        {finished && comparing === null && <p className="mt-1 text-[11px] text-muted-foreground">
+          {tr(locale, "A score needs 8 usable videos, 3 channels and 3 comparable ideas in this format.",
+            "点数には有効動画8件、チャンネル3件、同形式の比較対象3案が必要です。")}</p>}
+        {!assessment && <p className="mt-1 text-[11px] text-muted-foreground">
+          {status?.apiKeyConfigured === false
+            ? tr(locale, "Add a YouTube API key in Settings to collect observations.", "観測データの収集には設定で YouTube API キーを登録してください。")
+            : tr(locale, "No saved observation. New Discovery runs collect automatically.", "保存済みの観測データはありません。新しい調査では自動収集されます。")}</p>}
+        {matching?.state === "failed" && <p role="status" className="mt-1 text-[11px] text-destructive">
+          {marketErrorHint(matching.errorCode, locale === "ja") ||
+            tr(locale, "YouTube collection failed; open Evidence details to retry.", "YouTube の収集に失敗しました。観測の詳細から再試行できます。")}</p>}
       </div>
       <div className="min-w-0 rounded-xl border border-border/70 bg-surface/85 p-3">
         <div className="flex items-start justify-between gap-2">
@@ -141,14 +159,22 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
         </div>
         <p className="mt-1 text-[11px] text-muted-foreground">{tr(locale, "Google search momentum · last 13 vs previous 13 weeks",
           "Google の検索傾向 · 直近13週と前の13週")}</p>
+        {(googleTrends?.state === "failed" || googleTrends?.state === "unavailable") &&
+          <p role="status" className="mt-1 text-[11px] text-muted-foreground">
+            {trendAvailability(googleTrends.errorCode, locale)}</p>}
+        {!googleTrends && <p className="mt-1 text-[11px] text-muted-foreground">
+          {tr(locale, "No saved observation. New Discovery runs attempt Trends automatically.",
+            "保存済みの観測データはありません。新しい調査では自動収集を試みます。")}</p>}
+        {googleTrends?.state === "succeeded" && momentum === null &&
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            {tr(locale, "A trend percentage needs 26 valid weeks and a nonzero previous baseline.",
+              "変化率には有効な26週分のデータと、0ではない前期の基準値が必要です。")}</p>}
       </div>
     </div>
 
     {running && <p role="status" className="mt-3 flex items-center gap-2 text-xs font-medium text-primary">
       <LoaderCircle className="size-3.5 motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
       {tr(locale, "Collecting public videos…", "公開動画を収集中…")}</p>}
-    {matching?.state === "failed" && <p role="status" className="mt-3 text-xs text-destructive">
-      {marketErrorHint(matching.errorCode, locale === "ja") || tr(locale, "Collection failed. You can retry.", "収集に失敗しました。再試行できます。")}</p>}
     {matching?.state === "expired" && <p role="status" className="mt-3 text-xs text-muted-foreground">
       {tr(locale, "Observation expired. Collect again for current evidence.", "観測データの期限が切れました。再収集してください。")}</p>}
     {assessment && assessment.format !== format && <p className="mt-3 text-xs text-muted-foreground">

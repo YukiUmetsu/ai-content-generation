@@ -27,7 +27,7 @@ const assessment = (format: "long" | "shorts", comparisonScore: number | null): 
     sourceUrl: "https://www.youtube.com/watch?v=videoABC123" }],
 });
 
-function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boolean; afterCollect?: DiscoverySessionIdea[] } = {}) {
+function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boolean; afterCollect?: DiscoverySessionIdea[]; lastRun?: Record<string, unknown> } = {}) {
   const posts: Array<{query:string;format:string}> = [];
   let collected = false;
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
@@ -41,13 +41,49 @@ function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boo
     }
     if (url.endsWith("/ideas")) return new Response(JSON.stringify({ideas: collected && opts.afterCollect
       ? opts.afterCollect : initialIdeas}), {status:200});
-    if (url.endsWith("/session-1")) return new Response(JSON.stringify(session),{status:200});
+    if (url.endsWith("/session-1")) return new Response(JSON.stringify({...session, ...(opts.lastRun ? {lastRun:opts.lastRun} : {})}),{status:200});
     throw Error(`Unexpected route: ${url}`);
   });
   return {posts, fetcher};
 }
 
 describe("per-idea YouTube market evidence", () => {
+  it("shows the saved partial market collection summary even when Discovery completed", async () => {
+    serve([idea("idea-1")], {lastRun:{
+      id:"discover_"+"a".repeat(24), projectId:"project-1", inputRevision:"revision",
+      status:"completed", stage:"completed", createdAt:1760000000, updatedAt:1760000000,
+      errorCode:null, candidates:[],
+      providerHealth:{market:{state:"partial",
+        youtube:{succeeded:0,unavailable:1}, googleTrends:{succeeded:0,unavailable:1}}},
+    }});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    expect(await screen.findByText(/Discovery market collection: Partial/)).toBeInTheDocument();
+    expect(screen.getByText(/YouTube: 0 succeeded, 1 unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Google Trends: 0 succeeded, 1 unavailable/)).toBeInTheDocument();
+  });
+
+  it("shows readiness and why older ideas have no automatic market observations", async () => {
+    serve([idea("idea-1")], {keyConfigured:false});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    const card = (await screen.findByText("Question idea-1")).closest("article")!;
+    expect(within(card).getByText("Research readiness: 77/100")).toBeInTheDocument();
+    expect(within(card).getByText(/Add a YouTube API key in Settings/)).toBeInTheDocument();
+    expect(within(card).getByText(/No saved observation. New Discovery runs attempt Trends automatically/)).toBeInTheDocument();
+  });
+
+  it("shows the exact saved provider failure categories without expanding details", async () => {
+    const unavailable = {...assessment("long", null), state:"failed" as const,
+      errorCode:"budget_exhausted", sampleSize:0, distinctChannels:0, videos:[]};
+    const trend = {state:"unavailable" as const, query:"home energy costs", region:"US", observedAt:null,
+      recentMean:null, previousMean:null, changePercent:null, points:0,
+      metricVersion:"google-trends-momentum-v1", errorCode:"collection_limit"};
+    serve([{...idea("idea-1", unavailable), googleTrends:trend}]);
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    const card = (await screen.findByText("Question idea-1")).closest("article")!;
+    expect(within(card).getByText(/20 calls per 24 hours/)).toBeInTheDocument();
+    expect(within(card).getByText(/Google Trends collection limit/)).toBeInTheDocument();
+  });
+
   it("renders automatically saved YouTube and Google Trends signals without requesting a new collection", async () => {
     const trend = { state: "succeeded" as const, query: "home energy costs", region: "US", observedAt: 1760000000,
       recentMean: 62.4, previousMean: 40.0, changePercent: 56.0, points: 52,

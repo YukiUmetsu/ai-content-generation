@@ -3,6 +3,10 @@ import { marketErrorHint } from "./market-error-hint";
 
 describe("market provider error messages", () => {
   it("explains permission and precise Google API errors without exposing provider responses", () => {
+    expect(marketErrorHint("api_key_missing", false)).toMatch(/Studio Settings/);
+    expect(marketErrorHint("budget_exhausted", false)).toMatch(/20 calls per 24 hours/);
+    expect(marketErrorHint("collection_limit", false)).toMatch(/automatic YouTube collection limit/);
+    expect(marketErrorHint("provider_unavailable", false)).toMatch(/unavailable/);
     expect(marketErrorHint("permission", false)).toMatch(/YouTube Data API v3/);
     expect(marketErrorHint("api_not_enabled", false)).toMatch(/Enable YouTube Data API v3/);
     expect(marketErrorHint("api_key_invalid", false)).toMatch(/Keychain key takes priority/);
