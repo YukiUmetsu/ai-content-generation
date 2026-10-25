@@ -20,11 +20,28 @@ describe("eight-step production progress", () => {
     expect(stages[3].status).toBe("not_started");
   });
 
+  it("shows real saved discovery run progress before any idea is selected", () => {
+    const input = {sessionId:"session-1",discoveryIdeaCount:0};
+    expect(getProductionStages({...input,discoverySessionRun:{status:"queued",stage:"queued"}})[1].status).toBe("running");
+    expect(getProductionStages({...input,discoverySessionRun:{status:"running",stage:"collecting"}})[1].status).toBe("running");
+    expect(getProductionStages({...input,discoverySessionRun:{status:"completed",stage:"complete"}})[1].status).toBe("needs_review");
+    expect(getProductionStages({...input,discoverySessionRun:{status:"failed",stage:"search"}})[1].status).toBe("failed");
+    expect(getProductionStages({...input,discoveryIdeaCount:3,
+      discoverySessionRun:{status:"completed",stage:"complete"}})[1].status).toBe("complete");
+    expect(getProductionStages({...input,discoveryIdeaCount:2,
+      discoverySessionRun:{status:"insufficient_evidence",stage:"complete"}})[1].status).toBe("complete");
+    expect(getProductionStages({...input,discoveryIdeaCount:0,
+      discoverySessionRun:{status:"insufficient_evidence",stage:"complete"}})[1].status).toBe("needs_review");
+    expect(getProductionStages({ideaId:"selected-old-idea",sessionId:"session-1",
+      discoverySessionRun:{status:"completed",stage:"complete"},discoveryIdeaCount:0})[1].status).toBe("complete");
+  });
+
   it("shows partial research as review, never false completion", () => {
     const stages=getProductionStages({setupReady:true,sessionId:"session-1",
       discoveryJob:{status:"paused",stage:"evidence-repair"}});
     expect(stages[1].status).toBe("needs_review");
     expect(stages[1].primaryAction).toMatch(/Review/);
+    expect(stages[1].reason).toMatch(/sources require review/i);
   });
 
   it("allows an approved idea to advance directly to Script without a research stage", () => {

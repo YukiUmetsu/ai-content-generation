@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DiscoverySessionWorkspace } from "./discovery-session-workspace";
 import { DiscoveryIdeaSelection } from "./discovery-idea-selection";
@@ -10,13 +10,18 @@ afterEach(() => vi.restoreAllMocks());
 const project = { id: "brand-1", name: "Margin Atlas", notes: "Home and finance questions", createdAt: "2026-10-24T12:00:00Z" };
 const session = { id: "session-1", projectId: "brand-1", name: "Insurance costs", platforms: ["youtube", "tiktok"],
   settingsSnapshot: {}, status: "ready", createdAt: 1760000000, updatedAt: 1760000000, archivedAt: null, lastRun: null };
+function mockFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) {
+  vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => String(input).endsWith("/api/local-research-model/readiness")
+    ? Promise.resolve(new Response(JSON.stringify({version:1,search:{state:"ready"}}),{status:200}))
+    : handler(input,init));
+}
 
 describe("Content discovery sessions", () => {
   it("creates a named saved session with the selected platforms and announces its stable identifier", async () => {
     const selected = vi.fn();
     let stored: typeof session[] = [];
     const writes: unknown[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+    mockFetch(async (input, options) => {
       const url = String(input);
       if (url.endsWith("/sessions") && options?.method === "POST") {
         writes.push(JSON.parse(String(options.body)));
@@ -44,7 +49,7 @@ describe("Content discovery sessions", () => {
 
   it("sends the chosen bounded idea budget and this brand's produced topics to the discovery worker", async () => {
     const requests: unknown[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+    mockFetch(async (input, options) => {
       const path = String(input);
       if (path.endsWith("/project-discovery") && options?.method === "POST") {
         requests.push(JSON.parse(String(options.body)));
@@ -70,8 +75,118 @@ describe("Content discovery sessions", () => {
       content:[{name:"Existing roof analysis",stage:"published"}]});
   });
 
-  it("keeps saved sessions available while showing an actionable discovery failure", async () => {
+  it("disables discovery until SearXNG is reachable and tells the creator how to retry", async () => {
+    let searchReady = false;
+    let launches = 0;
+    let finishRetry: ((response: Response) => void) | undefined;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+      const path = String(input);
+      if (path.endsWith("/api/local-research-model/readiness"))
+        return searchReady ? new Promise<Response>(resolve=>{finishRetry=resolve;})
+          : new Response(JSON.stringify({version:1,search:{state:"unavailable",detail:"Probe diagnostic"}}),{status:200});
+      if (path.endsWith("/project-discovery") && options?.method==="POST") {
+        launches++;
+        return new Response(JSON.stringify({id:"run-1",projectId:"brand-1",status:"queued",
+          inputRevision:"revision",stage:"queued",createdAt:1760000000,updatedAt:1760000000,
+          errorCode:null,providerHealth:{},candidates:[]}),{status:202});
+      }
+      if (path.endsWith("/sessions")) return new Response(JSON.stringify({sessions:[session]}),{status:200});
+      if (path.endsWith("/sessions/session-1")) return new Response(JSON.stringify(session),{status:200});
+      if (path.endsWith("/runs")) return new Response(JSON.stringify({runs:[]}),{status:200});
+      if (path.endsWith("/ideas")) return new Response(JSON.stringify({ideas:[]}),{status:200});
+      throw Error("Unexpected route "+path);
+    });
+    render(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+      selectedSessionId="session-1" onSelectSession={()=>{}} />);
+    const button=await screen.findByRole("button",{name:"Discover opportunities"});
+    await waitFor(()=>expect(button).toBeDisabled());
+    expect(screen.getByText(/SearXNG is not responding/i)).toBeInTheDocument();
+    expect(screen.getByText(/Probe diagnostic/)).toBeInTheDocument();
+    expect(launches).toBe(0);
+    searchReady=true;
+    await userEvent.setup().click(screen.getByRole("button",{name:"Retry search check"}));
+    await waitFor(()=>expect(finishRetry).toBeDefined());
+    expect(screen.queryByText(/Probe diagnostic/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Retry search check"})).toBeDisabled();
+    finishRetry!(new Response(JSON.stringify({version:1,search:{state:"ready"}}),{status:200}));
+    await waitFor(()=>expect(button).toBeEnabled());
+    await userEvent.setup().click(button);
+    expect(launches).toBe(1);
+  });
+
+  it("moves to Select Idea only after a newly started run finishes with usable ideas", async () => {
+    const candidate={id:"idea-1",rank:1,title:"Insurance",hook:"Why?",premise:"Costs",whyNow:"Now",
+      angleKey:"insurance",sourceIds:[],confidence:"low",decision:null};
+    const previousRun={id:"run-old",projectId:"brand-1",inputRevision:"old",status:"completed",
+      stage:"complete",createdAt:1760000000,updatedAt:1760000000,errorCode:null,providerHealth:{},
+      candidates:[candidate]};
+    const startedRun={...previousRun,id:"run-new",status:"queued",stage:"queued",candidates:[]};
+    let currentRun=previousRun;
+    const onIdeasReady=vi.fn();
+    mockFetch(async (input,options)=>{
+      const path=String(input);
+      if(path.endsWith("/project-discovery")&&options?.method==="POST") {
+        currentRun=startedRun;
+        return new Response(JSON.stringify(startedRun),{status:202});
+      }
+      if(path.endsWith("/sessions"))return new Response(JSON.stringify({sessions:[session]}),{status:200});
+      if(path.endsWith("/sessions/session-1"))return new Response(JSON.stringify({...session,ideaCount:2}),{status:200});
+      if(path.endsWith("/runs"))return new Response(JSON.stringify({runs:[currentRun]}),{status:200});
+      if(path.endsWith("/ideas"))return new Response(JSON.stringify({ideas:[]}),{status:200});
+      throw Error("Unexpected route "+path);
+    });
+    vi.useFakeTimers({toFake:["setInterval","clearInterval"]});
+    try {
+      render(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+        selectedSessionId="session-1" onSelectSession={()=>{}} onIdeasReady={onIdeasReady} />);
+      expect(await screen.findByText("Latest job: completed")).toBeInTheDocument();
+      expect(onIdeasReady).not.toHaveBeenCalled();
+      await userEvent.setup().click(screen.getByRole("button",{name:"Discover opportunities"}));
+      currentRun={...startedRun,status:"completed",stage:"complete",candidates:[candidate]};
+      await act(async()=>{await vi.advanceTimersByTimeAsync(3600);});
+      await waitFor(()=>expect(onIdeasReady).toHaveBeenCalledWith("session-1","run-new"));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(3600);});
+      expect(onIdeasReady).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not auto-select when the new run finds no ideas despite older saved session ideas", async () => {
+    const oldCandidate={id:"idea-old",rank:1,title:"Earlier idea",hook:"Why?",premise:"Costs",whyNow:"Now",
+      angleKey:"insurance",sourceIds:[],confidence:"low",decision:null};
+    const previousRun={id:"run-old",projectId:"brand-1",inputRevision:"old",status:"completed",
+      stage:"complete",createdAt:1760000000,updatedAt:1760000000,errorCode:null,providerHealth:{},
+      candidates:[oldCandidate]};
+    const startedRun={...previousRun,id:"run-new",status:"queued",stage:"queued",candidates:[]};
+    let currentRun=previousRun;
+    const onIdeasReady=vi.fn();
+    mockFetch(async(input,options)=>{
+      const path=String(input);
+      if(path.endsWith("/project-discovery")&&options?.method==="POST") {
+        currentRun=startedRun;
+        return new Response(JSON.stringify(startedRun),{status:202});
+      }
+      if(path.endsWith("/sessions"))return new Response(JSON.stringify({sessions:[session]}),{status:200});
+      // ideaCount is intentionally session-wide: the last run may have produced no new ideas.
+      if(path.endsWith("/sessions/session-1"))return new Response(JSON.stringify({...session,ideaCount:1}),{status:200});
+      if(path.endsWith("/runs"))return new Response(JSON.stringify({runs:[currentRun]}),{status:200});
+      if(path.endsWith("/ideas"))return new Response(JSON.stringify({ideas:[]}),{status:200});
+      throw Error("Unexpected route "+path);
+    });
+    vi.useFakeTimers({toFake:["setInterval","clearInterval"]});
+    try {
+      render(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+        selectedSessionId="session-1" onSelectSession={()=>{}} onIdeasReady={onIdeasReady}/>);
+      expect(await screen.findByText("Latest job: completed")).toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole("button",{name:"Discover opportunities"}));
+      currentRun={...startedRun,status:"insufficient_evidence",stage:"complete"};
+      await act(async()=>{await vi.advanceTimersByTimeAsync(3600);});
+      await waitFor(()=>expect(screen.getByText("Latest job: insufficient evidence")).toBeInTheDocument());
+      expect(onIdeasReady).not.toHaveBeenCalled();
+    } finally {vi.useRealTimers();}
+  });
+
+  it("keeps saved sessions available while showing an actionable discovery failure", async () => {
+    mockFetch(async (input, options) => {
       const path = String(input);
       if (path.endsWith("/project-discovery") && options?.method === "POST")
         return new Response(JSON.stringify({ error: "Search connector unavailable" }), { status: 503 });
@@ -90,7 +205,7 @@ describe("Content discovery sessions", () => {
 
   it("archives a session without deleting it and restores it from saved history", async () => {
     let archived = false;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+    mockFetch(async (input, options) => {
       const path = String(input);
       if (path.endsWith("/sessions/session-1") && options?.method === "PATCH") {
         archived = JSON.parse(String(options.body)).archived;
@@ -121,7 +236,7 @@ describe("Content discovery sessions", () => {
       inputRevision: "revision", status: "running", stage: "refresh_sources", createdAt: 1760000000,
       updatedAt: 1760000000, errorCode: null, providerHealth: {}, candidates: [] };
     let cancelled = false;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+    mockFetch(async (input, options) => {
       const path = String(input);
       if (path.endsWith(`/project-discovery/${run.id}/cancel`) && options?.method === "POST") {
         cancelled = true;
@@ -146,7 +261,7 @@ describe("Content discovery sessions", () => {
       inputRevision: "revision", status: "running", stage: "refresh_sources", createdAt: 1760000000,
       updatedAt: 1760000000, errorCode: null, providerHealth: {}, candidates: [] };
     let finishSecondRun: ((response: Response) => void) | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    mockFetch(async input => {
       const path = String(input);
       if (path.endsWith("/sessions")) return new Response(JSON.stringify({ sessions: [session, secondSession] }), { status: 200 });
       if (path.endsWith("/session-1")) return new Response(JSON.stringify({ ...session, ideaCount: 2 }), { status: 200 });
@@ -169,7 +284,6 @@ describe("Content discovery sessions", () => {
     expect(screen.queryByText("Latest job: running")).not.toBeInTheDocument();
   });
 });
-
 describe("Select idea", () => {
   const ideas = Array.from({ length: 7 }, (_, i): DiscoverySessionIdea => ({
     id: `idea-${i + 1}`, sessionId: "session-1", runId: "run-1", rank: i + 1,
@@ -276,4 +390,3 @@ describe("Select idea", () => {
     expect(screen.queryByText("Why home insurance keeps rising")).not.toBeInTheDocument();
   });
 });
-
