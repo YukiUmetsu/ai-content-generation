@@ -147,6 +147,22 @@ test("quality screening rejects reported long or contrived search terms without 
   assert.equal(result.rejected,reported.length);
 });
 
+test("search-heading suffixes are rejected without blocking established technical phrases",()=>{
+  const headings=[
+    "home equity growth timeline", "property value depreciation risk",
+    "HOA fee escalation risk", "refinance cost benefit",
+  ];
+  const searchable=[
+    "mortgage interest deduction", "home equity loan rates", "property tax exemption limits",
+    "hidden closing costs", "environmental impact", "camera lens comparison",
+    "flood risk", "credit risk", "cost benefit analysis", "supply chain disruption risk",
+  ];
+  const result=qualityKeywordSuggestions([...headings,...searchable].map(text=>item(text)),
+    {name:"Homeownership"});
+  assert.deepEqual(result.suggestions.map(row=>row.text),searchable);
+  assert.equal(result.rejected,headings.length);
+});
+
 test("VS Code is a product name, not a three-word comparison",async()=>{
   const quality=qualityKeywordSuggestions([item("VS Code"),item("VS Code extensions")],
     {name:"Programming tools"});
@@ -158,6 +174,38 @@ test("VS Code is a product name, not a three-word comparison",async()=>{
       transport,sleep:async()=>{},targetCount:1});
   assert.equal(result.suggestions[0].text,"VS Code extensions");
   assert.equal(calls,1,"Do not spend a semantic comparison request on a product name");
+});
+
+test("natural product comparison keywords do not depend on optional semantic inference",async()=>{
+  let calls=0;
+  const result=await generateProjectKeywords({name:"Camera reviews",description:"Choosing camera lenses",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+      transport:async()=>{calls++;return reply([item("camera lens comparison")]);},
+      sleep:async()=>{},targetCount:1});
+  assert.deepEqual(result.suggestions.map(row=>row.text),["camera lens comparison"]);
+  assert.equal(calls,1,"A natural comparison search should not require a second model verdict");
+});
+
+test("cross-domain impact searches get contextual review instead of a blanket rejection",async()=>{
+  let generation=0;const verdicts=[];
+  const transport=async(_url,options)=>{
+    const req=JSON.parse(options.body);
+    if(req.messages[0].content.includes("comparison suitability")){
+      const payload=JSON.parse(req.messages[1].content);
+      verdicts.push(payload.candidates.map(row=>row.text));
+      return replyVerdict(payload.candidates.map(row=>({text:row.text,
+        suitable:row.text==="AI environmental impact"})));
+    }
+    generation++;
+    return reply(generation===1?[item("property tax impact"),item("AI environmental impact")]:
+      [item("solar panel efficiency")]);
+  };
+  const result=await generateProjectKeywords({name:"Climate technology",description:"Environmental effects of AI systems",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+      transport,sleep:async()=>{},targetCount:1});
+  assert.deepEqual(result.suggestions.map(row=>row.text),["AI environmental impact"]);
+  assert.deepEqual(verdicts,[["property tax impact","AI environmental impact"]]);
+  assert.equal(result.quality.modelRequests,2);
 });
 
 test("technical product names and established four-word terms remain searchable",()=>{
@@ -380,6 +428,59 @@ test("ambiguous financial jargon gets semantic review instead of passing on keyw
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,sleep:async()=>{},targetCount:2});
   assert.deepEqual(result.suggestions.map(x=>x.text),["property tax reassessment","home maintenance budget"]);
   assert.equal(calls,3);
+});
+
+test("opaque jargon receives natural-search review and rejected batches refill with different search terms",async()=>{
+  const requests=[];let generation=0;const updates=[];
+  const transport=async(_url,options)=>{
+    const req=JSON.parse(options.body);
+    requests.push(req);
+    if(req.messages[0].content.includes("comparison suitability")){
+      const payload=JSON.parse(req.messages[1].content);
+      return replyVerdict(payload.candidates.map(row=>({text:row.text,suitable:false})));
+    }
+    generation++;
+    if(generation===1)return reply([item("maintenance reserve funds"),item("mortgage interest deduction")]);
+    if(generation===2)return reply([item("rental yield comparison"),item("insurance premium volatility")]);
+    return reply([item("hidden closing costs"),item("home equity loan rates")]);
+  };
+  const result=await generateProjectKeywords({name:"Homeowner expenses",
+    description:"Practical costs of owning and maintaining a home",keywords:[]},
+  {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+    transport,sleep:async()=>{},targetCount:3,onBatch:batch=>updates.push(batch)});
+  assert.deepEqual(result.suggestions.map(row=>row.text),[
+    "mortgage interest deduction","hidden closing costs","home equity loan rates",
+  ]);
+  assert.deepEqual(updates.map(batch=>batch.suggestions.length),[1,0,2]);
+  assert.equal(result.quality.modelRequests,5,"Jargon checks and generation share the inference budget");
+  assert.ok(requests.filter(req=>req.messages[0].content.includes("comparison suitability")).length===2);
+  for(const req of requests.filter(req=>!req.messages[0].content.includes("comparison suitability"))){
+    assert.match(req.messages[0].content,/search box|search-bar|search engine/iu);
+    assert.doesNotMatch(req.messages[0].content,/maintenance reserve funds|rental yield comparison|insurance premium volatility/iu);
+  }
+});
+
+test("repeated rejected jargon is screened locally before another costly semantic review",async()=>{
+  let generations=0,semanticCalls=0;
+  const transport=async(_url,options)=>{
+    const req=JSON.parse(options.body);
+    if(req.messages[0].content.includes("comparison suitability")){
+      semanticCalls++;
+      return replyVerdict([{text:"maintenance reserve funds",suitable:false}]);
+    }
+    generations++;
+    if(generations===1)return reply([item("maintenance reserve funds"),item("roof replacement costs")]);
+    if(generations===2)return reply([item("maintenance reserve funds"),item("home insurance premiums")]);
+    return reply([item("mortgage interest deduction")]);
+  };
+  const result=await generateProjectKeywords({name:"Homeowner budget",description:"Everyday maintenance and insurance costs",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+      transport,sleep:async()=>{},targetCount:3});
+  assert.deepEqual(result.suggestions.map(row=>row.text),[
+    "roof replacement costs","home insurance premiums","mortgage interest deduction",
+  ]);
+  assert.equal(semanticCalls,1,"Previously rejected phrases should not be re-reviewed");
+  assert.equal(result.quality.modelRequests,4);
 });
 
 test("noncomparison suggestions require no additional judgment inference",async()=>{
