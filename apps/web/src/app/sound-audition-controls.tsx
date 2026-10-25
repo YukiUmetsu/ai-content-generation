@@ -34,13 +34,10 @@ export function SoundAuditionControls({shotId,choice,layers,ambience,library}:Pr
     player.current?.stop();player.current=null;setPhase("idle");setProgressMs(0);
   },[]);
   // A newly selected shot or updated mix must never continue playing the previous configuration.
-  useEffect(()=>{
-    setPhase("idle");setMessage("");
-    return ()=>{
-      player.current?.stop();player.current=null;
-      if(endTimer.current){clearTimeout(endTimer.current);endTimer.current=null;}
-      if(progressTimer.current){clearInterval(progressTimer.current);progressTimer.current=null;}
-    };
+  useEffect(()=>()=>{
+    player.current?.stop();player.current=null;
+    if(endTimer.current){clearTimeout(endTimer.current);endTimer.current=null;}
+    if(progressTimer.current){clearInterval(progressTimer.current);progressTimer.current=null;}
   },[plan,voiceFile]);
 
   async function play(){
