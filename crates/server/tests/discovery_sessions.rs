@@ -128,6 +128,7 @@ fn session_run_keeps_the_brand_context_from_session_creation() {
     assert_eq!(run.input_snapshot["projectName"],"Margin Atlas");
     assert_eq!(run.input_snapshot["description"],"Consumer finance explainer brand");
     assert_eq!(run.input_snapshot["sessionSettings"]["project"]["revision"],1);
+    assert_eq!(run.input_snapshot["ideaScoreVersion"],"evidence-readiness-v1");
 }
 
 #[test]
@@ -229,6 +230,7 @@ fn scoring_uses_frozen_evidence_and_never_invents_audience_demand() {
     let unquoted = ideas.iter().find(|i| i.candidate.angle_key == "no-passage").unwrap();
     assert!(unquoted.opportunity_score.is_none(), "an empty passage is not usable evidence");
     assert_eq!(unquoted.score_inputs["capturedPassages"], 0);
+    conn.execute("UPDATE kg_sources SET passage='Source changed after the run' WHERE id='s1'", []).unwrap();
     assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()
         .iter().find(|i| i.candidate.angle_key == "many-sources").unwrap().opportunity_score, Some(90.0));
 }
