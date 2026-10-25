@@ -29,6 +29,10 @@ test("visual preview compiles exactly the production scene plan with only estima
  assert.match(view.timing.note,/estimated/);
  assert.equal(view.plan.commercialReady,false);
  assert.match(view.renderPlanSha256,/^[a-f0-9]{64}$/);
+ assert.equal(view.quality.kind,"rendered-scene-quality/v1");
+ assert.equal(view.quality.summary.totalShots,bundle.plan.shots.length);
+ assert.equal(view.quality.basis,"compiled-renderer-static-preflight");
+ assert.deepEqual(view.quality.findings.map(f=>f.shotId).every(id=>bundle.plan.shots.some(s=>s.id===id)),true);
 });
 test("previews are reproducible at arbitrary frames, with a locked first payoff frame",()=>{
  const {dossier,bundle}=original();

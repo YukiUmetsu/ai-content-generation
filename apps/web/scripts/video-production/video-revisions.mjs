@@ -8,7 +8,8 @@ import { isSceneMotion } from "./scene-motion.mjs";
 import { isVisualElements } from "./visual-elements.mjs";
 const sha=v=>createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const text=(v,max=2000)=>typeof v==="string"&&v.trim()&&v.length<=max&&!/[\u0000-\u0008\u000e-\u001f]/u.test(v);
-const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements"];
+const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements","family"];
+const families=new Set(["question","process","comparison","cost-breakdown","mechanism","evidence","summary"]);
 export function editPreproductionShot(dossier,original,edit){
   if(!original || original.kind!=="preproduction-bundle" || original.researchId!==dossier?.id ||
      original.researchSha256!==sha(dossier) || original.planSha256!==sha(original.plan))
@@ -19,13 +20,15 @@ export function editPreproductionShot(dossier,original,edit){
     throw Error("Select one shot and explicit editable fields.");
   const changes=Object.entries(edit.changes);
   if(!changes.length||changes.length>allowed.length||
-      changes.some(([k,v])=>!allowed.includes(k)||(k==="visualElements"? !isVisualElements(v) : k==="motion"? !isSceneMotion(v) : k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
-    throw Error("Editable fields are narration, onScreenText, visualChange, visualAction, sfxIntent, motion and visualElements.");
+      changes.some(([k,v])=>!allowed.includes(k)||(k==="family"? !families.has(v) : k==="visualElements"? !isVisualElements(v) : k==="motion"? !isSceneMotion(v) : k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
+    throw Error("Editable fields are narration, onScreenText, visualChange, visualAction, sfxIntent, motion, visualElements and a supported shot family.");
   const plan=structuredClone(original.plan);
   const shot=plan.shots.find(x=>x.id===edit.shotId);
   const voice=plan.sound.find(x=>x.shotId===edit.shotId);
   const phase=(plan.teachingSequences??[]).flatMap(x=>x.phases).find(x=>x.shotId===edit.shotId);
   if(!shot||!voice||!phase)throw Error("Shot must exist in a narrated teaching sequence.");
+  if(changes.some(([key])=>key==="family") && (plan.shots[0].id===shot.id||plan.shots.at(-1).id===shot.id||shot.sceneRecipe))
+    throw Error("The opening, closing and bespoke recipe scenes have dedicated layouts; choose a middle general scene to change its family.");
   const revised=new Set(),audio=new Set(),visual=new Set(),sfx=new Set();
   for(const [key,value] of changes){
     const target=key==="narration"||key==="sfxIntent"?voice:key==="visualAction"?phase:shot;

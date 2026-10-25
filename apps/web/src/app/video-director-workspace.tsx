@@ -13,7 +13,7 @@ import { isVisualElements, type VisualElement } from "../../scripts/video-produc
 import { directorStages, nextDirectorStage, resolveDirectorNavigation,
   shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
 
-type Shot={id:string;visualChange:string;onScreenText:string;purpose:string;visualElements?:VisualElement[]};
+type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[]};
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
@@ -71,7 +71,7 @@ function shotDraft(bundle:Bundle,id:string){
   const shot=bundle.plan.shots.find(x=>x.id===id);
   const audio=bundle.plan.sound.find(x=>x.shotId===id);
   const phase=bundle.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===id);
-  return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",
+  return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",family:shot?.family??"process",
     visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
     sfxIntent:audio?.sfxIntent??"",
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
@@ -85,7 +85,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
-  const [draft,setDraft]=useState({narration:"",onScreenText:"",visualChange:"",visualAction:"",sfxIntent:"",visualElementsText:""});
+  const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",visualElementsText:""});
   const [variants,setVariants]=useState<Variant[]>([]);
   const [voiceVariant,setVoiceVariant]=useState("");
   const [visualVariant,setVisualVariant]=useState("");
@@ -210,7 +210,11 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     }
     setShotId(id);setDraft(shotDraft(bundle,id));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");
-    if(focusEditor)document.querySelector<HTMLSelectElement>('select[aria-label="Selected video shot"]')?.focus();
+    if(focusEditor){
+      setStage("storyboard");
+      if(typeof requestAnimationFrame==="function")
+        requestAnimationFrame(()=>document.querySelector<HTMLSelectElement>('select[aria-label="Selected video shot"]')?.focus());
+    }
   }
   function parseElementsInput(value:string):VisualElement[]{
     const lines=value.trim().split("\n").map(s=>s.trim()).filter(Boolean);
@@ -226,6 +230,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     if(!shot||!audio)return {};
     const result:Record<string,string|null|VisualElement[]>={};
     if(draft.narration!==audio.narration)result.narration=draft.narration;
+    if(draft.family!==(shot.family??"process"))result.family=draft.family;
     if(draft.onScreenText!==shot.onScreenText)result.onScreenText=draft.onScreenText;
     if(draft.visualChange!==shot.visualChange)result.visualChange=draft.visualChange;
     if(draft.visualAction!==(phase?.visualAction??shot.visualChange))result.visualAction=draft.visualAction;
@@ -280,6 +285,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const visualTextSaved=shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
   const dirty=!!shot&&!!audio&&(
     draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
+    draft.family!==(shot.family??"process")||
     draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
     draft.sfxIntent!==(audio.sfxIntent??"")||draft.visualElementsText.trim()!==visualTextSaved.trim());
   function navigate(target:DirectorStage){
@@ -416,6 +422,20 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
               </label>
               <label className={header}>Shot description<textarea className={field+" mt-2"} rows={3} maxLength={650} aria-label="Edit shot description" value={draft.visualChange} onChange={e=>setDraft({...draft,visualChange:e.target.value})}/></label>
               <div className="flex flex-col gap-3">
+                <label className={header}>Visible scene layout
+                  <select className={field+" mt-2"} aria-label="Visible scene layout" value={draft.family}
+                    disabled={busy||!!shot.sceneRecipe||shot.id===bundle.plan.shots[0].id||shot.id===bundle.plan.shots.at(-1)?.id}
+                    onChange={e=>setDraft({...draft,family:e.target.value})}>
+                    <option value="question">Question · connected stages</option>
+                    <option value="process">Process · connected stages</option>
+                    <option value="mechanism">Mechanism · connected stages</option>
+                    <option value="comparison">Comparison · side by side</option>
+                    <option value="cost-breakdown">Breakdown · itemized parts</option>
+                    <option value="evidence">Evidence · itemized parts</option>
+                    <option value="summary">Summary · connected stages</option>
+                  </select>
+                  <span className="mt-1 block text-xs font-normal normal-case tracking-normal text-muted-foreground">This controls the actual renderer arrangement. Opening, closing and bespoke scenes have fixed layouts. Written motion directions alone do not create 3D or footage.</span>
+                </label>
                 <label className={header}>On-screen text<input className={field+" mt-2"} maxLength={240} aria-label="Edit on-screen text" value={draft.onScreenText} onChange={e=>setDraft({...draft,onScreenText:e.target.value})}/></label>
                 <label className={header}>Sound effect intent (optional)<input className={field+" mt-2"} maxLength={250} aria-label="Edit sound effect intent" value={draft.sfxIntent} onChange={e=>setDraft({...draft,sfxIntent:e.target.value})}/></label>
               </div>

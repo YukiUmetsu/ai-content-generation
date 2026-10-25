@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
 import { DEFAULT_SCENE_MOTION, type SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
+import { VisualQualityReview, type VisualQualityReport } from "./visual-quality-review";
 
 const RendererScene=lazy(()=>import("./live-renderer-scene"));
 export type LiveVisualPreviewData={
@@ -11,6 +12,7 @@ export type LiveVisualPreviewData={
   sourcePlanSha256:string;renderPlanSha256:string;
   timing:{basis:"estimated-text-only";spokenWpm:number;measuredNarration:false;note:string};
   visualLimits:string[];
+  quality?:VisualQualityReport;
 };
 const humanTime=(frame:number,fps:number)=>{
   const seconds=frame/fps;
@@ -153,6 +155,10 @@ export function LiveRendererPreview({
         </button>)}
       </div>
     </div>
+    <VisualQualityReview report={preview.quality} activeShotId={shot.shotId}
+      shotIds={shotMap.map(item=>item.shotId)}
+      onInspectShot={id=>{const index=shotMap.findIndex(item=>item.shotId===id);if(index>=0)seekShot(index);}}
+      onEditShot={onSelectShot}/>
     <div className="space-y-3 rounded-control border border-border bg-surface-subtle p-3">
       <div>
         <p className="text-sm font-semibold">Scene motion · shot {active+1}</p>
