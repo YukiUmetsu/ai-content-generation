@@ -666,15 +666,79 @@ pub fn finish_run(
     Ok(())
 }
 
-/// Queue one-time market backfills for completed named sessions with genuinely
-/// missing provider observations. An existing failed/unavailable assessment is
-/// deliberately NOT a missing observation: retrying it requires a separate
-/// cooldown-aware policy. The marker prevents reopening the same run forever
-/// if a provider or database becomes unavailable.
+/// A failed or unavailable provider attempt is not a successful measurement.
+/// Respect the provider's retry window and the shared daily API budgets.
+/// YouTube never schedules work without a usable local API key; Google Trends
+/// is independent and can still be retried.
+pub fn market_retry_due(
+    db: &Connection,
+    idea_id: &str,
+    now: i64,
+    youtube_ready: bool,
+) -> Result<(bool, bool), DiscoveryError> {
+    const DAY: i64 = 86_400;
+    const SIX_HOURS: i64 = 6 * 3_600;
+    const THIRTY_DAYS: i64 = 30 * DAY;
+    let youtube: Option<(String, Option<String>, i64, Option<i64>)> = db
+        .query_row(
+            "SELECT state,error_code,started_at,finished_at FROM idea_market_runs
+             WHERE idea_id=?1 ORDER BY started_at DESC,rowid DESC LIMIT 1",
+            [idea_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let youtube_due = youtube_ready
+        && match youtube {
+            None => true,
+            Some((state, _, started, finished)) if state == "succeeded" => {
+                finished.unwrap_or(started).saturating_add(THIRTY_DAYS) <= now
+            }
+            Some((state, reason, started, _)) if matches!(state.as_str(), "failed" | "unavailable" | "expired") => {
+                if matches!(reason.as_deref(), Some("api_key_missing" | "credential_denied" | "credential_unavailable")) {
+                    true // Key was added or unlocked after the previous attempt.
+                } else {
+                    let delay = if matches!(reason.as_deref(), Some(
+                        "quota_exceeded" | "rate_limited" | "budget_exhausted" | "collection_limit"
+                    )) { DAY } else { SIX_HOURS };
+                    started.saturating_add(delay) <= now
+                }
+            }
+            _ => false, // Never race a running provider reservation.
+        };
+    let trends: Option<(String, Option<String>, i64, Option<i64>)> = db
+        .query_row(
+            "SELECT state,error_code,started_at,finished_at FROM idea_trends_runs
+             WHERE idea_id=?1 ORDER BY started_at DESC,rowid DESC LIMIT 1",
+            [idea_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let trends_due = match trends {
+        None => true,
+        Some((state, _, started, finished)) if state == "succeeded" => {
+            finished.unwrap_or(started).saturating_add(THIRTY_DAYS) <= now
+        }
+        Some((state, reason, started, _)) if matches!(state.as_str(), "failed" | "unavailable") => {
+            let delay = if matches!(reason.as_deref(), Some(
+                "rate_limited" | "budget_exhausted" | "collection_limit"
+            )) { DAY } else { SIX_HOURS };
+            started.saturating_add(delay) <= now
+        }
+        _ => false,
+    };
+    Ok((youtube_due, trends_due))
+}
+
+/// Queue eligible missing, expired and failed market measurements. Retry
+/// eligibility is computed from persisted provider attempts, not a one-shot
+/// Discovery-run marker, so previously unavailable results can recover.
+/// One active run per session and an immediate SQLite transaction prevent
+/// duplicate jobs from startup, the UI, and the periodic scheduler.
 pub fn queue_missing_market_runs(
     db: &mut Connection,
     scope: Option<(&str, &str)>,
     now: i64,
+    youtube_ready: bool,
 ) -> Result<Vec<String>, DiscoveryError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     if let Some((project_id, session_id)) = scope {
@@ -694,25 +758,37 @@ pub fn queue_missing_market_runs(
             "SELECT r.id FROM discovery_runs r
              JOIN content_discovery_sessions s ON s.id=r.session_id
              WHERE r.status='completed' AND r.stage='completed'
-               AND r.session_id LIKE 'session_%' AND s.archived_at IS NULL
+               AND s.archived_at IS NULL
                AND (?1 IS NULL OR r.project_id=?1)
                AND (?2 IS NULL OR r.session_id=?2)
-               AND json_type(r.provider_health_json,'$.marketBackfill') IS NULL
+               AND EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.run_id=r.id)
                AND NOT EXISTS (
                    SELECT 1 FROM discovery_runs active
                    WHERE active.session_id=r.session_id
                      AND active.status IN ('queued','running','paused'))
-               AND EXISTS (
-                   SELECT 1 FROM discovery_candidates c WHERE c.run_id=r.id
-                     AND (NOT EXISTS (SELECT 1 FROM idea_market_runs m WHERE m.idea_id=c.id)
-                          OR NOT EXISTS (SELECT 1 FROM idea_trends_runs t WHERE t.idea_id=c.id)))
-             ORDER BY r.created_at ASC,r.id ASC LIMIT 4",
+             ORDER BY r.created_at ASC,r.id ASC",
         )?;
         let rows = stmt.query_map(params![project_id, session_id], |row| row.get(0))?;
         rows.collect::<Result<Vec<String>, _>>()?
     };
     let mut queued = Vec::new();
     for run_id in candidates {
+        let idea_ids: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT id FROM discovery_candidates WHERE run_id=?1")?;
+            let rows = stmt.query_map([&run_id], |row| row.get(0))?;
+            rows.collect::<Result<Vec<String>, _>>()?
+        };
+        let mut needs_collection = false;
+        for idea_id in idea_ids {
+            let (youtube_due, trends_due) = market_retry_due(&tx, &idea_id, now, youtube_ready)?;
+            if youtube_due || trends_due {
+                needs_collection = true;
+                break;
+            }
+        }
+        if !needs_collection {
+            continue;
+        }
         if tx.execute(
             "UPDATE discovery_runs SET status='running',stage='measure_market',
              updated_at=?2,finished_at=NULL,
@@ -726,6 +802,9 @@ pub fn queue_missing_market_runs(
             params![run_id, now],
         )? == 1 {
             queued.push(run_id);
+        }
+        if queued.len() >= 4 {
+            break;
         }
     }
     tx.commit()?;

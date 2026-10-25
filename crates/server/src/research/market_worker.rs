@@ -1,4 +1,4 @@
-//! Exactly one local-background collector. Nothing survives server shutdown.
+//! Local background collector with durable SQLite claims and restart recovery.
 
 use std::future::Future;
 use std::time::Duration;
@@ -22,11 +22,19 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let _ = super::discovery_store::recover_interrupted_market_runs(&db, epoch_now());
         }
         // Recover completed sessions created before automatic enrichment existed.
-        // Queue only missing observations, once per run; never re-spend quota on
-        // saved failed/unavailable attempts or on repeated polling.
+        // Retry missing, failed, and expired observations only when eligible.
+        // Provider cooldowns and the shared daily budget prevent quota loops.
         if let Ok(mut db) = state.connect() {
-            if let Err(error) = super::discovery_store::queue_missing_market_runs(&mut db, None, epoch_now()) {
-                eprintln!("contentgen-server: market_backfill_queue_failed reason={error}");
+            match super::discovery_store::queue_missing_market_runs(
+                &mut db, None, epoch_now(),
+                state.credentials().youtube_key().ok()
+                    .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+            ) {
+                Ok(queued) if !queued.is_empty() => eprintln!(
+                    "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
+                ),
+                Ok(_) => {},
+                Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
             }
         }
         tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
@@ -34,11 +42,19 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
-            // Enqueue historical gaps on every tick as well as at startup.
-            // The persisted marker makes this idempotent across restarts.
+            // Re-evaluate durable provider cooldowns on each scheduler tick.
+            // SQLite run leases prevent duplicate work across caller paths.
             if let Ok(mut db) = state.connect() {
-                if let Err(error) = super::discovery_store::queue_missing_market_runs(&mut db, None, epoch_now()) {
-                    eprintln!("contentgen-server: market_backfill_queue_failed reason={error}");
+                match super::discovery_store::queue_missing_market_runs(
+                    &mut db, None, epoch_now(),
+                    state.credentials().youtube_key().ok()
+                        .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+                ) {
+                    Ok(queued) if !queued.is_empty() => eprintln!(
+                        "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
+                    ),
+                    Ok(_) => {},
+                    Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
                 }
             }
             // Discovery enrichment has its own completion state and must run

@@ -283,6 +283,24 @@ fn automatic_missing_credentials_is_visible_but_does_not_consume_quota_or_block_
 }
 
 #[test]
+fn automatic_retry_blockers_are_persisted_without_overwriting_success_or_spamming() {
+    let (mut db, session, idea) = seeded();
+    let now = 1_792_886_400;
+    idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
+        "roof repair", "long", "api_key_missing", now).unwrap();
+    // The key was added, but the provider quota is exhausted. Do not leave
+    // the stale missing-key error eligible for an immediate retry loop.
+    idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
+        "roof repair", "long", "budget_exhausted", now).unwrap();
+    let latest = idea_market::latest_assessment(&db, &idea, now + 1).unwrap().unwrap();
+    assert_eq!(latest.error_code.as_deref(), Some("budget_exhausted"));
+    idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
+        "roof repair", "long", "budget_exhausted", now + 2).unwrap();
+    assert_eq!(db.query_row("SELECT COUNT(*) FROM idea_market_runs", [], |r|r.get::<_,i64>(0)).unwrap(), 2);
+    assert_eq!(db.query_row("SELECT COUNT(*) FROM market_search_budget", [], |r|r.get::<_,i64>(0)).unwrap(), 0);
+}
+
+#[test]
 fn channel_dominance_missing_counts_and_bad_dates_cannot_fabricate_a_market_score() {
     let (mut db, session, idea) = seeded();
     let now = 1_792_886_400;
