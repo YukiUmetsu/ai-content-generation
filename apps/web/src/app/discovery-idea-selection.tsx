@@ -76,6 +76,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [compareFormat, setCompareFormat] = useState<IdeaVideoFormat>("long");
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
   const [runMarketHealth, setRunMarketHealth] = useState<unknown>(null);
+  const [discoveryRunning, setDiscoveryRunning] = useState(false);
   const [backfillState, setBackfillState] = useState<"idle" | "queued" | "running" | "no_pending" | "error">("idle");
   const [marketStatusError, setMarketStatusError] = useState<string | null>(null);
   const [collectingId, setCollectingId] = useState<string | null>(null);
@@ -101,6 +102,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       if (sessionResult.status === "fulfilled") {
         setSessionPlatforms(sessionResult.value.platforms);
         setRunMarketHealth(sessionResult.value.lastRun?.providerHealth.market ?? null);
+        setDiscoveryRunning(["queued", "running"].includes(sessionResult.value.lastRun?.status ?? ""));
       }
       setLoading(false);
     });
@@ -132,7 +134,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   }, [projectId, sessionId, loading, hasMissingMarket]);
 
   const hasPendingMarket = ideas.some(idea => idea.marketAssessment?.state === "running") ||
-    ["queued", "running"].includes(backfillState);
+    ["queued", "running"].includes(backfillState) || discoveryRunning;
   useEffect(() => {
     if ((!hasPendingMarket && !collectingId) || pollTimedOut) return;
     let alive = true;
@@ -147,6 +149,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         .then(async ([latest, runs]) => {
           if (!alive) return;
           setIdeas(latest);
+          setDiscoveryRunning(runs.some(run => run.status === "queued" || run.status === "running"));
           const activeBackfill = runs.some(run => run.status === "running" &&
             (run.stage === "measure_market" || run.stage === "measure_market_collecting"));
           const marketRun = runs.find(run => run.providerHealth?.market);
@@ -199,6 +202,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       ]);
       setIdeas(latest); setMarketStatus(status); setMarketStatusError(null);
       setRunMarketHealth(session.lastRun?.providerHealth.market ?? null);
+      setDiscoveryRunning(["queued", "running"].includes(session.lastRun?.status ?? ""));
       if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
         const queued = await queueMissingMarketEvidence(projectId, sessionId);
         setBackfillState(queued.state);
