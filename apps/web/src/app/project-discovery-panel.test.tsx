@@ -9,6 +9,23 @@ import type {GraphSource} from "@/lib/api/discovery";
 afterEach(()=>vi.restoreAllMocks());
 
 describe("Project discovery author controls",()=>{
+  it("accepts structured market health from the saved-run API and renders it as readable counts",async()=>{
+    const run={id:"discover_market",projectId:"project-local",inputRevision:"revision",status:"completed",
+      stage:"complete",createdAt:1760000000,updatedAt:1760000000,errorCode:null,candidates:[],
+      providerHealth:{market:{state:"partial",youtube:{succeeded:2,unavailable:1,attempts:3},
+        googleTrends:{succeeded:1,unavailable:2,attempts:3}},news:"Search completed"}};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+      const path=String(input);
+      if(path.endsWith("/runs"))return new Response(JSON.stringify({runs:[run]}));
+      throw Error(`Unexpected route ${path}`);
+    });
+    render(<DiscoveryIdeasPanel project={{id:"project-local",name:"House Math",notes:"Homeowner economics",
+      createdAt:"2026-10-20T00:00:00Z"}} content={[]} locale="en" syncStatus="synced"
+      sources={[]} onSaveIdea={()=>true} onRunFinished={()=>{}}/>);
+    expect(await screen.findByText(/YouTube: 2 succeeded, 1 unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Google Trends: 1 succeeded, 2 unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/news: Search completed/)).toBeInTheDocument();
+  });
   it("makes an unavailable local search service actionable without implying an empty search",async()=>{
     const run={id:"discover_"+"e".repeat(24),projectId:"project-local",inputRevision:"snapshot",
       status:"insufficient_evidence",stage:"completed",createdAt:1760000000,updatedAt:1760000000,

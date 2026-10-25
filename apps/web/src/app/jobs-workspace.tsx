@@ -19,6 +19,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { SplitPane } from "@/components/ui/split-pane";
 import { Surface } from "@/components/ui/surface-card";
 import { EmptyState } from "@/app/empty-state";
+import { formatDiscoveryProviderHealth } from "./discovery-provider-health";
 import { translate, formatDateTime } from "@/i18n/messages";
 import { listJobs, getJob, cancelJob, ApiError } from "@/lib/api/client";
 import { listDiscoverySessions, type DiscoverySession } from "@/lib/api/discovery-sessions";
@@ -1109,7 +1110,7 @@ function DiscoveryJobDetail({ entry, locale }: {
           <dl className="grid gap-2 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
             {health.map(([provider, status]) => <div key={provider} className="contents">
               <dt className="break-words text-muted-foreground">{provider}</dt>
-              <dd className="break-words text-foreground">{status}</dd>
+              <dd className="break-words text-foreground">{formatDiscoveryProviderHealth(status, locale)}</dd>
             </div>)}
           </dl>
         </section>

@@ -10,6 +10,7 @@ import {
   type DiscoveryPlatform, type DiscoverySession,
 } from "@/lib/api/discovery-sessions";
 import type { DiscoveryRun } from "@/lib/api/discovery";
+import { formatDiscoveryProviderHealth } from "./discovery-provider-health";
 
 const tr = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : en;
 const inputClass = "w-full rounded-control border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -159,13 +160,14 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
     if (!currentId) return;
     let alive = true;
     const controller = new AbortController();
+    const refreshSequence = activeRefreshSequence;
     const load = async () => {
       try { if (alive) await refreshActive(currentId, controller.signal); }
       catch (failure) { if (alive) setError(failure instanceof Error ? failure.message : "Could not load session details."); }
     };
     void load();
     const timer = window.setInterval(() => { void load(); }, 3500);
-    return () => { alive = false; controller.abort(); activeRefreshSequence.current++; window.clearInterval(timer); };
+    return () => { alive = false; controller.abort(); refreshSequence.current++; window.clearInterval(timer); };
   }, [currentId, refreshActive]);
 
   useEffect(()=>{
@@ -403,7 +405,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
             {run.providerHealth && Object.keys(run.providerHealth).length > 0 && <details className="mt-2 text-xs text-muted-foreground">
               <summary className="cursor-pointer">{tr(locale, "Provider availability and evidence gaps", "データ提供元・根拠の不足")}</summary>
               <ul className="mt-2 space-y-1">{Object.entries(run.providerHealth).map(([provider, status]) =>
-                <li key={provider}>{provider}: {status}</li>)}</ul>
+                <li key={provider}>{provider}: {formatDiscoveryProviderHealth(status, locale)}</li>)}</ul>
             </details>}
           </div>}
         </div>}

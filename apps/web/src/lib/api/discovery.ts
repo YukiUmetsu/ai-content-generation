@@ -1,4 +1,5 @@
 import type { LocalContent, LocalProject } from "@/app/catalog-model";
+import { parseDiscoveryProviderHealth, type DiscoveryProviderHealth } from "@/app/discovery-provider-health";
 
 export type KeywordKind = "topic" | "query" | "exclusion";
 export type KeywordOrigin = "manual" | "model";
@@ -24,12 +25,12 @@ export type DiscoveryRun = { id: string; projectId: string; inputRevision: strin
   inputSnapshot?: {version:number;projectName:string;description:string;content:{name:string;stage:string}[];
     keywords:ProjectKeyword[];projectRevision:number;graphRevision:number;researchFreshness:number};
   status: "queued" | "running" | "paused" | "completed" | "insufficient_evidence" | "failed" | "cancelled";
-  stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: Record<string,string>;
+  stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: DiscoveryProviderHealth;
   candidates: DiscoveryCandidate[] };
 const PREFIX = "/api/research/discovery";
 
 /** A local server version mismatch or partial reply must not crash the entire React view. */
-function requireDiscoveryRun(value: unknown): DiscoveryRun {
+export function requireDiscoveryRun(value: unknown): DiscoveryRun {
   const data = value as Partial<DiscoveryRun> | null;
   const object = (item: unknown): item is Record<string, unknown> =>
     !!item && typeof item === "object" && !Array.isArray(item);
@@ -42,12 +43,13 @@ function requireDiscoveryRun(value: unknown): DiscoveryRun {
     typeof data.inputRevision !== "string" ||
     !["queued", "running", "paused", "completed", "insufficient_evidence", "failed", "cancelled"].includes(String(data.status)) ||
     typeof data.stage !== "string" || !Number.isFinite(data.createdAt) || !Number.isFinite(data.updatedAt) ||
+    (data.errorCode != null && typeof data.errorCode !== "string") ||
     !Array.isArray(data.candidates) || !data.candidates.every(candidate) ||
-    (data.providerHealth !== undefined && (!object(data.providerHealth) ||
-      Object.values(data.providerHealth).some(item => typeof item !== "string")))) {
+    (data.providerHealth !== undefined && !object(data.providerHealth))) {
     throw Error("Invalid discovery run response. Restart or rebuild the local server, then retry.");
   }
-  return { ...data, providerHealth: data.providerHealth ?? {} } as DiscoveryRun;
+  return { ...data, errorCode: data.errorCode ?? null,
+    providerHealth: parseDiscoveryProviderHealth(data.providerHealth) } as DiscoveryRun;
 }
 
 async function request<T>(path: string, method = "GET", data?: object, signal?: AbortSignal): Promise<T> {
@@ -176,6 +178,11 @@ export async function streamProjectKeywords(project:LocalProject,activeKeywords:
     if(buffer.trim())acceptLine(buffer);
     if(!final)throw Error("Keyword stream ended incomplete. Earlier suggestions are still available.");
     return final;
+  }catch(error){
+    // Parsing failures must stop the active local model response, not only
+    // release our reader while the producer keeps writing into the stream.
+    await reader.cancel().catch(()=>{});
+    throw error;
   }finally{reader.releaseLock();}
 }
 
