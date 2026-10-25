@@ -38,7 +38,7 @@ export interface ScriptEvidence {
   reviewStatus: "verified" | "unverified" | "illustrative" | "disputed";
 }
 
-/** Descriptive observations from a single explicitly requested public YouTube search. */
+/** Descriptive observations from a dated public YouTube search, including automatic Discovery collection. */
 export interface IdeaMarketAssessment {
   runId: string;
   state: "running" | "succeeded" | "failed" | "expired";
@@ -65,6 +65,20 @@ export interface IdeaMarketAssessment {
   }>;
 }
 
+/** A within-query Google search-interest change; indices are not keyword volumes. */
+export interface IdeaGoogleTrends {
+  state: "running" | "succeeded" | "failed" | "unavailable";
+  query: string;
+  region: string;
+  observedAt: number | null;
+  recentMean: number | null;
+  previousMean: number | null;
+  changePercent: number | null;
+  points: number;
+  metricVersion?: string;
+  errorCode: string | null;
+}
+
 export interface DiscoverySessionIdea {
   id: string;
   sessionId: string;
@@ -85,6 +99,7 @@ export interface DiscoverySessionIdea {
   sources: DiscoverySourceSummary[];
   evidence?: ScriptEvidence[];
   marketAssessment?: IdeaMarketAssessment | null;
+  googleTrends?: IdeaGoogleTrends | null;
 }
 
 export interface DiscoveryIdeaBrief {
@@ -181,7 +196,25 @@ function requireIdea(value: unknown): DiscoverySessionIdea {
       ["claimId", "claimText", "sourceId", "sourceUrl", "quote"].every(key => typeof item[key] === "string") &&
       ["verified", "unverified", "illustrative", "disputed"].includes(String(item.reviewStatus))) as ScriptEvidence[] : [],
     marketAssessment: parseIdeaMarketAssessment(value.marketAssessment),
+    googleTrends: parseIdeaGoogleTrends(value.googleTrends),
   } as DiscoverySessionIdea;
+}
+
+function parseIdeaGoogleTrends(raw: unknown): IdeaGoogleTrends | null {
+  if (!record(raw) || typeof raw.query !== "string" || !["running", "succeeded", "failed", "unavailable"].includes(String(raw.state)))
+    return null;
+  const optionalNumber = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
+  return {
+    state: raw.state as IdeaGoogleTrends["state"], query: raw.query,
+    region: typeof raw.region === "string" ? raw.region : "",
+    observedAt: typeof raw.observedAt === "number" && Number.isFinite(raw.observedAt) && raw.observedAt >= 0
+      ? raw.observedAt : null,
+    recentMean: optionalNumber(raw.recentMean), previousMean: optionalNumber(raw.previousMean),
+    changePercent: optionalNumber(raw.changePercent),
+    points: typeof raw.points === "number" && Number.isFinite(raw.points) && raw.points >= 0 ? raw.points : 0,
+    ...(typeof raw.metricVersion === "string" ? {metricVersion:raw.metricVersion} : {}),
+    errorCode: typeof raw.errorCode === "string" ? raw.errorCode : null,
+  };
 }
 
 function parseIdeaMarketAssessment(raw: unknown): IdeaMarketAssessment | null {

@@ -2,7 +2,7 @@ use contentgen_server::{
     db,
     research::{
         discovery_projects::{self, ProjectContentSnapshot, ProjectSnapshot},
-        discovery_store, graph_store,
+        discovery_store, graph_store, sessions_store,
     },
 };
 
@@ -29,6 +29,85 @@ fn ready() -> rusqlite::Connection {
     )
     .unwrap();
     db
+}
+
+#[test]
+fn named_discovery_waits_for_market_observations_before_becoming_ready() {
+    let mut db = ready();
+    let session = sessions_store::create_session(
+        &db, "proj-houses", "October videos", &["youtube".into()],
+        &serde_json::json!({"version":1}), 100,
+    ).unwrap();
+    let source = graph_store::import_source(&db, "proj-houses", graph_store::SourceDraft {
+        url: "https://example.org/hvac-report".into(),
+        title: "HVAC replacement report".into(),
+        provider: "captured-web".into(),
+        published_at: None,
+        observed_at: 100,
+        passage: Some("Furnace replacement prices differ according to equipment and installation.".into()),
+    }).unwrap();
+    let run = discovery_store::start_or_get_active_for_session(
+        &mut db, "proj-houses", &session.id, "revision-1", 101,
+    ).unwrap();
+    discovery_store::finish_run(&mut db, &run.id, vec![discovery_store::CandidateDraft {
+        title: "Why Replacing HVAC Equipment Gets Expensive".into(),
+        hook: "What makes installation cost so much?".into(),
+        premise: "Equipment and installation drive prices".into(),
+        why_now: "Homeowners face replacement decisions".into(),
+        angle_key: "hvac-installation-expense".into(),
+        source_ids: vec![source], confidence: "medium".into(),
+    }], "completed", 102).unwrap();
+    let awaiting = discovery_store::get_run(&db, "proj-houses", &run.id).unwrap();
+    assert_eq!(awaiting.status, "running", "Discovery must not auto-open unfinished scores");
+    assert_eq!(awaiting.stage, "measure_market");
+    assert_eq!(awaiting.candidates.len(), 1, "ideas must already be durably saved");
+    let claimed = discovery_store::claim_pending_market_run(&mut db, 103).unwrap();
+    assert_eq!(claimed.as_deref(), Some(run.id.as_str()));
+    assert!(discovery_store::claim_pending_market_run(&mut db, 104).unwrap().is_none());
+    assert!(discovery_store::fail_run(&db,"proj-houses",&run.id,"stage_failed",104).is_err(),
+        "Late candidate-generator failures cannot invalidate persisted market collection");
+    assert_eq!(discovery_store::get_run(&db,"proj-houses",&run.id).unwrap().status,"running");
+    let summary = serde_json::json!({"youtube":"unavailable","googleTrends":"unavailable"});
+    assert!(discovery_store::finish_market_run(&db, &run.id, &summary, 105).unwrap());
+    let finished = discovery_store::get_run(&db, "proj-houses", &run.id).unwrap();
+    assert_eq!(finished.status, "completed");
+    assert_eq!(finished.stage, "completed");
+    assert_eq!(finished.provider_health["market"], summary);
+    assert!(!discovery_store::finish_market_run(&db, &run.id, &summary, 106).unwrap());
+}
+
+#[test]
+fn interrupted_market_phase_can_be_recovered_without_recreating_candidates() {
+    let mut db = ready();
+    let session = sessions_store::create_session(&db, "proj-houses", "Recovery",
+        &["youtube".into()], &serde_json::json!({"version":1}), 100).unwrap();
+    let source = graph_store::import_source(&db, "proj-houses", graph_store::SourceDraft {
+        url: "https://example.org/recovery".into(), title: "Insulation report".into(),
+        provider: "captured-web".into(), published_at: None, observed_at: 100,
+        passage: Some("Heat loss through insulation".into()),
+    }).unwrap();
+    let run = discovery_store::start_or_get_active_for_session(&mut db,"proj-houses",
+        &session.id,"revision",101).unwrap();
+    discovery_store::finish_run(&mut db,&run.id,vec![discovery_store::CandidateDraft {
+        title: "Why Insulation Costs More Than Expected".into(), hook:"Cost".into(),
+        premise:"Energy costs".into(), why_now:"Winter".into(), angle_key:"insulation-cost".into(),
+        source_ids:vec![source], confidence:"medium".into(),
+    }],"completed",102).unwrap();
+    discovery_store::claim_pending_market_run(&mut db,103).unwrap();
+    discovery_store::recover_interrupted_market_runs(&db,104).unwrap();
+    assert_eq!(discovery_store::get_run(&db,"proj-houses",&run.id).unwrap().stage,"measure_market");
+    discovery_store::pause_run(&db,"proj-houses",&run.id,105).unwrap();
+    let resumed=discovery_store::get_run(&db,"proj-houses",&run.id).unwrap();
+    assert_eq!(resumed.stage,"measure_market", "Node orphan pause is a no-op for Rust market work");
+    assert_eq!(resumed.status,"running");
+    assert_eq!(resumed.candidates.len(),1);
+    assert_eq!(discovery_store::claim_pending_market_run(&mut db,107).unwrap(),Some(run.id.clone()));
+    discovery_store::checkpoint(&db,"proj-houses",&run.id,"dedupe_rank",108,None).unwrap();
+    assert_eq!(discovery_store::get_run(&db,"proj-houses",&run.id).unwrap().stage,
+        "measure_market_collecting", "late Node checkpoints cannot restart completed candidate generation");
+    discovery_store::cancel_run(&db,"proj-houses",&run.id,109).unwrap();
+    assert!(!discovery_store::finish_market_run(&db,&run.id,&serde_json::json!({}),110).unwrap());
+    assert_eq!(discovery_store::get_run(&db,"proj-houses",&run.id).unwrap().status,"cancelled");
 }
 
 #[test]

@@ -542,14 +542,21 @@ async fn finish(
         message: "Discovery database unavailable".into(),
     })?;
     let known = discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?;
-    if known.status == "completed" || known.status == "insufficient_evidence" {
+    if known.status == "completed" || known.status == "insufficient_evidence"
+        || matches!(known.stage.as_str(), "measure_market" | "measure_market_collecting" | "measure_market_paused")
+    {
         return Ok(Json(known));
     }
     discovery_store::finish_run(&mut db, &run_id, body.candidates, &body.status, epoch_now())
         .map_err(map_error)?;
-    Ok(Json(
-        discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?,
-    ))
+    let saved = discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?;
+    drop(db);
+    if saved.stage == "measure_market" {
+        // Immediate collection keeps the UI responsive; the periodic collector
+        // provides restart recovery when the process exits at this boundary.
+        tokio::spawn(super::discovery_market_worker::process_pending(state));
+    }
+    Ok(Json(saved))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

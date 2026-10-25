@@ -28,6 +28,13 @@ function opportunityText(idea: DiscoverySessionIdea, locale: Locale): string {
   return idea.opportunityScore === null ? tr(locale, "Not measured", "未測定") : `${Math.round(idea.opportunityScore)}/100`;
 }
 
+/** A within-phrase rate of change, not a cross-phrase search-volume comparison. */
+function usableSearchMomentum(idea: DiscoverySessionIdea): number | null {
+  const trend = idea.googleTrends;
+  return trend?.state === "succeeded" && trend.points >= 26 &&
+    typeof trend.changePercent === "number" && Number.isFinite(trend.changePercent) ? trend.changePercent : null;
+}
+
 function inputLabel(key: string, locale: Locale): string {
   const labels: Record<string, [string, string]> = {
     capturedPassages: ["Captured passages", "取得済みの引用"],
@@ -165,6 +172,11 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         if (aMarket !== null && bMarket !== null) return bMarket - aMarket || a.rank - b.rank;
         if (aMarket !== null) return -1;
         if (bMarket !== null) return 1;
+        const aMomentum = usableSearchMomentum(a);
+        const bMomentum = usableSearchMomentum(b);
+        if (aMomentum !== null && bMomentum !== null) return bMomentum - aMomentum || a.rank - b.rank;
+        if (aMomentum !== null) return -1;
+        if (bMomentum !== null) return 1;
         return a.rank - b.rank;
       }
       // Numeric heuristic exists only when the backend has measured enough inputs;
@@ -242,7 +254,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       <label className="min-w-44 flex-1 text-xs font-medium text-muted-foreground">{tr(locale, "Sort ideas", "並べ替え")}
         <span className="relative block"><ArrowUpDown className="pointer-events-none absolute bottom-3 left-3 size-4" aria-hidden="true" />
           <select className={`${fieldClass} pl-10`} value={sort} onChange={event => setSort(event.target.value as Sort)}>
-            <option value="market">{tr(locale, "Measured comparison / rank", "実測比較・順位")}</option>
+            <option value="market">{tr(locale, "YouTube comparison / trend momentum", "YouTube 比較・検索の勢い")}</option>
             <option value="opportunity">{tr(locale, "Research readiness / rank", "調査準備度・順位")}</option>
             <option value="sources">{tr(locale, "Most source references", "参照元の数")}</option>
             <option value="title">{tr(locale, "Title A–Z", "タイトル順")}</option>
@@ -257,11 +269,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       </label>
     </div>
 
-    {ideas.length > 0 && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-      <p>{marketStatus?.apiKeyConfigured ? tr(locale,
-        `${Math.max(0, marketStatus.searchCallLimit - marketStatus.searchCallsLast24h)} shared YouTube searches left today`,
-        `今日の YouTube 検索残数: ${Math.max(0, marketStatus.searchCallLimit - marketStatus.searchCallsLast24h)} 件`)
-        : tr(locale, "YouTube collection is opt-in", "YouTube データの収集は任意です")}</p>
+    {ideas.length > 0 && <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
       <button type="button" onClick={() => void refreshMarket()}
         className="rounded-lg px-2 py-1 text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         {tr(locale, "Refresh observations", "観測データを更新")}</button>
@@ -292,16 +300,12 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           {idea.hook && <p className="mt-2 text-sm font-medium">{idea.hook}</p>}
           {idea.premise && <p className="mt-2 text-sm leading-6 text-muted-foreground">{idea.premise}</p>}
         </div>
-        <div className="min-w-[120px] rounded-control bg-muted/40 px-3 py-2 text-right">
-          <p className="text-xs text-muted-foreground">{tr(locale, "Research readiness", "調査準備度")}</p>
-          <p className="mt-1 text-sm font-semibold tabular-nums">{opportunityText(idea, locale)}</p>
-        </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
         <span>{tr(locale, "Draft confidence (AI-assigned)", "下書きの確度（AI による判断）")}: {idea.confidence}</span>
         {idea.whyNow && <span>{tr(locale, "Why consider", "選定理由")}: {idea.whyNow}</span>}
       </div>
-      {(idea.scoreVersion || Object.keys(idea.scoreInputs).length > 0) && <div className="mt-3">
+      {(idea.opportunityScore !== null || idea.scoreVersion || Object.keys(idea.scoreInputs).length > 0) && <div className="mt-3">
         <button className="text-xs font-medium text-primary underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-ring"
           aria-expanded={expandedScoreId === idea.id}
           aria-controls={expandedScoreId === idea.id ? `score-details-${idea.id}` : undefined}
@@ -309,6 +313,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           {expandedScoreId === idea.id ? tr(locale, "Hide score details", "評価の詳細を閉じる") : tr(locale, "Explain this score", "評価の根拠を確認")}
         </button>
         {expandedScoreId === idea.id && <div id={`score-details-${idea.id}`} className="mt-2 rounded-control bg-muted/30 p-3 text-xs text-muted-foreground">
+          <p>{tr(locale, "Editorial research readiness", "編集用の調査準備度")}: {opportunityText(idea, locale)} · {tr(locale,
+            "Source completeness, not predicted audience demand.", "出典の充実度であり、視聴者需要の予測ではありません。")}</p>
           <p>{tr(locale, "Formula revision", "計算式の版")}: {idea.scoreVersion ?? tr(locale, "not recorded", "記録なし")}</p>
           {Object.entries(idea.scoreInputs).slice(0, 12).map(([key, value]) => <p key={key} className="mt-1 break-words">
             {inputLabel(key, locale)}: {key === "scoreMeaning" && locale === "ja" ? "調査準備度のみ。動画の成果予測ではありません"
@@ -317,7 +323,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
         </div>}
       </div>}
       <IdeaMarketEvidence key={idea.id} ideaId={idea.id} title={idea.title} locale={locale} format={compareFormat}
-        assessment={idea.marketAssessment} status={marketStatus} statusError={marketStatusError}
+        assessment={idea.marketAssessment} googleTrends={idea.googleTrends}
+        status={marketStatus} statusError={marketStatusError}
         collecting={collectingId === idea.id} onCollect={collect} />
       <div className="mt-4 rounded-control border border-border-subtle bg-surface-subtle p-3">
         <p className="text-xs font-semibold"><FileSearch className="mr-1 inline size-3.5" aria-hidden="true" />

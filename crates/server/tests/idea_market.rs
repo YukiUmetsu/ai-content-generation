@@ -269,6 +269,20 @@ fn quota_is_shared_with_existing_watchlists_and_does_not_reserve_on_rejection() 
 }
 
 #[test]
+fn automatic_missing_credentials_is_visible_but_does_not_consume_quota_or_block_manual_retry() {
+    let (mut db, session, idea) = seeded();
+    let now = 1_792_886_400;
+    idea_market::record_unavailable_assessment(&mut db,"brand",&session,&idea,
+        "roof repair","long","api_key_missing",now).unwrap();
+    let latest=idea_market::latest_assessment(&db,&idea,now+1).unwrap().unwrap();
+    assert_eq!(latest.state,"failed");
+    assert_eq!(latest.error_code.as_deref(),Some("api_key_missing"));
+    assert!(latest.next_collection_at <= now);
+    assert_eq!(db.query_row("SELECT COUNT(*) FROM market_search_budget",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    assert!(idea_market::claim_assessment(&mut db,"brand",&session,&idea,"roof repair","long",now+1).is_ok());
+}
+
+#[test]
 fn channel_dominance_missing_counts_and_bad_dates_cannot_fabricate_a_market_score() {
     let (mut db, session, idea) = seeded();
     let now = 1_792_886_400;
