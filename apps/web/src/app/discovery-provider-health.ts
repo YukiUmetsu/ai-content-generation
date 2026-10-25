@@ -12,8 +12,9 @@ function count(value: unknown): value is number {
 }
 function parseCounts(value: unknown): MarketCounts | undefined {
   if (!record(value) || !count(value.succeeded) || !count(value.unavailable)) return;
-  if (value.attempts !== undefined && (!count(value.attempts) ||
-      value.attempts < value.succeeded + value.unavailable)) return;
+  // Outcomes include cached assessments and skipped providers, so they can
+  // exceed the number of new network attempts during this discovery run.
+  if (value.attempts !== undefined && !count(value.attempts)) return;
   return { succeeded: value.succeeded, unavailable: value.unavailable,
     ...(value.attempts === undefined ? {} : { attempts: value.attempts }) };
 }
@@ -23,6 +24,7 @@ export function parseDiscoveryProviderHealth(value: unknown): DiscoveryProviderH
   if (!record(value)) return {};
   const result: DiscoveryProviderHealth = {};
   for (const [key, item] of Object.entries(value)) {
+    if (key === "__proto__" || key === "prototype" || key === "constructor") continue;
     if (typeof item === "string") {
       result[key] = item;
     } else if (record(item)) {

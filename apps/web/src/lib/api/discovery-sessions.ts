@@ -1,5 +1,5 @@
 /** Durable content discovery belongs to a Project (brand), never to a video-named Project. */
-import type { DiscoveryRun } from "./discovery";
+import { requireDiscoveryRun, type DiscoveryRun } from "./discovery";
 
 export type DiscoveryPlatform = "youtube" | "youtube_shorts" | "tiktok" | "instagram" | "facebook" | "blog" | "website";
 export type DiscoverySessionStatus = "ready" | "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "archived" | string;
@@ -167,7 +167,7 @@ function requireSession(value: unknown): DiscoverySession {
   if (!validSession(value)) throw Error("The saved discovery session has an invalid response.");
   return { ...value, settingsSnapshot: record(value.settingsSnapshot) ? value.settingsSnapshot : {},
     archivedAt: typeof value.archivedAt === "number" ? value.archivedAt : null,
-    lastRun: value.lastRun ?? null };
+    lastRun: value.lastRun == null ? null : requireDiscoveryRun(value.lastRun) };
 }
 
 function requireIdea(value: unknown): DiscoverySessionIdea {
@@ -266,27 +266,27 @@ export async function updateDiscoverySession(projectId: string, sessionId: strin
 }
 
 /** Starts the real Node discovery worker; Rust's /discover endpoint alone only queues a run. */
-export function discoverSession(projectId: string, sessionId: string,
+export async function discoverSession(projectId: string, sessionId: string,
   input: { projectName: string; description: string; resultBudget?: number;
     content?: { name: string; stage: string }[] }): Promise<DiscoveryRun> {
-  return callDirector("/api/contentgen-director/project-discovery", { projectId, sessionId, ...input });
+  return requireDiscoveryRun(await callDirector("/api/contentgen-director/project-discovery", { projectId, sessionId, ...input }));
 }
 
-export function resumeSessionRun(projectId: string, sessionId: string, runId: string,
+export async function resumeSessionRun(projectId: string, sessionId: string, runId: string,
   input: { projectName: string; description: string; resultBudget?: number;
     content?: { name: string; stage: string }[] }): Promise<DiscoveryRun> {
-  return callDirector(`/api/contentgen-director/project-discovery/${encodeURIComponent(runId)}/resume`,
-    { projectId, sessionId, ...input });
+  return requireDiscoveryRun(await callDirector(`/api/contentgen-director/project-discovery/${encodeURIComponent(runId)}/resume`,
+    { projectId, sessionId, ...input }));
 }
 
-export function cancelSessionRun(projectId: string, runId: string): Promise<DiscoveryRun> {
-  return callDirector(`/api/contentgen-director/project-discovery/${encodeURIComponent(runId)}/cancel`, { projectId });
+export async function cancelSessionRun(projectId: string, runId: string): Promise<DiscoveryRun> {
+  return requireDiscoveryRun(await callDirector(`/api/contentgen-director/project-discovery/${encodeURIComponent(runId)}/cancel`, { projectId }));
 }
 
 export async function listSessionRuns(projectId: string, sessionId: string, signal?: AbortSignal): Promise<DiscoveryRun[]> {
   const result = await call<{ runs?: DiscoveryRun[] }>(`${sessionPath(projectId, sessionId)}/runs`, "GET", undefined, signal);
   if (!record(result) || !Array.isArray(result.runs)) throw Error("Invalid saved discovery run list.");
-  return result.runs;
+  return result.runs.map(requireDiscoveryRun);
 }
 
 export async function listSessionIdeas(projectId: string, sessionId: string, signal?: AbortSignal): Promise<DiscoverySessionIdea[]> {

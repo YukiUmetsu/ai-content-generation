@@ -18,6 +18,13 @@ describe("discovery provider health formatting", () => {
       youtube: { succeeded: -1, unavailable: 0.5, attempts: 2 } }, "en"))
       .toBe("Partial");
   });
+
+  it("preserves provider outcomes when cached or skipped ideas needed no new API attempts", () => {
+    expect(formatDiscoveryProviderHealth({state:"partial",
+      youtube:{succeeded:0,unavailable:5,attempts:0},
+      googleTrends:{succeeded:3,unavailable:2,attempts:0}},"en"))
+      .toBe("Partial · YouTube: 0 succeeded, 5 unavailable · Google Trends: 3 succeeded, 2 unavailable");
+  });
   it.each([
     [{ state: "unavailable" }, "Unavailable"],
     [{ state: "skipped" }, "Skipped"],
@@ -40,9 +47,18 @@ describe("discovery provider health formatting", () => {
     });
     expect(health).toEqual({
       news: "SearXNG unavailable",
-      market: { state: "partial", youtube: { succeeded: 2, unavailable: 1, attempts: 3 } },
+      market: { state: "partial", youtube: { succeeded: 2, unavailable: 1, attempts: 3 },
+        googleTrends: { succeeded: 1, unavailable: 0, attempts: 0 } },
     });
     expect(JSON.stringify(health)).not.toContain("secret");
+  });
+
+  it("ignores reserved provider names without changing the result object's prototype", () => {
+    const response = JSON.parse('{"__proto__":{"state":"partial"},"market":{"state":"completed"}}');
+    const health = parseDiscoveryProviderHealth(response);
+    expect(Object.getPrototypeOf(health)).toBe(Object.prototype);
+    expect(Object.keys(health)).toEqual(["market"]);
+    expect("state" in health).toBe(false);
   });
 
   it("does not render arbitrary structured fields in Japanese", () => {

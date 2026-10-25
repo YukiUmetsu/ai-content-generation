@@ -4,10 +4,36 @@ import {
   listDiscoverySessions, listSessionIdeas, decideSessionIdea, discoverSession,
   collectIdeaMarketEvidence,
 } from "./discovery-sessions";
+import { listDiscoveryRuns } from "./discovery";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("discovery session API", () => {
+  it("normalizes the nested run before exposing provider diagnostics to a session view", async () => {
+    const lastRun = { id:"run-1", projectId:"brand-1", inputRevision:"revision-1",
+      status:"failed", stage:"measure_market", createdAt:1760000000, updatedAt:1760000001,
+      errorCode:null, candidates:[], providerHealth:{market:{state:"partial",privateToken:"secret",
+        youtube:{succeeded:2,unavailable:1,attempts:3,apiKey:"secret"}}} };
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({sessions:[{
+      id:"session-a",projectId:"brand-1",name:"Home costs",platforms:["youtube"],
+      settingsSnapshot:{},status:"failed",createdAt:1760000000,updatedAt:1760000001,
+      archivedAt:null,lastRun,
+    }]})));
+    const [session] = await listDiscoverySessions("brand-1");
+    expect(session.lastRun?.providerHealth).toEqual({market:{state:"partial",
+      youtube:{succeeded:2,unavailable:1,attempts:3}}});
+    expect(JSON.stringify(session.lastRun)).not.toContain("secret");
+  });
+
+  it("rejects a malformed run error instead of passing an object to React", async () => {
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({runs:[{
+      id:"run-1",projectId:"brand-1",inputRevision:"revision-1",status:"failed",
+      stage:"complete",createdAt:1760000000,updatedAt:1760000001,
+      errorCode:{message:"Unexpected server shape"},candidates:[],providerHealth:{},
+    }]})));
+    await expect(listDiscoveryRuns("brand-1")).rejects.toThrow(/Invalid discovery run response/);
+  });
+
   it("lists durable sessions and creates a second session without reusing the first ID", async () => {
     const first = { id: "session-a", projectId: "brand-1", name: "Home costs", platforms: ["youtube"],
       settingsSnapshot: {}, status: "ready", createdAt: 1760000000, updatedAt: 1760000000,

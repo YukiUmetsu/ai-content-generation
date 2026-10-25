@@ -77,3 +77,15 @@ it("rejects a malformed later frame without losing the first verified suggestion
     .rejects.toThrow("Invalid local keyword progress data.");
   expect(seen).toEqual(["Property tax increase"]);
 });
+
+it("cancels an active keyword stream after malformed output so the local generator can stop",async()=>{
+  let cancelled=false;
+  const payload=new TextEncoder().encode("{bad json}\n");
+  vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(new ReadableStream({
+    start(controller){controller.enqueue(payload);},
+    cancel(){cancelled=true;},
+  }),{status:200,headers:{"Content-Type":"application/x-ndjson"}}));
+  await expect(streamProjectKeywords(project,[],{onBatch:()=>{}}))
+    .rejects.toThrow("Invalid local keyword progress data.");
+  expect(cancelled).toBe(true);
+});
