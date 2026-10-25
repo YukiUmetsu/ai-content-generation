@@ -708,8 +708,8 @@ pub fn queue_missing_market_runs(
                           OR NOT EXISTS (SELECT 1 FROM idea_trends_runs t WHERE t.idea_id=c.id)))
              ORDER BY r.created_at ASC,r.id ASC LIMIT 4",
         )?;
-        stmt.query_map(params![project_id, session_id], |row| row.get(0))?
-            .collect::<Result<Vec<String>, _>>()?
+        let rows = stmt.query_map(params![project_id, session_id], |row| row.get(0))?;
+        rows.collect::<Result<Vec<String>, _>>()?
     };
     let mut queued = Vec::new();
     for run_id in candidates {
