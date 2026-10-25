@@ -99,12 +99,12 @@ export async function setProjectWatchlists(projectId: string, ids: string[]): Pr
   const response = await request<{ watchlistIds: string[] }>(`/projects/${encodeURIComponent(projectId)}/watchlists`, "PUT", { watchlistIds: ids });
   return response.watchlistIds;
 }
-export async function suggestProjectKeywords(project: LocalProject, activeKeywords: string[]):
+export async function suggestProjectKeywords(project: LocalProject, activeKeywords: string[], excludedKeywords:string[]=[]):
   Promise<{suggestions:KeywordSuggestion[];quality?:KeywordSuggestionQuality}> {
   const response = await fetch("/api/contentgen-director/project-keyword-suggestions", {
     method: "POST", credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-Contentgen-Director": "local-only" },
-    body: JSON.stringify({ name: project.name, description: project.notes, keywords: activeKeywords }),
+    body: JSON.stringify({ name: project.name, description: project.notes, keywords: activeKeywords, excludedKeywords }),
   });
   const data = await response.json() as { suggestions?: KeywordSuggestion[];quality?:KeywordSuggestionQuality; error?: string };
   if (!response.ok) throw Error(data.error ?? `Local keyword model returned ${response.status}.`);
@@ -117,12 +117,12 @@ export type KeywordBatchProgress = {suggestions:KeywordSuggestion[];quality:Keyw
 
 /** Read independently useful local batches as they arrive; never write keywords implicitly. */
 export async function streamProjectKeywords(project:LocalProject,activeKeywords:string[],{
-  onBatch,signal}:{onBatch:(batch:KeywordBatchProgress)=>void;signal?:AbortSignal}
+  onBatch,signal,excludedKeywords=[]}:{onBatch:(batch:KeywordBatchProgress)=>void;signal?:AbortSignal;excludedKeywords?:string[]}
 ):Promise<KeywordSuggestionQuality> {
   const response=await fetch("/api/contentgen-director/project-keyword-suggestions/stream",{
     method:"POST",credentials:"same-origin",signal,
     headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
-    body:JSON.stringify({name:project.name,description:project.notes,keywords:activeKeywords}),
+    body:JSON.stringify({name:project.name,description:project.notes,keywords:activeKeywords,excludedKeywords}),
   });
   if(!response.ok){
     const error=await response.json().catch(()=>null) as {error?:string}|null;

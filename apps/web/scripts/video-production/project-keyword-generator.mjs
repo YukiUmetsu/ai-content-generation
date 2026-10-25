@@ -36,8 +36,12 @@ export function validateKeywordSuggestions(suggestions) {
 
 const COMMON_WORDS=new Set(["a","an","and","about","after","are","at","by","for","from","how","in","is","of","on","or","the","to","versus","vs","what","when","why","with"]);
 function intentTerms(value) {
-  return new Set(String(value??"").toLowerCase().split(/[^\p{L}\p{N}]+/u)
-    .filter(word=>word&&!COMMON_WORDS.has(word))
+  return new Set(String(value??"").split(/[^\p{L}\p{N}]+/u)
+    // Leading uppercase initials can be part of a product name (`VS Code`),
+    // while lowercase `vs` between terms is just a comparison separator.
+    .filter((word,index)=>word&&(!COMMON_WORDS.has(word.toLowerCase())||
+      (index===0&&/^[A-Z]{2}$/u.test(word))))
+    .map(word=>word.toLowerCase())
     .map(word=>word.replace(/(?:replacement|replacing|replaced)$/u,"replace")
       .replace(/(?:costs|taxes|premiums|expenses)$/u,match=>({costs:"cost",taxes:"tax",premiums:"premium",expenses:"expense"})[match])
       .replace(/ies$/u,"y").replace(/s$/u,"")));
@@ -72,6 +76,30 @@ function sameDiscoveryIntent(left,right) {
   const opportunityCost=value=>/\bopportunity\s+cost\b/iu.test(value);
   return opportunityCost(left)&&opportunityCost(right);
 }
+function coreSubject(text) {
+  const words=[...intentTerms(text)];
+  return words.length>=2?words.slice(0,2).join(" "):null;
+}
+function focusedOnSubject(subject,name,description) {
+  const [first,second]=subject.split(" ");
+  const containsPair=words=>words.some((word,index)=>word===first&&words[index+1]===second);
+  const projectName=String(name??"");
+  const nameWords=[...intentTerms(projectName)];
+  // A list of multiple subjects in a project name is not a narrow niche.
+  if(nameWords.length<=4&&!/[,/&]|\b(?:and|or|versus|vs)\b/iu.test(projectName)&&
+    containsPair(nameWords))return true;
+  // Generic brand names can still be focused channels. A plain mention of
+  // taxes alongside insurance/repairs is not, by itself, specialization.
+  const context=String(description??"");
+  const focus=/\b(?:focus(?:ed|es|ing)?(?:\s+\w+){0,3}\s+on|dedicated(?:\s+\w+){0,3}\s+to|devoted\s+to|specializ(?:es|ed|ing)(?:\s+\w+){0,3}\s+in|(?:all|exclusively)\s+about|(?:solely|only)\s+(?:covers?|discusses?))\b/giu;
+  for(const match of context.matchAll(focus)) {
+    const before=context.slice(Math.max(0,match.index-36),match.index);
+    if(/\b(?:not|never|hardly|no)\b(?:\s+\w+){0,2}\s*$/iu.test(before))continue;
+    const following=context.slice(match.index+match[0].length).split(/[.!?;]/u,1)[0];
+    if(containsPair([...intentTerms(following)].slice(0,4)))return true;
+  }
+  return false;
+}
 function weakSuggestion({text,rationale},name) {
   const phrase=text.toLowerCase();
   if(verboseKeyword(text))return true;
@@ -89,18 +117,26 @@ function needsSemanticReview({text}) {
 }
 
 /** Local-AI output is only a hypothesis; weak or redundant ideas never become persisted keywords. */
-export function qualityKeywordSuggestions(rows,{name,existing=[],accepted=[]}) {
+export function qualityKeywordSuggestions(rows,{name,description="",existing=[],excluded=[],accepted=[],applyDiversity=true}) {
   if(!Array.isArray(rows))return {suggestions:[],rejected:1};
-  const prior=[...existing,...accepted.map(item=>typeof item==="string"?item:item.text)];
+  const prior=[...existing,...excluded,...accepted.map(item=>typeof item==="string"?item:item.text)];
+  const coverage=new Map();
+  for(const text of [...existing,...accepted.filter(item=>typeof item==="string"||item?.kind!=="exclusion")]) {
+    const subject=coreSubject(typeof text==="string"?text:text.text);
+    if(subject)coverage.set(subject,(coverage.get(subject)??0)+1);
+  }
   const suggestions=[];let rejected=0;
   let exclusions=accepted.filter(item=>typeof item==="object"&&item?.kind==="exclusion").length;
   for(const row of rows) {
     let suggestion;
     try{suggestion=validateKeywordSuggestions([row])[0];}
     catch{rejected++;continue;}
+    const subject=suggestion.kind==="exclusion"?null:coreSubject(suggestion.text);
     if(weakSuggestion(suggestion,name)||prior.some(text=>sameDiscoveryIntent(text,suggestion.text))||
-      (suggestion.kind==="exclusion"&&exclusions>=2)){rejected++;continue;}
+      (suggestion.kind==="exclusion"&&exclusions>=2)||
+      (applyDiversity&&subject&&(coverage.get(subject)??0)>=2&&!focusedOnSubject(subject,name,description))){rejected++;continue;}
     suggestions.push(suggestion);prior.push(suggestion.text);
+    if(subject)coverage.set(subject,(coverage.get(subject)??0)+1);
     if(suggestion.kind==="exclusion")exclusions++;
   }
   return {suggestions,rejected};
@@ -157,11 +193,15 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
   verboseReminder=false,
   requestedBefore=[],rejectedCount=0,requestCounter}={}) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) ||
-    Object.keys(candidate).some(key => !["name","description","keywords"].includes(key)))
-    throw Error("Supply only project name, description and existing keywords.");
+    Object.keys(candidate).some(key => !["name","description","keywords","excludedKeywords"].includes(key)))
+    throw Error("Supply only project name, description and existing keywords or exclusions.");
   const name = safe(candidate.name, "Project name", 1, 120);
   const description = candidate.description ? safe(candidate.description, "Project description", 0, 2000) : "";
   const keywords = Array.isArray(candidate.keywords) ? candidate.keywords.slice(0,30).map(x=>safe(x,"Existing keyword",2,160)) : [];
+  const excludedKeywords = Array.isArray(candidate.excludedKeywords) ?
+    candidate.excludedKeywords.slice(0,30).map(x=>safe(x,"Excluded keyword",2,160)) : [];
+  if(candidate.excludedKeywords!==undefined&&!Array.isArray(candidate.excludedKeywords))
+    throw Error("Excluded keywords must be a list.");
   if (!description && !keywords.length) throw Error("Add a project description or specific keywords for context before requesting AI suggestions.");
   if (!modelSettings?.model) throw Error("Choose an installed local research model in Settings.");
   const endpoint = localChatEndpoint(modelSettings.endpoint);
@@ -175,6 +215,8 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
     "Use familiar terminology for the intended audience; remove analytical filler, editorial phrases, and unnecessary qualifiers. Keep the detailed viewer question in rationale, not text.",
     "Use X vs Y only for two genuine alternatives in the same choice, and only when the COMPLETE keyword has exactly THREE words (X, vs, Y).",
     "Every suggestion must explore a DIFFERENT useful project-specific question. Do not drift into adjacent topics outside the project or generate duplicate concepts.",
+    "For broad projects, cover different main subjects across batches; no more than two phrases should start with the same core two subject words. A project dedicated to one subject may explore its distinct questions.",
+    "Excluded keywords are specific unwanted subjects, not positive project coverage; avoid those exact intents without forbidding their broader subject.",
     ...(verboseReminder?["Previous keyword batch contained verbose phrases. Replace them with concrete 2–3-word search terms, at most four words."]:[]),
     "Rationales must describe a practical viewer question in under 12 words. Never mention prompts, project descriptions, authority or search intent.",
     "No numbers pretending to be search volume, popularity, citations, discovered trends or provider calls.",
@@ -193,7 +235,8 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
           max_tokens:[1200,1800,2400][attempt],messages:[{role:"system",content:[...system,`FOCUS: ${lens}`,`Propose ${requested} distinct suggestions, with short text and rationale. No other keys.`].join("\n")},
             {role:"user",content:JSON.stringify({name,description,
               // Retain legacy accepted terms for dedup, but do not teach the model their bad phrasing.
-              existingKeywords:keywords.filter(keyword=>!verboseKeyword(keyword)),alreadySuggested:requestedBefore,
+              existingKeywords:keywords.filter(keyword=>!verboseKeyword(keyword)),excludedKeywords,
+              alreadySuggested:requestedBefore,
               rejectedCount,
               ...(attempt?{feedback:`Prior JSON was incomplete or invalid. Reply with only ${requested} complete entries in one JSON object.`}:{})})}],
           ...(qwenThinkingModel(modelSettings.model)?{chat_template_kwargs:{enable_thinking:false}}:{})}),
@@ -264,17 +307,22 @@ export async function generateProjectKeywords(candidate,options={}) {
       verboseReminder=rows.some(row=>typeof row?.text==="string"&&verboseKeyword(row.text));
       // Previously rejected hypotheses must not repeatedly spend judgment calls.
       // This exclusion is local only; neither rejected wording nor verdicts enter future prompts.
-      const screened=qualityKeywordSuggestions(rows,{name:candidate.name.trim(),
-        existing:[...(candidate.keywords??[]),...rejectedBefore],accepted:suggestions});
+      const context={name:candidate.name.trim(),description:candidate.description??"",
+        existing:candidate.keywords??[],excluded:[...(candidate.excludedKeywords??[]),...rejectedBefore],accepted:suggestions};
+      // Do not let an unapproved ambiguous phrase occupy a topic slot; the
+      // optional meaning check runs before the final deterministic diversity gate.
+      const screened=qualityKeywordSuggestions(rows,{...context,applyDiversity:false});
       quality.rejected+=screened.rejected;
       const assessed=await assessAmbiguousKeywords(screened.suggestions,candidate,{...options,requestCounter:counter});
       quality.rejected+=assessed.rejected;
-      const acceptedTexts=new Set(assessed.suggestions.map(item=>item.text));
+      const diversified=qualityKeywordSuggestions(assessed.suggestions,context);
+      quality.rejected+=diversified.rejected;
+      const acceptedTexts=new Set(diversified.suggestions.map(item=>item.text));
       for(const row of rows)if(typeof row?.text==="string"&&!acceptedTexts.has(row.text)&&row.text.length<=160){
         rejectedBefore.push(row.text);
       }
-      if(assessed.suggestions.length){
-        additions=assessed.suggestions.slice(0,target-suggestions.length);
+      if(diversified.suggestions.length){
+        additions=diversified.suggestions.slice(0,target-suggestions.length);
         suggestions.push(...additions);
         quality.batches++;
       }
