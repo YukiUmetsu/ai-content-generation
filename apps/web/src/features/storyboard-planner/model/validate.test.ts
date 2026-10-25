@@ -197,3 +197,17 @@ describe("helper queries", () => {
     expect(diagnosticsForBeat(diagnostics, "beat-equipment")).toHaveLength(1);
   });
 });
+
+describe("editorial repetition warnings", () => {
+  it("flags repeated teaching copy across separate scenes without blocking the draft", () => {
+    const value=board();
+    value.beats[1].onScreenText="Hidden costs: permits and ductwork";
+    value.beats[2].onScreenText="Hidden labor and permits drive the costs";
+    const issue=validateStoryboard(value).find(x=>x.code==="storyboard-repeated-information");
+    expect(issue).toMatchObject({severity:"warning",beatId:value.beats[2].id,
+      params:{previousIndex:2,field:"onScreenText"}});
+  });
+  it("does not confuse a new operation with a repeated idea merely because both mention costs", () => {
+    expect(validateStoryboard(HVAC_EXAMPLE)).toEqual([]);
+  });
+});
