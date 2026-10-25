@@ -76,7 +76,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [compareFormat, setCompareFormat] = useState<IdeaVideoFormat>("long");
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
   const [runMarketHealth, setRunMarketHealth] = useState<unknown>(null);
-  const [backfillState, setBackfillState] = useState<"idle" | "requesting" | "queued" | "running" | "no_pending" | "error">("idle");
+  const [backfillState, setBackfillState] = useState<"idle" | "queued" | "running" | "no_pending" | "error">("idle");
   const [marketStatusError, setMarketStatusError] = useState<string | null>(null);
   const [collectingId, setCollectingId] = useState<string | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
@@ -132,7 +132,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   }, [projectId, sessionId, loading, hasMissingMarket]);
 
   const hasPendingMarket = ideas.some(idea => idea.marketAssessment?.state === "running") ||
-    ["requesting", "queued", "running"].includes(backfillState);
+    ["queued", "running"].includes(backfillState);
   useEffect(() => {
     if ((!hasPendingMarket && !collectingId) || pollTimedOut) return;
     let alive = true;
@@ -319,8 +319,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     </div>
 
     {backfillState !== "idle" && <p role="status" className="text-xs text-muted-foreground">
-      {backfillState === "requesting" ? tr(locale, "Checking missing market observations…", "未測定の市場データを確認中…")
-        : backfillState === "queued" ? tr(locale, "Missing market data queued for background collection.", "未測定の市場データをバックグラウンド収集に登録しました。")
+      {backfillState === "queued" ? tr(locale, "Missing market data queued for background collection.", "未測定の市場データをバックグラウンド収集に登録しました。")
         : backfillState === "running" ? tr(locale, "Collecting missing YouTube and Google Trends observations…", "未測定の YouTube と Google Trends データを収集中…")
         : backfillState === "error" ? tr(locale, "Could not start market backfill. Check the local server.", "市場データの補完を開始できません。ローカルサーバーを確認してください。")
         : hasMissingMarket ? tr(locale, "No new market job is eligible; inspect saved provider failures or refresh.", "新たに実行できる市場データ収集はありません。保存済みのエラーを確認してください。")
