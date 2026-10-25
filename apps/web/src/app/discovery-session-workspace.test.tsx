@@ -17,6 +17,30 @@ function mockFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Pr
 }
 
 describe("Content discovery sessions", () => {
+  it("keeps the newest session response when older polling resolves later", async () => {
+    const pending: Array<(response:Response)=>void> = [];
+    mockFetch(async (input) => {
+      const path=String(input);
+      if(path.endsWith("/sessions")) return new Response(JSON.stringify({sessions:[session]}));
+      if(path.endsWith("/sessions/session-1")) return new Promise<Response>(resolve=>{pending.push(resolve);});
+      if(path.endsWith("/runs")) return new Response(JSON.stringify({runs:[]}));
+      if(path.endsWith("/ideas")) return new Response(JSON.stringify({ideas:[]}));
+      throw Error("Unexpected route "+path);
+    });
+    vi.useFakeTimers({shouldAdvanceTime:true});
+    try {
+      render(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+        selectedSessionId="session-1" onSelectSession={()=>{}} />);
+      await vi.waitFor(()=>expect(pending).toHaveLength(1));
+      await act(async()=>{await vi.advanceTimersByTimeAsync(3500);});
+      await vi.waitFor(()=>expect(pending).toHaveLength(2));
+      await act(async()=>{pending[1](new Response(JSON.stringify({...session,ideaCount:7})));});
+      expect(screen.getByText(/7/)).toBeInTheDocument();
+      await act(async()=>{pending[0](new Response(JSON.stringify({...session,ideaCount:1})));});
+      expect(screen.getByText(/7/)).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("creates a named saved session with the selected platforms and announces its stable identifier", async () => {
     const selected = vi.fn();
     let stored: typeof session[] = [];
