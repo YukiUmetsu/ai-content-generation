@@ -101,8 +101,10 @@ async fn backfill_market(
     let mut db = state.connect().map_err(|_| ApiError::Internal {
         message: "Discovery DB unavailable".into(),
     })?;
+    let youtube_ready = state.credentials().youtube_key().ok()
+        .and_then(|key| YoutubeClient::from_key(key).ok()).is_some();
     let queued = discovery_store::queue_missing_market_runs(
-        &mut db, Some((&id, &session_id)), epoch_now(),
+        &mut db, Some((&id, &session_id)), epoch_now(), youtube_ready,
     ).map_err(map_error)?;
     let active: i64 = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM discovery_runs
