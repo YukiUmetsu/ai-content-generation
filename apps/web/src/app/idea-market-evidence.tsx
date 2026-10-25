@@ -136,7 +136,7 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
         {!assessment && <p className="mt-1 text-[11px] text-muted-foreground">
           {status?.apiKeyConfigured === false
             ? tr(locale, "Add a YouTube API key in Settings to collect observations.", "観測データの収集には設定で YouTube API キーを登録してください。")
-            : tr(locale, "No saved observation. New Discovery runs collect automatically.", "保存済みの観測データはありません。新しい調査では自動収集されます。")}</p>}
+            : tr(locale, "No saved observation. Missing data is queued for background collection when eligible.", "保存済みの観測データはありません。新しい調査では自動収集されます。")}</p>}
         {matching?.state === "failed" && <p role="status" className="mt-1 text-[11px] text-destructive">
           {marketErrorHint(matching.errorCode, locale === "ja") ||
             tr(locale, "YouTube collection failed; open Evidence details to retry.", "YouTube の収集に失敗しました。観測の詳細から再試行できます。")}</p>}
@@ -163,7 +163,7 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
           <p role="status" className="mt-1 text-[11px] text-muted-foreground">
             {trendAvailability(googleTrends.errorCode, locale)}</p>}
         {!googleTrends && <p className="mt-1 text-[11px] text-muted-foreground">
-          {tr(locale, "No saved observation. New Discovery runs attempt Trends automatically.",
+          {tr(locale, "No saved observation. Missing Trends data is queued for background collection when eligible.",
             "保存済みの観測データはありません。新しい調査では自動収集を試みます。")}</p>}
         {googleTrends?.state === "succeeded" && momentum === null &&
           <p className="mt-1 text-[11px] text-muted-foreground">
