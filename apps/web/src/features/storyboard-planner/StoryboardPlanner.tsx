@@ -202,7 +202,7 @@ export function StoryboardPlanner({
             <span>{t.checks}: {diagnostics.length}</span>
             <span aria-hidden="true">·</span>
             <span>{t.fps(String(board.fps.num / board.fps.den))}</span>
-            <span className="sp-example-notice">{t.exampleNotice}</span>
+            {!projectId && !initialBoard && <span className="sp-example-notice">{t.exampleNotice}</span>}
             {projectId && !storageError && (
               <span className="sp-example-notice">
                 {locale === "ja" ? "編集内容はこのプロジェクトのローカル下書きに保存されます" : "Project edits save as a local browser draft"}
