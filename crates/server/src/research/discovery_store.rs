@@ -612,7 +612,11 @@ pub fn finish_run(
         // Keep a bounded source version alongside each candidate even if
         // the project graph is refreshed later. Source leads alone are not
         // treated as verified factual passages.
-        for source_id in unique_sources {
+        let mut unique_sources = std::collections::HashSet::new();
+        for source_id in &draft.source_ids {
+            if !unique_sources.insert(source_id) {
+                continue;
+            }
             tx.execute("INSERT INTO discovery_candidate_sources
                 (candidate_id,source_id,provider,url,title,observed_at,published_at,evidence_state,passage)
                 SELECT ?1,id,provider,url,title,observed_at,published_at,evidence_state,substr(passage,1,1000)
@@ -788,3 +792,4 @@ pub fn list_runs(db: &Connection, project_id: &str) -> Result<Vec<DiscoveryRun>,
     };
     ids.iter().map(|id| get_run(db, project_id, id)).collect()
 }
+
