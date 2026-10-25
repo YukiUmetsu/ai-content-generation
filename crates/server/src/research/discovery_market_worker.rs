@@ -201,14 +201,24 @@ where
         if !(3..=120).contains(&query.chars().count()) {
             continue;
         }
-        // Existing saved data (including an interrupted paid attempt) is reused
-        // and never silently consumed twice on restart.
+        // A saved failed/unavailable attempt must not permanently suppress
+        // collection. The same durable eligibility policy is used by the queue
+        // and worker; successful or still-cooling-down data is reused.
+        let (retry_youtube, retry_trends) = match state.connect() {
+            Ok(db) => match discovery_store::market_retry_due(
+                &db, &idea.id, epoch_now(), client.is_some(),
+            ) {
+                Ok(due) => due,
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
         let previous_youtube = state.connect().ok().and_then(|db| {
             idea_market::latest_assessment(&db, &idea.id, epoch_now())
                 .ok()
                 .flatten()
         });
-        if let Some(observation) = previous_youtube {
+        if let Some(observation) = previous_youtube.as_ref().filter(|_| !retry_youtube) {
             if observation.state == "succeeded" {
                 youtube_ok += 1;
             } else {
@@ -315,7 +325,7 @@ where
                 .ok()
                 .flatten()
         });
-        if let Some(observation) = previous_trends {
+        if let Some(observation) = previous_trends.as_ref().filter(|_| !retry_trends) {
             if observation.state == "succeeded" {
                 trends_ok += 1;
             } else {
