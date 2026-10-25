@@ -85,6 +85,7 @@ describe("Video Director selected-shot workbench",()=>{
     const bundleInput=screen.getByLabelText("Preproduction bundle JSON") as HTMLInputElement;
     fireEvent.change(bundleInput,{target:{files:[new File([JSON.stringify(bundle)],"bundle.json",{type:"application/json"})]}});
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
     await user.click(screen.getByRole("button",{name:"Generate 3 local AI variations"}));
     expect((await screen.findAllByText("Personal problem")).length).toBeGreaterThanOrEqual(1);
     await user.selectOptions(screen.getByRole("combobox",{name:"Script candidate"}),"hook-2");
@@ -143,12 +144,18 @@ describe("first-run complete Studio demo",()=>{
     expect(screen.getByRole("button",{name:"Open interactive sample"})).toBeInTheDocument();
     await user.click(screen.getByRole("button",{name:"Open interactive sample"}));
     expect(await screen.findByText("Interactive sample loaded")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
     expect(await screen.findByTestId("demo-real-scene")).toHaveTextContent("frame 0");
     expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
     expect(screen.getByRole("combobox",{name:"Camera movement"})).toBeInTheDocument();
     expect(screen.getByRole("button",{name:"Save project"})).toBeInTheDocument();
     expect(screen.queryByText(/Import both the matching research dossier/)).not.toBeInTheDocument();
     expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
+    await user.click(screen.getByRole("button",{name:/01 Storyboard/i}));
+    await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
+    expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
+    expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"],
+      "step navigation must not restart the visual preview");
   });
 });
 
@@ -209,4 +216,30 @@ describe("editing meaningful visible teaching elements as a normal Studio user",
    expect(await screen.findByText(/specific visual elements/i)).toBeInTheDocument();
    expect(network).not.toHaveBeenCalled();
  });
+});
+
+describe("guided Video Director navigation",()=>{
+  it("preserves unsaved scene text and requires explicit discard before switching stages",async()=>{
+    const dossier={kind:"research-dossier",id:"r1",topic:{title:"How insulation works",audience:"Homeowners"}};
+    const bundle={kind:"preproduction-bundle",researchId:"r1",plan:{
+      story:{question:"Why?"},shots:[{id:"hook",purpose:"Question",visualChange:"Show room",onScreenText:"Warm room"}],
+      sound:[{shotId:"hook",narration:"What keeps heat inside?",sfxIntent:null}],teachingSequences:[]
+    }};
+    const user=userEvent.setup();
+    render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"video.json",{type:"application/json"})
+    ]}});
+    await screen.findByText("Video project loaded");
+    const narration=screen.getByRole("textbox",{name:"Edit narration"});
+    fireEvent.change(narration,{target:{value:"New hook that isn't saved"}});
+    await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
+    expect(narration).toHaveValue("New hook that isn't saved");
+    expect(screen.getByText(/Save or discard your scene edits before continuing/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Discard unsaved edits"}));
+    expect(narration).toHaveValue("What keeps heat inside?");
+    await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
+    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
+  });
 });

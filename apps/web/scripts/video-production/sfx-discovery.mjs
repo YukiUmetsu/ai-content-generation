@@ -223,17 +223,19 @@ async function readChoices(root,projectId){
 export async function setSceneSfxChoice(input,{root=DEFAULT_ROOT}={}){
   const projectId=validId(input?.projectId,"project identifier"),shotId=validId(input?.shotId,"shot identifier");
   if(!["pin","mute","auto"].includes(input?.mode))throw Error("Invalid SFX choice mode.");
+  const trigger=input.trigger??"shot-start";
+  if(!["shot-start","first-visual-reveal"].includes(trigger))throw Error("Invalid SFX timing trigger.");
   const choice=input.mode==="pin"?(()=>{
     validId(input.assetId,"sound identifier",UUID);
     if(!/^[a-f\d]{64}$/iu.test(input.sha256??""))throw Error("Invalid approved sound hash.");
-    return {mode:"pin",assetId:input.assetId,sha256:input.sha256};})():{mode:input.mode};
+    return {mode:"pin",assetId:input.assetId,sha256:input.sha256,trigger};})():{mode:input.mode,trigger};
   if(choice.mode==="pin"){
     const approved=await listApprovedSfx({root});
     if(!approved.some(x=>x.assetId===choice.assetId&&x.sha256===choice.sha256))
       throw Error("Cannot pin a sound absent from the approved and hash-verified library.");
   }
   const saved=await readChoices(root,projectId);
-  if(choice.mode==="auto")delete saved[shotId];else saved[shotId]=choice;
+  if(choice.mode==="auto"&&trigger==="shot-start")delete saved[shotId];else saved[shotId]=choice;
   const path=choicesFile(root,projectId),dir=dirname(path);
   await mkdir(dir,{recursive:true,mode:0o700});
   const temp=await mkdtemp(join(dir,".choices-"));
@@ -241,7 +243,7 @@ export async function setSceneSfxChoice(input,{root=DEFAULT_ROOT}={}){
     JSON.stringify({schemaVersion:1,kind:"contentgen-sfx-choices",choices:saved},null,2)+"\n",{flag:"wx",mode:0o600});
     await rename(staged,path);
   }finally{await rm(temp,{recursive:true,force:true});}
-  return {projectId,shotId,mode:choice.mode};
+  return {projectId,shotId,mode:choice.mode,trigger};
 }
 
 export async function resolveSceneSfxChoices({projectId,bundle},{root=DEFAULT_ROOT}={}){
@@ -252,7 +254,8 @@ export async function resolveSceneSfxChoices({projectId,bundle},{root=DEFAULT_RO
     const override=saved[suggestion.shotId],mode=override?.mode==="mute"?"mute":override?.mode==="pin"?"pin":"auto";
     const asset=mode==="mute"?null:mode==="pin"?
       approved.find(x=>x.assetId===override.assetId&&x.sha256===override.sha256):byId.get(suggestion.assetId);
-    return {shotId:suggestion.shotId,intent:suggestion.intent,mode,assetId:asset?.assetId??null,
+    const trigger=override?.trigger==="first-visual-reveal"?"first-visual-reveal":"shot-start";
+    return {shotId:suggestion.shotId,intent:suggestion.intent,mode,trigger,assetId:asset?.assetId??null,
       title:asset?.title??null,sha256:asset?.sha256??null,localPath:asset?.localPath??null,
       license:asset?.license??null,rightsStatus:asset?.rightsStatus??null,
       reason:mode==="mute"?"Silenced by editor":mode==="pin"&&!asset?"Pinned sound missing or damaged":

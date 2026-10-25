@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, RefreshCw, WandSparkles, Save } from "lucide-react";
+import { ArrowRight, Download, Film, Headphones, Images, Layers3, RefreshCw, WandSparkles, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
@@ -9,6 +9,8 @@ import { SfxDiscoveryPanel } from "./sfx-discovery-panel";
 import { NewVideoSetup } from "./new-video-setup";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
+import { directorStages, nextDirectorStage, resolveDirectorNavigation,
+  shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
 
 type Shot={id:string;visualChange:string;onScreenText:string;purpose:string;visualElements?:VisualElement[]};
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
@@ -21,6 +23,8 @@ type Variant={id:string;strategy:string;audienceSignal:string;curiosityQuestion:
 type Impact={changedFields:string[];speechRegenerate:string[];visualRerender:string[];
   sfxRemix:string[];downstreamRetiming:string[];timelineRecalculate:boolean;externalActionsPerformed:string[]};
 type Revision={kind:string;bundle:Bundle;impacts:Impact;reviewRequired:boolean};
+type DirectorStage="storyboard"|"assets"|"sound"|"preview";
+const stageIcons={storyboard:Layers3,assets:Images,sound:Headphones,preview:Film};
 const field="w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const header="text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 async function request(path:string,data:unknown){
@@ -64,11 +68,15 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const [busy,setBusy]=useState(false);
   const [status,setStatus]=useState("");
   const [sampleMode,setSampleMode]=useState(false);
+  const [stage,setStage]=useState<DirectorStage>("storyboard");
+  const [recheckToken,setRecheckToken]=useState(0);
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
   function acceptProject(d:Dossier,b:Bundle,source:"sample"|"topic"="topic"){
     setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");
+    setStage(source==="sample"?"preview":"storyboard");
+    setRecheckToken(0);
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
@@ -86,6 +94,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   }
   async function importDossier(file:File|undefined){
     setSampleMode(false);
+    setStage("storyboard");
     if(!file)return;
     try{const x=await loadJson(file) as unknown as Dossier;
       if(x.kind!=="research-dossier"||!x.id||!x.topic)throw Error("Expected a research-dossier/v1 JSON file.");
@@ -94,6 +103,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   }
   async function importBundle(file:File|undefined){
     setSampleMode(false);
+    setStage("storyboard");
     if(!file)return;
     try{const x=await loadJson(file) as unknown as Bundle;
       if(x.kind!=="preproduction-bundle"||!x.plan?.shots?.length)
@@ -106,6 +116,11 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   }
   function chooseShot(id:string,focusEditor=false){
     if(!bundle)return;
+    if(id!==shotId&&dirty){
+      setStage("storyboard");
+      setStatus("Save or discard your scene edits before choosing another scene. Your changes are still here.");
+      return;
+    }
     setShotId(id);setDraft(shotDraft(bundle,id));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");
     if(focusEditor)document.querySelector<HTMLSelectElement>('select[aria-label="Selected video shot"]')?.focus();
@@ -180,6 +195,17 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
     draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
     draft.sfxIntent!==(audio.sfxIntent??"")||draft.visualElementsText.trim()!==visualTextSaved.trim());
+  function navigate(target:DirectorStage){
+    const result=resolveDirectorNavigation({current:stage,target,unsaved:dirty});
+    if(result.blocked){setStatus(result.message);return;}
+    if(shouldInvalidateDirectorReadiness(stage,target))setRecheckToken(value=>value+1);
+    setStage(result.stage as DirectorStage);setStatus("");
+  }
+  function discardEdits(){
+    if(bundle)setDraft(shotDraft(bundle,shotId));
+    setStatus("Unsaved scene edits discarded. The saved storyboard is unchanged.");
+  }
+  const nextStage=nextDirectorStage(stage) as DirectorStage|null;
   const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId;
   const mergedImpact={
     speech:new Set(revisions.flatMap(x=>x.impacts.speechRegenerate)),
@@ -188,21 +214,30 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
     shifted:new Set(revisions.flatMap(x=>x.impacts.downstreamRetiming)),
   };
   return <main id="workspace" className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6" aria-label="Video director">
-    <div className="mx-auto flex max-w-6xl flex-col gap-4">
-      <div>
-        <h1 className="font-serif text-xl font-semibold">Video Director · Segment Lab</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Edit just one scene, generate different hook and storytelling combinations, and create a precise audio/visual regeneration plan. The source bundle is never overwritten.</p>
+    <div className="mx-auto flex max-w-7xl flex-col gap-5 pb-12">
+      <div className="flex items-start gap-4">
+        <div className="flex size-12 shrink-0 items-center justify-center rounded-surface bg-primary/10 text-primary">
+          <Film className="size-6"/>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[.18em] text-muted-foreground">ContentGen Studio</p>
+          <h1 className="mt-1 font-serif text-2xl font-semibold tracking-tight">Video Director</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            Build a video from its story to its final draft. Each step saves to the same project; review your work before rendering.
+          </p>
+        </div>
       </div>
       {!usable&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
       {usable&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle p-4">
         <div>
-          <p className="font-semibold">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
-          <p className="text-xs text-muted-foreground">{dossier.topic.title} · {bundle.plan.shots.length} scenes · {sampleMode?"Synthetic demo; you can explore without voice or research setup.":"Editable source-linked draft."}</p>
+          <p className="text-xs font-medium text-muted-foreground">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
+          <p className="mt-1 text-base font-semibold">{dossier.topic.title}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{bundle.plan.shots.length} scenes · {sampleMode?"Synthetic demo · explore without voice setup":"Editable source-linked draft"}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" icon={<Download className="size-4"/>}
+          <Button variant="outline" icon={<Download className="size-4"/>} disabled={dirty||busy}
             onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
-          <Button variant="outline" onClick={()=>{setDossier(null);setBundle(null);setShotId("");setSampleMode(false);setStatus("");}}>
+          <Button variant="outline" disabled={dirty||busy} onClick={()=>{setDossier(null);setBundle(null);setShotId("");setStage("storyboard");setSampleMode(false);setStatus("");}}>
             Start another project
           </Button>
         </div>
@@ -226,13 +261,40 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           ?"Matched: "+dossier.topic.title+" · "+bundle.plan.shots.length+" shots"
           :"Import both the matching research dossier and preproduction bundle. Studio does not send either to a cloud service."}</p>
       </Surface>}
+      {!usable&&status&&<p role="status" className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm">{status}</p>}
       {usable&&<>
-        <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
-          selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
-          onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
-        <AssetDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
-        <SfxDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
-        <Surface header={<h2 className="font-medium">2 · Choose and edit a shot</h2>}>
+        <nav aria-label="Video production steps" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {directorStages.map(item=>{
+            const StepIcon=stageIcons[item.id as DirectorStage];
+            const active=item.id===stage;
+            return <button key={item.id} type="button" aria-label={`${item.number} ${item.label}`}
+              aria-current={active?"step":undefined}
+              onClick={()=>navigate(item.id as DirectorStage)}
+              className={`group flex min-w-0 items-start gap-3 rounded-surface border px-4 py-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active?
+                "border-primary bg-primary/10 shadow-sm":"border-border bg-surface hover:border-primary/40 hover:bg-surface-subtle"}`}>
+              <span className={`flex size-10 shrink-0 items-center justify-center rounded-control ${active?
+                "bg-primary text-primary-foreground":"bg-surface-subtle text-muted-foreground"}`}>
+                <StepIcon className="size-5"/>
+              </span>
+              <span className="min-w-0">
+                <span className="block text-xs font-semibold text-muted-foreground">{item.number} · {active?"Current step":"Production step"}</span>
+                <span className="mt-0.5 block text-sm font-semibold">{item.label}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{item.detail}</span>
+              </span>
+            </button>;
+          })}
+        </nav>
+        {status&&<p role="status" className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm" >{status}</p>}
+        {stage==="storyboard"&&<section aria-label="Storyboard editing" className="space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-lg font-semibold">Shape your story</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Work on one scene at a time. Save its edits before choosing another.</p></div>
+            {dirty&&<div className="flex flex-wrap items-center gap-2 rounded-control border border-amber-400/40 bg-amber-400/5 px-3 py-2">
+              <span className="text-xs font-semibold text-foreground">Unsaved scene edits</span>
+              <Button size="sm" variant="outline" disabled={busy} onClick={discardEdits}>Discard unsaved edits</Button>
+            </div>}
+          </div>
+        <Surface header={<h2 className="font-medium">Scene editor</h2>}>
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
               <select aria-label="Selected video shot" className={field+" mt-2"} value={shotId}
@@ -261,7 +323,7 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
               onClick={()=>{try{void apply(changes());}catch(error){setStatus(error instanceof Error?error.message:"Review the visual elements.");}}}>Apply selected-shot edit</Button>
           </div>
         </Surface>
-        <Surface header={<h2 className="font-medium">3 · Generate creative alternatives</h2>}>
+        <Surface header={<h2 className="font-medium">Optional · Explore creative alternatives</h2>}>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">{shotId===bundle.plan.shots[0].id
               ?"Opening hooks must create immediate audience relevance AND a specific unanswered question."
@@ -292,14 +354,14 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
                       {variants.map(v=><option key={v.id} value={v.id}>{v.strategy}</option>)}
                     </select></label>)}
               </div>
-              <Button disabled={busy} onClick={combine} icon={<RefreshCw className="size-4"/>}>
+              <Button disabled={busy||dirty} onClick={combine} icon={<RefreshCw className="size-4"/>}>
                 Apply combined variation to selected shot
               </Button>
               <p className="text-xs text-muted-foreground">Generated choices are hypotheses, not measured hook winners. Claims and media rights still require editorial review.</p>
             </div>}
           </div>
         </Surface>
-        <Surface header={<h2 className="font-medium">4 · Selective regeneration plan</h2>}>
+        <Surface header={<h2 className="font-medium">Changes & regeneration</h2>}>
           <div className="space-y-2 text-sm">
             {revisions.length===0?<p className="text-muted-foreground">Make a change to see which segments need regeneration.</p>:<>
               <p>Revised shots: {revisions.length} · New narration: {[...mergedImpact.speech].join(", ")||"none"}</p>
@@ -320,9 +382,46 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
             </>}
           </div>
         </Surface>
-
+        </section>}
+        {stage==="assets"&&<section aria-label="Visual asset selection" className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div><h2 className="text-lg font-semibold">Find the right visuals</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Choose footage and imagery that actually explain the selected scene. Review source rights before use.</p></div>
+            <label className="text-xs font-semibold text-muted-foreground">Scene to source
+              <select aria-label="Visual asset scene" className={field+" mt-1 max-w-xs"} value={shotId}
+                onChange={event=>chooseShot(event.target.value)}>
+                {bundle.plan.shots.map((shot,index)=><option key={shot.id} value={shot.id}>
+                  {String(index+1).padStart(2,"0")} · {shot.purpose}
+                </option>)}
+              </select>
+            </label>
+          </div>
+          <AssetDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
+        </section>}
+        {stage==="sound"&&<section aria-label="Sound design" className="space-y-4">
+          <div><h2 className="text-lg font-semibold">Make it sound intentional</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Arrange approved effects, audition your mix and add subtle ambience where it helps.</p></div>
+          <SfxDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}
+            onSelectShot={id=>chooseShot(id)}/>
+        </section>}
+        <div className={stage==="preview"?"space-y-4":"hidden"} aria-hidden={stage!=="preview"}>
+          {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
+          <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle} recheckToken={recheckToken}
+            selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
+            onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle px-4 py-4">
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">{stage==="preview"?
+            "The final draft needs an explicit readiness check and human playback. Nothing publishes automatically.":
+            dirty?"Save or discard the selected scene before continuing.":
+            "You can revisit any stage. Saved choices remain in this project."}</p>
+          {nextStage?<Button disabled={busy||dirty} onClick={()=>navigate(nextStage)}>
+            Continue to {directorStages.find(item=>item.id===nextStage)?.label}
+            <ArrowRight className="ml-2 size-4"/>
+          </Button>:<Button variant="outline" onClick={()=>navigate("storyboard")}>Back to storyboard</Button>}
+        </div>
       </>}
-      {status&&<p role="status" className="text-sm text-muted-foreground">{status}</p>}
       <p className="text-xs text-muted-foreground">{ja?"すべての変更は下書きです。":"Every edit remains an unapproved draft. Source research, claims, voice permissions, and final export QA are never bypassed."}</p>
     </div>
   </main>;

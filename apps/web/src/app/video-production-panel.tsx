@@ -32,7 +32,7 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean}){
+export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;recheckToken?:number}){
   const [settings,setSettings]=useState<Settings>(defaults);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
@@ -46,6 +46,14 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   const [working,setWorking]=useState("");
   const [notice,setNotice]=useState("");
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
+  // Returning from scene/media/sound edits invalidates an old UI readiness approval,
+  // without discarding voice settings, previews or an already running/completed render.
+  useEffect(()=>{
+    if(recheckToken===0)return;
+    setReady(false);
+    setState(current=>["rendering","done"].includes(current.state)?current:
+      {state:"idle",phase:"idle",message:"",report:null});
+  },[recheckToken]);
   const change=(patch:Partial<Settings>)=>{setSettings(x=>({...x,...patch}));setReady(false);};
   const payload={dossier,bundle};
   useEffect(()=>{

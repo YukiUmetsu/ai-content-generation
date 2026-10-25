@@ -8,18 +8,25 @@ import { createHash } from "node:crypto";
 import { buildSampleTimeline } from "./timeline.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 
-function toneWav(samples, amplitude = 2000, sampleRate = 48000) {
+function toneWav(samples, amplitude = 2000, sampleRate = 48000, hertz = 220) {
   const b = Buffer.alloc(44 + samples * 2);
   b.write("RIFF", 0); b.writeUInt32LE(b.length - 8, 4); b.write("WAVE", 8);
   b.write("fmt ", 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20);
   b.writeUInt16LE(1, 22); b.writeUInt32LE(sampleRate, 24); b.writeUInt32LE(sampleRate * 2, 28);
   b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write("data", 36);
   b.writeUInt32LE(samples * 2, 40);
-  for (let i = 0; i < samples; i++) b.writeInt16LE(amplitude === 0 ? 0 : Math.round(Math.sin(2 * Math.PI * 220 * i / sampleRate) * amplitude), 44 + 2 * i);
+  for (let i = 0; i < samples; i++) b.writeInt16LE(amplitude === 0 ? 0 : Math.round(Math.sin(2 * Math.PI * hertz * i / sampleRate) * amplitude), 44 + 2 * i);
   return b;
 }
 const sha256 = (b) => createHash("sha256").update(b).digest("hex");
 const enabled = spawnSync("ffmpeg", ["-version"], { stdio: "ignore" }).status === 0 && spawnSync("ffprobe", ["-version"], { stdio: "ignore" }).status === 0;
+function strengthAt(bytes,start,count,hertz){
+  const data=bytes.indexOf(Buffer.from("data"))+8;
+  assert.ok(data>=8,"rendered WAV must have an audio data chunk");
+  let sum=0;
+  for(let index=start;index<start+count;index++)sum+=bytes.readInt16LE(data+2*index)*Math.sin(2*Math.PI*hertz*index/48000);
+  return Math.abs(sum/count);
+}
 
 async function fixture(t, { amplitude = 2000, sampleRate = 48000 } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "contentgen-master-test-"));
@@ -57,6 +64,69 @@ test("intentional no-SFX mix remains playable without inserting sounds", { skip:
   assert.equal(result.samples, timeline.totalSamples);
   assert.deepEqual(result.sfxCueSamples, {});
   assert.equal(result.findings.length, 0);
+});
+
+test("reviewed SFX is mixed at the exact event sample only when the imported WAV hash still matches", { skip: !enabled }, async t=>{
+  const {dir,beats,timeline}=await fixture(t);
+  const wav=toneWav(12000,1900),assetPath=join(dir,"reviewed-sound.wav");
+  await writeFile(assetPath,wav);
+  const sound={id:"reviewed",eventId:"lifetime-total-reveal",assetRef:assetPath,
+    assetPath,assetSha256:sha256(wav),licenseStatus:"verified"};
+  const verified=await renderMasterAudio({beats,timeline,sfx:[sound]},
+    {outputDir:join(dir,"verified")});
+  assert.equal(verified.sfxCueSamples.reviewed,60000);
+  assert.equal(verified.samples,timeline.totalSamples);
+  await writeFile(assetPath,toneWav(12000,2100));
+  await assert.rejects(renderMasterAudio({beats,timeline,sfx:[sound]},
+    {outputDir:join(dir,"tampered")}),/checksum|hash|changed/i);
+});
+
+test("multiple effects offset from one event mix independently, with bounded gain and fades",{skip:!enabled},async t=>{
+  const {dir,beats,timeline}=await fixture(t);
+  const bytes=toneWav(24000,3000),assetPath=join(dir,"additional.wav");await writeFile(assetPath,bytes);
+  const effect={kind:"effect",assetRef:assetPath,assetPath,assetSha256:sha256(bytes),
+    eventId:"lifetime-total-reveal",licenseStatus:"verified",gainDb:-18,fadeInMs:120,fadeOutMs:240};
+  const sfx=[{...effect,id:"hit-a",offsetMs:0},{...effect,id:"hit-b",offsetMs:250,gainDb:-30,fadeInMs:0,fadeOutMs:120}];
+  const result=await renderMasterAudio({beats,timeline,sfx},{outputDir:join(dir,"multi")});
+  assert.deepEqual(result.sfxCueSamples,{"hit-a":60000,"hit-b":72000});
+  assert.equal(result.samples,timeline.totalSamples);
+  assert.ok(result.loudness.truePeakDbtp<=-1.45);
+  const single=await renderMasterAudio({beats,timeline,sfx:sfx.slice(0,1)},
+    {outputDir:join(dir,"single")});
+  assert.notEqual(sha256(await readFile(result.wavPath)),sha256(await readFile(single.wavPath)),
+    "the second independently timed cue must alter the actual master");
+});
+
+test("a short ambience sample loops across the full measured film and respects safe fade bounds",{skip:!enabled},async t=>{
+  const {dir,beats,timeline}=await fixture(t);
+  const fullTimeline={...timeline,eventSamples:{...timeline.eventSamples,"film-start":0}};
+  const bytes=toneWav(4800,2000,48000,1000),assetPath=join(dir,"ambient.wav");await writeFile(assetPath,bytes);
+  const ambience={id:"ambient",kind:"ambience",eventId:"film-start",assetRef:assetPath,
+    assetPath,assetSha256:sha256(bytes),licenseStatus:"verified",offsetMs:0,
+    gainDb:-25,fadeInMs:200,fadeOutMs:400};
+  const result=await renderMasterAudio({beats,timeline:fullTimeline,sfx:[ambience]},{outputDir:join(dir,"ambient")});
+  assert.equal(result.samples,timeline.totalSamples);
+  assert.equal(result.sfxCueSamples.ambient,0);
+  assert.ok(result.loudness.truePeakDbtp<=-1.45);
+  const late=await readFile(result.wavPath);
+  const steady=strengthAt(late,48000,4800,1000);
+  assert.ok(steady>15,"1000 Hz ambience must still be audible after the original 0.1s clip ends");
+  assert.ok(steady>strengthAt(late,0,2400,1000)*1.7,"fade-in must be audible in the actual master");
+  assert.ok(steady>strengthAt(late,101000,2400,1000)*1.7,"fade-out must be audible near the end of the master");
+  await assert.rejects(renderMasterAudio({beats,timeline:fullTimeline,sfx:[{...ambience,gainDb:2}]},
+    {outputDir:join(dir,"too-loud")}),/gain|range|bound/i);
+  await assert.rejects(renderMasterAudio({beats,timeline:fullTimeline,sfx:[{...ambience,offsetMs:500}]},
+    {outputDir:join(dir,"bad-ambient-offset")}),/offset|ambien/i);
+});
+
+test("manual cue offsets that start outside the finished timeline fail without publishing a master",{skip:!enabled},async t=>{
+  const {dir,beats,timeline}=await fixture(t);
+  const bytes=toneWav(4800),assetPath=join(dir,"end.wav");await writeFile(assetPath,bytes);
+  const effect={id:"past-end",kind:"effect",eventId:"lifetime-total-reveal",assetPath,
+    assetRef:assetPath,assetSha256:sha256(bytes),licenseStatus:"verified",offsetMs:10000,
+    gainDb:-18,fadeInMs:0,fadeOutMs:0};
+  await assert.rejects(renderMasterAudio({beats,timeline,sfx:[effect]},
+    {outputDir:join(dir,"past-end")}),/outside|duration|timeline|offset/i);
 });
 
 test("orphan event, mismatched asset/rights, missing speech, wrong rate and clipped input fail closed", { skip: !enabled }, async (t) => {
