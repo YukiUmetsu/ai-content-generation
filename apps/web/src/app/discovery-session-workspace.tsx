@@ -70,6 +70,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
   const [searchDetail, setSearchDetail] = useState("");
   const [searchAttempt, setSearchAttempt] = useState(0);
   const newlyStartedRunId = useRef<string | null>(null);
+  const activeRefreshSequence = useRef(0);
   const latestCallbacks = useRef({onDiscoveryStateChange,onIdeasReady});
   useEffect(()=>{latestCallbacks.current={onDiscoveryStateChange,onIdeasReady};},
     [onDiscoveryStateChange,onIdeasReady]);
@@ -139,6 +140,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
   }, [project.id]);
 
   const refreshActive = useCallback(async (sessionId: string, signal?: AbortSignal) => {
+    const sequence = ++activeRefreshSequence.current;
     const [detail, runs] = await Promise.all([
       getDiscoverySession(project.id, sessionId, signal), listSessionRuns(project.id, sessionId, signal),
     ]);
@@ -146,7 +148,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
     // fetching every captured source passage again on each status poll.
     const count = typeof detail.ideaCount === "number" ? detail.ideaCount
       : (await listSessionIdeas(project.id, sessionId, signal)).length;
-    if (signal?.aborted) return;
+    if (signal?.aborted || sequence !== activeRefreshSequence.current) return;
     setSessions(previous => previous.map(item => item.id === detail.id ? detail : item));
     const latestRun=runs[0]??detail.lastRun??null;
     setActiveDetails({ sessionId, runHistory: runs, run: latestRun, candidateCount: count });
@@ -163,7 +165,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
     };
     void load();
     const timer = window.setInterval(() => { void load(); }, 3500);
-    return () => { alive = false; controller.abort(); window.clearInterval(timer); };
+    return () => { alive = false; controller.abort(); activeRefreshSequence.current++; window.clearInterval(timer); };
   }, [currentId, refreshActive]);
 
   useEffect(()=>{
