@@ -387,3 +387,50 @@ fn cohort_percentiles_require_three_comparable_ideas_and_preserve_ties() {
             .all(|x| x.as_ref().unwrap().comparison_score == Some(50.0))
     );
 }
+
+#[test]
+fn successful_but_sparsely_sampled_youtube_queues_one_broader_job() {
+    let (mut db, session, idea) = seeded();
+    let now = 1_792_886_400;
+    let first_query = "roof repair costs much";
+    let first = idea_market::claim_assessment(
+        &mut db, "brand", &session, &idea, first_query, "long", now,
+    ).unwrap();
+    idea_market::complete_assessment(&db, &first.id, &[], now + 5).unwrap();
+    let broadened = idea_market::broader_query(first_query).unwrap();
+    assert_eq!(broadened, "roof repair costs");
+    assert_eq!(idea_market::broader_query("roof repair"), None);
+    assert_eq!(discovery_store::low_sample_retry_query(&db, &idea, now + 60).unwrap(), None,
+        "respect the provider's one-hour paid-query cooldown");
+    assert_eq!(discovery_store::low_sample_retry_query(&db, &idea, now + 3_606).unwrap(),
+        Some(broadened.clone()));
+    assert_eq!(discovery_store::market_retry_due(&db, &idea, now + 3_606, true).unwrap().0, true);
+    assert_eq!(discovery_store::market_retry_due(&db, &idea, now + 3_606, false).unwrap().0, false);
+
+    let second = idea_market::claim_assessment(
+        &mut db, "brand", &session, &idea, &broadened, "long", now + 3_606,
+    ).unwrap();
+    idea_market::complete_assessment(&db, &second.id, &[], now + 3_611).unwrap();
+    assert_eq!(discovery_store::low_sample_retry_query(&db, &idea, now + 7_300).unwrap(), None,
+        "two paid attempts within the retention window is the hard limit");
+    assert!(!discovery_store::market_retry_due(&db, &idea, now + 7_300, true).unwrap().0,
+        "a second sparse success must not trigger infinite paid retries");
+}
+
+#[test]
+fn qualified_youtube_sample_does_not_requery_just_because_cohort_is_too_small() {
+    let (mut db, session, idea) = seeded();
+    let now = 1_792_886_400;
+    let first = idea_market::claim_assessment(
+        &mut db, "brand", &session, &idea, "roof repair costs much", "long", now,
+    ).unwrap();
+    let videos = (0..12).map(|n| video(n, "Roof repair costs much explained", 420))
+        .collect::<Vec<_>>();
+    idea_market::complete_assessment(&db, &first.id, &videos, now + 5).unwrap();
+    let saved = idea_market::latest_assessment(&db, &idea, now + 6).unwrap().unwrap();
+    assert_eq!(saved.sample_size, 12);
+    assert_eq!(saved.distinct_channels, 4);
+    assert_eq!(saved.comparison_score, None, "a single idea cannot form a cohort");
+    assert_eq!(discovery_store::low_sample_retry_query(&db, &idea, now + 3_606).unwrap(), None,
+        "collecting more videos for a qualified idea cannot create a missing cohort");
+}
