@@ -200,15 +200,35 @@ describe("Select idea", () => {
       opportunityScore: [78, 70, 60, 55][index], scoreVersion: "evidence-readiness-v1",
       scoreInputs: { capturedPassages: 2, sourcePoints: 40, audienceDemand: "unknown" },
     } : idea);
-    vi.spyOn(globalThis, "fetch").mockImplementation(async input =>
-      new Response(JSON.stringify(String(input).endsWith("/ideas") ? { ideas: scored } : session), { status: 200 }));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+      if (String(input).endsWith("/decision") && options?.method === "POST")
+        return new Response(JSON.stringify({ saved: true }), { status: 200 });
+      return new Response(JSON.stringify(String(input).endsWith("/ideas") ? { ideas: scored } : session), { status: 200 });
+    });
     render(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText("Original housing question 7")).toBeInTheDocument();
     expect(screen.getAllByText("Top 3 recommendation")).toHaveLength(3);
     expect(screen.getByText("78/100")).toBeInTheDocument();
     expect(screen.getAllByText("Not measured")).toHaveLength(3);
     await userEvent.setup().click(screen.getAllByRole("button", { name: "Explain this score" })[0]);
-    expect(screen.getByText(/Audience Demand: unknown/)).toBeInTheDocument();
+    expect(screen.getByText(/Audience demand: unknown/)).toBeInTheDocument();
+    const rejected = screen.getByText("Why home insurance keeps rising").closest("article")!;
+    await userEvent.setup().click(within(rejected).getByRole("button", { name: "Dismiss" }));
+    await waitFor(() => expect(within(rejected).queryByText("Top 3 recommendation")).not.toBeInTheDocument());
+    expect(screen.getAllByText("Top 3 recommendation")).toHaveLength(3);
+  });
+
+  it("explains the source-based score in Japanese with an accessible disclosure", async () => {
+    const first = { ...ideas[0], opportunityScore: 60, scoreVersion: "evidence-readiness-v1",
+      scoreInputs: { capturedPassages: 1, audienceDemand: "unknown" } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input =>
+      new Response(JSON.stringify(String(input).endsWith("/ideas") ? { ideas: [first] } : session), { status: 200 }));
+    render(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-1" locale="ja" onStartProduction={()=>{}} />);
+    const details = await screen.findByRole("button", { name: "評価の根拠を確認" });
+    expect(details).toHaveAttribute("aria-expanded", "false");
+    await userEvent.setup().click(details);
+    expect(screen.getByRole("button", { name: "評価の詳細を閉じる" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("視聴者の需要: 不明")).toBeInTheDocument();
   });
 
   it("lets the creator revise an AI idea and send an approved brief under the original session", async () => {
