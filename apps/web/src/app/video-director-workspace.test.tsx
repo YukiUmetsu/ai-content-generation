@@ -166,8 +166,8 @@ describe("first-run complete Studio demo",()=>{
     await user.click(screen.getByRole("button",{name:/01 Storyboard/i}));
     await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
     expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
-    expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"],
-      "step navigation must not restart the visual preview");
+    // Navigating steps must not restart the visual preview.
+    expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
   });
 });
 
