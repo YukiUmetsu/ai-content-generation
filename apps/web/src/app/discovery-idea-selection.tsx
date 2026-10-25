@@ -3,7 +3,8 @@ import { ArrowUpDown, CheckCircle2, ExternalLink, FileSearch, Search } from "luc
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/features/registry";
 import {
-  collectIdeaMarketEvidence, decideSessionIdea, getDiscoverySession, listSessionIdeas,
+  collectIdeaMarketEvidence, decideSessionIdea, getDiscoverySession, listSessionIdeas, listSessionRuns,
+  queueMissingMarketEvidence,
   type DiscoveryIdeaBrief, type DiscoveryPlatform, type DiscoverySessionIdea,
 } from "@/lib/api/discovery-sessions";
 import { loadMarketStatus, type MarketStatus } from "@/lib/api/market";
@@ -75,6 +76,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [compareFormat, setCompareFormat] = useState<IdeaVideoFormat>("long");
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
   const [runMarketHealth, setRunMarketHealth] = useState<unknown>(null);
+  const [discoveryRunning, setDiscoveryRunning] = useState(false);
+  const [backfillState, setBackfillState] = useState<"idle" | "queued" | "running" | "no_pending" | "error">("idle");
   const [marketStatusError, setMarketStatusError] = useState<string | null>(null);
   const [collectingId, setCollectingId] = useState<string | null>(null);
   const [pollTimedOut, setPollTimedOut] = useState(false);
@@ -99,6 +102,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       if (sessionResult.status === "fulfilled") {
         setSessionPlatforms(sessionResult.value.platforms);
         setRunMarketHealth(sessionResult.value.lastRun?.providerHealth.market ?? null);
+        setDiscoveryRunning(["queued", "running"].includes(sessionResult.value.lastRun?.status ?? ""));
       }
       setLoading(false);
     });
@@ -112,8 +116,25 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     return () => { alive = false; };
   }, [projectId, sessionId]);
 
-  // A saved 'running' assessment reactivates polling on reload. No provider calls happen here.
-  const hasPendingMarket = ideas.some(idea => idea.marketAssessment?.state === "running");
+  // A missing observation is a durable background job, not a passive "Not measured" label.
+  // The POST is idempotent; the server also queues historical gaps on startup.
+  const hasMissingMarket = ideas.some(idea => !idea.marketAssessment || !idea.googleTrends);
+  useEffect(() => {
+    if (loading || !hasMissingMarket) return;
+    let alive = true;
+    void queueMissingMarketEvidence(projectId, sessionId).then(result => {
+      if (alive) setBackfillState(result.state);
+    }).catch(failure => {
+      if (alive) {
+        setBackfillState("error");
+        setError(failure instanceof Error ? failure.message : "Could not queue missing market observations.");
+      }
+    });
+    return () => { alive = false; };
+  }, [projectId, sessionId, loading, hasMissingMarket]);
+
+  const hasPendingMarket = ideas.some(idea => idea.marketAssessment?.state === "running") ||
+    ["queued", "running"].includes(backfillState) || discoveryRunning;
   useEffect(() => {
     if ((!hasPendingMarket && !collectingId) || pollTimedOut) return;
     let alive = true;
@@ -121,23 +142,42 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     let attempts = 0;
     const timer = window.setInterval(() => {
       if (inFlight) return;
-      if (++attempts > 30) { window.clearInterval(timer); setPollTimedOut(true); return; }
+      // A full Discovery run can spend several minutes collecting bounded provider data.
+      if (++attempts > 360) { window.clearInterval(timer); setPollTimedOut(true); return; }
       inFlight = true;
-      void listSessionIdeas(projectId, sessionId).then(latest => {
-        if (!alive) return;
-        setIdeas(latest);
-        if (collectingId && latest.some(idea => idea.id === collectingId &&
-          idea.marketAssessment && idea.marketAssessment.state !== "running")) setCollectingId(null);
-        if (!latest.some(idea => idea.marketAssessment?.state === "running"))
-          void loadMarketStatus().then(status => {
-            if (alive) { setMarketStatus(status); setMarketStatusError(null); }
-          }).catch(() => {});
-      }).catch(failure => {
-        if (alive) setError(failure instanceof Error ? failure.message : "Could not refresh YouTube observations.");
-      }).finally(() => { inFlight = false; });
-    }, 2000);
+      void Promise.all([listSessionIdeas(projectId, sessionId), listSessionRuns(projectId, sessionId)])
+        .then(async ([latest, runs]) => {
+          if (!alive) return;
+          setIdeas(latest);
+          setDiscoveryRunning(runs.some(run => run.status === "queued" || run.status === "running"));
+          const activeBackfill = runs.some(run => run.status === "running" &&
+            (run.stage === "measure_market" || run.stage === "measure_market_collecting"));
+          const marketRun = runs.find(run => run.providerHealth?.market);
+          if (marketRun) setRunMarketHealth(marketRun.providerHealth.market);
+          if (backfillState === "queued" || backfillState === "running") {
+            if (activeBackfill) {
+              setBackfillState("running");
+            } else if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
+              // A session can have several completed runs. Queue the next
+              // missing run only after the previous one releases its lease.
+              const next = await queueMissingMarketEvidence(projectId, sessionId);
+              if (alive) setBackfillState(next.state);
+            } else {
+              setBackfillState("no_pending");
+            }
+          }
+          if (collectingId && latest.some(idea => idea.id === collectingId &&
+            idea.marketAssessment && idea.marketAssessment.state !== "running")) setCollectingId(null);
+          if (!activeBackfill && !latest.some(idea => idea.marketAssessment?.state === "running"))
+            void loadMarketStatus().then(status => {
+              if (alive) { setMarketStatus(status); setMarketStatusError(null); }
+            }).catch(() => {});
+        }).catch(failure => {
+          if (alive) setError(failure instanceof Error ? failure.message : "Could not refresh market observations.");
+        }).finally(() => { inFlight = false; });
+    }, 5000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [projectId, sessionId, hasPendingMarket, collectingId, pollTimedOut]);
+  }, [projectId, sessionId, hasPendingMarket, collectingId, pollTimedOut, backfillState]);
 
   const collect = async (ideaId: string, query: string, format: IdeaVideoFormat) => {
     setCollectingId(ideaId); setPollTimedOut(false); setError(null);
@@ -157,8 +197,16 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const refreshMarket = async () => {
     setError(null); setPollTimedOut(false);
     try {
-      const [latest, status] = await Promise.all([listSessionIdeas(projectId, sessionId), loadMarketStatus()]);
+      const [latest, status, session] = await Promise.all([
+        listSessionIdeas(projectId, sessionId), loadMarketStatus(), getDiscoverySession(projectId, sessionId),
+      ]);
       setIdeas(latest); setMarketStatus(status); setMarketStatusError(null);
+      setRunMarketHealth(session.lastRun?.providerHealth.market ?? null);
+      setDiscoveryRunning(["queued", "running"].includes(session.lastRun?.status ?? ""));
+      if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
+        const queued = await queueMissingMarketEvidence(projectId, sessionId);
+        setBackfillState(queued.state);
+      }
     }
     catch (failure) { setError(failure instanceof Error ? failure.message : "Could not refresh YouTube evidence."); }
   };
@@ -274,6 +322,14 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       </label>
     </div>
 
+    {backfillState !== "idle" && <p role="status" className="text-xs text-muted-foreground">
+      {backfillState === "queued" ? tr(locale, "Missing market data queued for background collection.", "未測定の市場データをバックグラウンド収集に登録しました。")
+        : backfillState === "running" ? tr(locale, "Collecting missing YouTube and Google Trends observations…", "未測定の YouTube と Google Trends データを収集中…")
+        : backfillState === "error" ? tr(locale, "Could not start market backfill. Check the local server.", "市場データの補完を開始できません。ローカルサーバーを確認してください。")
+        : discoveryRunning ? tr(locale, "Discovery is still running; market collection follows idea generation.", "調査を実行中です。アイデア生成後に市場データを収集します。")
+          : hasMissingMarket ? tr(locale, "No new market job is eligible; inspect saved provider failures or refresh.", "新たに実行できる市場データ収集はありません。保存済みのエラーを確認してください。")
+            : tr(locale, "Missing market observations have been processed.", "未測定の市場データの処理が完了しました。")}
+    </p>}
     {runMarketHealth !== null && <p role="status" className="text-xs text-muted-foreground">
       {tr(locale, "Discovery market collection", "調査時の市場データ収集")}: {formatDiscoveryProviderHealth(runMarketHealth, locale)}
     </p>}

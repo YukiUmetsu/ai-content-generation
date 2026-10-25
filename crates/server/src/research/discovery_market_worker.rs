@@ -553,6 +553,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn completed_session_with_no_market_observations_is_backfilled_once() {
+        let (_dir, state, session_id, run_id) = setup();
+        let mut db = state.connect().unwrap();
+        // Simulate a completed session created before automatic market enrichment.
+        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1", [&run_id]).unwrap();
+        let queued = discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap();
+        assert_eq!(queued, vec![run_id.clone()]);
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap().is_empty(), "double-click must not enqueue twice");
+        let pending = discovery_store::get_run(&db, "proj-homes", &run_id).unwrap();
+        assert_eq!(pending.stage, "measure_market");
+        assert_eq!(pending.provider_health["marketBackfill"], "queued");
+        drop(db);
+
+        process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
+        let mut db = state.connect().unwrap();
+        let completed = discovery_store::get_run(&db, "proj-homes", &run_id).unwrap();
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.provider_health["marketBackfill"], "completed");
+        let ideas = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap();
+        assert!(ideas[0].market_assessment.is_some());
+        assert!(ideas[0].google_trends.is_some());
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap().is_empty(), "completed backfill must not loop");
+        let budget: i64 = db.query_row(
+            "SELECT COUNT(*) FROM market_search_budget", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(budget, 0, "missing YouTube key must not spend quota");
+    }
+
+    #[tokio::test]
+    async fn backfill_serializes_multiple_completed_runs_in_one_session() {
+        let (_dir, state, session_id, first_id) = setup();
+        let mut db = state.connect().unwrap();
+        let first = discovery_store::get_run(&db, "proj-homes", &first_id).unwrap();
+        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1", [&first_id]).unwrap();
+        let second = discovery_store::start_or_get_active_for_session(
+            &mut db, "proj-homes", &session_id, "revision-2", 104,
+        ).unwrap();
+        discovery_store::finish_run(&mut db, &second.id, vec![discovery_store::CandidateDraft {
+            title: "The cost of replacing a water heater".into(),
+            hook: "What will it cost?".into(),
+            premise: "Compare water heater expenses".into(),
+            why_now: "Maintenance costs are rising".into(),
+            angle_key: "water-heater-expenses".into(),
+            source_ids: first.candidates[0].source_ids.clone(),
+            confidence: "medium".into(),
+        }], "completed", 105).unwrap();
+        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1", [&second.id]).unwrap();
+        let first_batch = discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap();
+        assert_eq!(first_batch, vec![first_id.clone()]);
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap().is_empty(), "only one active market job per session");
+        drop(db);
+
+        process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
+        let mut db = state.connect().unwrap();
+        let second_batch = discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap();
+        assert_eq!(second_batch, vec![second.id.clone()]);
+        drop(db);
+        process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
+        let db = state.connect().unwrap();
+        assert_eq!(discovery_store::get_run(&db, "proj-homes", &second.id).unwrap().status, "completed");
+        assert_eq!(sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn backfill_only_collects_missing_provider_and_preserves_saved_youtube() {
+        let (_dir, state, session_id, run_id) = setup();
+        process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
+        let mut db = state.connect().unwrap();
+        let ideas = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap();
+        db.execute("DELETE FROM idea_trends_runs WHERE idea_id=?1", [&ideas[0].candidate.id]).unwrap();
+        let youtube_before: i64 = db.query_row(
+            "SELECT COUNT(*) FROM idea_market_runs", [], |row| row.get(0),
+        ).unwrap();
+        let queued = discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap();
+        assert_eq!(queued, vec![run_id]);
+        drop(db);
+        process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
+        let db = state.connect().unwrap();
+        let youtube_after: i64 = db.query_row(
+            "SELECT COUNT(*) FROM idea_market_runs", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(youtube_before, youtube_after, "saved YouTube result must be reused");
+        let trends_after: i64 = db.query_row(
+            "SELECT COUNT(*) FROM idea_trends_runs", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(trends_after, 1);
+    }
+
+    #[test]
+    fn backfill_is_scoped_and_does_not_queue_active_or_archived_sessions() {
+        let (_dir, state, session_id, run_id) = setup();
+        let mut db = state.connect().unwrap();
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("other-project", &session_id)), epoch_now(),
+        ).is_err(), "cross-project session must not be writable");
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+        ).unwrap().is_empty(), "initial market job is already active");
+        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1", [&run_id]).unwrap();
+        db.execute("UPDATE content_discovery_sessions SET archived_at=?2 WHERE id=?1",
+            rusqlite::params![session_id, epoch_now()]).unwrap();
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, None, epoch_now(),
+        ).unwrap().is_empty(), "archived sessions must not be reactivated");
+    }
+
+    #[tokio::test]
     async fn unavailable_providers_complete_discovery_with_durable_partial_evidence() {
         let (_dir, state, session_id, run_id) = setup();
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;

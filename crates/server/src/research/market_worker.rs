@@ -21,11 +21,26 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let _ = super::idea_trends::reconcile_interrupted(&db, epoch_now());
             let _ = super::discovery_store::recover_interrupted_market_runs(&db, epoch_now());
         }
+        // Recover completed sessions created before automatic enrichment existed.
+        // Queue only missing observations, once per run; never re-spend quota on
+        // saved failed/unavailable attempts or on repeated polling.
+        if let Ok(mut db) = state.connect() {
+            if let Err(error) = super::discovery_store::queue_missing_market_runs(&mut db, None, epoch_now()) {
+                eprintln!("contentgen-server: market_backfill_queue_failed reason={error}");
+            }
+        }
         tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
         let mut ticks = tokio::time::interval(Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
+            // Enqueue historical gaps on every tick as well as at startup.
+            // The persisted marker makes this idempotent across restarts.
+            if let Ok(mut db) = state.connect() {
+                if let Err(error) = super::discovery_store::queue_missing_market_runs(&mut db, None, epoch_now()) {
+                    eprintln!("contentgen-server: market_backfill_queue_failed reason={error}");
+                }
+            }
             // Discovery enrichment has its own completion state and must run
             // even if no YouTube key is configured (Google Trends is independent).
             tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));

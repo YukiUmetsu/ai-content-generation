@@ -27,13 +27,19 @@ const assessment = (format: "long" | "shorts", comparisonScore: number | null): 
     sourceUrl: "https://www.youtube.com/watch?v=videoABC123" }],
 });
 
-function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boolean; afterCollect?: DiscoverySessionIdea[]; lastRun?: Record<string, unknown> } = {}) {
+function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boolean; afterCollect?: DiscoverySessionIdea[]; lastRun?: Record<string, unknown>; backfillState?: "queued" | "running" | "no_pending" } = {}) {
   const posts: Array<{query:string;format:string}> = [];
+  const backfills: string[] = [];
   let collected = false;
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
     const url = String(request);
     if (url.endsWith("/market/status")) return new Response(JSON.stringify({ apiKeyConfigured: opts.keyConfigured ?? true,
       collecting: false, searchCallsLast24h: 1, searchCallLimit: 20 }), {status: 200});
+    if (url.endsWith("/market/backfill") && init?.method === "POST") {
+      backfills.push(url);
+      return new Response(JSON.stringify({state:opts.backfillState ?? "no_pending",queuedRunIds:[]}),{status:202});
+    }
+    if (url.endsWith("/runs")) return new Response(JSON.stringify({runs:opts.lastRun ? [opts.lastRun] : []}),{status:200});
     if (url.endsWith("/ideas/idea-1/market") && init?.method === "POST") {
       collected = true;
       posts.push(JSON.parse(String(init.body)));
@@ -44,10 +50,20 @@ function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boo
     if (url.endsWith("/session-1")) return new Response(JSON.stringify({...session, ...(opts.lastRun ? {lastRun:opts.lastRun} : {})}),{status:200});
     throw Error(`Unexpected route: ${url}`);
   });
-  return {posts, fetcher};
+  return {posts, backfills, fetcher};
 }
 
 describe("per-idea YouTube market evidence", () => {
+  it("automatically starts the durable backfill job for unmeasured YouTube and Trends ideas", async () => {
+    const {backfills} = serve([idea("idea-1")], {backfillState:"queued"});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    await waitFor(() => expect(backfills).toEqual([
+      "/api/research/discovery/projects/project-1/sessions/session-1/market/backfill",
+    ]));
+    expect(await screen.findByText(/Missing market data queued for background collection/)).toBeInTheDocument();
+  });
+
   it("shows the saved partial market collection summary even when Discovery completed", async () => {
     serve([idea("idea-1")], {lastRun:{
       id:"discover_"+"a".repeat(24), projectId:"project-1", inputRevision:"revision",
@@ -68,7 +84,7 @@ describe("per-idea YouTube market evidence", () => {
     const card = (await screen.findByText("Question idea-1")).closest("article")!;
     expect(within(card).getByText("Research readiness: 77/100")).toBeInTheDocument();
     expect(within(card).getByText(/Add a YouTube API key in Settings/)).toBeInTheDocument();
-    expect(within(card).getByText(/No saved observation. New Discovery runs attempt Trends automatically/)).toBeInTheDocument();
+    expect(within(card).getByText(/No saved observation. Missing Trends data is queued for background collection when eligible/)).toBeInTheDocument();
   });
 
   it("shows the exact saved provider failure categories without expanding details", async () => {
@@ -131,15 +147,17 @@ describe("per-idea YouTube market evidence", () => {
     expect(within(screen.getAllByRole("article")[2]).getByText("-12%")).toBeInTheDocument();
     expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
   });
-  it("does not request paid-quota observations on page load and explains the missing local key", async () => {
-    const { posts, fetcher } = serve([idea("idea-1")], {keyConfigured:false});
+  it("queues missing observations on page load without directly spending YouTube quota", async () => {
+    const { posts, backfills, fetcher } = serve([idea("idea-1")], {keyConfigured:false});
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText("Question idea-1")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("button", {name:"Evidence details"}));
     expect(await screen.findByText(/Connect YouTube in Settings/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Measure on YouTube" })).toBeDisabled();
     expect(posts).toEqual([]);
-    expect(fetcher.mock.calls.every(([,init]) => init?.method !== "POST")).toBe(true);
+    await waitFor(() => expect(backfills).toHaveLength(1));
+    expect(fetcher.mock.calls.filter(([request, init]) =>
+      String(request).endsWith("/ideas/idea-1/market") && init?.method === "POST")).toHaveLength(0);
   });
 
   it("collects a user-edited search phrase for the chosen format and shows a running state", async () => {

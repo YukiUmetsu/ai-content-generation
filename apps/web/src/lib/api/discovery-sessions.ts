@@ -295,6 +295,16 @@ export async function listSessionIdeas(projectId: string, sessionId: string, sig
   return result.ideas.map(requireIdea);
 }
 
+/** Idempotently queue missing provider observations; the Rust worker owns all network requests. */
+export async function queueMissingMarketEvidence(projectId: string, sessionId: string):
+  Promise<{ state: "queued" | "running" | "no_pending"; queuedRunIds: string[] }> {
+  const response = await call<unknown>(`${sessionPath(projectId, sessionId)}/market/backfill`, "POST");
+  if (!record(response) || !["queued", "running", "no_pending"].includes(String(response.state)) ||
+    !Array.isArray(response.queuedRunIds) || !response.queuedRunIds.every(id => typeof id === "string"))
+    throw Error("Invalid market backfill response from local server.");
+  return response as { state: "queued" | "running" | "no_pending"; queuedRunIds: string[] };
+}
+
 /** One explicit user action consumes at most one shared YouTube search reservation. */
 export function validIdeaMarketQuery(value: string): boolean {
   const characters = Array.from(value.trim());
