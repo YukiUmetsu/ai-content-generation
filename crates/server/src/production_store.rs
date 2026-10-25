@@ -33,8 +33,10 @@ fn validate_brief(brief: &serde_json::Value, platforms: &[String]) -> Result<(),
         ("angle", 1200, false), ("description", 2400, false),
     ] {
         let value = obj.get(field).and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
+        let multiline = matches!(field, "angle" | "description");
         if value.chars().count() > limit || (required && value.trim().is_empty())
-            || value.chars().any(char::is_control) {
+            || value.chars().any(|ch| ch.is_control()
+                && !(multiline && matches!(ch, '\n' | '\t'))) {
             return Err(invalid());
         }
     }

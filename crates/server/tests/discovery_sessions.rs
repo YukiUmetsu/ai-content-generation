@@ -215,7 +215,7 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
     let p2 = production_store::create_production(
         &conn, "brand-one", &session.id, &idea.id,
         &serde_json::json!({"topic":"Home lifetime costs","title":"Home ownership costs, part two",
-            "angle":"Unexpected expenses","description":"Second look at home costs","keywords":[],
+            "angle":"Unexpected expenses","description":"Second look at home costs\nIncluding taxes and maintenance","keywords":[],
             "platforms":["youtube"]}),
         &["youtube".into()], 104,
     ).unwrap();
