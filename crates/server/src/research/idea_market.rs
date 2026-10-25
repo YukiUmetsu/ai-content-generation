@@ -14,6 +14,18 @@ const DAY: i64 = 86_400;
 const RETENTION: i64 = 30 * DAY;
 const MIN_RETRY: i64 = 3_600;
 const METRIC_VERSION: &str = "youtube-comparables-v1";
+
+/// One conservative broadening of a weak automatic YouTube query. Never
+/// repeat the identical paid query to try to repair a missing score. A query
+/// with fewer than three words has no safe deterministic broadening.
+pub fn broader_query(query: &str) -> Option<String> {
+    let words: Vec<&str> = query.split_whitespace().collect();
+    if words.len() < 3 { return None; }
+    let keep = if words.len() > 4 { 3 } else { words.len() - 1 };
+    let broadened = words[..keep].join(" ");
+    (broadened.chars().count() >= 3 && broadened != query).then_some(broadened)
+}
+
 type StoredAssessment = (
     String,
     String,
