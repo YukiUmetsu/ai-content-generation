@@ -61,7 +61,52 @@ describe("per-idea YouTube market evidence", () => {
     await waitFor(() => expect(backfills).toEqual([
       "/api/research/discovery/projects/project-1/sessions/session-1/market/backfill",
     ]));
-    expect(await screen.findByText(/Missing market data queued for background collection/)).toBeInTheDocument();
+    expect(await screen.findByText(/Viral-score evidence queued for background collection/)).toBeInTheDocument();
+  });
+
+  it("queues automatic collection when YouTube and Trends succeeded but Viral Score is still null", async () => {
+    const trends = {state:"succeeded" as const,query:"home energy costs",region:"US",
+      observedAt:1760000000,recentMean:44,previousMean:34,changePercent:29.4,
+      points:52,metricVersion:"google-trends-momentum-v1",errorCode:null};
+    const sparse = {...assessment("long", null),sampleSize:2,distinctChannels:1,
+      comparisonCohortSize:0};
+    const {backfills} = serve([{...idea("idea-1",sparse),googleTrends:trends,
+      viralPotential:{score:null,state:"insufficient_data",scoreVersion:"viral-potential-v1",
+        format:"long",youtubeScore:null,trendScore:64.7,trendChangePercent:29.4,
+        coveragePercent:25,sampleSize:2,distinctChannels:1,comparisonCohortSize:0,
+        youtubeObservedAt:1760000000,trendsObservedAt:1760000000}}],
+      {backfillState:"queued"});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
+      locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    await waitFor(() => expect(backfills).toHaveLength(1));
+    expect(await screen.findByText(/Viral-score evidence queued/)).toBeInTheDocument();
+  });
+
+  it("automatically requests retries for saved failed and unavailable observations", async () => {
+    const failed = {...assessment("long", null),state:"failed" as const,
+      errorCode:"provider_unavailable",sampleSize:0,distinctChannels:0,videos:[]};
+    const trends = {state:"unavailable" as const,query:"home energy costs",region:"US",
+      observedAt:null,recentMean:null,previousMean:null,changePercent:null,
+      points:0,metricVersion:"google-trends-momentum-v1",errorCode:"provider_unavailable"};
+    const {backfills} = serve([{...idea("idea-1",failed),googleTrends:trends}],
+      {backfillState:"queued"});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
+      locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    await waitFor(() => expect(backfills).toHaveLength(1));
+    expect(await screen.findByText(/Viral-score evidence queued/)).toBeInTheDocument();
+  });
+
+  it("reports why no job can start instead of silently showing a missing score", async () => {
+    const {backfills} = serve([idea("idea-1",assessment("long",null))],
+      {backfillState:"no_pending"});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
+      locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    await waitFor(() => expect(backfills).toHaveLength(1));
+    expect(await screen.findByText(/1 idea\\(s\\) still lack a Viral Score/)).toBeInTheDocument();
+    expect(screen.getByText(/No collection job is eligible right now/)).toBeInTheDocument();
   });
 
   it("shows the saved partial market collection summary even when Discovery completed", async () => {
@@ -127,7 +172,11 @@ describe("per-idea YouTube market evidence", () => {
     const trend = { state: "succeeded" as const, query: "home energy costs", region: "US", observedAt: 1760000000,
       recentMean: 62.4, previousMean: 40.0, changePercent: 56.0, points: 52,
       metricVersion: "google-trends-momentum-v1", errorCode: null };
-    const { fetcher } = serve([{ ...idea("idea-1", assessment("long", 76)), googleTrends: trend }]);
+    const { fetcher } = serve([{ ...idea("idea-1", assessment("long", 76)), googleTrends: trend,
+      viralPotential:{score:77,state:"measured",scoreVersion:"viral-potential-v1",
+        format:"long",youtubeScore:76,trendScore:78,trendChangePercent:56,
+        coveragePercent:100,sampleSize:12,distinctChannels:5,comparisonCohortSize:3,
+        youtubeObservedAt:1760000000,trendsObservedAt:1760000000} }]);
     const user = userEvent.setup();
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     const card = (await screen.findByText("Question idea-1")).closest("article")!;
