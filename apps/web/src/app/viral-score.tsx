@@ -124,18 +124,27 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
 
               <div className="mt-3 space-y-3.5">
                 <Factor locale={locale} name={tr(locale, "YouTube performance", "YouTube の実績")}
-                  value={youtube} weight="75%" note={youtube === null
+                  value={youtube} weight={score !== null && trends === null ? "100%" : "75%"} note={youtube === null
                     ? tr(locale, "Requires 8 usable videos, 3 channels and 3 comparable ideas in this format.",
                       "同形式の動画8件、チャンネル3件、比較対象3案が必要です。")
                     : tr(locale, `${matching?.sampleSize ?? 0} videos · ${matching?.distinctChannels ?? 0} channels · ${matching?.comparisonCohortSize ?? 0} ideas. Ranked by median lifetime views/day.`,
                       `動画 ${matching?.sampleSize ?? 0} 件 · チャンネル ${matching?.distinctChannels ?? 0} 件 · 比較対象 ${matching?.comparisonCohortSize ?? 0} 案。累計再生数の日割中央値で比較。`)} />
                 <Factor locale={locale} name={tr(locale, "Search momentum", "検索の勢い")}
-                  value={trends} weight="25%" note={change === null
+                  value={trends} weight={trends === null ? tr(locale, "not counted", "対象外") : "25%"} note={change === null
                     ? tr(locale, "Google Trends needs 26 valid weeks; unavailable data is not counted as zero.",
                       "Google Trends は有効な26週分が必要です。取得不可をゼロとはみなしません。")
                     : tr(locale, `${change} in Google search interest, last 13 vs previous 13 weeks.`,
                       `Google 検索関心度 ${change}（直近13週と前の13週の比較）。`)} />
               </div>
+
+              {(matching?.youtubeObservedAt != null || matching?.trendsObservedAt != null) &&
+                <p className="mt-3 text-[11px] text-muted-foreground">{tr(locale, "Observed", "取得日")}: {
+                  [matching.youtubeObservedAt, matching.trendsObservedAt]
+                    .filter((value): value is number => typeof value === "number" && value > 0)
+                    .map(value => new Intl.DateTimeFormat(locale === "ja" ? "ja-JP" : "en-US",
+                      { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(value * 1000))
+                    .filter((value, index, values) => values.indexOf(value) === index).join(" · ")
+                }</p>}
 
               {sample?.state === "succeeded" && sample.medianViewsPerDay !== null &&
                 <div className="mt-3 flex items-center justify-between rounded-lg bg-surface-subtle px-3 py-2 text-xs">
