@@ -666,6 +666,72 @@ pub fn finish_run(
     Ok(())
 }
 
+/// Queue one-time market backfills for completed named sessions with genuinely
+/// missing provider observations. An existing failed/unavailable assessment is
+/// deliberately NOT a missing observation: retrying it requires a separate
+/// cooldown-aware policy. The marker prevents reopening the same run forever
+/// if a provider or database becomes unavailable.
+pub fn queue_missing_market_runs(
+    db: &mut Connection,
+    scope: Option<(&str, &str)>,
+    now: i64,
+) -> Result<Vec<String>, DiscoveryError> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    if let Some((project_id, session_id)) = scope {
+        let exists: i64 = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM content_discovery_sessions
+             WHERE id=?1 AND project_id=?2)",
+            params![session_id, project_id],
+            |row| row.get(0),
+        )?;
+        if exists == 0 {
+            return Err(DiscoveryError::NotFound);
+        }
+    }
+    let (project_id, session_id) = scope.map_or((None, None), |(p, s)| (Some(p), Some(s)));
+    let candidates: Vec<String> = {
+        let mut stmt = tx.prepare(
+            "SELECT r.id FROM discovery_runs r
+             JOIN content_discovery_sessions s ON s.id=r.session_id
+             WHERE r.status='completed' AND r.stage='completed'
+               AND r.session_id LIKE 'session_%' AND s.archived_at IS NULL
+               AND (?1 IS NULL OR r.project_id=?1)
+               AND (?2 IS NULL OR r.session_id=?2)
+               AND json_type(r.provider_health_json,'$.marketBackfill') IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM discovery_runs active
+                   WHERE active.session_id=r.session_id
+                     AND active.status IN ('queued','running','paused'))
+               AND EXISTS (
+                   SELECT 1 FROM discovery_candidates c WHERE c.run_id=r.id
+                     AND (NOT EXISTS (SELECT 1 FROM idea_market_runs m WHERE m.idea_id=c.id)
+                          OR NOT EXISTS (SELECT 1 FROM idea_trends_runs t WHERE t.idea_id=c.id)))
+             ORDER BY r.created_at ASC,r.id ASC LIMIT 4",
+        )?;
+        stmt.query_map(params![project_id, session_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?
+    };
+    let mut queued = Vec::new();
+    for run_id in candidates {
+        if tx.execute(
+            "UPDATE discovery_runs SET status='running',stage='measure_market',
+             updated_at=?2,finished_at=NULL,
+             provider_health_json=json_set(provider_health_json,'$.marketBackfill','queued')
+             WHERE id=?1 AND status='completed' AND stage='completed'
+               AND NOT EXISTS (
+                   SELECT 1 FROM discovery_runs active
+                   WHERE active.session_id=discovery_runs.session_id
+                     AND active.id<>discovery_runs.id
+                     AND active.status IN ('queued','running','paused'))",
+            params![run_id, now],
+        )? == 1 {
+            queued.push(run_id);
+        }
+    }
+    tx.commit()?;
+    Ok(queued)
+}
+
 /// Atomically claim one saved Discovery result for automatic enrichment. The
 /// two stages are a SQLite lease: other collectors cannot duplicate provider
 /// requests while a claimant is alive; restart reconciles stale claims.
@@ -711,7 +777,9 @@ pub fn finish_market_run(
     Ok(db.execute(
         "UPDATE discovery_runs
          SET status='completed',stage='completed',updated_at=?2,finished_at=?2,
-         provider_health_json=json_set(provider_health_json,'$.market',json(?3))
+         provider_health_json=json_set(provider_health_json,'$.market',json(?3),
+             '$.marketBackfill',CASE WHEN json_type(provider_health_json,'$.marketBackfill') IS NULL
+               THEN NULL ELSE 'completed' END)
          WHERE id=?1 AND status='running' AND stage='measure_market_collecting'",
         params![run_id, now, summary.to_string()],
     )? == 1)
