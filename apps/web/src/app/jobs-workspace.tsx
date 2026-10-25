@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
+  ChevronRight,
   Clock,
+  FileSearch,
   Info,
   ListChecks,
   Loader2,
   RefreshCw,
+  Search,
   XCircle,
 } from "lucide-react";
 import { ApiErrorNotice } from "./api-error-notice";
@@ -29,6 +33,83 @@ const EMPTY_PROJECTS: { id: string; name: string }[] = [];
 interface DiscoveryJob {
   projectName: string;
   session: DiscoverySession;
+  stale?: boolean;
+}
+
+type MonitorBucket = "active" | "attention" | "finished";
+type MonitorFilter = "all" | MonitorBucket;
+type MonitorEntry =
+  | { kind: "discovery"; key: string; projectName: string; session: DiscoverySession; stale: boolean;
+      bucket: MonitorBucket; priority: number; updatedAt: number }
+  | { kind: "pipeline"; key: string; job: Job;
+      bucket: MonitorBucket; priority: number; updatedAt: number };
+
+function humanize(value: string): string {
+  const label = value.replaceAll(/[_-]+/g, " ").trim();
+  return label ? label[0].toUpperCase() + label.slice(1) : value;
+}
+
+function discoveryBucket(status: string): MonitorBucket {
+  if (status === "running" || status === "queued") return "active";
+  if (["completed", "cancelled"].includes(status)) return "finished";
+  return "attention";
+}
+
+function monitorEntries(jobs: Job[], discoveries: DiscoveryJob[]): MonitorEntry[] {
+  const entries: MonitorEntry[] = discoveries.flatMap(({ projectName, session, stale }) => {
+    const run = session.lastRun;
+    if (!run) return [];
+    const bucket = discoveryBucket(run.status);
+    return [{ kind: "discovery" as const, key: `discovery:${session.projectId}:${session.id}`,
+      projectName, session, stale: !!stale, bucket,
+      priority: bucket === "active" ? run.status === "running" ? 0 : 1 : bucket === "attention" ? 2 : 3,
+      updatedAt: run.updatedAt * 1000 }];
+  });
+  entries.push(...jobs.map(job => {
+    const bucket: MonitorBucket = ACTIVE_STATES.includes(job.state) ? "active"
+      : job.state === "FAILED" ? "attention" : "finished";
+    return { kind: "pipeline" as const, key: `pipeline:${job.id}`, job, bucket,
+      priority: bucket === "active" ? job.state === "RUNNING" ? 0 : 1
+        : bucket === "attention" ? 2 : 3, updatedAt: safeTime(job.updatedAt) };
+  }));
+  return entries.sort((a, b) => a.priority - b.priority || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key));
+}
+
+function monitorName(entry: MonitorEntry): string {
+  return entry.kind === "discovery" ? entry.session.name : humanize(entry.job.jobKind);
+}
+
+function monitorStatus(entry: MonitorEntry, locale: Locale): string {
+  return entry.kind === "discovery" ? discoveryStatus(entry.session.lastRun?.status ?? "", locale)
+    : stateLabel(entry.job.state, locale);
+}
+
+function monitorBadgeClasses(entry: MonitorEntry): string {
+  if (entry.kind === "pipeline") return stateBadgeClasses(entry.job.state);
+  const status = entry.session.lastRun?.status;
+  if (status === "completed") return severityBadgeClasses("SUCCEEDED");
+  if (status === "running") return severityBadgeClasses("RUNNING");
+  if (status === "queued") return severityBadgeClasses("READY");
+  if (status === "cancelled") return severityBadgeClasses("CANCELLED");
+  return status === "failed" ? severityBadgeClasses("FAILED")
+    : "border-status-warning/30 bg-status-warning/10 text-status-warning";
+}
+
+function formatRunTime(epochSeconds: number, locale: Locale): string {
+  if (!Number.isFinite(epochSeconds)) return "—";
+  const date = new Date(epochSeconds * 1000);
+  return Number.isFinite(date.getTime()) ? formatDateTime(date.toISOString(), locale) : "—";
+}
+
+function relativeTime(timestamp: number, locale: Locale): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || !Number.isFinite(new Date(timestamp).getTime())) return "—";
+  const elapsed = Math.max(0, Date.now() - timestamp);
+  const lang = locale === "ja" ? "ja-JP" : "en-US";
+  const unit: Intl.RelativeTimeFormatUnit = elapsed < 60_000 ? "second"
+    : elapsed < 3_600_000 ? "minute" : elapsed < 86_400_000 ? "hour" : "day";
+  const divisor = unit === "second" ? 1000 : unit === "minute" ? 60_000 : unit === "hour" ? 3_600_000 : 86_400_000;
+  const amount = unit === "second" && elapsed < 5000 ? 0 : -Math.floor(elapsed / divisor);
+  return new Intl.RelativeTimeFormat(lang, { numeric: "auto", style: "short" }).format(amount, unit);
 }
 
 function discoveryStatus(status: string, locale: Locale): string {
@@ -84,37 +165,6 @@ function stateLabel(state: JobState, locale: Locale): string {
 function safeTime(iso: string): number {
   const value = Date.parse(iso);
   return Number.isNaN(value) ? Number.NEGATIVE_INFINITY : value;
-}
-
-/**
- * Backend order is not meaningful to the operator: surface live work first.
- * Non-terminal jobs come before terminal ones; terminals are newest-updated
- * first. The comparator is stable enough because the API order breaks ties.
- */
-function sortJobs(jobs: Job[]): Job[] {
-  const stateRank = (state: JobState): number => {
-    if (state === "RUNNING") return 0;
-    if (state === "READY") return 1;
-    if (state === "PENDING") return 2;
-    return 3;
-  };
-  return jobs
-    .map((job, index) => ({ job, index }))
-    .sort((a, b) => {
-      const terminalDelta = Number(isTerminal(a.job.state)) - Number(isTerminal(b.job.state));
-      if (terminalDelta !== 0) return terminalDelta;
-      const rankDelta = stateRank(a.job.state) - stateRank(b.job.state);
-      if (rankDelta !== 0) return rankDelta;
-      const aTime = safeTime(a.job.updatedAt);
-      const bTime = safeTime(b.job.updatedAt);
-      if (aTime !== bTime) {
-        if (aTime === Number.NEGATIVE_INFINITY) return 1;
-        if (bTime === Number.NEGATIVE_INFINITY) return -1;
-        return bTime - aTime;
-      }
-      return a.index - b.index;
-    })
-    .map((entry) => entry.job);
 }
 
 /**
@@ -264,8 +314,12 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   const [discoveryLoading, setDiscoveryLoading] = useState(true);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [listError, setListError] = useState<ApiError | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<MonitorFilter>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [jobView, setJobView] = useState<JobView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<ApiError | null>(null);
@@ -275,7 +329,28 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   const [cancelError, setCancelError] = useState<ApiError | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const listAbortRef = useRef<AbortController | null>(null);
   const discoveryInFlight = useRef(false);
+  const backButtonRef = useRef<HTMLButtonElement | null>(null);
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
+  const visitedMobileDetailRef = useRef(false);
+
+  const entries = useMemo(() => monitorEntries(jobs, discoveryJobs), [jobs, discoveryJobs]);
+  const filteredEntries = useMemo(() => {
+    const search = searchQuery.trim().toLocaleLowerCase();
+    return entries.filter(entry => {
+      if (filter !== "all" && entry.bucket !== filter) return false;
+      if (!search) return true;
+      const content = entry.kind === "discovery"
+        ? [entry.session.name, entry.projectName, entry.session.lastRun?.stage,
+          humanize(entry.session.lastRun?.stage ?? ""), entry.session.lastRun?.id]
+        : [entry.job.jobKind, humanize(entry.job.jobKind), entry.job.id];
+      return content.some(value => value?.toLocaleLowerCase().includes(search));
+    });
+  }, [entries, filter, searchQuery]);
+  const selectedEntry = filteredEntries.find(entry => entry.key === selectedEntryKey) ?? filteredEntries[0] ?? null;
+  const selectedJobId = selectedEntry?.kind === "pipeline" ? selectedEntry.job.id : null;
+  const selectedJobView = selectedJobId && jobView?.job.id === selectedJobId ? jobView : null;
 
   const loadDiscoveryJobs = useCallback(async (signal?: AbortSignal) => {
     if (discoveryInFlight.current) return;
@@ -289,9 +364,15 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
       if (signal?.aborted) return;
       const available = results.flatMap((result, index) => result.status === "fulfilled"
         ? result.value.filter(session => session.lastRun).map(session =>
-            ({ projectName: projects[index].name, session })) : []);
+            ({ projectName: projects[index].name, session, stale: false })) : []);
       const failures = results.filter(result => result.status === "rejected").length;
-      if (failures < results.length) setDiscoveryJobs(latestDiscoveryJobs(available));
+      const unavailableProjectIds = new Set(results.flatMap((result, index) =>
+        result.status === "rejected" ? [projects[index].id] : []));
+      setDiscoveryJobs(previous => latestDiscoveryJobs([
+        ...available,
+        ...previous.filter(item => unavailableProjectIds.has(item.session.projectId))
+          .map(item => ({ ...item, stale: true })),
+      ]));
       setDiscoveryError(failures > 0
         ? (locale === "ja" ? `${failures} 件のプロジェクトの検索ジョブを取得できませんでした。`
           : `Could not load discovery jobs for ${failures} project(s).`)
@@ -316,16 +397,24 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
     }
   }, []);
 
-  const loadList = useCallback(() => {
-    setListError(null);
-    return listJobs()
+  const loadList = useCallback((options?: { force?: boolean }) => {
+    if (listAbortRef.current && !options?.force) return Promise.resolve();
+    if (options?.force) listAbortRef.current?.abort();
+    const controller = new AbortController();
+    listAbortRef.current = controller;
+    return listJobs({ signal: controller.signal })
       .then((data) => {
+        if (listAbortRef.current !== controller || controller.signal.aborted) return;
         setJobs(data.jobs);
+        setListError(null);
       })
       .catch((err) => {
+        if (listAbortRef.current !== controller || controller.signal.aborted) return;
         setListError(err instanceof ApiError ? err : new ApiError("network", "unknown", String(err)));
       })
       .finally(() => {
+        if (listAbortRef.current !== controller) return;
+        listAbortRef.current = null;
         setListLoading(false);
       });
   }, []);
@@ -365,6 +454,8 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
       clearTimeout(timer);
       stopPolling();
       clearDetailRequest();
+      listAbortRef.current?.abort();
+      listAbortRef.current = null;
     };
   }, [loadList, stopPolling, clearDetailRequest]);
 
@@ -381,42 +472,52 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   }, [loadList]);
 
   useEffect(() => {
+    if (mobileDetailOpen) {
+      visitedMobileDetailRef.current = true;
+      backButtonRef.current?.focus();
+    } else if (visitedMobileDetailRef.current) {
+      selectedRowRef.current?.focus();
+    }
+  }, [mobileDetailOpen]);
+
+  useEffect(() => {
     stopPolling();
     if (!selectedJobId) {
+      clearDetailRequest();
       return;
     }
     loadDetail(selectedJobId);
     return () => stopPolling();
-  }, [selectedJobId, loadDetail, stopPolling]);
+  }, [selectedJobId, loadDetail, stopPolling, clearDetailRequest]);
 
   useEffect(() => {
     stopPolling();
-    if (!jobView || isTerminal(jobView.job.state)) {
+    if (!selectedJobView || isTerminal(selectedJobView.job.state)) {
       return;
     }
     intervalRef.current = setInterval(() => {
       // Never abort an in-flight read: a detail response slower than the poll
       // interval would otherwise be cancelled by every tick and never finish.
       if (abortRef.current) return;
-      loadDetail(jobView.job.id, { silent: true });
+      loadDetail(selectedJobView.job.id, { silent: true });
     }, POLL_INTERVAL_MS);
     return () => stopPolling();
-  }, [jobView, loadDetail, stopPolling]);
+  }, [selectedJobView, loadDetail, stopPolling]);
 
-  function handleSelectJob(jobId: string) {
-    if (jobId === selectedJobId) return;
-    setSelectedJobId(jobId);
-    setJobView(null);
-    setCheckedAt(null);
-    setDetailLoading(true);
+  function handleSelectEntry(key: string) {
+    if (key === selectedEntry?.key) {
+      setMobileDetailOpen(true);
+      return;
+    }
+    setSelectedEntryKey(key);
+    setMobileDetailOpen(true);
     setDetailError(null);
     setCancelError(null);
   }
 
   function handleRefreshList() {
-    setListLoading(true);
-    void loadList();
-    void loadDiscoveryJobs();
+    setRefreshing(true);
+    void Promise.allSettled([loadList({ force: true }), loadDiscoveryJobs()]).finally(() => setRefreshing(false));
   }
 
   function handleRetryDetail() {
@@ -432,11 +533,11 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   }
 
   async function handleConfirmCancel() {
-    if (!jobView || cancelLoading) return;
+    if (!selectedJobView || cancelLoading) return;
     setCancelLoading(true);
     setCancelError(null);
     try {
-      const data = await cancelJob(jobView.job.id);
+      const data = await cancelJob(selectedJobView.job.id);
       setJobView(data);
       setCheckedAt(new Date());
       setDetailError(null);
@@ -449,13 +550,11 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
     }
   }
 
-  const canCancel = jobView != null && ACTIVE_STATES.includes(jobView.job.state);
-  const sortedJobs = sortJobs(jobs);
-  const discoveryOnly = sortedJobs.length === 0 && discoveryJobs.length > 0;
+  const canCancel = selectedJobView != null && ACTIVE_STATES.includes(selectedJobView.job.state);
   const emptyList = !listLoading && !discoveryLoading && !listError && !discoveryError &&
-    sortedJobs.length === 0 && discoveryJobs.length === 0;
-  const orderedNodes = jobView ? orderNodes(jobView.nodes, jobView.edges) : [];
-  const failure = jobView ? jobFailureSummary(jobView, orderedNodes) : null;
+    entries.length === 0;
+  const orderedNodes = selectedJobView ? orderNodes(selectedJobView.nodes, selectedJobView.edges) : [];
+  const failure = selectedJobView ? jobFailureSummary(selectedJobView, orderedNodes) : null;
 
   return (
     <section
@@ -464,151 +563,164 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
       className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row"
     >
       <div
-        className={`flex min-h-0 flex-col border-b border-border bg-surface lg:border-b-0 ${
-          emptyList || discoveryOnly ? "flex-1 lg:w-full lg:border-r-0" : "lg:w-80 lg:border-r"
-        }`}
+        className={`min-h-0 min-w-0 flex-1 flex-col border-border bg-surface lg:w-[360px] lg:flex-none lg:border-r xl:w-[390px] ${mobileDetailOpen ? "hidden lg:flex" : "flex"}`}
       >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="flex items-center gap-2 font-medium text-foreground">
-            <ListChecks aria-hidden className="size-5" />
+        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <ListChecks aria-hidden className="size-[18px] text-muted-foreground" />
             {translate(locale, "jobsList")}
+            {entries.some(entry => entry.bucket === "active") && (
+              <span className="rounded-full bg-status-info/10 px-2 py-0.5 text-xs font-medium text-status-info">
+                {entries.filter(entry => entry.bucket === "active").length} {locale === "ja" ? "件実行中" : "active"}
+              </span>
+            )}
           </h2>
           <Button
             variant="subtle"
             size="icon"
             aria-label={translate(locale, "jobsRefresh")}
             onClick={handleRefreshList}
-            isLoading={listLoading}
+            isLoading={refreshing}
             loadingLabel={translate(locale, "jobsRefreshing")}
           >
             <RefreshCw aria-hidden className="size-4" />
           </Button>
         </div>
+        <div className="grid gap-3 border-b border-border px-4 py-3">
+          <label className="relative block">
+            <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <span className="sr-only">{locale === "ja" ? "ジョブを検索" : "Search jobs"}</span>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={event => setSearchQuery(event.target.value)}
+              placeholder={locale === "ja" ? "ジョブを検索" : "Search jobs"}
+              className="h-9 w-full rounded-control border border-border bg-canvas pe-3 ps-9 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+            />
+          </label>
+          <div role="group" aria-label={locale === "ja" ? "ジョブの状態で絞り込み" : "Filter job status"}
+            className="flex gap-1">
+            {(["all", "active", "attention", "finished"] as const).map(value => {
+              const label = locale === "ja"
+                ? { all: "すべて", active: "実行中", attention: "要確認", finished: "終了" }[value]
+                : { all: "All", active: "Active", attention: "Attention", finished: "Finished" }[value];
+              return <button key={value} type="button" aria-pressed={filter === value}
+                aria-label={value === "attention" && locale === "en" ? "Needs attention" : undefined}
+                onClick={() => setFilter(value)}
+                className={`min-h-9 min-w-0 flex-1 rounded-full px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${filter === value
+                  ? "bg-foreground text-canvas" : "text-muted-foreground hover:bg-surface-inset hover:text-foreground"}`}>
+                {label}
+              </button>;
+            })}
+          </div>
+        </div>
 
-        <div className="flex-1 overflow-auto p-3">
-          {(discoveryJobs.length > 0 || discoveryLoading || discoveryError) && (
-            <section aria-label={locale === "ja" ? "検索ジョブ" : "Discovery searches"} className="mb-4 space-y-2">
-              <h3 className="px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {locale === "ja" ? "検索ジョブ" : "Discovery searches"}
-              </h3>
-              {discoveryLoading && discoveryJobs.length === 0 && (
-                <p role="status" className="px-2 text-xs text-muted-foreground">
-                  {locale === "ja" ? "検索ジョブを確認中…" : "Checking discovery jobs…"}
-                </p>
-              )}
-              {discoveryError && <p role="alert" className="px-2 text-xs text-status-warning">{discoveryError}</p>}
-              <ul className="grid gap-2">
-                {discoveryJobs.map(({ projectName, session }) => {
-                  const run = session.lastRun;
-                  if (!run) return null;
-                  const active = run.status === "running" || run.status === "queued";
-                  return <li key={`${session.projectId}:${session.id}`} className="rounded-control border border-border bg-surface px-3 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="min-w-0 font-medium text-sm text-foreground">{session.name}</p>
-                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${active
-                        ? "border-status-info/30 bg-status-info/10 text-status-info"
-                        : "border-border bg-surface-subtle text-muted-foreground"}`}>
-                        {discoveryStatus(run.status, locale)}
+        <div className="min-h-0 flex-1 overflow-y-auto" aria-live="off">
+          {discoveryError && (
+            <div role="alert" aria-label={locale === "ja" ? "検索状況" : "Discovery status"}
+              className="m-3 rounded-control border border-status-warning/25 bg-status-warning/5 px-3 py-2 text-xs text-status-warning">
+              {discoveryError}
+              <button type="button" onClick={handleRefreshList}
+                className="ms-2 font-semibold underline underline-offset-2">
+                {locale === "ja" ? "再試行" : "Retry"}
+              </button>
+            </div>
+          )}
+          {listError && (
+            <div className="mx-3 mt-3 rounded-control border border-danger/25 bg-danger/5 p-3 text-xs text-danger" role="alert">
+              {failureMessage(listError, locale)}
+              <button type="button" onClick={handleRefreshList} className="ms-2 font-semibold underline underline-offset-2">
+                {locale === "ja" ? "再試行" : "Retry"}
+              </button>
+            </div>
+          )}
+          {(listLoading || discoveryLoading) && entries.length === 0 && (
+            <p role="status" className="flex items-center gap-2 px-5 py-8 text-sm text-muted-foreground">
+              <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" />
+              {translate(locale, "loading")}
+            </p>
+          )}
+          {emptyList && <EmptyState title={translate(locale, "jobsEmptyTitle")} description={translate(locale, "jobsEmptyBody")} />}
+          {entries.length > 0 && filteredEntries.length === 0 && (
+            <p className="px-5 py-8 text-sm text-muted-foreground">
+              {locale === "ja" ? "条件に一致するジョブはありません。" : "No jobs match these filters."}
+            </p>
+          )}
+          <ul aria-label={translate(locale, "jobsList")} className="divide-y divide-border/70">
+            {filteredEntries.map(entry => {
+              const selected = selectedEntry?.key === entry.key;
+              const stage = entry.kind === "discovery" ? entry.session.lastRun?.stage : null;
+              const subtitle = entry.kind === "discovery"
+                ? entry.projectName : `${locale === "ja" ? "パイプライン" : "Pipeline"} · ${compactId(entry.job.id)}`;
+              const absoluteTime = entry.kind === "discovery"
+                ? formatRunTime(entry.session.lastRun?.updatedAt ?? entry.session.updatedAt, locale)
+                : formatDateTime(entry.job.updatedAt, locale);
+              return <li key={entry.key} className="min-w-0">
+                <button type="button" ref={selected ? selectedRowRef : undefined}
+                  aria-current={selected ? "true" : undefined}
+                  onClick={() => handleSelectEntry(entry.key)}
+                  className={`group relative flex w-full min-w-0 items-start gap-3 px-4 py-3.5 text-start outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected
+                    ? "bg-surface-inset/80" : "hover:bg-surface-subtle"}`}>
+                  {selected && <span aria-hidden className="absolute inset-y-2 start-0 w-[3px] rounded-e-full bg-primary" />}
+                  <span className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-control ${entry.bucket === "active"
+                    ? "bg-status-info/10 text-status-info" : entry.bucket === "attention"
+                      ? "bg-status-warning/10 text-status-warning" : "bg-surface-subtle text-muted-foreground"}`}>
+                    {entry.kind === "discovery" ? <FileSearch aria-hidden className="size-[18px]" />
+                      : <ListChecks aria-hidden className="size-[18px]" />}
+                  </span>
+                  <span className="min-w-0 flex-1 space-y-1">
+                    <span className="block truncate text-sm font-semibold text-foreground" title={monitorName(entry)}>{monitorName(entry)}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+                    <span className="flex min-w-0 items-center gap-2 pt-1">
+                      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${monitorBadgeClasses(entry)}`}>
+                        {monitorStatus(entry, locale)}
                       </span>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{projectName}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {locale === "ja" ? "現在の処理" : "Current stage"}: {run.stage.replaceAll("_", " ")}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {locale === "ja" ? `セッションに保存されたアイデア: ${session.ideaCount ?? 0} 件`
-                        : `${session.ideaCount ?? 0} saved ideas in session`}
-                    </p>
-                    {run.errorCode && <p className="mt-1 break-words text-xs text-danger">{run.errorCode}</p>}
-                  </li>;
-                })}
-              </ul>
-            </section>
-          )}
-          {listLoading && (
-            <Surface variant="outline" className="items-center justify-center py-8 text-center">
-              <Loader2 aria-hidden className="mx-auto size-6 animate-spin text-muted-foreground" />
-              <p className="mt-2 text-foreground">{translate(locale, "loading")}</p>
-            </Surface>
-          )}
-
-          {listError && !listLoading && (
-            <ApiErrorNotice
-              error={listError}
-              locale={locale}
-              onRetry={handleRefreshList}
-              message={failureMessage(listError, locale)}
-            />
-          )}
-
-          {!listLoading && !discoveryLoading && sortedJobs.length === 0 && discoveryJobs.length === 0 &&
-            !listError && !discoveryError && (
-            <EmptyState
-              title={translate(locale, "jobsEmptyTitle")}
-              description={translate(locale, "jobsEmptyBody")}
-            />
-          )}
-
-          {sortedJobs.length > 0 && !listLoading && (
-            <ul className="grid gap-2" aria-label={translate(locale, "jobsList")}>
-              {sortedJobs.map((job) => {
-                const selected = selectedJobId === job.id;
-                return (
-                  <li key={job.id} className="min-w-0">
-                    <Surface
-                      variant={selected ? "solid" : "ghost"}
-                      interactive
-                      onClick={() => handleSelectJob(job.id)}
-                      aria-current={selected ? "true" : undefined}
-                      className="w-full text-start"
-                    >
-                      <div className="grid min-w-0 gap-1 px-4 py-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span
-                            className="min-w-0 truncate font-mono text-sm font-medium text-foreground"
-                            title={job.id}
-                          >
-                            {compactId(job.id)}
-                          </span>
-                          <span
-                            className={`shrink-0 rounded-full border px-2 py-0.5 text-sm font-medium ${stateBadgeClasses(job.state)}`}
-                            title={job.state}
-                          >
-                            {stateLabel(job.state, locale)}
-                          </span>
-                        </div>
-                        <p className="break-words text-sm text-muted-foreground">{job.jobKind}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {translate(locale, "jobsUpdatedAt")}: {formatDateTime(job.updatedAt, locale)}
-                        </p>
-                      </div>
-                    </Surface>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                      {stage && <span className="min-w-0 truncate text-xs text-muted-foreground">{humanize(stage)}</span>}
+                    </span>
+                    {entry.kind === "discovery" && entry.stale && (
+                      <span className="block text-xs text-status-warning">
+                        {locale === "ja" ? "前回取得時点" : "Last known"}
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end gap-2">
+                    <time title={absoluteTime} className="text-xs text-muted-foreground">{relativeTime(entry.updatedAt, locale)}</time>
+                    <ChevronRight aria-hidden className={`size-4 text-muted-foreground/50 transition-colors group-hover:text-foreground ${selected ? "text-foreground" : ""}`} />
+                  </span>
+                </button>
+              </li>;
+            })}
+          </ul>
         </div>
       </div>
 
       <div
-        className={`min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-canvas p-4 ${emptyList || discoveryOnly ? "hidden" : "flex"}`}
+        className={`min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-canvas px-4 pb-7 pt-4 sm:px-6 lg:px-8 ${mobileDetailOpen ? "flex" : "hidden lg:flex"}`}
       >
-        {!selectedJobId && !detailLoading && (
+        <button ref={backButtonRef} type="button" onClick={() => setMobileDetailOpen(false)}
+          className="mb-4 inline-flex items-center gap-2 self-start rounded-control px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
+          <ArrowLeft aria-hidden className="size-4" />
+          {locale === "ja" ? "ジョブ一覧に戻る" : "Back to jobs"}
+        </button>
+        {!selectedEntry && !listLoading && !discoveryLoading && (
           <EmptyState
             title={translate(locale, "jobsSelectTitle")}
             description={translate(locale, "jobsSelectBody")}
           />
         )}
 
-        {detailLoading && (
+        {selectedEntry?.kind === "discovery" && selectedEntry.session.lastRun && (
+          <DiscoveryJobDetail locale={locale} entry={selectedEntry} />
+        )}
+
+        {selectedJobId && !detailError && (!selectedJobView || detailLoading) && (
           <Surface variant="outline" className="items-center justify-center py-8 text-center">
-            <Loader2 aria-hidden className="mx-auto size-6 animate-spin text-muted-foreground" />
+            <Loader2 aria-hidden className="mx-auto size-6 animate-spin motion-reduce:animate-none text-muted-foreground" />
             <p className="mt-2 text-foreground">{translate(locale, "loading")}</p>
           </Surface>
         )}
 
-        {detailError && !detailLoading && (
+        {selectedJobId && detailError && !detailLoading && (
           <ApiErrorNotice
             error={detailError}
             locale={locale}
@@ -617,18 +729,23 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
           />
         )}
 
-        {jobView && !detailLoading && (
-          <div className="grid gap-4">
+        {selectedJobView && !detailLoading && (
+          <div className="mx-auto grid w-full max-w-5xl gap-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="font-serif text-2xl text-foreground">{translate(locale, "jobsTitle")}</h2>
-                <p className="break-words text-sm text-muted-foreground">{translate(locale, "jobsIntro")}</p>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  {locale === "ja" ? "パイプラインジョブ" : "Pipeline job"}
+                </p>
+                <h2 className="font-serif text-3xl leading-tight text-foreground">{humanize(selectedJobView.job.jobKind)}</h2>
+                <p className="mt-1 break-all font-mono text-xs text-muted-foreground" title={selectedJobView.job.id}>
+                  {compactId(selectedJobView.job.id)}
+                </p>
               </div>
               <div className="flex min-w-0 flex-col items-start gap-1 text-sm text-muted-foreground sm:items-end">
                 <span className="inline-flex flex-wrap items-center gap-1">
                   <Clock aria-hidden className="size-4 shrink-0" />
                   <span>{translate(locale, "jobsUpdatedAt")}:</span>
-                  <span className="text-foreground">{formatDateTime(jobView.job.updatedAt, locale)}</span>
+                  <span className="text-foreground">{formatDateTime(selectedJobView.job.updatedAt, locale)}</span>
                 </span>
                 {checkedAt && (
                   <span className="inline-flex flex-wrap items-center gap-1">
@@ -637,7 +754,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                   </span>
                 )}
                 <span className="text-start sm:text-end">
-                  {isTerminal(jobView.job.state)
+                  {isTerminal(selectedJobView.job.state)
                     ? translate(locale, "jobsStopped")
                     : translate(locale, "jobsPolling")}
                 </span>
@@ -685,10 +802,10 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
               <div className="grid gap-3">
                 <div className="flex flex-wrap items-center gap-3">
                   <span
-                    className={`rounded-full border px-2 py-0.5 text-sm font-medium ${stateBadgeClasses(jobView.job.state)}`}
-                    title={jobView.job.state}
+                    className={`rounded-full border px-2 py-0.5 text-sm font-medium ${stateBadgeClasses(selectedJobView.job.state)}`}
+                    title={selectedJobView.job.state}
                   >
-                    {stateLabel(jobView.job.state, locale)}
+                    {stateLabel(selectedJobView.job.state, locale)}
                   </span>
                   {canCancel && (
                     <Button
@@ -703,34 +820,34 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                 </div>
                 <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
                   <dt className="text-muted-foreground">{translate(locale, "jobsJobId")}</dt>
-                  <dd className="min-w-0 break-all font-mono text-foreground select-all">{jobView.job.id}</dd>
+                  <dd className="min-w-0 break-all font-mono text-foreground select-all">{selectedJobView.job.id}</dd>
                   <dt className="text-muted-foreground">{translate(locale, "jobsJobKind")}</dt>
-                  <dd className="text-foreground">{jobView.job.jobKind}</dd>
+                  <dd className="text-foreground">{selectedJobView.job.jobKind}</dd>
                   <dt className="text-muted-foreground">{translate(locale, "jobsCreated")}</dt>
-                  <dd className="text-foreground">{formatDateTime(jobView.job.createdAt, locale)}</dd>
+                  <dd className="text-foreground">{formatDateTime(selectedJobView.job.createdAt, locale)}</dd>
                   <dt className="text-muted-foreground">{translate(locale, "jobsUpdatedAt")}</dt>
-                  <dd className="text-foreground">{formatDateTime(jobView.job.updatedAt, locale)}</dd>
+                  <dd className="text-foreground">{formatDateTime(selectedJobView.job.updatedAt, locale)}</dd>
                 </dl>
               </div>
             </Surface>
 
             <Surface variant="outline">
               <h3 className="mb-2 font-medium text-foreground">{translate(locale, "jobsProgress")}</h3>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-                <CountBox label={translate(locale, "jobsProgressTotal")} value={jobView.progress.total} />
-                <CountBox label={translate(locale, "jobsProgressPending")} value={jobView.progress.pending} />
-                <CountBox label={translate(locale, "jobsProgressReady")} value={jobView.progress.ready} />
-                <CountBox label={translate(locale, "jobsProgressRunning")} value={jobView.progress.running} />
-                <CountBox label={translate(locale, "jobsProgressSucceeded")} value={jobView.progress.succeeded} />
-                <CountBox label={translate(locale, "jobsProgressFailed")} value={jobView.progress.failed} />
-                <CountBox label={translate(locale, "jobsProgressCancelled")} value={jobView.progress.cancelled} />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+                <CountBox label={translate(locale, "jobsProgressTotal")} value={selectedJobView.progress.total} />
+                <CountBox label={translate(locale, "jobsProgressPending")} value={selectedJobView.progress.pending} />
+                <CountBox label={translate(locale, "jobsProgressReady")} value={selectedJobView.progress.ready} />
+                <CountBox label={translate(locale, "jobsProgressRunning")} value={selectedJobView.progress.running} />
+                <CountBox label={translate(locale, "jobsProgressSucceeded")} value={selectedJobView.progress.succeeded} />
+                <CountBox label={translate(locale, "jobsProgressFailed")} value={selectedJobView.progress.failed} />
+                <CountBox label={translate(locale, "jobsProgressCancelled")} value={selectedJobView.progress.cancelled} />
               </div>
             </Surface>
 
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="grid gap-3">
                 <h3 className="font-medium text-foreground">{translate(locale, "jobsNodes")}</h3>
-                {jobView.nodes.length === 0 ? (
+                {selectedJobView.nodes.length === 0 ? (
                   <Surface variant="outline" className="border-status-warning/40 bg-status-warning/5">
                     <div className="flex items-start gap-2">
                       <AlertTriangle aria-hidden className="mt-0.5 size-4 text-status-warning" />
@@ -744,9 +861,9 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                         key={node.id}
                         node={node}
                         locale={locale}
-                        nodes={jobView.nodes}
-                        edges={jobView.edges}
-                        attempts={jobView.attempts.filter((a) => a.nodeId === node.id)}
+                        nodes={selectedJobView.nodes}
+                        edges={selectedJobView.edges}
+                        attempts={selectedJobView.attempts.filter((a) => a.nodeId === node.id)}
                       />
                     ))}
                   </div>
@@ -755,15 +872,15 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
 
               <div className="grid gap-3">
                 <h3 className="font-medium text-foreground">{translate(locale, "jobsAttempts")}</h3>
-                {jobView.attempts.length === 0 ? (
+                {selectedJobView.attempts.length === 0 ? (
                   <p className="text-muted-foreground">{translate(locale, "jobsNoAttempts")}</p>
                 ) : (
                   <div className="grid gap-2">
-                    {jobView.attempts
+                    {selectedJobView.attempts
                       .slice()
                       .sort((a, b) => safeTime(a.startedAt) - safeTime(b.startedAt))
                       .map((attempt) => (
-                        <AttemptCard key={attempt.id} attempt={attempt} locale={locale} nodes={jobView.nodes} />
+                        <AttemptCard key={attempt.id} attempt={attempt} locale={locale} nodes={selectedJobView.nodes} />
                       ))}
                   </div>
                 )}
@@ -828,6 +945,112 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
         </div>
       </Dialog>
     </section>
+  );
+}
+
+function DiscoveryJobDetail({ entry, locale }: {
+  entry: Extract<MonitorEntry, { kind: "discovery" }>;
+  locale: Locale;
+}) {
+  const { session, projectName } = entry;
+  const run = session.lastRun;
+  if (!run) return null;
+  const health = Object.entries(run.providerHealth ?? {});
+  const ideaCount = session.ideaCount ?? 0;
+  return (
+    <div className="mx-auto grid w-full max-w-4xl gap-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            {locale === "ja" ? "検索ジョブ · " : "Discovery search · "}{projectName}
+          </p>
+          <h2 className="font-serif text-3xl leading-tight text-foreground [overflow-wrap:anywhere]">{session.name}</h2>
+        </div>
+        <span className={`mt-1 rounded-full border px-3 py-1 text-sm font-medium ${monitorBadgeClasses(entry)}`}>
+          {discoveryStatus(run.status, locale)}
+        </span>
+      </header>
+
+      {entry.stale && (
+        <p role="status" className="rounded-control border border-status-warning/25 bg-status-warning/5 px-3 py-2 text-sm text-status-warning">
+          {locale === "ja" ? "プロジェクトに接続できません。前回取得した状態を表示しています。"
+            : "Project unavailable. Showing the last known status."}
+        </p>
+      )}
+
+      {run.errorCode && (
+        <div role="alert" className="flex items-start gap-3 rounded-surface border border-danger/30 bg-danger/5 px-4 py-3">
+          <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-danger" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">{locale === "ja" ? "検索の問題" : "Discovery needs attention"}</p>
+            <p className="mt-1 break-all font-mono text-sm text-danger">{run.errorCode}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1.6fr)_minmax(160px,1fr)]">
+        <section aria-label={locale === "ja" ? "現在の処理" : "Current stage"}
+          className="min-w-0 rounded-surface border border-border bg-surface p-5">
+          <p className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">
+            {locale === "ja" ? "現在の処理" : "Current stage"}
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            <span className={`flex size-10 shrink-0 items-center justify-center rounded-control ${run.status === "cancelled"
+              ? "bg-surface-subtle text-muted-foreground" : entry.bucket === "active"
+              ? "bg-status-info/10 text-status-info" : entry.bucket === "attention"
+                ? "bg-status-warning/10 text-status-warning" : "bg-status-success/10 text-status-success"}`}>
+              {run.status === "cancelled" ? <XCircle aria-hidden className="size-5" />
+                : entry.bucket === "active" ? <Loader2 aria-hidden className="size-5 animate-spin motion-reduce:animate-none" />
+                : entry.bucket === "attention" ? <AlertTriangle aria-hidden className="size-5" />
+                  : <CheckCircle2 aria-hidden className="size-5" />}
+            </span>
+            <h3 className="min-w-0 text-lg font-semibold text-foreground [overflow-wrap:anywhere]">{humanize(run.stage)}</h3>
+          </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            {locale === "ja" ? "最終更新" : "Last updated"} · {formatRunTime(run.updatedAt, locale)}
+          </p>
+        </section>
+        <section aria-label={locale === "ja" ? "セッション内のアイデア" : "Ideas in session"}
+          className="rounded-surface border border-border bg-surface p-5">
+          <p className="text-xs font-medium uppercase tracking-[0.1em] text-muted-foreground">
+            {locale === "ja" ? "セッション内のアイデア" : "Ideas in session"}
+          </p>
+          <p className="mt-2 font-serif text-4xl tabular-nums text-foreground">{ideaCount}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {locale === "ja" ? `セッション内のアイデア: ${ideaCount} 件`
+              : `${ideaCount} ideas in this session`}
+          </p>
+        </section>
+      </div>
+
+      <section aria-label={locale === "ja" ? "実行情報" : "Run information"}
+        className="rounded-surface border border-border bg-surface px-5 py-4">
+        <h3 className="mb-4 text-sm font-semibold text-foreground">{locale === "ja" ? "実行情報" : "Run information"}</h3>
+        <dl className="grid gap-x-5 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
+          <dt className="text-muted-foreground">{locale === "ja" ? "開始日時" : "Started"}</dt>
+          <dd className="text-foreground">{formatRunTime(run.createdAt, locale)}</dd>
+          <dt className="text-muted-foreground">{locale === "ja" ? "実行 ID" : "Run ID"}</dt>
+          <dd className="break-all font-mono text-xs text-foreground select-all">{run.id}</dd>
+          <dt className="text-muted-foreground">{locale === "ja" ? "プロジェクト" : "Project"}</dt>
+          <dd className="text-foreground">{projectName}</dd>
+        </dl>
+      </section>
+
+      {health.length > 0 && (
+        <section aria-label={locale === "ja" ? "プロバイダーの状態" : "Provider health"}
+          className="rounded-surface border border-border bg-surface px-5 py-4">
+          <h3 className="mb-3 text-sm font-semibold text-foreground">
+            {locale === "ja" ? "プロバイダーの状態" : "Provider health"}
+          </h3>
+          <dl className="grid gap-2 text-sm sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            {health.map(([provider, status]) => <div key={provider} className="contents">
+              <dt className="break-words text-muted-foreground">{provider}</dt>
+              <dd className="break-words text-foreground">{status}</dd>
+            </div>)}
+          </dl>
+        </section>
+      )}
+    </div>
   );
 }
 
