@@ -82,7 +82,9 @@ describe("per-idea YouTube market evidence", () => {
     serve([idea("idea-1")], {keyConfigured:false});
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     const card = (await screen.findByText("Question idea-1")).closest("article")!;
-    expect(within(card).getByText("Research readiness: 77/100")).toBeInTheDocument();
+    expect(within(card).getByRole("button", {name:/Viral score: insufficient data/})).toBeInTheDocument();
+    expect(within(card).queryByText(/Research readiness/)).not.toBeInTheDocument();
+    expect(within(card).queryByText("77/100")).not.toBeInTheDocument();
     expect(within(card).getByText(/Add a YouTube API key in Settings/)).toBeInTheDocument();
     expect(within(card).getByText(/No saved observation. Missing Trends data is queued for background collection when eligible/)).toBeInTheDocument();
   });
@@ -98,6 +100,27 @@ describe("per-idea YouTube market evidence", () => {
     const card = (await screen.findByText("Question idea-1")).closest("article")!;
     expect(within(card).getByText(/20 calls per 24 hours/)).toBeInTheDocument();
     expect(within(card).getByText(/Google Trends collection limit/)).toBeInTheDocument();
+  });
+
+  it("sorts only by actual viral scores, never the legacy research-readiness score", async () => {
+    const withScore = (id: string, score: number | null) => ({
+      ...idea(id, assessment("long", score)),
+      viralPotential: {score, state: score === null ? "insufficient_data" as const : "partial" as const,
+        scoreVersion:"viral-potential-v1" as const, format:"long" as const,
+        youtubeScore:score, trendScore:null, trendChangePercent:null,
+        coveragePercent:score === null ? 0 : 75, sampleSize:12,
+        distinctChannels:5, comparisonCohortSize:3,
+        youtubeObservedAt:1760000000, trendsObservedAt:null},
+    });
+    serve([withScore("idea-1", 25), withScore("idea-2", 75), withScore("idea-3", null)]);
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1"
+      locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    expect(screen.getAllByRole("article").map(article =>
+      within(article).getByRole("heading", {level:3}).textContent))
+      .toEqual(["Question idea-2", "Question idea-1", "Question idea-3"]);
+    expect(within(screen.getAllByRole("article")[2]).getByRole("button",
+      {name:/Viral score: insufficient data/})).toBeInTheDocument();
   });
 
   it("renders automatically saved YouTube and Google Trends signals without requesting a new collection", async () => {
@@ -132,7 +155,7 @@ describe("per-idea YouTube market evidence", () => {
     expect(within(card).queryByText(/\+50%/)).not.toBeInTheDocument();
   });
 
-  it("sorts by measured within-query momentum only when YouTube cohort scores are missing", async () => {
+  it("falls back to editorial rank when YouTube evidence is insufficient, not cross-query Trends", async () => {
     const googleTrends = (changePercent: number) => ({
       state:"succeeded" as const,query:"homeownership costs",region:"US",observedAt:1760000000,
       recentMean:44,previousMean:34,changePercent,points:52,metricVersion:"google-trends-momentum-v1",errorCode:null,
@@ -143,8 +166,8 @@ describe("per-idea YouTube market evidence", () => {
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
     expect(screen.getAllByRole("article").map(article => within(article).getByRole("heading", {level:3}).textContent))
-      .toEqual(["Question idea-2", "Question idea-3", "Question idea-1"]);
-    expect(within(screen.getAllByRole("article")[2]).getByText("-12%")).toBeInTheDocument();
+      .toEqual(["Question idea-1", "Question idea-2", "Question idea-3"]);
+    expect(within(screen.getAllByRole("article")[0]).getByText("-12%")).toBeInTheDocument();
     expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
   });
   it("queues missing observations on page load without directly spending YouTube quota", async () => {

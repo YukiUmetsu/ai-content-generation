@@ -91,6 +91,36 @@ describe("discovery session API", () => {
     expect(idea.marketAssessment?.comparisonScore).toBeNull();
   });
 
+  it("parses versioned viral potential independently of legacy research readiness", async () => {
+    const viralPotential = {score:77,state:"measured",scoreVersion:"viral-potential-v1",
+      format:"long",youtubeScore:76,trendScore:78,trendChangePercent:56,
+      coveragePercent:100,sampleSize:12,distinctChannels:5,comparisonCohortSize:3,
+      youtubeObservedAt:1760000000,trendsObservedAt:1760000000};
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[{
+      id:"idea-1",sessionId:"session-a",runId:"run-a",title:"House costs",
+      opportunityScore:60,viralPotential,
+    }]}),{status:200}));
+    const [idea] = await listSessionIdeas("brand-1","session-a");
+    expect(idea.opportunityScore).toBe(60);
+    expect(idea.viralPotential).toEqual(viralPotential);
+  });
+
+  it("rejects malformed viral scores instead of rendering a fabricated 100/100", async () => {
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[
+      {id:"idea-1",sessionId:"session-a",runId:"run-a",title:"House costs",
+        opportunityScore:100,viralPotential:{score:100,state:"measured",scoreVersion:"evidence-readiness-v1",
+          format:"long",youtubeScore:100,trendScore:100,trendChangePercent:100,coveragePercent:100,
+          sampleSize:12,distinctChannels:5,comparisonCohortSize:3,youtubeObservedAt:1,trendsObservedAt:1}},
+      {id:"idea-2",sessionId:"session-a",runId:"run-a",title:"Insurance costs",
+        viralPotential:{score:999,state:"partial",scoreVersion:"viral-potential-v1",
+          format:"long",youtubeScore:50,trendScore:null,trendChangePercent:null,coveragePercent:75,
+          sampleSize:12,distinctChannels:5,comparisonCohortSize:3,youtubeObservedAt:1,trendsObservedAt:null}},
+    ]}),{status:200}));
+    const ideas = await listSessionIdeas("brand-1","session-a");
+    expect(ideas[0].viralPotential).toBeNull();
+    expect(ideas[1].viralPotential).toBeNull();
+  });
+
   it("parses a saved Google Trends momentum change but never substitutes a value for unavailable data", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[
       {id:"idea-1",sessionId:"session-a",runId:"run-a",title:"Repair costs",googleTrends:{
