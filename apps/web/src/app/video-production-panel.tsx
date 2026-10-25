@@ -62,17 +62,22 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   const [sfxSummary,setSfxSummary]=useState<SfxSummary|null>(null);
   // Returning from scene/media/sound edits invalidates an old UI readiness approval,
   // without discarding voice settings, previews or an already running/completed render.
-  useEffect(()=>{
-    if(recheckToken===0)return;
-    sampleRevision.current++;
-    setSampleStatus(current=>current.state==="generating"?{
-      state:"generating",message:"An older voice sample is finishing. Cancel it or wait, then audition the updated project."
-    }:{state:"idle",message:"Storyboard or sound edits require a new voice audition."});
-    setReady(false);
-    setSfxSummary(null);
-    setState(current=>["rendering","done"].includes(current.state)?current:
-      {state:"idle",phase:"idle",message:"",report:null});
-  },[recheckToken]);
+  const [handledRecheckToken,setHandledRecheckToken]=useState(recheckToken);
+  // Adjust state during render when the parent changes revision; avoids a stale
+  // readiness approval reaching the next paint without resetting voice settings.
+  if(handledRecheckToken!==recheckToken){
+    setHandledRecheckToken(recheckToken);
+    if(recheckToken!==0){
+      setSampleStatus(current=>current.state==="generating"?{
+        state:"generating",message:"An older voice sample is finishing. Cancel it or wait, then audition the updated project."
+      }:{state:"idle",message:"Storyboard or sound edits require a new voice audition."});
+      setReady(false);
+      setSfxSummary(null);
+      setState(current=>["rendering","done"].includes(current.state)?current:
+        {state:"idle",phase:"idle",message:"",report:null});
+    }
+  }
+  useEffect(()=>{if(recheckToken!==0)sampleRevision.current++;},[recheckToken]);
   const change=(patch:Partial<Settings>)=>{
     sampleRevision.current++;
     setSampleStatus(current=>current.state==="generating"?{
