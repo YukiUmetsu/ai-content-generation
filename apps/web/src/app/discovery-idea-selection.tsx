@@ -355,8 +355,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
 
     {backfillState !== "idle" && (hasMarketAttention || backfillState === "queued" ||
       backfillState === "running") && <p role="status" className="text-xs text-muted-foreground">
-      {backfillState === "queued" ? tr(locale, "Missing market data queued for background collection.", "未測定の市場データをバックグラウンド収集に登録しました。")
-        : backfillState === "running" ? tr(locale, "Collecting missing YouTube and Google Trends observations…", "未測定の YouTube と Google Trends データを収集中…")
+      {backfillState === "queued" ? tr(locale, "Market observations queued for background collection.", "市場データのバックグラウンド収集を登録しました。")
+        : backfillState === "running" ? tr(locale, "Collecting YouTube and Google Trends observations…", "YouTube と Google Trends の市場データを収集中…")
         : backfillState === "error" ? tr(locale, "Could not start market backfill. Check the local server.", "市場データの補完を開始できません。ローカルサーバーを確認してください。")
         : discoveryRunning ? tr(locale, "Discovery is still running; market collection follows idea generation.", "調査を実行中です。アイデア生成後に市場データを収集します。")
           : hasMarketAttention ? tr(locale, "Waiting to retry market collection: provider cooldown, daily quota, or YouTube API key may be required. Automatic checks continue every minute.", "市場データの再収集待ちです。提供元の待機時間、1日の上限、または YouTube API キーが必要な場合があります。1分ごとに自動確認します。")
