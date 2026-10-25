@@ -159,6 +159,12 @@ where
     let Ok(run) = discovery_store::get_run(&db, &project_id, run_id) else {
         return;
     };
+    eprintln!(
+        "contentgen-server: discovery_market_job_started run_id={} kind={} ideas={}",
+        run_id,
+        if run.provider_health["marketBackfill"] == "queued" { "retry" } else { "initial" },
+        run.candidates.len(),
+    );
     let format = if run.input_snapshot["platforms"]
         .as_array()
         .is_some_and(|platforms| {
@@ -439,7 +445,25 @@ where
         "googleTrends": {"succeeded":trends_ok,"unavailable":trends_unknown,"attempts":trends_attempts},
     });
     if let Ok(db) = state.connect() {
-        let _ = discovery_store::finish_market_run(&db, run_id, &summary, epoch_now());
+        match discovery_store::finish_market_run(&db, run_id, &summary, epoch_now()) {
+            Ok(true) => eprintln!(
+                "contentgen-server: discovery_market_job_finished run_id={} state={} youtube_ok={} trends_ok={} youtube_attempts={} trends_attempts={}",
+                run_id, state_name, youtube_ok, trends_ok, youtube_attempts, trends_attempts,
+            ),
+            Ok(false) => eprintln!(
+                "contentgen-server: discovery_market_job_skipped run_id={} reason=cancelled_or_paused",
+                run_id,
+            ),
+            Err(_) => eprintln!(
+                "contentgen-server: discovery_market_job_failed run_id={} reason=database",
+                run_id,
+            ),
+        }
+    } else {
+        eprintln!(
+            "contentgen-server: discovery_market_job_failed run_id={} reason=database_unavailable",
+            run_id,
+        );
     }
 }
 
