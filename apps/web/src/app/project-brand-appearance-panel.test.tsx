@@ -39,6 +39,18 @@ describe("Project Brand & Appearance", () => {
     expect(onSave.mock.calls[1][0].palette.custom).toHaveLength(1);
   });
 
+  it("resets an unsaved palette when switching projects", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(() => true);
+    const {rerender} = render(<ProjectBrandAppearancePanel project={project} locale="en" onSave={onSave}/>);
+    const input = screen.getByRole("textbox",{name:"Primary HEX"});
+    await user.clear(input);
+    await user.type(input,"#123456");
+    expect(input).toHaveValue("#123456");
+    rerender(<ProjectBrandAppearancePanel project={{...project,id:"another-project"}} locale="en" onSave={onSave}/>);
+    expect(screen.getByRole("textbox",{name:"Primary HEX"})).not.toHaveValue("#123456");
+  });
+
   it("blocks invalid colors and reports contrast without discarding typed input", async () => {
     const onSave=vi.fn<(draft:ProjectAppearanceDraft) => boolean>(() => true);
     const user=userEvent.setup();
