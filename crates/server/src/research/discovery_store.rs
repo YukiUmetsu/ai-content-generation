@@ -666,6 +666,42 @@ pub fn finish_run(
     Ok(())
 }
 
+/// A successful YouTube API call can still leave Viral Score unmeasured if
+/// fewer than eight relevant videos or three channels survived filtering.
+/// Allow ONE more paid attempt with a meaningfully broader query, after the
+/// existing one-hour provider cooldown. Never loop on the same query or spend
+/// unlimited quota trying to turn an intrinsically sparse topic into a score.
+/// A small session cohort is handled separately: retrying already-qualified
+/// ideas cannot create the third comparable idea.
+pub fn low_sample_retry_query(
+    db: &Connection,
+    idea_id: &str,
+    now: i64,
+) -> Result<Option<String>, DiscoveryError> {
+    const HOUR: i64 = 3_600;
+    const MONTH: i64 = 30 * 86_400;
+    let latest = super::idea_market::latest_assessment(db, idea_id, now)
+        .map_err(|_| DiscoveryError::Invalid("Cannot inspect saved YouTube samples".into()))?;
+    let Some(latest) = latest else { return Ok(None) };
+    if latest.state != "succeeded"
+        || (latest.sample_size >= 8 && latest.distinct_channels >= 3)
+        || latest.observed_at.is_none_or(|at| at.saturating_add(HOUR) > now)
+    {
+        return Ok(None);
+    }
+    let paid_attempts: i64 = db.query_row(
+        "SELECT COUNT(*) FROM idea_market_runs r
+         JOIN market_search_budget b ON b.run_id=r.id
+         WHERE r.idea_id=?1 AND r.started_at>?2",
+        params![idea_id, now.saturating_sub(MONTH)],
+        |row| row.get(0),
+    )?;
+    if paid_attempts != 1 {
+        return Ok(None);
+    }
+    Ok(super::idea_market::broader_query(&latest.query))
+}
+
 /// A failed or unavailable provider attempt is not a successful measurement.
 /// Respect the provider's retry window and the shared daily API budgets.
 /// YouTube never schedules work without a usable local API key; Google Trends
@@ -692,6 +728,7 @@ pub fn market_retry_due(
             None => true,
             Some((state, _, started, finished)) if state == "succeeded" => {
                 finished.unwrap_or(started).saturating_add(THIRTY_DAYS) <= now
+                    || low_sample_retry_query(db, idea_id, now)?.is_some()
             }
             Some((state, reason, started, _)) if matches!(state.as_str(), "failed" | "unavailable" | "expired") => {
                 if matches!(reason.as_deref(), Some("api_key_missing" | "credential_denied" | "credential_unavailable")) {
