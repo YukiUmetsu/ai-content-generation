@@ -13,3 +13,16 @@ apps/web/.qa/
 *.db-shm
 *.db-wal
 
+# Local provider credentials and machine-specific secrets.
+.env
+.env.*
+!.env.example
+!.env.sample
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+

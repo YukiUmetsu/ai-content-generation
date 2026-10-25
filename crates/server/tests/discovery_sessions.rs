@@ -181,10 +181,10 @@ fn a_session_can_persist_more_than_five_distinct_evidence_backed_ideas() {
     assert_eq!(ideas[0].score_version.as_deref(), Some("evidence-readiness-v1"));
     assert_eq!(ideas[0].score_inputs["capturedPassages"], 1);
     assert_eq!(ideas[0].score_inputs["audienceDemand"], "unknown");
-    sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].id, "saved", None, 103).unwrap();
-    assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].decision.as_deref(), Some("saved"));
-    sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].id, "selected", None, 104).unwrap();
-    assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].decision.as_deref(), Some("selected"));
+    sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].candidate.id, "saved", None, 103).unwrap();
+    assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].candidate.decision.as_deref(), Some("saved"));
+    sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].candidate.id, "selected", None, 104).unwrap();
+    assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].candidate.decision.as_deref(), Some("selected"));
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
         }], "completed", 102).unwrap();
     let idea = &sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0];
     let p1 = production_store::create_production(
-        &conn, "brand-one", &session.id, &idea.id,
+        &conn, "brand-one", &session.id, &idea.candidate.id,
         &serde_json::json!({"topic":"Home lifetime costs","title":"Lifetime cost of a house",
             "angle":"actual costs","description":"Break down ownership costs","keywords":[],
             "platforms":["youtube"]}),
@@ -265,7 +265,7 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
     ).unwrap();
     assert!(p1.id.starts_with("production-"),"Production IDs use the public identifier format");
     let p2 = production_store::create_production(
-        &conn, "brand-one", &session.id, &idea.id,
+        &conn, "brand-one", &session.id, &idea.candidate.id,
         &serde_json::json!({"topic":"Home lifetime costs","title":"Home ownership costs, part two",
             "angle":"Unexpected expenses","description":"Second look at home costs\nIncluding taxes and maintenance","keywords":[],
             "platforms":["youtube"]}),
@@ -277,7 +277,7 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
     assert_eq!(production_store::list_productions(&conn, "brand-one").unwrap().len(), 2);
     assert_eq!(production_store::list_all_productions(&conn).unwrap().len(), 2);
     assert!(production_store::create_production(
-        &conn, "brand-two", &session.id, &idea.id,
+        &conn, "brand-two", &session.id, &idea.candidate.id,
         &serde_json::json!({"topic":"Invalid","title":"Invalid",
             "angle":"","description":"","keywords":[],"platforms":["youtube"]}),
         &["youtube".into()], 105,
@@ -285,13 +285,13 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
     let valid = serde_json::json!({"topic":"Home lifetime costs","title":"Why homes cost more",
         "angle":"Tax, insurance and maintenance","description":"Evidence-first explainer",
         "keywords":["home cost"],"platforms":["youtube"]});
-    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.id,
+    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.candidate.id,
         &serde_json::json!({}),&["youtube".into()],106).is_err(),
         "A malformed brief cannot be persisted and later crash the editor");
-    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.id,
+    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.candidate.id,
         &valid,&["tiktok".into()],106).is_err(),
         "Productions cannot choose platforms outside their discovery session");
-    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.id,
+    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.candidate.id,
         &valid,&["youtube".into(),"tiktok".into()],106).is_err(),
         "The request and the frozen brief must agree on platforms");
     assert_eq!(conn.query_row("SELECT COUNT(*) FROM discovery_projects", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
