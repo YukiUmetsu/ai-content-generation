@@ -110,3 +110,60 @@ async fn session_and_production_api_preserve_scope_and_return_expected_shapes() 
     assert_eq!(conn.query_row("SELECT COUNT(*) FROM discovery_projects",[],|r|r.get::<_,i64>(0)).unwrap(),2);
 }
 
+
+#[tokio::test]
+async fn missing_market_backfill_endpoint_requires_local_header_and_is_idempotent() {
+    use contentgen_server::research::{
+        discovery_projects::{self, ProjectSnapshot},
+        discovery_store::{self, CandidateDraft},
+        graph_store::{self, SourceDraft},
+        sessions_store,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("backfill.sqlite");
+    let mut conn = db::open(&path).unwrap();
+    db::migrate(&mut conn).unwrap();
+    discovery_projects::sync_project(&mut conn, &ProjectSnapshot {
+        id: "brand-one".into(), name: "House Costs".into(), notes: "Housing".into(),
+        updated_at: 1, content: vec![],
+    }, 1).unwrap();
+    let session = sessions_store::create_session(
+        &conn, "brand-one", "Historical ideas", &["youtube".into()],
+        &json!({"version":1}), 2,
+    ).unwrap();
+    let source = graph_store::import_source(&conn, "brand-one", SourceDraft {
+        url: "https://example.org/house-costs".into(),
+        title: "House costs".into(), provider: "captured-web".into(),
+        published_at: None, observed_at: 2,
+        passage: Some("Home ownership has maintenance expenses".into()),
+    }).unwrap();
+    let run = discovery_store::start_or_get_active_for_session(
+        &mut conn, "brand-one", &session.id, "revision", 3,
+    ).unwrap();
+    discovery_store::finish_run(&mut conn, &run.id, vec![CandidateDraft {
+        title: "Hidden expenses of home ownership".into(),
+        hook: "Why does it cost more?".into(), premise: "Cost analysis".into(),
+        why_now: "Household expenses".into(), angle_key: "hidden-expenses".into(),
+        source_ids: vec![source], confidence: "medium".into(),
+    }], "completed", 4).unwrap();
+    // Simulate a session that finished before the market-enrichment worker existed.
+    conn.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                  WHERE id=?1", [&run.id]).unwrap();
+
+    let router = build_router(AppState::new(path));
+    let endpoint = format!("/api/research/discovery/projects/brand-one/sessions/{}/market/backfill", session.id);
+    assert_eq!(call(&router, Method::POST, &endpoint, json!({}), false).await.0,
+        StatusCode::FORBIDDEN);
+    let foreign = endpoint.replace("/brand-one/", "/brand-two/");
+    assert_eq!(call(&router, Method::POST, &foreign, json!({}), true).await.0,
+        StatusCode::NOT_FOUND);
+    let (code, body) = call(&router, Method::POST, &endpoint, json!({}), true).await;
+    assert_eq!(code, StatusCode::ACCEPTED, "{body:?}");
+    assert_eq!(body["state"], "queued");
+    assert_eq!(body["queuedRunIds"][0], run.id);
+    let (code, again) = call(&router, Method::POST, &endpoint, json!({}), true).await;
+    assert_eq!(code, StatusCode::ACCEPTED);
+    assert!(again["queuedRunIds"].as_array().unwrap().is_empty(),
+        "repeated request must not queue another provider job");
+}
