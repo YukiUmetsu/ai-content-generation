@@ -750,6 +750,14 @@ pub fn market_retry_due(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
+    // Do not reopen completed Discovery runs when the shared provider budget
+    // already guarantees that claim_assessment would refuse every request.
+    // The scheduler checks again on the next minute tick when quota rolls off.
+    let youtube_used: i64 = db.query_row(
+        "SELECT COUNT(*) FROM market_search_budget WHERE reserved_at>?1",
+        [now.saturating_sub(DAY)], |row| row.get(0),
+    )?;
+    let youtube_due = youtube_due && youtube_used < 20;
     let trends_due = match trends {
         None => true,
         Some((state, _, started, finished)) if state == "succeeded" => {
@@ -763,7 +771,12 @@ pub fn market_retry_due(
         }
         _ => false,
     };
-    Ok((youtube_due, trends_due))
+    let trends_used: i64 = db.query_row(
+        "SELECT COUNT(*) FROM idea_trends_runs
+         WHERE started_at>?1 AND state!='unavailable'",
+        [now.saturating_sub(DAY)], |row| row.get(0),
+    )?;
+    Ok((youtube_due, trends_due && trends_used < 12))
 }
 
 /// Queue eligible missing, expired and failed market measurements. Retry
