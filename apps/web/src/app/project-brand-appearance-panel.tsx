@@ -66,7 +66,11 @@ function BrandSample({kind,palette,name}: {kind:Preview;palette:ProjectPalette;n
   </div>;
 }
 
-export function ProjectBrandAppearancePanel({project,locale,onSave}:Props) {
+export function ProjectBrandAppearancePanel(props:Props) {
+  return <ProjectBrandAppearanceEditor key={`${props.project.id}:${props.project.brandAppearance?.revision ?? "new"}`} {...props} />;
+}
+
+function ProjectBrandAppearanceEditor({project,locale,onSave}:Props) {
   const initial=resolveProjectAppearance(project);
   const [draft,setDraft]=useState<ProjectAppearanceDraft>(()=>({
     palette:{...initial.palette,custom:initial.palette.custom.map(c=>({...c}))},
@@ -173,7 +177,7 @@ export function ProjectBrandAppearancePanel({project,locale,onSave}:Props) {
         {(project.brandAppearanceHistory?.length??0)>0&&<div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3">
           <span className="text-xs text-muted-foreground">{message(locale,"Previous versions","以前の版")}</span>
           {project.brandAppearanceHistory?.slice().reverse().map(old=><Button key={old.revision} size="sm" variant="outline"
-            icon={<RotateCcw className="size-3.5" aria-hidden/>} onClick={()=>{const previous={palette:old.palette,typographyPreset:old.typographyPreset};setDraft(previous);onSave(previous);setSaved(true);}}>
+            icon={<RotateCcw className="size-3.5" aria-hidden/>} onClick={()=>{const previous={palette:old.palette,typographyPreset:old.typographyPreset};setDraft(previous);setSaved(onSave(previous));}}>
             {message(locale,"Restore revision","版を復元") + " " + old.revision}
           </Button>)}
         </div>}
