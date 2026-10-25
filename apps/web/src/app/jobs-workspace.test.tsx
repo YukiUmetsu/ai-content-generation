@@ -28,7 +28,7 @@ const pipelineDetail = {
   progress: { total: 0, pending: 0, ready: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 },
 };
 
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); window.localStorage.removeItem("contentgen.jobs.list-width"); });
 
 describe("Jobs & QA discovery visibility", () => {
   it("shows a running discovery search when the DAG job queue is empty", async () => {
@@ -93,7 +93,7 @@ describe("Jobs & QA discovery visibility", () => {
     expect(screen.getByRole("alert", { name: /discovery/i })).toHaveTextContent("1 project(s)");
   });
 
-  it("combines discovery and pipeline jobs, prioritizes active work, and filters jobs needing attention", async () => {
+  it("puts recently updated jobs first regardless of status and filters jobs needing attention", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
       const path = String(input);
       if (path === "/api/jobs") return new Response(JSON.stringify({ jobs: [pipelineJob] }));
@@ -105,7 +105,7 @@ describe("Jobs & QA discovery visibility", () => {
     render(<JobsWorkspace locale="en" projects={[project]} />);
     const jobsList = await screen.findByRole("list", { name: "Jobs" });
     await waitFor(() => expect(within(jobsList).getAllByRole("button")).toHaveLength(3));
-    expect(within(jobsList).getAllByRole("button")[0]).toHaveTextContent("Household energy costs");
+    expect(within(jobsList).getAllByRole("button")[0]).toHaveTextContent("Render video");
     expect(within(jobsList).getByText("Render video")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Needs attention/i }));
     expect(within(jobsList).getAllByRole("button")).toHaveLength(1);
@@ -113,6 +113,43 @@ describe("Jobs & QA discovery visibility", () => {
     expect(within(jobsList).queryByText("Household energy costs")).not.toBeInTheDocument();
     fireEvent.click(within(jobsList).getByRole("button", { name: /Past research/i }));
     expect(screen.getByText("provider_unavailable")).toBeInTheDocument();
+  });
+
+  it("resizes the jobs list with a keyboard-accessible divider and remembers the width", () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ jobs: [] })));
+    const view = render(<JobsWorkspace locale="en" />);
+    const divider = screen.getByRole("separator", { name: "Resize job list and details" });
+    const workspace = screen.getByRole("region", { name: "Jobs" });
+    const splitPane = workspace.querySelector<HTMLElement>('[data-km-split-pane="root"]');
+    expect(splitPane).not.toBeNull();
+    vi.spyOn(splitPane!, "getBoundingClientRect").mockReturnValue({ left: 0, width: 1000 } as DOMRect);
+
+    expect(divider).toHaveAttribute("aria-valuenow", "46");
+    fireEvent.keyDown(divider, { key: "ArrowRight" });
+    expect(divider).toHaveAttribute("aria-valuenow", "47");
+
+    fireEvent.pointerDown(divider, { pointerId: 1, button: 0, isPrimary: true, clientX: 470 });
+    fireEvent.pointerMove(divider, { pointerId: 1, clientX: 600 });
+    fireEvent.pointerUp(divider, { pointerId: 1, clientX: 600 });
+    expect(divider).toHaveAttribute("aria-valuenow", "60");
+    expect(window.localStorage.getItem("contentgen.jobs.list-width")).toBe("60");
+
+    view.unmount();
+    render(<JobsWorkspace locale="en" />);
+    expect(screen.getByRole("separator", { name: "Resize job list and details" }))
+      .toHaveAttribute("aria-valuenow", "60");
+  });
+
+  it("reserves the minimum list and detail widths at a narrow desktop size", () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ jobs: [] })));
+    render(<JobsWorkspace locale="en" />);
+    const workspace = screen.getByRole("region", { name: "Jobs" });
+    vi.spyOn(workspace, "getBoundingClientRect").mockReturnValue({ width: 768 } as DOMRect);
+    fireEvent.resize(window);
+    const divider = screen.getByRole("separator", { name: "Resize job list and details" });
+    const available = 768 - 8;
+    expect(Number(divider.getAttribute("aria-valuemin")) * available / 100).toBeGreaterThanOrEqual(279.99);
+    expect((100 - Number(divider.getAttribute("aria-valuemax"))) * available / 100).toBeGreaterThanOrEqual(359.99);
   });
 
   it("allows switching between discovery and pipeline detail without losing the selected item on refresh", async () => {
