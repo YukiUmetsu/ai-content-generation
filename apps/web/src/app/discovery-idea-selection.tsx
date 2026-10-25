@@ -122,7 +122,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     !idea.marketAssessment || idea.marketAssessment.state !== "succeeded" ||
     !idea.googleTrends || idea.googleTrends.state !== "succeeded");
   useEffect(() => {
-    if (loading || ideas.length === 0) return;
+    if (loading || ideas.length === 0 || !hasMarketAttention) return;
     let alive = true;
     void queueMissingMarketEvidence(projectId, sessionId).then(result => {
       if (alive) setBackfillState(result.state);
@@ -133,7 +133,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       }
     });
     return () => { alive = false; };
-  }, [projectId, sessionId, loading, ideas.length]);
+  }, [projectId, sessionId, loading, ideas.length, hasMarketAttention]);
 
   // A retry can become eligible hours later without revisiting Select Idea.
   // The server also checks independently every minute when this page is closed.
@@ -145,8 +145,14 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     const timer = window.setInterval(() => {
       if (inFlight) return;
       inFlight = true;
-      void queueMissingMarketEvidence(projectId, sessionId).then(result => {
-        if (alive) setBackfillState(result.state);
+      void Promise.all([
+        queueMissingMarketEvidence(projectId, sessionId),
+        listSessionIdeas(projectId, sessionId),
+      ]).then(([result, latest]) => {
+        if (alive) {
+          setBackfillState(result.state);
+          setIdeas(latest);
+        }
       }).catch(failure => {
         if (alive) setError(failure instanceof Error ? failure.message : "Market retry check failed.");
       }).finally(() => { inFlight = false; });
