@@ -16,6 +16,7 @@ import {
 import { ApiErrorNotice } from "./api-error-notice";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { SplitPane } from "@/components/ui/split-pane";
 import { Surface } from "@/components/ui/surface-card";
 import { EmptyState } from "@/app/empty-state";
 import { translate, formatDateTime } from "@/i18n/messages";
@@ -40,9 +41,9 @@ type MonitorBucket = "active" | "attention" | "finished";
 type MonitorFilter = "all" | MonitorBucket;
 type MonitorEntry =
   | { kind: "discovery"; key: string; projectName: string; session: DiscoverySession; stale: boolean;
-      bucket: MonitorBucket; priority: number; updatedAt: number }
+      bucket: MonitorBucket; updatedAt: number }
   | { kind: "pipeline"; key: string; job: Job;
-      bucket: MonitorBucket; priority: number; updatedAt: number };
+      bucket: MonitorBucket; updatedAt: number };
 
 function humanize(value: string): string {
   const label = value.replaceAll(/[_-]+/g, " ").trim();
@@ -62,17 +63,41 @@ function monitorEntries(jobs: Job[], discoveries: DiscoveryJob[]): MonitorEntry[
     const bucket = discoveryBucket(run.status);
     return [{ kind: "discovery" as const, key: `discovery:${session.projectId}:${session.id}`,
       projectName, session, stale: !!stale, bucket,
-      priority: bucket === "active" ? run.status === "running" ? 0 : 1 : bucket === "attention" ? 2 : 3,
       updatedAt: run.updatedAt * 1000 }];
   });
   entries.push(...jobs.map(job => {
     const bucket: MonitorBucket = ACTIVE_STATES.includes(job.state) ? "active"
       : job.state === "FAILED" ? "attention" : "finished";
     return { kind: "pipeline" as const, key: `pipeline:${job.id}`, job, bucket,
-      priority: bucket === "active" ? job.state === "RUNNING" ? 0 : 1
-        : bucket === "attention" ? 2 : 3, updatedAt: safeTime(job.updatedAt) };
+      updatedAt: safeTime(job.updatedAt) };
   }));
-  return entries.sort((a, b) => a.priority - b.priority || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key));
+  return entries.sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key));
+}
+
+const LIST_WIDTH_STORAGE_KEY = "contentgen.jobs.list-width";
+const DEFAULT_LIST_WIDTH = 46;
+const DIVIDER_WIDTH_PX = 8;
+
+function listWidthBounds(containerWidth: number): { min: number; max: number } {
+  const width = containerWidth > DIVIDER_WIDTH_PX ? containerWidth - DIVIDER_WIDTH_PX : 992;
+  const min = Math.max(25, (280 / width) * 100);
+  const max = Math.max(min, Math.min(70, ((width - 360) / width) * 100));
+  return { min, max };
+}
+
+function clampListWidth(value: number, containerWidth: number): number {
+  const { min, max } = listWidthBounds(containerWidth);
+  return Math.round(Math.min(max, Math.max(min, value)));
+}
+
+function initialListWidth(): number {
+  try {
+    const saved = window.localStorage.getItem(LIST_WIDTH_STORAGE_KEY);
+    if (saved !== null && Number.isFinite(Number(saved))) {
+      return Math.max(25, Math.min(70, Math.round(Number(saved))));
+    }
+  } catch { /* Storage is optional in restricted browser environments. */ }
+  return DEFAULT_LIST_WIDTH;
 }
 
 function monitorName(entry: MonitorEntry): string {
@@ -320,6 +345,8 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   const [filter, setFilter] = useState<MonitorFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  const [listWidth, setListWidth] = useState(initialListWidth);
+  const [containerWidth, setContainerWidth] = useState(1000);
   const [jobView, setJobView] = useState<JobView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<ApiError | null>(null);
@@ -334,6 +361,28 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   const backButtonRef = useRef<HTMLButtonElement | null>(null);
   const selectedRowRef = useRef<HTMLButtonElement | null>(null);
   const visitedMobileDetailRef = useRef(false);
+  const workspaceRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const measure = () => {
+      const width = workspace.getBoundingClientRect().width;
+      if (width > 0) setContainerWidth(width);
+    };
+    measure();
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    observer?.observe(workspace);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, []);
+
+  function updateListWidth(next: number, width: number) {
+    const adjusted = clampListWidth(next, width);
+    setListWidth(adjusted);
+    try { window.localStorage.setItem(LIST_WIDTH_STORAGE_KEY, String(adjusted)); }
+    catch { /* Resizing still works without browser storage. */ }
+  }
 
   const entries = useMemo(() => monitorEntries(jobs, discoveryJobs), [jobs, discoveryJobs]);
   const filteredEntries = useMemo(() => {
@@ -558,13 +607,27 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
 
   return (
     <section
+      ref={workspaceRef}
       id="workspace"
       aria-label={translate(locale, "navJobs")}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <div
-        className={`min-h-0 min-w-0 flex-1 flex-col border-border bg-surface lg:w-[360px] lg:flex-none lg:border-r xl:w-[390px] ${mobileDetailOpen ? "hidden lg:flex" : "flex"}`}
-      >
+      <SplitPane
+        className={`min-h-0 flex-1 !flex flex-col lg:!grid lg:grid-rows-[minmax(0,1fr)]
+          [&_[data-part=primary]]:flex-1 lg:[&_[data-part=primary]]:flex-none
+          [&_[data-part=secondary]]:flex-1 lg:[&_[data-part=secondary]]:flex-none
+          [&_[data-part=divider]]:hidden lg:[&_[data-part=divider]]:block
+          ${mobileDetailOpen
+            ? "[&_[data-part=primary]]:hidden lg:[&_[data-part=primary]]:block"
+            : "[&_[data-part=secondary]]:hidden lg:[&_[data-part=secondary]]:block"}`}
+        aria-label={locale === "ja" ? "ジョブ一覧と詳細の幅を変更" : "Resize job list and details"}
+        primarySize={clampListWidth(listWidth, containerWidth)}
+        minPrimarySize={listWidthBounds(containerWidth).min}
+        maxPrimarySize={listWidthBounds(containerWidth).max}
+        onPrimarySizeChange={next => updateListWidth(next, containerWidth)}
+        primary={<div
+          className={`flex h-full min-h-0 min-w-0 flex-col bg-surface ${mobileDetailOpen ? "hidden lg:flex" : "flex"}`}
+        >
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
           <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
             <ListChecks aria-hidden className="size-[18px] text-muted-foreground" />
@@ -692,11 +755,11 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
             })}
           </ul>
         </div>
-      </div>
+      </div>}
 
-      <div
-        className={`min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-canvas px-4 pb-7 pt-4 sm:px-6 lg:px-8 ${mobileDetailOpen ? "flex" : "hidden lg:flex"}`}
-      >
+        secondary={<div
+          className={`h-full min-h-0 min-w-0 flex-col overflow-y-auto bg-canvas px-4 pb-7 pt-4 sm:px-6 lg:px-8 ${mobileDetailOpen ? "flex" : "hidden lg:flex"}`}
+        >
         <button ref={backButtonRef} type="button" onClick={() => setMobileDetailOpen(false)}
           className="mb-4 inline-flex items-center gap-2 self-start rounded-control px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
           <ArrowLeft aria-hidden className="size-4" />
@@ -888,7 +951,8 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
             </div>
           </div>
         )}
-      </div>
+      </div>}
+      />
 
       <Dialog
         open={cancelDialogOpen}
