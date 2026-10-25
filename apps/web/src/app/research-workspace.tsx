@@ -409,7 +409,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
   async function resumeResearchJob(retryScene=false){
     if(!activeJobId)return;
     const scene=researchJob?.stage.match(/^scene:(\d+)$/u);
+    const evidenceReview=researchJob?.status==="paused"&&researchJob.stage==="evidence-repair";
     const url=retryScene&&scene?`/api/contentgen-director/research-jobs/${activeJobId}/scenes/${Number(scene[1])-1}/retry`:
+      evidenceReview?`/api/contentgen-director/research-jobs/${activeJobId}/repair`:
       `/api/contentgen-director/research-jobs/${activeJobId}/resume`;
     setResearchError("");setResearchBusy(true);
     try{
@@ -497,7 +499,7 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                     <h3 className="text-sm font-semibold text-foreground">{tr("Local research readiness", "ローカル調査の準備状況")}</h3>
                     <p className="mt-1 text-xs text-muted-foreground">{tr("Checked on page open · no search or AI generation triggered", "ページ表示時に確認・検索と AI 生成は実行しません")}</p>
                   </div>
-                  <Button variant="outline" size="sm" disabled={checkingReadiness} onClick={()=>setReadinessAttempt(attempt=>attempt+1)}>
+                  <Button variant="outline" size="sm" disabled={checkingReadiness} onClick={()=>{setCheckingReadiness(true);setReadinessError(false);setReadinessAttempt(attempt=>attempt+1);}}>
                     {tr("Check again", "再確認")}
                   </Button>
                 </div>
@@ -591,7 +593,9 @@ export function ResearchWorkspace({ locale, onUseVideo, onCreateStoryboard, proj
                 </Button>
                 {activeJobId&&researchJob&&["failed","paused","cancelled"].includes(researchJob.status)&&
                   <Button size="lg" variant="outline" onClick={()=>void resumeResearchJob()} disabled={researchBusy||blockedForStory}>
-                    {tr("Resume saved job","保存済みジョブを再開")}
+                    {researchJob.stage==="evidence-repair"&&researchJob.status==="paused"?
+                      tr("Refresh sources and retry evidence","出典を再取得して根拠を再確認"):
+                      tr("Resume saved job","保存済みジョブを再開")}
                   </Button>}
                 {activeJobId&&researchJob?.status==="failed"&&/^scene:\d+$/u.test(researchJob.stage)&&
                   <Button size="md" variant="outline" onClick={()=>void resumeResearchJob(true)} disabled={researchBusy||blockedForStory}>

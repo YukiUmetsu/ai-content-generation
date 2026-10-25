@@ -77,8 +77,10 @@ jobs:
             scripts/video-production/try.test.mjs \
             scripts/video-production/research-job-planner.test.mjs \
             scripts/video-production/research-job-queue.test.mjs \
+            scripts/video-production/evidence-link-repair.test.mjs \
             scripts/video-production/research-model-settings.test.mjs \
-            scripts/video-production/model-profiles.test.mjs
+            scripts/video-production/model-profiles.test.mjs \
+            scripts/director-studio-vite.test.mjs
 
       - name: Production build
         run: pnpm build

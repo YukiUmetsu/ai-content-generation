@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, Download, Film, Headphones, Images, Layers3, RefreshCw, WandSparkles, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -6,6 +6,7 @@ import type { Locale } from "@/features/registry";
 import { ProductionPanel } from "./video-production-panel";
 import { AssetDiscoveryPanel } from "./asset-discovery-panel";
 import { SfxDiscoveryPanel } from "./sfx-discovery-panel";
+import { loadProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { NewVideoSetup } from "./new-video-setup";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
@@ -16,7 +17,7 @@ type Shot={id:string;visualChange:string;onScreenText:string;purpose:string;visu
 type Sound={shotId:string;narration:string;sfxIntent:string|null};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
-type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string};
+type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string;researchSha256?:string};
 type Dossier={kind:string;id:string;topic:{title:string;audience:string}};
 type Variant={id:string;strategy:string;audienceSignal:string;curiosityQuestion:string;
   narration:string;firstVisual:string;onScreenText:string;payoffConnection:string;sfxIntent:string|null};
@@ -25,6 +26,7 @@ type Impact={changedFields:string[];speechRegenerate:string[];visualRerender:str
 type Revision={kind:string;bundle:Bundle;impacts:Impact;reviewRequired:boolean};
 type DirectorStage="storyboard"|"assets"|"sound"|"preview";
 const stageIcons={storyboard:Layers3,assets:Images,sound:Headphones,preview:Film};
+type StoryboardSync={storyboardSha256:string;applied:string[];manualReview:string[]};
 const field="w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const header="text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 async function request(path:string,data:unknown){
@@ -45,6 +47,26 @@ function downloadJson(name:string,data:unknown){
   document.body.append(anchor);anchor.click();anchor.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
+const directorSessionKey=(projectId:string,artifactId:string,storyboardSha256:string|null=null)=>
+  storyboardSha256?"contentgen:director-session:v2:"+projectId+":"+artifactId+":"+storyboardSha256:
+    "contentgen:director-session:v1:"+projectId+":"+artifactId;
+function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle,
+  storyboardSha256:string|null=null):
+  {dossier:Dossier;bundle:Bundle}|null {
+  if(!projectId||typeof sessionStorage==="undefined"||!source.researchSha256)return null;
+  try{
+    const raw=sessionStorage.getItem(directorSessionKey(projectId,artifactId,storyboardSha256));
+    if(!raw||raw.length>900000)return null;
+    const data=JSON.parse(raw) as {version?:number;artifactId?:string;dossier?:Dossier;bundle?:Bundle};
+    if(data.version!==1||data.artifactId!==artifactId||data.dossier?.kind!=="research-dossier"||
+      data.dossier.id!==source.researchId||data.bundle?.kind!=="preproduction-bundle"||
+      data.bundle.researchId!==source.researchId||data.bundle.researchSha256!==source.researchSha256||
+      !Array.isArray(data.bundle.plan?.shots)||!data.bundle.plan.shots.length||
+      !Array.isArray(data.bundle.plan?.sound)||!Array.isArray(data.bundle.plan?.teachingSequences)||
+      !/^[a-f0-9]{64}$/u.test(data.bundle.planSha256??""))return null;
+    return {dossier:data.dossier,bundle:data.bundle};
+  }catch{return null;}
+}
 function shotDraft(bundle:Bundle,id:string){
   const shot=bundle.plan.shots.find(x=>x.id===id);
   const audio=bundle.plan.sound.find(x=>x.shotId===id);
@@ -54,7 +76,11 @@ function shotDraft(bundle:Bundle,id:string){
     sfxIntent:audio?.sfxIntent??"",
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
 }
-export function VideoDirectorWorkspace({locale}:{locale:Locale}){
+type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"export"};
+export function VideoDirectorWorkspace(props:DirectorWorkspaceProps){
+  return <VideoDirectorWorkspaceContent key={`${props.projectId??""}:${props.researchArtifactId??""}`} {...props}/>;
+}
+function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focusStage}:DirectorWorkspaceProps){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
@@ -70,18 +96,79 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
   const [sampleMode,setSampleMode]=useState(false);
   const [stage,setStage]=useState<DirectorStage>("storyboard");
   const [recheckToken,setRecheckToken]=useState(0);
+  const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId));
+  const [loadError,setLoadError]=useState("");
+  const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
+  const [sourceStoryboardSha,setSourceStoryboardSha]=useState<string|null>(null);
+  const [syncReport,setSyncReport]=useState<StoryboardSync|null>(null);
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  function acceptProject(d:Dossier,b:Bundle,source:"sample"|"topic"="topic"){
-    setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");
-    setStage(source==="sample"?"preview":"storyboard");
+  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null)=>{
+    setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");setSourceArtifactId(artifactId);
+    setSourceStoryboardSha(storyboardSha);setSyncReport(null);
+    setStage(source==="sample"?"preview":focusStage==="visuals"?"assets":focusStage==="audio"?"sound":focusStage==="export"?"preview":"storyboard");
     setRecheckToken(0);
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
     setStatus("Storyboard ready. Review and edit individual shots, then preview the renderable scenes below.");
-  }
+  },[focusStage]);
+  useEffect(()=>{
+    if(!researchArtifactId)return;
+    let active=true;
+    // Re-read on entry so source-bound edits made since Production was last shown are included.
+    const loaded=projectId?loadProjectStoryboard(projectId):null;
+    const board=loaded?.board?.assumptions.includes("Research artifact: "+researchArtifactId)
+      ?loaded.board:null;
+    const warning=loaded?.warning
+      ?loaded.warning+" The original research plan will open without storyboard edits."
+      :loaded?.board&&!board
+        ?"The saved storyboard references a different research artifact. Director will use the selected research plan without its edits."
+        :"";
+    const payload={artifactId:researchArtifactId,
+      ...(board&&projectId?{projectId,storyboard:board}:{})};
+    void request("compile-saved-research",payload).then(result=>{
+      if(!active)return;
+      if(warning)setLoadError(warning);
+      const saved=result as {artifactId?:string;dossier?:Dossier;bundle?:Bundle;synchronization?:StoryboardSync|null};
+      if(saved.artifactId!==researchArtifactId || saved.dossier?.kind!=="research-dossier" ||
+        saved.bundle?.kind!=="preproduction-bundle" || !saved.dossier.id ||
+        saved.bundle.researchId!==saved.dossier.id || !saved.bundle.plan?.shots?.length ||
+        (board&&(!saved.synchronization||
+          !/^[a-f0-9]{64}$/u.test(saved.synchronization.storyboardSha256))))
+        throw Error("The returned project did not match the selected storyboard and research artifact.");
+      const sync=saved.synchronization??null;
+      const revision=sync?.storyboardSha256??null;
+      const resumed=readDirectorSession(projectId,researchArtifactId,saved.bundle,revision);
+      acceptProject(resumed?.dossier??saved.dossier,resumed?.bundle??saved.bundle,
+        "topic",researchArtifactId,revision);
+      setSyncReport(sync);
+      setStatus((resumed?"Resumed applied edits from this storyboard version. ":
+        sync?"Opened the saved storyboard with compatible changes applied. ":"Opened the original research plan. ")+
+        "Claims, unsynchronized semantic details, and media rights still need review.");
+    }).catch(error=>{if(active){
+      const message=error instanceof Error?error.message:"Saved research could not be opened.";
+      setStatus(message);setLoadError(message);
+    }})
+      .finally(()=>{if(active)setLoadingSaved(false);});
+    return ()=>{active=false;};
+  },[researchArtifactId,projectId,acceptProject]);
+  useEffect(()=>{
+    if(!projectId||!researchArtifactId||sourceArtifactId!==researchArtifactId||!dossier||!bundle||
+      typeof sessionStorage==="undefined")return;
+    let warningTimer:ReturnType<typeof setTimeout>|undefined;
+    try{
+      // Only applied shot edits are saved here. Never store provider keys or voice permissions.
+      const data=JSON.stringify({version:1,artifactId:researchArtifactId,dossier,bundle});
+      if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
+      sessionStorage.setItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha),data);
+    }catch{
+      // Storage failure is reported after the effect finishes, avoiding a cascading render.
+      warningTimer=setTimeout(()=>setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director."),0);
+    }
+    return ()=>{if(warningTimer!==undefined)clearTimeout(warningTimer);};
+  },[projectId,researchArtifactId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
   async function importProject(file:File|undefined){
     if(!file)return;
     try{
@@ -227,7 +314,16 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
           </p>
         </div>
       </div>
-      {!usable&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
+      {loadError&&<p role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm">{loadError} Review the storyboard or open a saved project manually; no source was overwritten.</p>}
+      {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening saved research for Video Director…</p>}
+      {!usable&&!loadingSaved&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
+      {usable&&syncReport&&<div role="status" className="rounded-surface border border-primary/30 bg-surface-subtle p-4 text-sm">
+        <p className="font-semibold">Saved storyboard → Director</p>
+        <p className="mt-1">{syncReport.applied.length} narration, screen-text, or visual-action change(s) applied to a new draft bundle. Immutable research remains unchanged.</p>
+        {syncReport.manualReview.length>0&&<ul className="mt-2 list-disc space-y-1 pl-5 text-status-warning">
+          {syncReport.manualReview.map((warning,i)=><li key={i}>{warning}</li>)}</ul>}
+        <p className="mt-2 text-xs text-muted-foreground">Other storyboard-only timing, camera, and semantic design fields need manual comparison. This is not publishing approval.</p>
+      </div>}
       {usable&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle p-4">
         <div>
           <p className="text-xs font-medium text-muted-foreground">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
@@ -237,12 +333,17 @@ export function VideoDirectorWorkspace({locale}:{locale:Locale}){
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" icon={<Download className="size-4"/>} disabled={dirty||busy}
             onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
-          <Button variant="outline" disabled={dirty||busy} onClick={()=>{setDossier(null);setBundle(null);setShotId("");setStage("storyboard");setSampleMode(false);setStatus("");}}>
+          <Button variant="outline" disabled={dirty||busy} onClick={()=>{
+               if(projectId&&researchArtifactId&&sourceArtifactId===researchArtifactId){
+                 try{sessionStorage.removeItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha));}catch{/* In-memory reset still works. */}
+               }
+               setDossier(null);setBundle(null);setShotId("");setStage("storyboard");setSampleMode(false);setSourceArtifactId(null);setSourceStoryboardSha(null);setSyncReport(null);setLoadError("");setStatus("");
+             }}>
             Start another project
           </Button>
         </div>
       </div>}
-      {!usable&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
+      {!usable&&!loadingSaved&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <label className={header}>Open saved project (.json)
             <input type="file" className={field+" mt-2"} accept=".json" aria-label="Saved ContentGen project"

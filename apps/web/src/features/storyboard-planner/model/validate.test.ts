@@ -146,6 +146,32 @@ describe("narrative and copy checks", () => {
     expect(codes(value)).toContain("storyboard-claim-unresolved");
   });
 
+  it("does not call a source-linked but unverified claim missing evidence", () => {
+    const value = board();
+    value.claims.push({
+      id: "claim-source-linked",
+      status: "unverified",
+      note: "Claim has a source but still needs a human factual review.",
+      sourceRefs: ["source_01"],
+    });
+    value.beats[0].claimRefs.push("claim-source-linked");
+    const findings = validateStoryboard(value).filter(item => item.params?.claimId === "claim-source-linked");
+    expect(findings.some(item => item.code === "storyboard-claim-unresolved")).toBe(false);
+  });
+
+  it("reports an unverified claim with no source reference as unresolved", () => {
+    const value = board();
+    value.claims.push({
+      id: "claim-unlinked",
+      status: "unverified",
+      note: "A claim without captured evidence.",
+      sourceRefs: [],
+    });
+    value.beats[0].claimRefs.push("claim-unlinked");
+    expect(validateStoryboard(value).some(item =>
+      item.code === "storyboard-claim-unresolved" && item.params?.claimId === "claim-unlinked")).toBe(true);
+  });
+
   it("reports illustrative claims without an illustrative-data label", () => {
     const value = board();
     value.illustrativeData = false;

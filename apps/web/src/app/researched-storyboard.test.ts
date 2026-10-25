@@ -40,6 +40,14 @@ describe("research to editable semantic storyboard",()=>{
     expect(preview).toContain("Insulation layer");
     expect(preview).not.toContain("$12,400");
   });
+  it("does not repeat the same visual action when a generated shot and its teaching phase agree",()=>{
+    const fixture=structuredClone(researchedFixture);
+    fixture.plan.shots[0].visualChange="Animate heat leakage";
+    const board=researchToStoryboard(fixture,"project-no-duplicate-action","en");
+    expect(board.beats[0].visualObjective).toBe("Animate heat leakage");
+    expect(board.beats[1].visualObjective).toBe(
+      "Insulation fills cavity and fewer heat arrows cross; Show resistance reducing flow");
+  });
   it("uses actual sourced claim IDs, meaningful shot narration and semantic teaching changes",()=>{
     const board=researchToStoryboard(researchedFixture,"project-research","en");
     expect(board.claims).toEqual([{id:"claim_01",status:"unverified",note:expect.stringContaining("Insulation resists"),sourceRefs:["source_01"]}]);
@@ -77,6 +85,13 @@ describe("research to editable semantic storyboard",()=>{
     const shown=renderToStaticMarkup(createElement(ScenePreview,{board,beat:board.beats[0],locale:"en"}));
     expect(shown).toContain("wall");
     expect(shown).not.toContain("$12,400");
+  });
+  it("retains the source artifact ID to detect downstream staleness",()=>{
+    const fixture=structuredClone(researchedFixture);
+    fixture.artifactId="research_home-123456789abc";
+    const board=researchToStoryboard(fixture,"project-revision","en");
+    expect(board.assumptions).toContain("Research artifact: research_home-123456789abc");
+    expect(board.claims[0].status).toBe("unverified");
   });
   it("accepts descriptive source-backed visual states beyond the former 48/90-character targets",()=>{
     const fixture=structuredClone(researchedFixture);

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { CATALOG_KEY } from "./catalog-model";
@@ -13,26 +13,26 @@ describe("Studio menu workspaces", () => {
     const navigate = async (name:string) => user.click(screen.getByRole("link",{name}));
     await navigate("Projects");
     expect(screen.queryByText(/outside this foundation/i)).not.toBeInTheDocument();
-    await user.type(screen.getByRole("textbox",{name:"Name"}),"Short documentaries");
+    fireEvent.change(screen.getByRole("textbox",{name:"Name"}),{target:{value:"Short documentaries"}});
     await user.click(screen.getByRole("button",{name:"Create project"}));
     expect(screen.getByText("Short documentaries")).toBeInTheDocument();
 
     await navigate("Content");
-    await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Why data travels in packets");
+    fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Why data travels in packets"}});
     await user.selectOptions(screen.getByRole("combobox",{name:"Kind"}),"short");
     await user.click(screen.getByRole("button",{name:"Add entry"}));
     expect(screen.getByText("Why data travels in packets")).toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox",{name:"Stage for Why data travels in packets"}),"review");
 
     await navigate("Assets");
-    await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Narrator recording");
+    fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Narrator recording"}});
     await user.selectOptions(screen.getByRole("combobox",{name:"Kind"}),"audio");
     await user.selectOptions(screen.getByRole("combobox",{name:"Rights"}),"cleared");
     await user.click(screen.getByRole("button",{name:"Add entry"}));
     expect(screen.getByText("Narrator recording")).toBeInTheDocument();
 
     await navigate("Products");
-    await user.type(screen.getByRole("textbox",{name:"Title / label"}),"Narration editing course");
+    fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Narration editing course"}});
     await user.selectOptions(screen.getByRole("combobox",{name:"Kind"}),"course");
     await user.click(screen.getByRole("button",{name:"Add entry"}));
     expect(screen.getByText("Narration editing course")).toBeInTheDocument();
@@ -106,7 +106,9 @@ describe("Research model setup in Settings", () => {
       await user.click(screen.getByRole("button",{name:"Save AI settings"}));
       expect(await screen.findByText(/Saved\. New Research/)).toBeInTheDocument();
       const saved=calls.find(call=>call.path.endsWith("/profiles/save"));
-      expect(saved?.body).toEqual({version:1,defaultProfileId:"local-default",assignments:{},profiles:[{
+      // Legacy stored profiles omit generation; saving them persists the explicit safe defaults.
+      expect(saved?.body).toEqual({version:1,defaultProfileId:"local-default",assignments:{},
+        generation:{outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240},profiles:[{
         id:"local-default",name:"Local model",provider:"ollama",endpoint:"http://127.0.0.1:11434/v1/chat/completions",model:"gemma:4b"}]});
       expect(localStorage.getItem(CATALOG_KEY)).not.toContain("gemma:4b");
     } finally {

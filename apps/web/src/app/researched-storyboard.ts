@@ -94,7 +94,9 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
     return {id:shot.id,role:roleFor(shot,i,plan.shots.length-1),
       objective:phase?.learningChange||learning.after,narration:voice.narration,
       onScreenText:readable(shot.onScreenText),visualIntent:intentFor(shot.family,i,plan.shots.length-1),
-      visualObjective:[shot.visualChange,phase?.visualAction].filter(Boolean).join("; "),
+      visualObjective:shot.visualChange.trim()===phase?.visualAction?.trim()
+        ? shot.visualChange.trim()
+        : [shot.visualChange,phase?.visualAction].filter(Boolean).join("; "),
       semanticObjects:[...shot.subjectIds],focusTarget:shot.subjectIds[0],durationFrames,
       claimRefs:[...shot.claimIds],namedEvents:isFirst?[semanticEvents[0].id]:isLast?[semanticEvents[1].id]:[],
       staticFallback:`${readable(shot.onScreenText)} — ${shot.visualChange}`,
@@ -111,6 +113,7 @@ export function researchToStoryboard(result:ResearchDraftResult,projectId:string
     semanticObjects,semanticEvents,illustrativeData:false,
     assumptions:["Research-grounded editorial draft only. Exact source quotes are NOT independent fact verification.",
       `Immutable research snapshot: ${result.snapshotId}. Human review required before final production.`,
+      ...(result.artifactId?[`Research artifact: ${result.artifactId}`]:[]),
       ...dossier.evidence.map(s=>`Source ${s.id}: ${s.title} — ${s.sourceUri} (captured ${s.retrievedAt}; SHA-256 ${s.snapshotSha256}).`),
       ...dossier.gaps.map(g=>`Research gap: ${g}`)],
   };

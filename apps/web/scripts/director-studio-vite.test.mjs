@@ -81,6 +81,16 @@ test("research job routes start immediately and support durable progress, resume
   ]);
 });
 
+test("a user can retry only an existing evidence repair job through the local route",async()=>{
+  const jobId="job_"+"a".repeat(24);
+  let called=0;
+  const response=await post("/research-jobs/"+jobId+"/repair",{},{
+    jobs:{retryEvidence:async id=>{called++;assert.equal(id,jobId);return {jobId,status:"queued",stage:"queued"};}},
+  });
+  assert.equal(response.status,202);
+  assert.equal(response.result.jobId,jobId);
+  assert.equal(called,1);
+});
 test("research job only receives a secondary local model when fallback was explicitly configured",async()=>{
   let seen;
   const deps={model:async()=>({model:"primary",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
@@ -160,6 +170,69 @@ test("keyword stream sends accepted suggestions before all local AI batches fini
   const events=writes.join("").trim().split("\n").map(line=>JSON.parse(line));
   assert.deepEqual(events.map(event=>event.type),["batch","done"]);
   assert.equal(ended,true);
+});
+
+test("compile saved research opens an immutable snapshot without running any model or search",async()=>{
+  const artifactId="research_hvac-123456789abc";
+  const dossier={kind:"research-dossier",id:"research_hvac",topic:{title:"HVAC"}};
+  const plan={kind:"preproduction-plan",researchId:dossier.id,shots:[{id:"shot_1"}]};
+  let loaded=0,compiled=0;
+  const deps={
+    model:async()=>{throw Error("Saved project loading must not start a model.");},
+    loadResearch:async id=>{loaded++;assert.equal(id,artifactId);return {artifactId,snapshotId:dossier.id,dossier,plan};},
+    compileBundle:(d,p)=>{
+      compiled++;assert.equal(d,dossier);assert.equal(p,plan);
+      return {kind:"preproduction-bundle",researchId:d.id,plan:p,planSha256:"a".repeat(64)};
+    },
+  };
+  const result=await post("/compile-saved-research",{artifactId},deps);
+  assert.equal(result.status,200);
+  assert.equal(result.result.artifactId,artifactId);
+  assert.equal(result.result.bundle.researchId,dossier.id);
+  assert.deepEqual([loaded,compiled],[1,1]);
+});
+test("compile saved research rejects malformed IDs and mismatched saved plans",async()=>{
+  let loads=0;
+  const bad=await post("/compile-saved-research",{artifactId:"../../elsewhere"},{
+    loadResearch:async()=>{loads++;throw Error("Must not read path");},
+  });
+  assert.equal(bad.status,422);assert.equal(loads,0);
+  const cross=await post("/compile-saved-research",{artifactId:"research_hvac-123456789abc"},{
+    loadResearch:async()=>({artifactId:"research_hvac-123456789abc",snapshotId:"research_hvac",
+      dossier:{kind:"research-dossier",id:"research_hvac"},plan:{researchId:"research_other"}}),
+    compileBundle:()=>{throw Error("Must reject cross-research bundles");},
+  });
+  assert.equal(cross.status,422);
+});
+
+test("rejects a null storyboard instead of silently compiling without synchronization",async()=>{
+  let loaded=0;
+  const result=await post("/compile-saved-research",{
+    artifactId:"research_hvac-123456789abc",projectId:"project-demo",storyboard:null,
+  },{loadResearch:async()=>{loaded++;throw Error("Should reject before loading source.");}});
+  assert.equal(result.status,422);
+  assert.equal(loaded,0);
+});
+
+test("passes an explicitly saved storyboard through the deterministic Director synchronizer",async()=>{
+  const artifactId="research_hvac-123456789abc";
+  const dossier={id:"research_hvac"},plan={researchId:"research_hvac",shots:[{id:"shot_one"}]};
+  const storyboard={kind:"contentgen-semantic-storyboard",id:"storyboard-project-demo",beats:[{id:"shot_one"}]};
+  let received;
+  const result=await post("/compile-saved-research",{artifactId,projectId:"project-demo",storyboard},{
+    model:async()=>{throw Error("No AI allowed in storyboard handoff");},
+    loadResearch:async()=>({artifactId,snapshotId:dossier.id,dossier,plan}),
+    compileBundle:()=>{throw Error("Must apply changes through synchronizer");},
+    syncStoryboard:input=>{received=input;return {
+      bundle:{kind:"preproduction-bundle",researchId:dossier.id,plan:{...plan,updated:true}},
+      synchronization:{storyboardSha256:"b".repeat(64),applied:["shot_one:narration"],manualReview:[]},
+    };},
+  });
+  assert.equal(result.status,200);
+  assert.equal(received.projectId,"project-demo");
+  assert.equal(received.artifactId,artifactId);
+  assert.deepEqual(received.storyboard,storyboard);
+  assert.equal(result.result.synchronization.applied[0],"shot_one:narration");
 });
 
 test("closing a keyword stream aborts its own running generator",async()=>{

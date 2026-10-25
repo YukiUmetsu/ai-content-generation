@@ -11,6 +11,7 @@ import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type Stu
 import { ResearchWorkspace, type ResearchIdeaHandoff } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import { ProductionWorkspace } from "./production-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
@@ -27,7 +28,12 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 export function Shell() {
   const { locale } = usePreferences();
-  const [activeSection, setActiveSection] = useState<SectionId>("create");
+  const [activeSection, setActiveSection] = useState<SectionId>("production");
+  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"export"}|null>(null);
+  const selectSection = (next:SectionId) => {
+    if(next==="video-director")setDirectorEntry(null);
+    setActiveSection(next);
+  };
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
@@ -153,7 +159,7 @@ export function Shell() {
       <div className="hidden lg:block">
         <StudioSidebar
           activeSection={activeSection}
-          onSelectSection={setActiveSection}
+          onSelectSection={selectSection}
           locale={locale}
           onOpenShortcuts={() => setShortcutsOpen(true)}
         />
@@ -163,7 +169,7 @@ export function Shell() {
         open={mobileNavOpen}
         onOpenChange={setMobileNavOpen}
         activeSection={activeSection}
-        onSelectSection={setActiveSection}
+        onSelectSection={selectSection}
         locale={locale}
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />
@@ -174,12 +180,30 @@ export function Shell() {
             Local catalog: {catalogError}. Existing data has not been overwritten.
           </div>
         )}
-        {activeSection !== "create" && (
+        {activeSection !== "create" && activeSection !== "production" && (
           <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
         )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-          {activeSection === "create" ? (
+          {activeSection === "production" ? (
+            <ProductionWorkspace
+              key={catalog.activeProjectId}
+              locale={locale}
+              catalog={catalog}
+              onSelectProject={(projectId) => {
+                if(catalog.projects.some(project=>project.id===projectId))
+                  saveCatalog({...catalog,activeProjectId:projectId});
+              }}
+              onOpenNav={() => setMobileNavOpen(true)}
+              onOpenResearch={() => setActiveSection("research")}
+              onOpenStoryboard={() => {setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
+              onOpenVisuals={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
+              onOpenAudio={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
+              onOpenExport={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
+              onCreateStoryboard={startEditorialStoryboard}
+              onUseVideo={saveVideoIdea}
+            />
+          ) : activeSection === "create" ? (
             <Workspace
               key={catalog.activeProjectId}
               locale={locale}
@@ -191,7 +215,11 @@ export function Shell() {
               onToolGuideOpenChange={setToolGuideOpen}
             />
           ) : activeSection === "video-director" ? (
-            <VideoDirectorWorkspace locale={locale}/>
+            <VideoDirectorWorkspace
+              key={catalog.activeProjectId+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
+              locale={locale} projectId={catalog.activeProjectId}
+              researchArtifactId={directorEntry?.projectId===catalog.activeProjectId?directorEntry.artifactId:undefined}
+              focusStage={directorEntry?.projectId===catalog.activeProjectId?directorEntry.stage:undefined}/>
           ) : activeSection === "research" ? (
             <ResearchWorkspace key={catalog.activeProjectId+":"+(researchHandoff?.title??"")} locale={locale}
               handoff={researchHandoff} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}

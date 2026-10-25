@@ -3,9 +3,20 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PromptStudio } from "./prompt-studio";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import * as projectStorage from "@/features/storyboard-planner/model/project-storage";
 
 vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
   <div data-testid="demo-real-scene">Actual exporter at frame {frame}</div>}));
+
+// Asset and sound libraries are independent local sidecars, not AI generation.
+function localMediaCatalogResponse(url:unknown):Response|null {
+  const path=String(url);
+  const result=path.startsWith("/api/contentgen-assets/approved?")?{assets:[]}:
+    path.startsWith("/api/contentgen-assets/selected?")?{selections:[],invalidShots:[]}:
+    path==="/api/contentgen-sfx/library"?{assets:[]}:
+    path==="/api/contentgen-sfx/choices"?{scenes:[]}:null;
+  return result?new Response(JSON.stringify(result),{status:200}):null;
+}
 
 afterEach(()=>{vi.restoreAllMocks();});
 describe("AI Prompt Studio",()=>{
@@ -133,6 +144,7 @@ describe("first-run complete Studio demo",()=>{
       visualLimits:[]};
     const calls:string[]=[];
     vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
+      const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
       calls.push(String(url));
       if(String(url).endsWith("/demo"))return new Response(JSON.stringify({
         dossier:sampleDossier,bundle:sampleBundle}),{status:200});
@@ -203,7 +215,10 @@ describe("editing meaningful visible teaching elements as a normal Studio user",
      sound:[{shotId:"hook",narration:"The question is interesting for learners.",sfxIntent:null}],
      teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Show question"}]}]
    }};
-   const network=vi.spyOn(globalThis,"fetch");
+   const network=vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+     const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
+     throw Error("Invalid visual edit unexpectedly requested "+String(url));
+   });
    const user=userEvent.setup();
    render(<VideoDirectorWorkspace locale="en"/>);
    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
@@ -214,7 +229,7 @@ describe("editing meaningful visible teaching elements as a normal Studio user",
      target:{value:"House | Some house\nCategories | Many categories"}});
    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
    expect(await screen.findByText(/specific visual elements/i)).toBeInTheDocument();
-   expect(network).not.toHaveBeenCalled();
+   expect(network.mock.calls.filter(([url])=>String(url).endsWith("/edit"))).toHaveLength(0);
  });
 });
 
@@ -241,5 +256,116 @@ describe("guided Video Director navigation",()=>{
     expect(narration).toHaveValue("What keeps heat inside?");
     await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
     expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
+  });
+});
+
+describe("saved research to Video Director handoff",()=>{
+  const artifactId="research_hvac-123456789abc";
+  const dossier={kind:"research-dossier",id:"research_hvac",topic:{title:"Heat pump installation",audience:"Homeowners"}};
+  const bundle={kind:"preproduction-bundle",researchId:"research_hvac",plan:{
+    shots:[{id:"shot_1",visualChange:"Show equipment",onScreenText:"The real cost",purpose:"reveal"}],
+    sound:[{shotId:"shot_1",narration:"Installation includes labor.",sfxIntent:null}],
+    teachingSequences:[],story:{question:"Why is replacement expensive?"}}};
+  it("opens the exact saved research artifact without generating a fresh storyboard",async()=>{
+    const calls:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
+      const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
+      calls.push(String(url));
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({artifactId});
+      return new Response(JSON.stringify({artifactId,dossier,bundle}),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
+    expect(screen.getByText("Heat pump installation")).toBeInTheDocument();
+    expect(screen.getByText(/1 scenes/)).toBeInTheDocument();
+    expect(calls).toEqual(["/api/contentgen-director/compile-saved-research"]);
+  });
+  it("opens the requested guided production stage after loading saved research",async()=>{
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
+      const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
+      return new Response(JSON.stringify({artifactId,dossier,bundle}),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId} focusStage="visuals"/>);
+    expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/02 Visual assets/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).not.toHaveAttribute("aria-current","step");
+  });
+  it("resumes saved shot edits only for the matching snapshot",async()=>{
+    const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
+    const revised=structuredClone(bundle);
+    revised.plan.shots[0].onScreenText="Approved local draft edit";
+    const sourceBundle={...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)};
+    const savedBundle={...revised,researchSha256:"b".repeat(64),planSha256:"c".repeat(64)};
+    sessionStorage.setItem(sessionKey,JSON.stringify({version:1,artifactId,dossier,bundle:savedBundle}));
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
+      artifactId,dossier,bundle:sourceBundle,
+    }),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Approved local draft edit");
+    sessionStorage.removeItem(sessionKey);
+  });
+  it("does not restore draft edits from a different research fingerprint",async()=>{
+    const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
+    const savedBundle={...structuredClone(bundle),researchSha256:"0".repeat(64),planSha256:"c".repeat(64)};
+    savedBundle.plan.shots[0].onScreenText="Wrong source edits";
+    sessionStorage.setItem(sessionKey,JSON.stringify({version:1,artifactId,dossier,bundle:savedBundle}));
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
+      artifactId,dossier,bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)},
+    }),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+    sessionStorage.removeItem(sessionKey);
+  });
+  it("passes saved storyboard into Director and does not resume an older storyboard revision",async()=>{
+    const digest="c".repeat(64),oldDigest="d".repeat(64);
+    const board={assumptions:["Research artifact: "+artifactId]};
+    vi.spyOn(projectStorage,"loadProjectStoryboard").mockReturnValue({
+      board:board as unknown as NonNullable<ReturnType<typeof projectStorage.loadProjectStoryboard>["board"]>,
+      warning:null,
+    });
+    const sessionKey="contentgen:director-session:v2:project-demo:"+artifactId+":"+oldDigest;
+    const older={...structuredClone(bundle),researchSha256:"b".repeat(64),planSha256:"d".repeat(64)};
+    older.plan.shots[0].onScreenText="Outdated storyboard shot";
+    sessionStorage.setItem(sessionKey,JSON.stringify({version:1,artifactId,dossier,bundle:older}));
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(_url,init)=>{
+      expect(JSON.parse(String(init?.body))).toEqual({artifactId,projectId:"project-demo",storyboard:board});
+      return new Response(JSON.stringify({artifactId,dossier,
+        bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)},
+        synchronization:{storyboardSha256:digest,applied:["shot_1:narration"],
+          manualReview:["Storyboard camera edits are not yet imported into Director."]},
+      }),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByText("Saved storyboard → Director")).toBeInTheDocument();
+    expect(screen.getByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+    expect(screen.getByText(/Storyboard camera edits are not yet imported/)).toBeInTheDocument();
+    sessionStorage.removeItem(sessionKey);
+  });
+  it("shows a warning and compiles only saved research when the local storyboard belongs to another artifact",async()=>{
+    const older={assumptions:["Research artifact: research_old-123456789abc"]};
+    vi.spyOn(projectStorage,"loadProjectStoryboard").mockReturnValue({
+      board:older as unknown as NonNullable<ReturnType<typeof projectStorage.loadProjectStoryboard>["board"]>,
+      warning:null,
+    });
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(_url,init)=>{
+      expect(JSON.parse(String(init?.body))).toEqual({artifactId});
+      return new Response(JSON.stringify({artifactId,dossier,
+        bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)},
+        synchronization:null,
+      }),{status:200});
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/different research artifact/);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("The real cost");
+  });
+  it("rejects a result from a different saved artifact",async()=>{
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({
+      artifactId:"research_other-123456789abc",dossier,bundle,
+    }),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    await waitFor(()=>expect(screen.getByRole("status")).toHaveTextContent(/did not match the selected .*research artifact/i));
+    expect(screen.getByRole("alert")).toHaveTextContent(/did not match the selected .*research artifact/i);
+    expect(screen.queryByText("Video project loaded")).not.toBeInTheDocument();
   });
 });

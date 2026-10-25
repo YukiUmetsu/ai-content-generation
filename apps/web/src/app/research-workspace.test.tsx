@@ -385,7 +385,7 @@ describe("Studio Research to source-backed story", () => {
     }));
     const user=userEvent.setup();
     render(<ResearchWorkspace locale="en" onUseVideo={()=>true} onCreateStoryboard={()=>true}/>);
-    await user.click(screen.getByText("Saved searches",{exact:true}));
+    await user.click(screen.getByText("Saved searches", { selector: "summary" }));
     await user.click(await screen.findByRole("button",{name:/Heat pump costs.*1 source/i}));
     expect(screen.getByRole("textbox",{name:"Research topic"})).toHaveValue("Heat pump costs");
     expect(screen.getByRole("link",{name:/DOE Energy Saver/i})).toBeInTheDocument();

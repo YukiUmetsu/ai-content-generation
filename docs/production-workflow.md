@@ -1,0 +1,60 @@
+# Guided Production workspace
+
+Production is the primary, project-scoped entry point for making a video. It shows six stages in a slim left rail:
+
+1. **Brief** — define the video question, audience and intended payoff.
+2. **Research** — search, capture sources, generate saved teaching units, and check references.
+3. **Storyboard** — inspect the editable explanation and issue groups; open Storyboard Planner for changes.
+4. **Visuals** — open the existing Video Director and Kumiki-backed visual tools.
+5. **Audio** — prepare narration and sound effects in the existing production tools.
+6. **Preview & Export** — inspect playback and produce the final artifact in the existing director.
+
+Each stage is navigable. Its status comes from saved project/storyboard or research-job state, not a timer, a guessed completion percentage or a successful page load. Stages without a canonical media artifact remain `Not started`; the new page does not pretend rendering has happened.
+
+## Evidence is not approval
+
+- A search result alone is not a captured citation.
+- A valid captured quote links a claim to a particular source snapshot. It **does not verify the factual claim**. Quotes are shown only when the storyboard is bound to that exact saved research artifact (legacy boards may use a matching immutable snapshot ID).
+- Imported storyboard claims stay `unverified` until a person reviews them.
+- Missing source references, invalid quote/source mappings, and human fact review have separate labels. The claim review panel groups repeated references across beats by unique claim ID.
+- Production displays the saved quotation beside the claim and allows a person to explicitly record or undo local review. A receipt is tied to the exact claim wording, cited source IDs, source snapshot hashes and research artifact ID; edited or replaced evidence invalidates that receipt.
+- Local review receipts affect the Production step indicator only. They do **not** edit the source material, mark the AI's claim as true, or replace publishing/export approval gates.
+- Downstream commercial readiness still requires the existing independent human-review gates.
+
+## Automatic source-link repair
+
+The server runs deterministic evidence-link inspection during a user-started research job. It can relink a claim only when both a source SHA-256 digest and an exact per-claim quotation match a **single** stored capture. Ambiguous, unsupported, or modified material remains flagged for review. The repair result is checkpointed, so a refresh or resume does not discard completed research fragments.
+
+A paused evidence-repair job can be explicitly retried, which re-captures public sources into a new checkpoint revision (up to two manual retries) and preserves older captured material. The click may contact the source websites; opening or refreshing Production never starts a source search or local-model inference.
+
+For an existing storyboard, Production offers **Auto-fix safe source links** when unresolved claims and the matching saved research draft are available. It can restore missing source IDs on exact, unedited claims from the same research artifact, but does not replace nonempty user-edited references or approve factual truth.
+
+## Saved research into Video Director
+
+From **Visuals**, **Audio**, or **Preview & Export**, Production sends the selected project's matching immutable research artifact ID to Video Director. A same-origin, user-triggered `POST /api/contentgen-director/compile-saved-research` loads the snapshot on the local server, checks dossier/plan lineage and compiles the ordinary fingerprinted preproduction bundle. It never calls a model, searches the web, or changes the stored research. The destination opens actual rendered visuals, voice settings or render controls respectively; a preview/plan failure is shown honestly.
+
+If a storyboard has no matching stored research, Production opens manual Video Director setup rather than selecting another project's snapshot. For a matching saved storyboard, the compiler transfers **edited narration, on-screen text, and visual objectives** to a new, fingerprinted draft; the original research and plan remain unchanged. The storyboard must match the selected project, immutable research and original shot order. Claim-reference changes are rejected. When the combined visual objective contains semicolons, the bridge preserves the original shot/motion boundary if it can identify it; ambiguous multi-part edits are rejected so wording is not reassigned between fields. Camera, timing, semantic-mechanic and other storyboard-only changes are flagged for manual review and are **not silently treated as rendered media**. A changed source remains subject to evidence review; compilation never approves claims or rights.
+
+Video Director saves **applied shot edits** for the same project, research artifact, source fingerprint and storyboard revision in this browser tab's session storage, so switching between guided stages can resume those edits without changing the immutable snapshot. Unapplied form edits, manually imported projects and voice credentials are not auto-saved; use **Save project** to download durable editable JSON before closing the tab. **Start another project** discards that tab's saved session for the selected source. The generated preview is not itself a saved MP4, and a readiness check is not rendered audio. Visual, audio and export stage indicators therefore stay **Not started** until a durable project-bound media artifact is implemented; do not infer completion from a button click, a plan or a source snapshot.
+
+## Resume and existing tools
+
+The page reuses the current project catalog, browser-local storyboard, last saved research pointers, durable local research jobs, and existing editor routes. Selected step is a UI preference, not a second copy of the content. Research snapshots are immutable. Changing an upstream research artifact makes derived storyboard/visual/audio/export stages stale when their stored lineage can be compared; prior edits must be preserved.
+
+The Production page is a guided entry point; it does not replace Research, Create, Video Director, or their release gates.
+
+## Local verification gate (without GitHub Actions)
+
+From the repository root, run these checks after installing the existing dependencies:
+
+```sh
+pnpm --dir apps/web run typecheck
+pnpm --dir apps/web run lint
+pnpm --dir apps/web run test
+pnpm --dir apps/web run test:video:headless
+pnpm --dir apps/web run build
+```
+
+The headless-video command includes source-link repair, storyboard synchronization, the saved-research API, and the Director production/readiness route tests. These checks are local and do not request a GitHub Actions runner.
+
+Then use a project with a saved captured-research artifact to open **Production → Storyboard → Video Director**. Edit a shot's narration, screen copy, and visual action; confirm all three are present in Director, the source claim references remain unchanged, unsupported camera/semantic/timing edits show explicit review warnings, and a source mismatch cannot reuse an older Director session. Preview and export require actual visual/audio inspection and rights approval. A saved plan or test result is not a completed media artifact.

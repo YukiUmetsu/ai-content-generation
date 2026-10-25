@@ -6,6 +6,7 @@ import {fileURLToPath} from "node:url";
 import {validateStudioBrief} from "./studio-research.mjs";
 import {loadStudioSearch,validateStudioSearchMatch} from "./studio-search.mjs";
 import {captureSavedSources,buildDeterministicDossier} from "./research-job-evidence.mjs";
+import {repairCapturedLinks} from "./evidence-link-repair.mjs";
 import {generateOutlineSkeleton,generateOutlineBeat,assembleOutline,generateSceneCore,generateSceneStates,assembleSceneStructure,generateSceneDirection,generateSceneElements,assembleSceneVisual,generateSceneNarration,assembleSceneUnit,assembleResumablePlan,validateSavedOutline,validateSavedOutlineSkeleton,validateSavedOutlineBeat,validateSavedSceneStructure,validateSavedSceneVisual,validateSavedSceneUnit,validateSavedSceneCore,validateSavedSceneStates,validateSavedSceneDirection,validateSavedSceneElements,validateSavedSceneNarration} from "./research-job-planner.mjs";
 import {validateResearchModelSettings} from "./research-model-settings.mjs";
 import {withLocalInference} from "./local-inference-gate.mjs";
@@ -15,7 +16,7 @@ const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",impo
 const sha=value=>createHash("sha256").update(value).digest("hex");
 const ID=/^job_[a-f0-9]{24}$/u;
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const safeName=name=>/^(?:manifest|captures|evidence|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
+const safeName=name=>/^(?:manifest|captures(?:_repair_\d+)?|evidence|evidence_source_repair_\d+|evidence_repair_\d+|outline_\d+|outline_skeleton_\d+|outline_beat_\d+_\d+|scene_\d+_\d+_\d+|structure_\d+_\d+_\d+|structure_(?:core|states)_\d+_\d+_\d+|visual_(?:direction|elements)_\d+_\d+_\d+_[012]|(?:visual|narration)_\d+_\d+_\d+_[012])\.json$/u.test(name);
 const safeField=field=>typeof field==="string"&&/^(?:response|pattern|premise|hook|beatCount|question|purpose|payoff|claimIds|beats(?:\[\d\])?(?:\.(?:question|purpose|payoff|claimIds))?|subject|parts(?:\[\d\])?|operator|before|action|after|before\/action\/after|visualAction|learningChange|onScreenText|visualElements|narration|phases(?:\[\d\])?(?:\.(?:visualAction|learningChange|onScreenText|narration|visualElements))?|phases\.(?:visualAction|learningChange))$/u.test(field)?field:null;
 const safeSchemaIssue=issue=>["missing","wrong_type","too_short","too_long","placeholder","control_char",
   "wrong_shape","invalid_element","duplicate_previous"].includes(issue)?issue:null;
@@ -30,6 +31,8 @@ const phaseRepairHint=step=>{
       "Show a genuinely different teaching operation for this phase.";
 };
 const repairHint=(failure,step)=>{
+  if(failure.schemaIssue==="duplicate_previous"&&failure.field==="payoff")
+    return " An earlier beat already delivered this takeaway. Choose a new, evidence-supported payoff, not a paraphrase or extra invented fact.";
   if(failure.schemaIssue==="duplicate_previous"&&["visualAction","learningChange"].includes(failure.field))
     return ` ${phaseRepairHint(step)} The ${failure.field} exactly repeated an accepted previousVisuals value. `+
       `Do not paraphrase or rename a prior action or insight. Choose a different ${failure.field==="visualAction"?
@@ -87,7 +90,8 @@ function publicState(job){
     completedScenes:job.completedScenes??0,totalScenes:job.totalScenes??0,
     ...(job.currentStep?{currentStep:job.currentStep}:{}),
     ...(job.retry?{retry:job.retry}:{}),
-    ...(job.error?{error:job.error}:{}),...(job.artifactId?{artifactId:job.artifactId}:{})};
+    ...(job.error?{error:job.error}:{}),...(job.artifactId?{artifactId:job.artifactId}:{}),
+    ...(job.evidenceRepair?{evidenceRepair:job.evidenceRepair}:{})};
 }
 async function saveCompleted(root,job,data,plan){
   const {dossier,quotes,captures,warnings}=data;
@@ -114,7 +118,7 @@ async function optionalText(file){
 
 /** Instances allow isolated tests; the real Vite process uses exactly one shared manager. */
 export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudioSearch,
-  capture=captureSavedSources,evidence=buildDeterministicDossier,outline=null,
+  capture=captureSavedSources,evidence=buildDeterministicDossier,repair=null,outline=null,
   outlineSkeleton=generateOutlineSkeleton,outlineBeat=generateOutlineBeat,combineOutline=assembleOutline,
   scene=null,sceneStructure=null,sceneCore=generateSceneCore,sceneStates=generateSceneStates,
   combineStructure=assembleSceneStructure,sceneVisual=null,sceneDirection=generateSceneDirection,
@@ -131,7 +135,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
   };
   const write=async(job,name,data)=>{
     await mkdir(join(rootJobs,job.id),{recursive:true,mode:0o700});
-    await writeCheckpoint(pathFor(job.id,name),data,name==="captures.json"?256*1024:512*1024);
+    await writeCheckpoint(pathFor(job.id,name),data,name==="captures.json"||/^captures_repair_\d+\.json$/u.test(name)?256*1024:512*1024);
   };
   const save=job=>{
     const previous=manifestWrites.get(job.id)??Promise.resolve();
@@ -154,7 +158,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     if(job.id!==id||job.version!==1)throw Error("Research job manifest is invalid.");
     return job;
   };
-  const stageFile=async(job,name)=>optionalJson(pathFor(job.id,name),name==="captures.json"?256*1024:512*1024);
+  const stageFile=async(job,name)=>optionalJson(pathFor(job.id,name),name==="captures.json"||/^captures_repair_\d+\.json$/u.test(name)?256*1024:512*1024);
   const setStage=async(job,stage,currentStep=null)=>{job.status="running";job.stage=stage;
     job.currentStep=currentStep;job.error=null;job.retry=null;await save(job);};
   const guard=signal=>{if(signal.aborted)throw signal.reason??Error("Job cancelled.");};
@@ -233,19 +237,49 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     try{
       job=await read(id);
       guard(signal);
-      let captures=await stageFile(job,"captures.json");
+      const revision=job.evidenceRepairRevision??0;
+      const captureName=revision>0?`captures_repair_${revision}.json`:"captures.json";
+      const evidenceName=revision>0?`evidence_source_repair_${revision}.json`:"evidence.json";
+      let captures=await stageFile(job,captureName);
       if(!captures){
         await setStage(job,"capture");
         const saved=await loadSearch(job.searchArtifactId,{root});
         validateStudioSearchMatch(saved,job.brief);
         captures=await capture(saved,job.brief,{signal});
-        guard(signal);await write(job,"captures.json",captures);
+        guard(signal);await write(job,captureName,captures);
       }
-      let data=await stageFile(job,"evidence.json");
+      let data=await stageFile(job,evidenceName);
       if(!data){
         await setStage(job,"evidence");
         data=evidence(job.brief,captures.captures,captures.gaps);
-        guard(signal);await write(job,"evidence.json",data);
+        guard(signal);await write(job,evidenceName,data);
+      }
+      // Repair only existing captured source IDs and verbatim passages.
+      // Injected legacy evidence producers remain unchanged unless they opt in.
+      const repairStep=repair??(evidence===buildDeterministicDossier?repairCapturedLinks:null);
+      if(repairStep){
+        const filename=`evidence_repair_${job.evidenceRepairRevision??0}.json`;
+        let checkpoint=await stageFile(job,filename);
+        if(!checkpoint){
+          await setStage(job,"evidence-repair");
+          const repaired=await repairStep({dossier:data.dossier,quotes:data.quotes,
+            captures:data.captures,plan:null},{signal});
+          guard(signal);
+          checkpoint={dossier:repaired.document.dossier,quotes:repaired.document.quotes,
+            autoFixed:repaired.autoFixed,unresolved:repaired.unresolved,
+            proposals:repaired.proposals,audit:repaired.audit};
+          await write(job,filename,checkpoint);
+        }
+        data={...data,dossier:checkpoint.dossier,quotes:checkpoint.quotes};
+        job.evidenceRepair={status:checkpoint.unresolved.length?"needs_review":"complete",
+          autoFixed:checkpoint.autoFixed,needsReview:checkpoint.unresolved.length,
+          issues:checkpoint.unresolved.slice(0,16).map(item=>({
+            claimId:String(item.claimId).slice(0,80),reason:String(item.reason).slice(0,40)}))};
+        await save(job);
+        if(checkpoint.unresolved.length){
+          job.status="paused";job.stage="evidence-repair";job.currentStep=null;
+          job.error=null;await save(job);return;
+        }
       }
       let story=await stageFile(job,`outline_${job.generation}.json`);
       const checkOutline=(validator)=>{
@@ -314,7 +348,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
           await setStage(job,`scene:${index+1}`);
           if(scene){
             // Preserve the original injectable whole-scene producer for existing integrations/tests.
-            unit=await attempt(job,(settings,feedback)=>scene(story,index,data.dossier,data.quotes,settings,{signal,feedback}),signal);
+            unit=await attempt(job,(settings,feedback)=>scene(story,index,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),signal);
           }else{
             const substep=async(filename,label,action,validator)=>{
               const saved=await stageFile(job,filename);
@@ -330,13 +364,13 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
             if(!structure){
               if(sceneStructure){
                 structure=await substep(`structure_${prefix}.json`,"structure",(settings,feedback)=>
-                  sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback}));
+                  sceneStructure(story,index,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}));
               }else{
                 const core=await substep(`structure_core_${prefix}.json`,"structure:core",(settings,feedback)=>
-                  sceneCore(story,index,data.dossier,data.quotes,settings,{signal,feedback}),
+                  sceneCore(story,index,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                   sceneCore===generateSceneCore?validateSavedSceneCore:null);
                 const states=await substep(`structure_states_${prefix}.json`,"structure:states",(settings,feedback)=>
-                  sceneStates(story,index,core,data.dossier,data.quotes,settings,{signal,feedback}),
+                  sceneStates(story,index,core,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                   sceneStates===generateSceneStates?validateSavedSceneStates:null);
                 structure=compose(index,()=>combineStructure(core,states));
                 guard(signal);await write(job,`structure_${prefix}.json`,structure);
@@ -351,20 +385,20 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
               if(!visual){
                 if(sceneVisual){
                   visual=await substep(`visual_${prefix}_${phase}.json`,`visual:${phase+1}`,(settings,feedback)=>
-                    sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}));
+                    sceneVisual(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}));
                 }else{
                   const direction=await substep(`visual_direction_${prefix}_${phase}.json`,`visual:${phase+1}:direction`,(settings,feedback)=>
-                    sceneDirection(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback}),
+                    sceneDirection(story,index,phase,structure,previous,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                     sceneDirection===generateSceneDirection?value=>validateSavedSceneDirection(value,previous):null);
                   const elements=await substep(`visual_elements_${prefix}_${phase}.json`,`visual:${phase+1}:elements`,(settings,feedback)=>
-                    sceneElements(story,index,phase,structure,direction,data.dossier,data.quotes,settings,{signal,feedback}),
+                    sceneElements(story,index,phase,structure,direction,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                     sceneElements===generateSceneElements?validateSavedSceneElements:null);
                   visual=compose(index,()=>combineVisual(direction,elements,previous));
                   guard(signal);await write(job,`visual_${prefix}_${phase}.json`,visual);
                 }
               }
               const narration=await substep(`narration_${prefix}_${phase}.json`,`narration:${phase+1}`,(settings,feedback)=>
-                sceneNarration(story,index,phase,structure,visual,data.dossier,data.quotes,settings,{signal,feedback}),
+                sceneNarration(story,index,phase,structure,visual,data.dossier,data.quotes,settings,{signal,feedback,priorScenes:units}),
                 sceneNarration===generateSceneNarration?validateSavedSceneNarration:null);
               phases.push({visual,narration});
             }
@@ -464,6 +498,20 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     job.status="queued";job.stage="queued";job.currentStep=null;job.error=null;job.retry=null;job.artifactId=null;
     await save(job);start(job);return publicState(job);
   }
+  async function retryEvidence(id){
+    const job=await read(id);
+    if(active.has(id))throw Error("Evidence repair is already active.");
+    if(job.status!=="paused"||job.stage!=="evidence-repair")
+      throw Error("Only a paused evidence-repair job can be retried.");
+    if((job.evidenceRepairRevision??0)>=2)
+      throw Error("Evidence still could not be linked after two fresh source captures. Start new research with better sources.");
+    // Explicit user retry fetches a NEW capture revision. Old source and model checkpoints stay intact.
+    job.evidenceRepairRevision=(job.evidenceRepairRevision??0)+1;
+    job.generation++;job.sceneRevisions={};job.completedScenes=0;job.totalScenes=0;
+    job.modelsUsed=[];job.repairHint=null;
+    job.status="queued";job.stage="queued";job.currentStep=null;job.evidenceRepair=null;job.error=null;job.retry=null;
+    await save(job);start(job);return publicState(job);
+  }
   async function cancel(id){
     const job=await read(id);
     if(job.status==="completed")throw Error("Research job already completed; its snapshot cannot be cancelled.");
@@ -481,7 +529,7 @@ export function createResearchJobManager({root=DEFAULT_ROOT,loadSearch=loadStudi
     job.status="failed";job.artifactId=null;
     await save(job);return await resume(id,models);
   }
-  return {create,get,resume,cancel,retryScene};
+  return {create,get,resume,cancel,retryScene,retryEvidence};
 }
 
 export const researchJobManager=createResearchJobManager();

@@ -18,6 +18,12 @@ This workflow uses ContentGen's existing local search/model, collected **source 
 
 An explicit **Create unresearched outline** fallback still makes the original blank fact-checking scaffold and labels it unverified. That is not equivalent to researched production.
 
+## Storyboard variety checks
+
+A generated outline contains evidence-backed teaching beats, each expanded into **problem → mechanism → payoff** shots. The local model receives brief summaries of earlier beat outcomes and completed scenes so it can advance the explanation instead of redrawing the same cost chart or restating the same conclusion. Exact/reworded punctuation-only duplicate payoffs and repeated visual actions are rejected by the relevant small inference step and can be retried without regenerating approved earlier fragments. The storyboard projection also avoids printing the same visual action twice when shot and teaching-phase text match.
+
+These checks cannot guarantee semantic originality; distinct wording may still express one idea. If captured evidence cannot support several distinct insights, revise the viewer question, gather more source material, or shorten the outline instead of making unsupported claims to fill runtime. Editorial review remains required.
+
 ## Data and safety
 
 - Source snapshots and versioned preproduction JSON are written immutably under ignored `data/studio-research/` on the machine running Vite. Source IDs/URLs/hashes flow into the editable storyboard's claim references and assumptions.

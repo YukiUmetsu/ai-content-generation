@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { CATALOG_KEY, parseCatalog } from "./catalog-model";
@@ -27,8 +27,15 @@ describe("Studio shell", () => {
     expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled();
   });
 
+  it("opens the guided Production workspace by default", () => {
+    render(<App />);
+    expect(screen.getByRole("heading", { name: "Production" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Production stages" })).toBeInTheDocument();
+  });
+
   it("opens directly into a focused create workspace with a real preview and a tool guide", async () => {
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
 
     expect(screen.getByRole("link", { name: /skip to workspace/i })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: /main navigation/i })).toBeInTheDocument();
@@ -58,6 +65,7 @@ describe("Studio shell", () => {
   it("lets the tool guide close and reopen from its own header and the preview toolbar", async () => {
     const user = userEvent.setup();
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
 
     await user.click(screen.getByRole("button", { name: /close tool guide/i }));
     expect(screen.getByRole("button", { name: /show tool guide/i })).toBeInTheDocument();
@@ -72,6 +80,7 @@ describe("Studio shell", () => {
   it("updates the shared preview when a brand palette color changes", async () => {
     const user = userEvent.setup();
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
 
     const canvasInput = screen.getAllByLabelText(/hex$/i)[0];
     await user.clear(canvasInput);
@@ -85,6 +94,7 @@ describe("Studio shell", () => {
   it("opens the now-live platform planner with per-platform preview and Kumiki safe-area checks", async () => {
     const user = userEvent.setup();
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
     await user.click(screen.getByRole("tab", { name: /platform layouts/i }));
     expect(screen.queryByText(/The editor isn't connected yet/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button",{name:/Export layout plan JSON/i})).toBeInTheDocument();

@@ -26,6 +26,37 @@ test("short outline request validates known claim IDs",async()=>{
   await assert.rejects(generateOutline(dossier,quotes,settings,{transport:transportFor({...outline,beats:[{...outline.beats[0],claimIds:["invented_claim"]},outline.beats[1]]})}),/claim/i);
 });
 
+test("outline assembly rejects a rephrased question with the same teaching payoff",()=>{
+  const repeated=[outline.beats[0],{
+    ...outline.beats[1],question:"Which hidden costs are in the final bill?",
+    payoff:"Equipment and labor both matter.",
+  }];
+  assert.throws(()=>assembleOutline(dossier,{pattern:outline.pattern,premise:outline.premise,
+    hook:outline.hook,beatCount:2},repeated),error=>
+    error.code==="schema_invalid"&&error.field==="beats[1].payoff"&&
+    error.schemaIssue==="duplicate_previous");
+});
+
+test("a new scene direction receives prior teaching context and rejects repeated outcomes",async()=>{
+  const earlier=unit("Installation costs");
+  const {phases,...structure}=unit("Other details");
+  let request;
+  const transport=async(_url,options)=>{
+    request=JSON.parse(options.body);
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      message:{content:JSON.stringify({visualAction:earlier.phases[0].visualAction,
+        learningChange:earlier.phases[0].learningChange,onScreenText:"Repeat bill elements"})},
+    }]})};
+  };
+  await assert.rejects(generateSceneDirection(outline,1,0,structure,[],dossier,quotes,settings,
+    {transport,priorScenes:[earlier]}),error=>error.code==="schema_invalid"&&
+    error.schemaIssue==="duplicate_previous"&&["visualAction","learningChange"].includes(error.field));
+  const context=JSON.parse(request.messages[1].content).previousScenes;
+  assert.equal(context.length,1);
+  assert.equal(context[0].learningOutcomes[0],earlier.phases[0].learningChange);
+  assert.ok(request.messages[1].content.length<4500);
+});
+
 test("scene task only needs its beat, and assembled plan passes full contract",async()=>{
   const first=await generateSceneUnit(outline,0,dossier,quotes,settings,{transport:transportFor(unit("Price = equipment + labor"))});
   const second=await generateSceneUnit(outline,1,dossier,quotes,settings,{transport:transportFor(unit("Installation work matters"))});
