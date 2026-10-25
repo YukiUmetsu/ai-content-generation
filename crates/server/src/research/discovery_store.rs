@@ -682,7 +682,7 @@ pub fn market_retry_due(
     let youtube: Option<(String, Option<String>, i64, Option<i64>)> = db
         .query_row(
             "SELECT state,error_code,started_at,finished_at FROM idea_market_runs
-             WHERE idea_id=?1 ORDER BY started_at DESC,id DESC LIMIT 1",
+             WHERE idea_id=?1 ORDER BY started_at DESC,rowid DESC LIMIT 1",
             [idea_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -708,7 +708,7 @@ pub fn market_retry_due(
     let trends: Option<(String, Option<String>, i64, Option<i64>)> = db
         .query_row(
             "SELECT state,error_code,started_at,finished_at FROM idea_trends_runs
-             WHERE idea_id=?1 ORDER BY started_at DESC,id DESC LIMIT 1",
+             WHERE idea_id=?1 ORDER BY started_at DESC,rowid DESC LIMIT 1",
             [idea_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
