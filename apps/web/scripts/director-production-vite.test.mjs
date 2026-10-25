@@ -29,6 +29,109 @@ async function invoke(controller,method,path,payload,headers){
   await controller.handle(r.req,r.res);
   return r.result();
 }
+async function audioResponse(controller,path){
+  const req=Readable.from([]);
+  Object.assign(req,{method:"GET",url:path,headers:{host:"127.0.0.1:5173"}});
+  let status=0,headers={};const bytes=[];
+  const res={writeHead(code,h){status=code;headers=h;},end(data){if(data)bytes.push(Buffer.from(data));},destroy(){}};
+  await controller.handle(req,res);
+  return {status,headers,bytes:Buffer.concat(bytes)};
+}
+async function waitSample(server){
+  for(let i=0;i<40;i++){
+    const result=await invoke(server,"GET","/narration-sample/status");
+    if(result.data.state!=="generating")return result.data;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  throw Error("Narration sample did not settle");
+}
+
+test("voice audition generates only a bounded first-scene excerpt and serves a protected WAV",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const calls=[];
+  const server=createDirectorProduction({outputRoot:dir,
+    synthesizeNarration:async(job,options)=>{
+      calls.push({beats:job.beats,settings:options});
+      const wavPath=join(options.cacheRoot,"sample.wav");
+      await writeFile(wavPath,Buffer.from("RIFFexampleWAVE"));
+      return [{wavPath}];
+    },build:async()=>{throw Error("audition should never build");},
+    produce:async()=>{throw Error("audition should never render");}});
+  const p=inputs();
+  const start=await invoke(server,"POST","/narration-sample",{...p,settings:config});
+  assert.equal(start.status,202);
+  const result=await waitSample(server);
+  assert.equal(result.state,"done");
+  assert.match(result.audioUrl,/\/narration-sample\/[a-f0-9-]+\.wav$/);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].beats.length,1);
+  assert.ok(calls[0].beats[0].narration.length<=180);
+  assert.equal(calls[0].settings.localVoiceAuthorized,true);
+  const samplePath=result.audioUrl.replace("/api/contentgen-video","");
+  assert.equal((await audioResponse(server,samplePath)).headers["Content-Type"],"audio/wav");
+  assert.equal((await audioResponse(server,samplePath)).bytes.toString(),"RIFFexampleWAVE");
+  assert.equal((await audioResponse(server,"/narration-sample/unknown.wav")).status,404);
+  const newSample=await invoke(server,"POST","/narration-sample",{...p,settings:config});
+  assert.equal(newSample.status,202);
+  const second=await waitSample(server);
+  assert.equal(second.state,"done");
+  assert.notEqual(second.audioUrl,result.audioUrl);
+  assert.equal((await audioResponse(server,samplePath)).status,404);
+});
+
+test("sample audition refuses unauthorized voices and concurrent render/check",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-block-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  let resolveSample,synthesis=0;
+  const server=createDirectorProduction({outputRoot:dir,
+    synthesizeNarration:async()=>{synthesis++;await new Promise(resolve=>{resolveSample=resolve;});
+      throw Error("cancelled");},
+    inspect:async()=>{throw Error("must not inspect");}});
+  const p=inputs();
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:{...config,localVoiceAuthorized:false}})).status,422);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:{...config,provider:"fish",apiKey:"key",voiceConsent:false,transmitText:true}})).status,422);
+  assert.equal(synthesis,0);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config})).status,202);
+  assert.equal((await invoke(server,"POST","/check",{...p,settings:config})).status,409);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config})).status,409);
+  assert.equal((await invoke(server,"POST","/narration-sample/cancel",{confirmed:true})).status,202);
+  if(resolveSample)resolveSample();
+  const ended=await waitSample(server);
+  assert.equal(ended.state,"cancelled");
+  assert.equal(ended.audioUrl,null);
+  assert.ok(synthesis<=1,"cancellation may prevent synthesis from starting at all");
+});
+
+test("cancelling an active voice sample retires its playback without interrupting a later render",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-active-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  let began,started=new Promise(resolve=>{began=resolve;});
+  const server=createDirectorProduction({outputRoot:dir,synthesizeNarration:async(_job,options)=>{
+    began();await new Promise((resolve,reject)=>{
+      options.signal.addEventListener("abort",()=>reject(Error("Cancelled by editor.")),{once:true});
+    });
+    return [];
+  }});
+  assert.equal((await invoke(server,"POST","/narration-sample",{...inputs(),settings:config})).status,202);
+  await started;
+  assert.equal((await invoke(server,"POST","/narration-sample/cancel",{confirmed:true})).status,202);
+  const settled=await waitSample(server);
+  assert.equal(settled.state,"cancelled");assert.equal(settled.audioUrl,null);
+  assert.equal((await invoke(server,"POST","/plan",inputs())).status,200);
+});
+
+test("a provider failure never repeats the API key in voice audition status",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-secret-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const secret="sensitive-voice-key-123";
+  const server=createDirectorProduction({outputRoot:dir,synthesizeNarration:async()=>{
+    throw Error("Provider refused token "+secret);
+  }});
+  const settings={provider:"fish",voiceId:"licensed-fish-voice",providerRevision:"fish-v1",
+    apiKey:secret,voiceConsent:true,transmitText:true};
+  assert.equal((await invoke(server,"POST","/narration-sample",{...inputs(),settings})).status,202);
+  const result=await waitSample(server);
+  assert.equal(result.state,"failed");
+  assert.equal(result.message.includes(secret),false);
+  assert.match(result.message,/Voice sample failed/);
+});
 test("editor bridge is viewable without generating audio, and preview creates an offline rough cut",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-server-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let toolCalls=0;
