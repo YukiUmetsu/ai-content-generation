@@ -51,6 +51,17 @@ function intentTerms(value){
       term.endsWith("s")?term.slice(0,-1):term));
 }
 
+const SEARCH_STOP_WORDS=new Set(["a","about","an","and","are","at","by","can","content","covering","explain",
+  "explaining","for","from","guide","how","including","into","is","of","on","or","the","their","this",
+  "through","to","understand","understanding","video","videos","what","when","why","with"]);
+function descriptionQueries(description){
+  const words=String(description??"").match(/[\p{L}\p{N}][\p{L}\p{N}'-]*/gu)??[];
+  const terms=words.filter(word=>word.length>=3&&!SEARCH_STOP_WORDS.has(word.toLowerCase()));
+  const keywordQuery=terms.slice(0,10).join(" ").slice(0,180).trim();
+  const naturalQuery=String(description??"").replace(/\s+/gu," ").trim().slice(0,180);
+  return [...new Set([keywordQuery,naturalQuery].filter(query=>query.length>=6))];
+}
+
 /** Project DESCRIPTION decides query relevance; brand names are not split into generic tokens. */
 export function selectDiscoveryQueries(keywords,_projectName,description){
   const active=keywords.filter(keyword=>keyword.active&&keyword.kind!=="exclusion");
@@ -60,7 +71,8 @@ export function selectDiscoveryQueries(keywords,_projectName,description){
     return {keyword,index,overlap,score:overlap*10+(keyword.kind==="query"?2:0)+(keyword.origin==="manual"?1:0)};
   });
   const relevant=ranked.some(entry=>entry.overlap>0)?ranked.filter(entry=>entry.overlap>0):ranked;
-  return relevant.sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,2).map(entry=>entry.keyword.text);
+  const selected=relevant.sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,2).map(entry=>entry.keyword.text);
+  return selected.length?selected:descriptionQueries(description).slice(0,2);
 }
 
 export function isRelevantDiscoveryLead(lead,query,exclusions=[]){
@@ -133,10 +145,15 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
       },signal);
       await callBackend(projectId,"graph/import-market","POST",{},signal);
       const focusedQueries=selectDiscoveryQueries(keywords,input.projectName,input.description);
+      const searchQueries=[...new Set([...focusedQueries,...descriptionQueries(input.description)])].slice(0,4);
       const exclusions=keywords.filter(keyword=>keyword.active&&keyword.kind==="exclusion").map(keyword=>keyword.text);
-      if(searchEndpoint()&&focusedQueries.length) {
-        let imported=0;
-        for(const [queryIndex,query] of focusedQueries.entries()){
+      if(searchEndpoint()&&searchQueries.length) {
+        let imported=0,searchAttempts=0,relevantLeads=0,captureAttempts=0,successfulCaptures=0;
+        let searchUnavailable=false;
+        for(const [queryIndex,query] of searchQueries.entries()){
+          // Broaden only when the first focused searches found no capturable passage.
+          if(queryIndex>=focusedQueries.length&&capturedThisRun.size>0)break;
+          if(imported>=20)break;
           try{
             const cacheKey=`source-query:${queryIndex}`;
             let sources=await saved(cacheKey);
@@ -149,15 +166,20 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
                 continue;
               }
               await preserve(`source-attempt:${queryIndex}`,{query,started:true});
+              searchAttempts++;
               const result=await search({title:input.projectName,viewerQuestion:query,audience:"Interested learners",
                 locale:"en-US"},{signal});
               sources=[];
-              for(const [index,lead] of result.results.filter(item=>isRelevantDiscoveryLead(item,query,exclusions)).slice(0,20).entries()){
+              const relevant=result.results.filter(item=>isRelevantDiscoveryLead(item,query,exclusions))
+                .slice(0,Math.min(8,20-imported));
+              relevantLeads+=relevant.length;
+              for(const lead of relevant){
                 let passage=null;
                 // Explicit creator click only. Bounded HTTPS capture has SSRF,
                 // redirect, timeout, content-type and response-size guards.
-                if(index<2){
-                  try{passage=await capture(lead,signal);}
+                if(captureAttempts<6&&successfulCaptures<2){
+                  captureAttempts++;
+                  try{passage=await capture(lead,signal);if(passage)successfulCaptures++;}
                   catch(error){
                     if(signal.aborted)throw error;
                     console.warn("[contentgen-discovery-capture]",JSON.stringify({runId,errorCode:safeError(error)}));
@@ -172,11 +194,17 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
             if(sources.length)await callBackend(projectId,"sources/import","POST",{sources},signal);
             imported+=sources.length;
           }catch(error){
+            if(signal.aborted)throw error;
             console.warn("[contentgen-discovery-search]",JSON.stringify({runId,errorCode:safeError(error)}));
+            if(/SearXNG.*(?:unavailable|disabled)|ECONNREFUSED|fetch failed/iu.test(String(error?.message??""))){
+              searchUnavailable=true;
+              break;
+            }
           }
         }
-        providerHealth.news=imported?`found ${imported} unverified public search leads`:
-          "local SearXNG returned no usable results";
+        providerHealth.news=searchUnavailable?
+          "local SearXNG unavailable or JSON search disabled. Run pnpm --dir apps/web research:up, then research:check.":
+          `${searchAttempts} searches; ${relevantLeads} relevant leads; ${successfulCaptures} captured passages; ${imported} leads imported`;
       }
       await checkpoint("analyze_signals",providerHealth);
       graph=await callBackend(projectId,"graph","GET",undefined,signal);

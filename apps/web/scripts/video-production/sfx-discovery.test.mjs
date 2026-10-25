@@ -195,3 +195,25 @@ test("cannot pin unapproved sounds or use unsafe project and shot IDs",async t=>
   await assert.rejects(setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",mode:"pin",
     assetId:soundId,sha256:"a".repeat(64)},{root:opts.root}),/approved|verified/i);
 });
+
+test("per-shot visual timing persists for automatic sound choice and survives pin/mute transitions",async t=>{
+  const opts=await imported(t);
+  const saved=await approveSfx(approval,opts);
+  const input={projectId:"house-project",bundle};
+  const legacy=await resolveSceneSfxChoices(input,{root:opts.root});
+  assert.equal(legacy.find(x=>x.shotId==="shot-roof").trigger,"shot-start");
+  await setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",mode:"auto",
+    trigger:"first-visual-reveal"},{root:opts.root});
+  assert.equal((await resolveSceneSfxChoices(input,{root:opts.root})).find(x=>x.shotId==="shot-roof").trigger,"first-visual-reveal");
+  await setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",mode:"pin",
+    assetId:soundId,sha256:saved.sha256,trigger:"first-visual-reveal"},{root:opts.root});
+  const pinned=await resolveSceneSfxChoices(input,{root:opts.root});
+  assert.equal(pinned.find(x=>x.shotId==="shot-roof").trigger,"first-visual-reveal");
+  await setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",mode:"mute",
+    trigger:"first-visual-reveal"},{root:opts.root});
+  const muted=await resolveSceneSfxChoices(input,{root:opts.root});
+  assert.equal(muted.find(x=>x.shotId==="shot-roof").mode,"mute");
+  assert.equal(muted.find(x=>x.shotId==="shot-roof").trigger,"first-visual-reveal");
+  await assert.rejects(setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",
+    mode:"auto",trigger:"unreviewed-offset"},{root:opts.root}),/trigger|timing/i);
+});

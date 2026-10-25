@@ -10,6 +10,7 @@ import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
 import { buildSampleTimeline, toFrame } from "./timeline.mjs";
+import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
@@ -149,14 +150,19 @@ export async function produceVideo(candidate, options, deps = {}) {
       onDiagnostic: options.onProgress,
     });
     options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
-    const timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
+    let timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const captionReadability = analyzeCaptionReadability(
       timeline, Object.fromEntries(job.beats.map((beat) => [beat.id, beat.narration])),
       { profile: job.mode === "youtube-long" ? "long" : "short" },
     );
     if (!captionReadability.ok) fail("caption-readability preflight found missing or invalid beat captions");
-    const plan = job.visualFamily === "general-explainer-v1"
+    let plan = job.visualFamily === "general-explainer-v1"
       ? compileGeneralVisuals(job, timeline) : compileHouseMathVisuals(job, timeline);
+    const visualCueTimeline=resolveVisualSfxTimeline(job,timeline,plan);
+    if(visualCueTimeline!==timeline){
+      timeline=visualCueTimeline;
+      plan=compileGeneralVisuals(job,timeline);
+    }
     const frames = plan.manifest.durationFrames;
     const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
     const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));
@@ -231,7 +237,13 @@ export async function produceVideo(candidate, options, deps = {}) {
       reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
       reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
+    const soundEffects=job.sounds.map(({id,eventId,licenseStatus,assetSha256,kind,offsetMs,gainDb,fadeInMs,fadeOutMs})=>({
+      id,eventId,eventSample:timeline.eventSamples[eventId]+(offsetMs??0)*48,licenseStatus,
+      ...(assetSha256?{assetSha256}:{}),...(kind?{kind}:{}),
+      ...(offsetMs!==undefined?{offsetMs}:{}),...(gainDb!==undefined?{gainDb}:{}),
+      ...(fadeInMs!==undefined?{fadeInMs}:{}),...(fadeOutMs!==undefined?{fadeOutMs}:{})
+    }));
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.

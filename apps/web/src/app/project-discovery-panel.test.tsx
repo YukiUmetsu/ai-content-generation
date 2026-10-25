@@ -3,10 +3,26 @@ import {render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {ProjectDiscoveryPanel} from "./project-discovery-panel";
 import {ProjectKnowledgePanel} from "./project-knowledge-panel";
+import {DiscoveryIdeasPanel} from "./discovery-ideas-panel";
 
 afterEach(()=>vi.restoreAllMocks());
 
 describe("Project discovery author controls",()=>{
+  it("makes an unavailable local search service actionable without implying an empty search",async()=>{
+    const run={id:"discover_"+"e".repeat(24),projectId:"project-local",inputRevision:"snapshot",
+      status:"insufficient_evidence",stage:"completed",createdAt:1760000000,updatedAt:1760000000,
+      errorCode:null,providerHealth:{news:"local SearXNG unavailable or JSON search disabled. Run pnpm --dir apps/web research:up, then research:check.",
+        evidence:"No captured passages or measured video signals."},candidates:[]};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+      const path=String(input);
+      if(!path.endsWith("/runs"))throw Error(`Unexpected discovery route: ${path}`);
+      return new Response(JSON.stringify({runs:[run]}),{status:200});
+    });
+    render(<DiscoveryIdeasPanel project={{id:"project-local",name:"House Math",notes:"Homeowner economics",createdAt:"2026-10-24T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" sources={[]} onSaveIdea={()=>true} onRunFinished={()=>{}}/>);
+    expect(await screen.findByText(/Search service is unavailable/iu)).toBeInTheDocument();
+    expect(screen.getByText("pnpm --dir apps/web research:up",{selector:"code"})).toBeInTheDocument();
+  });
   it("lets a creator reject an AI relationship and add and remove a topic alias",async()=>{
     const sourceNodes=[{id:"topic-insurance",kind:"topic",label:"Home insurance"},
       {id:"topic-roof",kind:"topic",label:"Roof repairs"}];

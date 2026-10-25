@@ -3,11 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createReadStream, readFileSync } from "node:fs";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compilePreproductionRenderJob } from "./video-production/preproduction-render-bridge.mjs";
+import { resolveAndBindApprovedSfx } from "./video-production/sfx-render-bindings.mjs";
 import { compileLiveVisualPreview } from "./video-production/live-visual-preview.mjs";
 import { compileAnimatic } from "./video-production/animatic.mjs";
 import { renderAnimaticHtml } from "./video-production/animatic-player.mjs";
@@ -20,10 +21,18 @@ import { generatePreproductionPlan } from "./video-production/preproduction-gene
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
 import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
+import { synthesizeNarration } from "./video-production/speech.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"};
+const sampleExcerpt=text=>{
+  const compact=String(text??"").replace(/\s+/gu," ").trim();
+  if(!compact)throw Error("The first scene has no narration to audition.");
+  if(compact.length<=180)return compact;
+  const fragment=compact.slice(0,180),stop=fragment.lastIndexOf(" ");
+  return fragment.slice(0,stop>=60?stop:180).trim();
+};
 const respond=(res,status,payload)=>{
   res.writeHead(status,{...headers,"Content-Type":"application/json; charset=utf-8"});
   res.end(JSON.stringify(payload));
@@ -92,7 +101,11 @@ async function deliverVideo(req,res,releaseDir){
 }
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
+  const synthesizeSample=deps.synthesizeNarration??synthesizeNarration;
   const compile=deps.compile??compilePreproductionRenderJob;
+  const bindSfx=async (compiled,input)=>resolveAndBindApprovedSfx(compiled,input,{
+    ...(deps.resolveSfx?{resolve:deps.resolveSfx}:{}),
+    ...(deps.resolveSoundDesign?{resolveDesign:deps.resolveSoundDesign}:{})});
   const compileLive=deps.compileLive??compileLiveVisualPreview;
   const research=deps.research??researchVideoTopic;
   const generateStory=deps.generateStory??generatePreproductionPlan;
@@ -103,6 +116,8 @@ export function createDirectorProduction(deps={}){
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
   const env=deps.env??process.env;
   let busy=false,checked=null,controller=null,lastOutput=null,preview=null;
+  let sample=null,sampleController=null;
+  let sampleStatus={state:"idle",message:"No voice sample generated.",audioUrl:null};
   const results=new Map();
   let status={state:"idle",phase:"idle",message:"Review the renderable storyboard before creating media.",
     progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -121,6 +136,18 @@ export function createDirectorProduction(deps={}){
           note:"Synthetic example only. No factual claims are verified."});return;
       }
       if(req.method==="GET"&&route==="/status"){respond(res,200,status);return;}
+      if(req.method==="GET"&&route==="/narration-sample/status"){
+        respond(res,200,sampleStatus);return;
+      }
+      if(req.method==="GET"&&route.startsWith("/narration-sample/")){
+        const id=/^\/narration-sample\/([a-f0-9-]+)\.wav$/u.exec(route)?.[1];
+        if(!id||!sample||id!==sample.id||sampleStatus.state!=="done"){
+          respond(res,404,{error:"Narration audition expired. Generate a new sample."});return;
+        }
+        const bytes=await readFile(sample.wavPath);
+        res.writeHead(200,{...headers,"Content-Type":"audio/wav","Content-Length":bytes.length});
+        res.end(bytes);return;
+      }
       if(req.method==="GET"&&route.startsWith("/preview/")){
         if(!preview||route!=="/preview/"+preview.id){respond(res,404,{error:"Preview expired."});return;}
         res.writeHead(200,{...headers,"Content-Type":"text/html; charset=utf-8",
@@ -133,12 +160,71 @@ export function createDirectorProduction(deps={}){
         await deliverVideo(req,res,results.get(id));return;
       }
       if(req.method!=="POST"){respond(res,404,{error:"Unknown production action."});return;}
+      if(route==="/narration-sample/cancel"){
+        if(!sampleController||sampleStatus.state!=="generating"){
+          respond(res,409,{error:"No narration audition is running."});return;
+        }
+        const input=await readBody(req);
+        if(input.confirmed!==true){respond(res,422,{error:"Explicit cancellation required."});return;}
+        sampleController.abort(Error("Cancelled by editor."));
+        respond(res,202,{cancelRequested:true});return;
+      }
       if(route==="/cancel"){
         if(!busy||!controller){respond(res,409,{error:"No active render."});return;}
         controller.abort(Error("Cancelled by editor."));
         respond(res,202,{cancelRequested:true});return;
       }
       if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
+      if(route==="/narration-sample"){
+        const input=await readBody(req),settings=validateSettings(input.settings);
+        const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
+        const job=configureRenderJob(compiled.job,settings);
+        if(!job.beats?.length)throw Error("Add a narrated scene before auditioning a voice.");
+        job.beats=[{...job.beats[0],narration:sampleExcerpt(job.beats[0].narration)}];
+        const id=randomUUID(),abort=new AbortController();
+        sampleController=abort;busy=true;
+        sampleStatus={state:"generating",message:"Synthesizing a short, first-scene voice sample…",audioUrl:null};
+        respond(res,202,{started:true});
+        void (async()=>{
+          let ownedRoot=null,nextStatus=null;
+          try{
+            const parent=join(outputRoot,"narration-samples");
+            await mkdir(parent,{recursive:true,mode:0o700});
+            ownedRoot=await mkdtemp(join(parent,"sample-"));
+            if(abort.signal.aborted)throw Error("Cancelled by editor.");
+            const [beat]=await synthesizeSample(job,{
+              provider:settings.provider,providerRevision:settings.providerRevision,
+              cacheRoot:ownedRoot,signal:abort.signal,localVoiceAuthorized:settings.localVoiceAuthorized===true,
+              allowNetwork:settings.provider==="fish",voiceReferenceConsent:settings.voiceConsent===true,
+              textTransmissionApproved:settings.transmitText===true,apiKey:settings.apiKey,
+              budgetUsd:0,paidUsageApproved:false
+            });
+            if(abort.signal.aborted)throw Error("Cancelled by editor.");
+            if(typeof beat?.wavPath!=="string"||!beat.wavPath.startsWith(ownedRoot+"/"))
+              throw Error("Narration service returned audio outside its owned sample folder.");
+            const info=await stat(beat.wavPath);
+            if(!info.isFile()||info.size<12||info.size>16*1024*1024)
+              throw Error("Voice provider returned an invalid or oversized sample.");
+            const previous=sample;sample={id,wavPath:beat.wavPath,root:ownedRoot};ownedRoot=null;
+            nextStatus={state:"done",message:"Voice sample ready. Listen below before rendering.",
+              audioUrl:"/api/contentgen-video/narration-sample/"+id+".wav"};
+            if(previous)await rm(previous.root,{recursive:true,force:true}).catch(()=>{});
+          }catch(error){
+            const detail=[settings.apiKey,settings.voiceId,job.beats[0].narration]
+              .filter(value=>typeof value==="string"&&value.length>0)
+              .reduce((message,secret)=>message.replaceAll(secret,"[redacted]"),
+                String(error?.message??"Speech service unavailable.")).slice(0,180);
+            nextStatus={state:abort.signal.aborted?"cancelled":"failed",audioUrl:null,
+              message:abort.signal.aborted?"Voice sample cancelled.":
+                "Voice sample failed: "+detail};
+          }finally{
+            try{if(ownedRoot)await rm(ownedRoot,{recursive:true,force:true});}
+            finally{sampleController=null;busy=false;
+              sampleStatus=nextStatus??{state:"failed",audioUrl:null,message:"Could not clean up the voice sample."};}
+          }
+        })();
+        return;
+      }
       if(route==="/research"){
         const input=await readBody(req);
         if(input.allowNetwork!==true)throw Error("Approve public web research explicitly before searching.");
@@ -196,7 +282,8 @@ export function createDirectorProduction(deps={}){
       }
       if(route==="/check"){
         const input=await readBody(req),compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
-        const settings=validateSettings(input.settings),job=configureRenderJob(compiled.job,settings);
+        const settings=validateSettings(input.settings);
+        const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const identity=sha({source:compiled.sourcePlanSha256,job,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
@@ -217,13 +304,15 @@ export function createDirectorProduction(deps={}){
           checked=report.ready?{identity}:null;
           status={...status,state:report.ready?"ready":"blocked",phase:"preflight",
             message:report.ready?"Ready to render an unverified test draft.":"Resolve the readiness findings below.",report};
-          respond(res,200,{ready:report.ready,report,warnings:compiled.warnings});
+          respond(res,200,{ready:report.ready,report,warnings:compiled.warnings,
+            sfxSummary:approvedSfx.sfxSummary});
         }finally{busy=false;}
         return;
       }
       if(route==="/start"){
         const input=await readBody(req),compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
-        const settings=validateSettings(input.settings),job=configureRenderJob(compiled.job,settings);
+        const settings=validateSettings(input.settings);
+        const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const identity=sha({source:compiled.sourcePlanSha256,job,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
