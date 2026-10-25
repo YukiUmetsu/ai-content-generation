@@ -1,4 +1,4 @@
-//! Exactly one local-background collector. Nothing survives server shutdown.
+//! Local background collector with durable SQLite claims and restart recovery.
 
 use std::future::Future;
 use std::time::Duration;
@@ -33,7 +33,7 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
                 Ok(queued) if !queued.is_empty() => eprintln!(
                     "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
                 ),
-                Ok(_) => {}
+                Ok(_) => {},
                 Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
             }
         }
@@ -53,7 +53,7 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
                     Ok(queued) if !queued.is_empty() => eprintln!(
                         "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
                     ),
-                    Ok(_) => {}
+                    Ok(_) => {},
                     Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
                 }
             }
