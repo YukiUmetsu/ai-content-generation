@@ -185,6 +185,9 @@ fn a_session_can_persist_more_than_five_distinct_evidence_backed_ideas() {
         "editorial research readiness must never become a viral score");
     assert_eq!(ideas[0].viral_potential.state, "insufficient_data");
     assert_eq!(ideas[0].viral_potential.coverage_percent, 0);
+    let payload = serde_json::to_value(&ideas[0]).unwrap();
+    assert_eq!(payload["viralPotential"]["score"], serde_json::Value::Null);
+    assert_eq!(payload["viralPotential"]["scoreVersion"], "viral-potential-v1");
     sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].candidate.id, "saved", None, 103).unwrap();
     assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].candidate.decision.as_deref(), Some("saved"));
     sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].candidate.id, "selected", None, 104).unwrap();
