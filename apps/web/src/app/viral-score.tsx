@@ -139,7 +139,7 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
 
               {(matching?.youtubeObservedAt != null || matching?.trendsObservedAt != null) &&
                 <p className="mt-3 text-[11px] text-muted-foreground">{tr(locale, "Observed", "取得日")}: {
-                  [matching.youtubeObservedAt, matching.trendsObservedAt]
+                  [matching?.youtubeObservedAt, matching?.trendsObservedAt]
                     .filter((value): value is number => typeof value === "number" && value > 0)
                     .map(value => new Intl.DateTimeFormat(locale === "ja" ? "ja-JP" : "en-US",
                       { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(value * 1000))
