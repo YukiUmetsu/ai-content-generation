@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createReadStream, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,8 @@ import { synthesizeNarration } from "./video-production/speech.mjs";
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"};
+const productionIdPattern=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
+const runIdPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
 const sampleExcerpt=text=>{
   const compact=String(text??"").replace(/\s+/gu," ").trim();
   if(!compact)throw Error("The first scene has no narration to audition.");
@@ -114,6 +116,56 @@ export function createDirectorProduction(deps={}){
   const build=deps.build??(()=>run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024}));
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
+  const mediaIndexPath=join(outputRoot,"production-media-index-v1.json");
+  async function readMediaIndex(){
+    let raw;
+    try{raw=await readFile(mediaIndexPath,"utf8");}
+    catch(error){if(error?.code==="ENOENT")return [];throw error;}
+    if(raw.length>30000)throw Error("Saved media index exceeds its size limit.");
+    let data;
+    try{data=JSON.parse(raw);}catch{throw Error("Saved media index is invalid; no entries were overwritten.");}
+    if(data?.version!==1||!Array.isArray(data.records)||data.records.length>100||
+      data.records.some(item=>!runIdPattern.test(item.runId)||
+        (item.productionId!==null&&!productionIdPattern.test(item.productionId))||
+        !Number.isSafeInteger(item.createdAt)))
+      throw Error("Saved media index is invalid; no entries were overwritten.");
+    return data.records;
+  }
+  async function recordMedia(runId,productionId){
+    const previous=await readMediaIndex();
+    const records=[...previous.filter(item=>item.runId!==runId),
+      {runId,productionId,createdAt:Date.now()}].slice(-100);
+    await mkdir(outputRoot,{recursive:true,mode:0o700});
+    const temporary=join(outputRoot,".production-media-index-"+randomUUID()+".json");
+    try{
+      await writeFile(temporary,JSON.stringify({version:1,records})+"\n",{flag:"wx",mode:0o600});
+      await rename(temporary,mediaIndexPath);
+    }catch(error){await rm(temporary,{force:true}).catch(()=>{});throw error;}
+  }
+  async function releaseForRun(runId){
+    if(results.has(runId))return results.get(runId);
+    const records=await readMediaIndex();
+    if(!records.some(item=>item.runId===runId))return null;
+    // Never trust a path from persisted JSON; every target is derived from the
+    // validated UUID within the application's owned output directory.
+    return join(outputRoot,"draft-"+runId,"release");
+  }
+  async function productionAssets(productionId){
+    const records=(await readMediaIndex()).filter(item=>item.productionId===productionId);
+    const assets=[];
+    for(const {runId} of records){
+      const releaseDir=join(outputRoot,"draft-"+runId,"release");
+      for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"]]){
+        try{
+          const info=await stat(join(releaseDir,file));
+          if(!info.isFile()||info.size===0)continue;
+        }catch(error){if(error?.code==="ENOENT")continue;throw error;}
+        assets.push({id:kind+"-"+runId,kind,platform:"youtube",filename:file,
+          downloadUrl:"/api/contentgen-video/media/"+runId+"/"+file});
+      }
+    }
+    return assets;
+  }
   const env=deps.env??process.env;
   let busy=false,checked=null,controller=null,lastOutput=null,preview=null;
   let sample=null,sampleController=null;
@@ -155,9 +207,22 @@ export function createDirectorProduction(deps={}){
         res.end(preview.html);return;
       }
       if(req.method==="GET"&&route.startsWith("/media/")){
-        const id=/^\/media\/([a-f0-9-]+)\/video\.mp4$/u.exec(route)?.[1];
-        if(!id||!results.has(id)){respond(res,404,{error:"Video is unavailable."});return;}
-        await deliverVideo(req,res,results.get(id));return;
+        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt)$/u.exec(route);
+        if(!match||!runIdPattern.test(match[1])){respond(res,404,{error:"Media is unavailable."});return;}
+        const releaseDir=await releaseForRun(match[1]);
+        if(!releaseDir){respond(res,404,{error:"Media is unavailable."});return;}
+        if(match[2]==="video.mp4")await deliverVideo(req,res,releaseDir);
+        else {
+          const bytes=await readFile(join(releaseDir,"captions.srt"));
+          res.writeHead(200,{...headers,"Content-Type":"text/plain; charset=utf-8","Content-Length":bytes.length});
+          res.end(bytes);
+        }
+        return;
+      }
+      if(req.method==="GET"&&route.startsWith("/assets/")){
+        const id=route.slice("/assets/".length);
+        if(!productionIdPattern.test(id)){respond(res,404,{error:"Unknown production."});return;}
+        respond(res,200,{assets:await productionAssets(id)});return;
       }
       if(req.method!=="POST"){respond(res,404,{error:"Unknown production action."});return;}
       if(route==="/narration-sample/cancel"){
@@ -281,10 +346,13 @@ export function createDirectorProduction(deps={}){
           status:"unreviewed-rough-cut"});return;
       }
       if(route==="/check"){
-        const input=await readBody(req),compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
+        const input=await readBody(req);
+        if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
+          throw Error("Invalid production identity.");
+        const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -310,10 +378,13 @@ export function createDirectorProduction(deps={}){
         return;
       }
       if(route==="/start"){
-        const input=await readBody(req),compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
+        const input=await readBody(req);
+        if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
+          throw Error("Invalid production identity.");
+        const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
@@ -341,9 +412,13 @@ export function createDirectorProduction(deps={}){
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
             results.set(runId,result.releaseDir);
             if(results.size>5)results.delete(results.keys().next().value);
+            let mediaWarning="";
+            try{await recordMedia(runId,input.productionId??null);}
+            catch(error){mediaWarning=" Media index was not saved; keep your local release folder. "+
+              String(error?.message??"Index error").slice(0,140);}
             lastOutput=out;
             status={...status,state:"done",phase:"review",
-              message:"Draft MP4 rendered. Watch/listen and review claims and rights.",
+              message:"Draft MP4 rendered. Watch/listen and review claims and rights."+mediaWarning,
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
               regeneration:result.regeneration??null};
           }catch(error){
@@ -371,3 +446,4 @@ export function directorProductionPlugin(){
     configurePreviewServer(server){server.middlewares.use("/api/contentgen-video",(req,res)=>{void worker.handle(req,res);});}
   };
 }
+

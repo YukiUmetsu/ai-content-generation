@@ -18,10 +18,12 @@ export interface ProductionProgressInput {
   sessionId?: string | null;
   ideaId?: string | null;
   scriptReady?: boolean;
+  scriptStale?: boolean;
   discoveryJob?: Job | null;
   discoveryArtifactId?: string | null;
   discoveryReady?: boolean;
   storyboardReady?: boolean;
+  storyboardScriptStale?: boolean;
   storyboardResearchArtifactId?: string | null;
   missingEvidenceClaims?: number;
   unreviewedClaims?: number;
@@ -47,12 +49,13 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
     job?.status==="paused"&&job.stage==="evidence-repair"?"needs_review":
     job?.status==="failed"||job?.status==="paused"||job?.status==="cancelled"?"failed":
     evidenceComplete?"complete":"not_started";
-  const stale=Boolean(input.storyboardReady&&input.storyboardResearchArtifactId&&evidenceId&&
-    input.storyboardResearchArtifactId!==evidenceId);
+  const stale=Boolean(input.storyboardScriptStale || input.scriptStale ||
+    (input.storyboardReady&&input.storyboardResearchArtifactId&&evidenceId&&
+    input.storyboardResearchArtifactId!==evidenceId));
   const missing=input.missingEvidenceClaims??0;
   const reviews=input.unreviewedClaims??0;
   const repeated=input.storyboardEditorialWarnings??0;
-  const boardStatus:ProductionStageStatus=stale?"stale":!input.storyboardReady?"not_started":
+  const boardStatus:ProductionStageStatus=!input.storyboardReady?"not_started":stale?"stale":
     missing>0||reviews>0||repeated>0?"needs_review":"complete";
   const downstream=(ready:boolean):ProductionStageStatus=>stale&&ready?"stale":ready?"complete":"not_started";
   return [
@@ -67,7 +70,8 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       discoverStatus==="needs_review"?"Review source links":discoverStatus==="failed"?"Retry discovery":"Discover ideas"),
     stage("select",input.ideaId?"complete":"not_started",
       input.ideaId?"An idea has been selected for this production.":"Review saved opportunities and select one idea.","Select an idea"),
-    stage("script",input.scriptReady?"complete":"not_started",
+    stage("script",input.scriptStale?"stale":input.scriptReady?"complete":"not_started",
+      input.scriptStale?"Research or creative inputs changed. Reapprove the updated script.":
       input.scriptReady?"The script has an approved revision.":"Review the AI-written script and its evidence.","Review script"),
     stage("storyboard",boardStatus,
       stale?"Research changed. Review the previous storyboard before rebuilding.":
@@ -87,3 +91,4 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       input.exportReady?"An export artifact is available.":"Review and download platform-ready files.","Preview & export"),
   ];
 }
+

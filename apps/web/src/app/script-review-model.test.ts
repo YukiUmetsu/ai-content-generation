@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptScriptCandidate, approveScriptDraft, createScriptDraft, discardScriptCandidate,
-  editScriptSection, fillScriptSection, proposeScriptCandidate, rebindEmptyScriptEvidence,
-  scriptDraftKey, validateScriptDraft, type ScriptDraft,
+  editScriptSection, fillScriptSection, isScriptContextCurrent, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence,
+  scriptDraftKey, scriptEvidenceFingerprint, validateScriptDraft, type ScriptDraft,
 } from "./script-review-model";
 
 const context = {
@@ -26,6 +26,13 @@ const filled = (): ScriptDraft => {
 };
 
 describe("AI-first script revision model", () => {
+  it("invalidates a script when a source URL or claim text changes without changing the quote", () => {
+    const captured = [{claimId:"claim-1",claimText:"Original interpretation",sourceId:"source-1",
+      sourceUrl:"https://example.org/a",quote:"The captured passage",reviewStatus:"unverified" as const}];
+    const fingerprint=scriptEvidenceFingerprint(captured);
+    expect(scriptEvidenceFingerprint([{...captured[0],sourceUrl:"https://example.org/b"}])).not.toBe(fingerprint);
+    expect(scriptEvidenceFingerprint([{...captured[0],claimText:"Corrected interpretation"}])).not.toBe(fingerprint);
+  });
   it("initializes predictable stable section IDs separately for each production/platform", () => {
     const draft = createScriptDraft(context, timestamp);
     expect(draft.sections.map(s => s.id)).toEqual(["hook", "context", "mechanism", "practical", "closing"]);
@@ -82,4 +89,19 @@ describe("AI-first script revision model", () => {
     const wrote = fillScriptSection(pristine, "hook", result, 0, timestamp);
     expect(rebindEmptyScriptEvidence(wrote, "sources-new", timestamp)).toEqual(wrote);
   });
+
+  it("explicitly rebinds a reviewed script after evidence or brand changes without discarding narration history", () => {
+    const approved = approveScriptDraft(filled(), timestamp);
+    const nextContext = { ...context, evidenceSnapshotId: "capture-2", brandVoice: "Friendly and factual" };
+    expect(isScriptContextCurrent(approved, nextContext)).toBe(false);
+    const rebased = rebaseScriptDraftContext(approved, nextContext, "2026-10-25T13:00:00.000Z");
+    expect(rebased.input).toEqual(nextContext);
+    expect(rebased.status).toBe("draft");
+    expect(rebased.approvedAt).toBeNull();
+    expect(rebased.sections).toEqual(approved.sections);
+    expect(rebased.sections[0].history).toEqual(approved.sections[0].history);
+    expect(isScriptContextCurrent(rebased, nextContext)).toBe(true);
+    expect(() => rebaseScriptDraftContext(rebased, { ...nextContext, platform: "tiktok" })).toThrow(/different script/i);
+  });
 });
+

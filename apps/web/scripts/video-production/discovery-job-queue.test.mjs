@@ -40,6 +40,20 @@ test("session discovery rejects forged session identifiers before touching the r
   assert.equal(calls,0);
 });
 
+test("resuming a run from another saved session is refused before changing backend state",async()=>{
+  const expected="session_"+"a".repeat(24),foreign="session_"+"b".repeat(24);
+  const runId="discover_"+"c".repeat(24),calls=[];
+  const manager=createDiscoveryJobManager({backend:async(_project,route,method)=>{
+    calls.push(method+" "+route);
+    if(route===`runs/${runId}`)return {id:runId,sessionId:foreign,status:"paused"};
+    throw Error("Foreign run must not be resumed");
+  }});
+  await assert.rejects(manager.resume({projectId:"brand-one",projectName:"Costs",
+    description:"Home costs",sessionId:expected},runId,{model:"local",
+    endpoint:"http://localhost:1234/v1/chat/completions"}),/different discovery session/i);
+  assert.deepEqual(calls,[`GET runs/${runId}`]);
+});
+
 test("a saved session passes its bounded idea budget and frozen prior content to candidate generation",async()=>{
   const sessionId="session_"+"d".repeat(24),runId="discover_"+"e".repeat(24);
   const source={id:"public-video-1",title:"Annual insurance cost comparison",url:"https://example.org/watch",
@@ -502,3 +516,4 @@ test("Resume from a saved candidate-input skips source stages and checkpoints mi
   assert.deepEqual(artifacts.get("candidate-batch:1"),[]);
   assert.deepEqual(artifacts.get("candidate-pool"),[candidate]);
 });
+

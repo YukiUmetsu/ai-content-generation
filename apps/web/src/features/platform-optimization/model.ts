@@ -14,6 +14,8 @@ export interface PlatformAsset {
   kind: AssetKind;
   platform?: string;
   filename?: string;
+  /** Local, same-origin download for an actually existing release file. */
+  downloadUrl?: string;
   durationSeconds?: number;
   width?: number;
   height?: number;
@@ -242,10 +244,11 @@ export function sourceSignature(input: PlatformOptimizationInput, target?: Platf
 
 function suitableAsset(input: PlatformOptimizationInput, target: PlatformTarget, kind: AssetKind): string | null {
   const assets = (input.assets ?? []).filter((asset) => asset.kind === kind);
-  const exact = assets.find((asset) => asset.platform?.trim().toLowerCase() === target);
+  const latest = [...assets].reverse();
+  const exact = latest.find((asset) => asset.platform?.trim().toLowerCase() === target);
   if (exact) return exact.id;
-  const compatible = assets.find((asset) => asset.platform && normalizeTarget(asset.platform) === target);
-  return (compatible ?? assets.find((asset) => !asset.platform))?.id ?? null;
+  const compatible = latest.find((asset) => asset.platform && normalizeTarget(asset.platform) === target);
+  return (compatible ?? latest.find((asset) => !asset.platform))?.id ?? null;
 }
 
 function initialPackage(target: PlatformTarget, input: PlatformOptimizationInput): PlatformPackage {
@@ -396,8 +399,13 @@ export function reviewPlatformPackage(pkg: PlatformPackage, input: PlatformOptim
     issues.push(issue("error", "video-unavailable", "The selected video cannot be found among current exported assets."));
   if (f.paidPromotion === null) issues.push(issue("warning", "paid-promotion-review", "Confirm whether a paid-promotion disclosure is needed."));
   if (f.syntheticContentDisclosure === null) issues.push(issue("warning", "synthetic-content-review", "Check the destination's altered/synthetic-content disclosure requirements."));
-  const metadataReady = !issues.some((finding) => finding.severity === "error" && !["video-missing", "video-unavailable"].includes(finding.code));
-  return { issues, metadataReady, readyToUpload: !issues.some((finding) => finding.severity === "error") };
+  // Metadata review is useful even before the render pipeline provides real
+  // files. Media rights and existence are separate upload/release gates.
+  const metadataReady = !issues.some((finding) => finding.severity === "error" &&
+    !["rights-unreviewed", "video-missing", "video-unavailable"].includes(finding.code));
+  const readyToUpload = pkg.status === "approved" && !issues.some((finding) => finding.severity === "error") &&
+    f.paidPromotion !== null && f.syntheticContentDisclosure !== null;
+  return { issues, metadataReady, readyToUpload };
 }
 
 function platformHasInvalidChapters(pkg: PlatformPackage): boolean {
@@ -409,7 +417,7 @@ export function approvePlatformPackage(manifest: PlatformOptimizationManifest, t
   input: PlatformOptimizationInput): PlatformOptimizationManifest {
   return replacePackage(manifest, target, (pkg) => {
     const check = reviewPlatformPackage(pkg, input);
-    if (!check.readyToUpload) throw new Error("Resolve the package review checks before approval.");
+    if (!check.metadataReady) throw new Error("Resolve the metadata review checks before approval.");
     const approved = newRevision(pkg, "approved");
     return { ...approved, status: "approved", approvedRevision: approved.revision };
   });
@@ -436,3 +444,4 @@ export function platformExportManifest(manifest: PlatformOptimizationManifest, i
     })),
   };
 }
+

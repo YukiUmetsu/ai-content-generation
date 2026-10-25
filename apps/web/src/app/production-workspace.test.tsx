@@ -25,6 +25,7 @@ describe("Production eight-step workspace",()=>{
     }
     expect(screen.getByRole("combobox",{name:"Project / brand"})).toHaveValue("project-demo");
     expect(screen.getByRole("group",{name:"Target platforms"})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"YouTube Shorts"})).toBeInTheDocument();
   });
 
   it("allows a return to any stage without clearing target platforms",()=>{
@@ -53,3 +54,4 @@ describe("Production eight-step workspace",()=>{
     expect(screen.getByRole("button",{name:"Continue to production"})).toBeInTheDocument();
   });
 });
+

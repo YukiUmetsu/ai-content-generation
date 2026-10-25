@@ -54,4 +54,14 @@ describe("eight-step production progress", () => {
     expect(storyboard?.status).toBe("needs_review");
     expect(storyboard?.reason).toMatch(/2/);
   });
+
+  it("invalidates script approval and all saved downstream stages when its source context changes", () => {
+    const stages = getProductionStages({scriptReady:false,scriptStale:true,storyboardReady:true,
+      storyboardScriptStale:true,visualReady:true,audioReady:true,optimizationReady:true,exportReady:true});
+    expect(stages.find(stage => stage.id === "script")?.status).toBe("stale");
+    for (const id of ["storyboard","produce","optimize","export"]) {
+      expect(stages.find(stage => stage.id === id)?.status).toBe("stale");
+    }
+  });
 });
+

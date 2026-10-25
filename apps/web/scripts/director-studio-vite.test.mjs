@@ -49,6 +49,25 @@ test("script section route selects dedicated installed script model and returns 
   assert.equal(result.result.status,"candidate-needs-acceptance");
 });
 
+test("approved script Director handoff compiles locally and enforces the same-origin boundary",async()=>{
+  let called=0;
+  const input={productionId:"production-"+"a".repeat(24),script:{status:"approved"},evidence:[],sources:[]};
+  const compiled={dossier:{kind:"research-dossier"},bundle:{kind:"preproduction-bundle"}};
+  const deps={compileApprovedScript:received=>{called++;assert.deepEqual(received,input);return compiled;},
+    model:async()=>{throw Error("No model should load for an approved script handoff.");}};
+  assert.deepEqual(await post("/compile-approved-script",input,deps),{status:200,result:compiled});
+  assert.equal((await post("/compile-approved-script",{...input,unexpected:"x"},deps)).status,422);
+  assert.equal(called,1);
+  const req=Readable.from([Buffer.from(JSON.stringify(input))]);
+  Object.assign(req,{method:"POST",url:"/compile-approved-script",headers:{host:"127.0.0.1:5173",
+    origin:"https://foreign.example","x-contentgen-director":"local-only"}});
+  let status=0;
+  const res={writeHead(value){status=value;},end(){}};
+  await handleDirectorRequest(req,res,deps);
+  assert.equal(status,403);
+  assert.equal(called,1);
+});
+
 test("search-only Studio API saves and retrieves leads without consulting local models",async()=>{
   const brief={title:"Heat pumps",viewerQuestion:"Why expensive?",audience:"Homeowners",locale:"en-US"};
   const snapshot={artifactId:"search_20261024T015250000Z-aaaaaaaaaaaa",kind:"studio-search-snapshot",
@@ -283,4 +302,5 @@ test("closing a keyword stream aborts its own running generator",async()=>{
   assert.equal(signalSeen.aborted,true);
   assert.equal(wasAborted,true);
 });
+
 

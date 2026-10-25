@@ -41,7 +41,7 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;recheckToken?:number}){
+export function ProductionPanel({dossier,bundle,productionId,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;productionId?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;recheckToken?:number}){
   const [stage,setStage]=useState<Stage>("preview");
   const [settings,setSettings]=useState<Settings>(defaults);
   const [sampleStatus,setSampleStatus]=useState<SampleStatus>({state:"idle",message:""});
@@ -198,7 +198,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
   async function check(){
     setWorking("check");setNotice("");setReady(false);
     try{
-      const response=await request("check",{...payload,settings});
+      const response=await request("check",{...payload,settings,...(productionId?{productionId}:{})});
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
@@ -212,7 +212,7 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
     if(!ready)return;
     setWorking("start");setNotice("");
     try{
-      const r=await request("start",{...payload,settings,confirmRender:true});
+      const r=await request("start",{...payload,settings,...(productionId?{productionId}:{}),confirmRender:true});
       setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
       setReady(false);
       setNotice("Render started. Only files in the new job-owned output folder will be written.");
@@ -426,3 +426,4 @@ export function ProductionPanel({dossier,bundle,selectedShotId,onSelectShot,onAp
     </Surface>
   </div>;
 }
+

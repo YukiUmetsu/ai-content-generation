@@ -206,14 +206,18 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
     let idea = &sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0];
     let p1 = production_store::create_production(
         &conn, "brand-one", &session.id, &idea.id,
-        &serde_json::json!({"title":"Lifetime cost of a house","angle":"actual costs"}),
-        &["youtube".into(), "instagram".into()], 103,
+        &serde_json::json!({"topic":"Home lifetime costs","title":"Lifetime cost of a house",
+            "angle":"actual costs","description":"Break down ownership costs","keywords":[],
+            "platforms":["youtube"]}),
+        &["youtube".into()], 103,
     ).unwrap();
     assert!(p1.id.starts_with("production-"),"Production IDs use the public identifier format");
     let p2 = production_store::create_production(
         &conn, "brand-one", &session.id, &idea.id,
-        &serde_json::json!({"title":"Home ownership costs, part two"}),
-        &["tiktok".into()], 104,
+        &serde_json::json!({"topic":"Home lifetime costs","title":"Home ownership costs, part two",
+            "angle":"Unexpected expenses","description":"Second look at home costs","keywords":[],
+            "platforms":["youtube"]}),
+        &["youtube".into()], 104,
     ).unwrap();
     assert_ne!(p1.id, p2.id);
     assert_eq!(p1.project_id, "brand-one");
@@ -222,7 +226,22 @@ fn productions_preserve_brand_session_idea_links_and_reject_cross_project_input(
     assert_eq!(production_store::list_all_productions(&conn).unwrap().len(), 2);
     assert!(production_store::create_production(
         &conn, "brand-two", &session.id, &idea.id,
-        &serde_json::json!({"title":"Invalid"}), &["youtube".into()], 105,
+        &serde_json::json!({"topic":"Invalid","title":"Invalid",
+            "angle":"","description":"","keywords":[],"platforms":["youtube"]}),
+        &["youtube".into()], 105,
     ).is_err());
+    let valid = serde_json::json!({"topic":"Home lifetime costs","title":"Why homes cost more",
+        "angle":"Tax, insurance and maintenance","description":"Evidence-first explainer",
+        "keywords":["home cost"],"platforms":["youtube"]});
+    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.id,
+        &serde_json::json!({}),&["youtube".into()],106).is_err(),
+        "A malformed brief cannot be persisted and later crash the editor");
+    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.id,
+        &valid,&["tiktok".into()],106).is_err(),
+        "Productions cannot choose platforms outside their discovery session");
+    assert!(production_store::create_production(&conn,"brand-one",&session.id,&idea.id,
+        &valid,&["youtube".into(),"tiktok".into()],106).is_err(),
+        "The request and the frozen brief must agree on platforms");
     assert_eq!(conn.query_row("SELECT COUNT(*) FROM discovery_projects", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
 }
+

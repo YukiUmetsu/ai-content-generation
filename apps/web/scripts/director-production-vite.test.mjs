@@ -214,6 +214,35 @@ test("a normal UI sequence checks tools, renders a new MP4, reuses previous outp
   assert.equal(performed[1].reuseFrom,performed[0].out);
   assert.equal(server.status().state,"done");
 });
+
+test("completed renders are discoverable by production across server restarts, never by another production",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-assets-test-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"a".repeat(24),otherId="production-"+"b".repeat(24);
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[],tools:{}}),
+    produce:async(_job,opts)=>{
+      const releaseDir=join(opts.out,"release");
+      await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock video media");
+      await writeFile(join(releaseDir,"captions.srt"),"1\n00:00:00,000 --> 00:00:01,000\nTest");
+      return {releaseDir};
+    }});
+  const params={...inputs(),settings:config,productionId};
+  assert.equal((await invoke(server,"POST","/check",params)).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...params,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)
+    await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"done");
+  const restarted=createDirectorProduction({outputRoot:dir});
+  const own=await invoke(restarted,"GET",`/assets/${productionId}`);
+  assert.equal(own.status,200);
+  assert.deepEqual(own.data.assets.map(asset=>asset.kind).sort(),["captions","video"]);
+  assert.ok(own.data.assets.every(asset=>asset.platform==="youtube"));
+  assert.match(own.data.assets[0].downloadUrl,/^\/api\/contentgen-video\/media\//);
+  assert.deepEqual((await invoke(restarted,"GET",`/assets/${otherId}`)).data.assets,[]);
+  assert.equal((await invoke(restarted,"GET","/assets/../production-other")).status,404);
+});
 test("changing a checked setting demands a fresh preflight; revoked local voice is never rendered",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-mismatch-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let calls=0;
@@ -374,3 +403,4 @@ test("actual renderer preview is identical to the edit plan and never starts voi
  assert.equal(rejected.status,422);
  assert.equal(calls,0);
 });
+

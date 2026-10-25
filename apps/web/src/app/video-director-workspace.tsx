@@ -155,20 +155,39 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     return ()=>{active=false;};
   },[researchArtifactId,projectId,acceptProject]);
   useEffect(()=>{
-    if(!projectId||!researchArtifactId||sourceArtifactId!==researchArtifactId||!dossier||!bundle||
+    if(researchArtifactId||!projectId?.startsWith("production-"))return;
+    try{
+      const raw=sessionStorage.getItem("contentgen:director-approved-script:v1:"+projectId);
+      if(!raw)return;
+      if(raw.length>900000)throw Error("Approved script handoff exceeds the Director browser-session limit.");
+      const handoff=JSON.parse(raw) as {productionId?:string;scriptRevision?:string;dossier?:Dossier;bundle?:Bundle};
+      if(handoff.productionId!==projectId||typeof handoff.scriptRevision!=="string"||
+        handoff.dossier?.kind!=="research-dossier"||handoff.bundle?.kind!=="preproduction-bundle"||
+        !handoff.dossier.id||handoff.bundle.researchId!==handoff.dossier.id||
+        !handoff.bundle.researchSha256||!handoff.bundle.plan?.shots?.length)
+        throw Error("The approved script handoff is invalid. Return to Production and reopen the approved script.");
+      const sourceId="approved-script:"+handoff.scriptRevision;
+      const resumed=readDirectorSession(projectId,sourceId,handoff.bundle);
+      acceptProject(resumed?.dossier??handoff.dossier,resumed?.bundle??handoff.bundle,"topic",sourceId);
+      setStatus(resumed?"Resumed your saved edits from this approved script revision. Factual review and rights remain outstanding.":
+        "Imported approved script narration and captured citations. Visuals are schematic drafts; edit the scenes before previewing.");
+    }catch(reason){setLoadError(reason instanceof Error?reason.message:"Cannot open approved script in Director.");}
+  },[researchArtifactId,projectId,acceptProject]);
+  useEffect(()=>{
+    if(!projectId||!sourceArtifactId||!dossier||!bundle||
       typeof sessionStorage==="undefined")return;
     let warningTimer:ReturnType<typeof setTimeout>|undefined;
     try{
       // Only applied shot edits are saved here. Never store provider keys or voice permissions.
-      const data=JSON.stringify({version:1,artifactId:researchArtifactId,dossier,bundle});
+      const data=JSON.stringify({version:1,artifactId:sourceArtifactId,dossier,bundle});
       if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
-      sessionStorage.setItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha),data);
+      sessionStorage.setItem(directorSessionKey(projectId,sourceArtifactId,sourceStoryboardSha),data);
     }catch{
       // Storage failure is reported after the effect finishes, avoiding a cascading render.
       warningTimer=setTimeout(()=>setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director."),0);
     }
     return ()=>{if(warningTimer!==undefined)clearTimeout(warningTimer);};
-  },[projectId,researchArtifactId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
+  },[projectId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
   async function importProject(file:File|undefined){
     if(!file)return;
     try{
@@ -342,8 +361,11 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
           <Button variant="outline" icon={<Download className="size-4"/>} disabled={dirty||busy}
             onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
           <Button variant="outline" disabled={dirty||busy} onClick={()=>{
-               if(projectId&&researchArtifactId&&sourceArtifactId===researchArtifactId){
-                 try{sessionStorage.removeItem(directorSessionKey(projectId,researchArtifactId,sourceStoryboardSha));}catch{/* In-memory reset still works. */}
+               if(projectId&&sourceArtifactId){
+                 try{sessionStorage.removeItem(directorSessionKey(projectId,sourceArtifactId,sourceStoryboardSha));
+                   if(sourceArtifactId.startsWith("approved-script:"))
+                     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+projectId);
+                 }catch{/* In-memory reset still works. */}
                }
                setDossier(null);setBundle(null);setShotId("");setStage("storyboard");setSampleMode(false);setSourceArtifactId(null);setSourceStoryboardSha(null);setSyncReport(null);setLoadError("");setStatus("");
              }}>
@@ -531,6 +553,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
           {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
           <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle} recheckToken={recheckToken}
+            productionId={projectId?.startsWith("production-")?projectId:undefined}
             selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
             onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
         </div>
@@ -549,4 +572,5 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     </div>
   </main>;
 }
+
 

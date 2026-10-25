@@ -67,14 +67,20 @@ function AssetPicker({ label, kind, value, input, platform, onChange }: {
   const available = (input.assets ?? []).filter((asset) => asset.kind === kind &&
     (!asset.platform || normalizeTarget(asset.platform) === platform));
   const missing = value && !available.some((asset) => asset.id === value);
-  return <label className="block min-w-0 text-xs font-medium text-muted-foreground">
-    <span className="mb-1.5 block">{label}</span>
-    <select className={inputClass} value={value ?? ""} onChange={(event) => onChange(event.target.value || null)}>
-      <option value="">{kind === "video" ? "No rendered video selected" : "None selected"}</option>
-      {missing && <option value={value}>{value} (not in current assets)</option>}
-      {available.map((asset) => <option key={asset.id} value={asset.id}>{friendlyAsset(asset)}</option>)}
-    </select>
-  </label>;
+  const selected = available.find(asset=>asset.id===value);
+  return <div className="min-w-0">
+    <label className="block text-xs font-medium text-muted-foreground">
+      <span className="mb-1.5 block">{label}</span>
+      <select className={inputClass} value={value ?? ""} onChange={(event) => onChange(event.target.value || null)}>
+        <option value="">{kind === "video" ? "No rendered video selected" : "None selected"}</option>
+        {missing && <option value={value}>{value} (not in current assets)</option>}
+        {available.map((asset) => <option key={asset.id} value={asset.id}>{friendlyAsset(asset)}</option>)}
+      </select>
+    </label>
+    {selected?.downloadUrl?.startsWith("/api/contentgen-video/media/")&&
+      <a className="mt-1 inline-block text-xs font-medium text-primary underline" href={selected.downloadUrl}
+        download={selected.filename}>Download selected local file</a>}
+  </div>;
 }
 
 function ChapterEditor({ chapters, onChange }: {
@@ -223,7 +229,7 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
         <p className="mb-1 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Step 7 · Optimize</p>
         <h2 className="font-serif text-2xl font-semibold text-foreground">Prepare every platform</h2>
         <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Titles, captions, keywords and chapters are prefilled from your source. Review each destination and adjust only what you need.
+          Titles, captions, keywords and chapters are prefilled from your source. Approve metadata now; real video files, rights and final disclosures remain separate release checks.
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -387,8 +393,8 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
           <div className={`${cardClass} space-y-3`}>
             <div className="flex items-center justify-between gap-2">
               <SectionHeading>Readiness check</SectionHeading>
-              <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${review.readyToUpload ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>
-                {pkg.status === "approved" ? "Approved" : review.readyToUpload ? "Ready for approval" : "Review needed"}
+              <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${review.metadataReady ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-900"}`}>
+                {pkg.status === "approved" ? "Metadata approved" : review.metadataReady ? "Ready to review metadata" : "Review needed"}
               </span>
             </div>
             {review.issues.length === 0 ? <p className="flex items-center gap-2 text-xs text-emerald-700"><CheckCircle2 className="size-4" aria-hidden /> All current checks passed.</p> :
@@ -399,17 +405,20 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
                   <span className="text-muted-foreground">{finding.message}</span>
                 </li>)}
               </ul>}
+            {pkg.status === "approved" && !review.readyToUpload && <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+              Metadata is approved, but this package cannot be uploaded yet. Attach a real destination render and complete rights and disclosure checks first.
+            </p>}
             {pkg.stale && <button type="button" onClick={() => setManifest((current) => markPlatformReviewed(current, platform))}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline">
               <RefreshCcw className="size-3.5" aria-hidden /> Reviewed updated source
             </button>}
             <div className="space-y-2 border-t border-border pt-3">
-              <button type="button" disabled={!review.readyToUpload || pkg.status === "approved"}
+              <button type="button" disabled={!review.metadataReady || pkg.status === "approved"}
                 onClick={() => {
-                  try { setManifest((current) => approvePlatformPackage(current, platform, input)); setNotice("Metadata package approved for manual upload preparation."); }
+                  try { setManifest((current) => approvePlatformPackage(current, platform, input)); setNotice("Metadata approved. File, rights and disclosure checks still control upload readiness."); }
                   catch (error) { setNotice(error instanceof Error ? error.message : "Could not approve package."); }
                 }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-45">
-                <Check className="size-4" aria-hidden /> Approve package
+                <Check className="size-4" aria-hidden /> Approve metadata
               </button>
               <button type="button" onClick={exportCurrent} className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-2.5 text-sm font-medium hover:bg-muted">
                 <Download className="size-4" aria-hidden /> Export this platform's metadata
@@ -421,3 +430,4 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
       </div>}
   </section>;
 }
+

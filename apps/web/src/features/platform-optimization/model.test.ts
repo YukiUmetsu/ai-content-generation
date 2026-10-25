@@ -82,16 +82,22 @@ describe("platform optimization authoring", () => {
     expect(restored.packages[0].manualFields).not.toContain("title");
   });
 
-  it("requires destination review and actual media/rights before a package is approved", () => {
+  it("separately approves prepared metadata and refuses upload readiness without media and rights", () => {
     const first = createPlatformOptimizationManifest(input);
     expect(reviewPlatformPackage(first.packages[0], input).issues.some((item) => item.code === "rights-unreviewed")).toBe(true);
     expect(() => approvePlatformPackage(first, "youtube", input)).toThrow(/review/i);
-    const rights = updatePlatformField(first, "youtube", "rightsConfirmed", true);
-    const policies = updatePlatformField(rights, "youtube", "platformPolicyReviewed", true);
+    const policies = updatePlatformField(first, "youtube", "platformPolicyReviewed", true);
     const disclosed = updatePlatformField(policies, "youtube", "madeForKids", false);
     const approved = approvePlatformPackage(disclosed, "youtube", input);
     expect(approved.packages[0].status).toBe("approved");
     expect(approved.packages[0].approvedRevision).toBe(approved.packages[0].revision);
+    expect(reviewPlatformPackage(approved.packages[0], input).readyToUpload).toBe(false);
+    const rights = updatePlatformField(disclosed, "youtube", "rightsConfirmed", true);
+    const promotion = updatePlatformField(rights, "youtube", "paidPromotion", false);
+    const synthetic = updatePlatformField(promotion, "youtube", "syntheticContentDisclosure", false);
+    expect(reviewPlatformPackage(synthetic.packages[0], input).readyToUpload).toBe(false);
+    const releaseReviewed = approvePlatformPackage(synthetic, "youtube", input);
+    expect(reviewPlatformPackage(releaseReviewed.packages[0], input).readyToUpload).toBe(true);
     expect(updatePlatformField(approved, "youtube", "title", "A new title").packages[0].status).toBe("draft");
     expect(reviewPlatformPackage(first.packages[2], input).issues.some((item) => item.code === "video-missing")).toBe(true);
   });
@@ -99,7 +105,15 @@ describe("platform optimization authoring", () => {
   it("does not treat absent media or unconfirmed disclosure as automatic publication readiness", () => {
     const manifest = createPlatformOptimizationManifest({ ...input, assets: [] });
     expect(manifest.packages[0].assetIds.video).toBeNull();
-    expect(reviewPlatformPackage(manifest.packages[0], { ...input, assets: [] }).readyToUpload).toBe(false);
+    const noMedia = { ...input, assets: [] };
+    expect(reviewPlatformPackage(manifest.packages[0], noMedia).readyToUpload).toBe(false);
+    const policy = updatePlatformField(manifest, "youtube", "platformPolicyReviewed", true);
+    const audience = updatePlatformField(policy, "youtube", "madeForKids", false);
+    const approved = approvePlatformPackage(audience, "youtube", noMedia);
+    const review = reviewPlatformPackage(approved.packages[0], noMedia);
+    expect(approved.packages[0].status).toBe("approved");
+    expect(review.metadataReady).toBe(true);
+    expect(review.readyToUpload).toBe(false);
     expect(manifest.packages.every((item) => item.status !== "published")).toBe(true);
   });
 
@@ -124,3 +138,4 @@ describe("platform optimization authoring", () => {
     expect(second.packages[1].fields.description).toContain("new short-form voiceover");
   });
 });
+

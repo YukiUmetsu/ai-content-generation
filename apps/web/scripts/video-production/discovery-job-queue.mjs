@@ -322,6 +322,14 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
     const input=validateInput(raw);
     if(!RUN.test(runId))throw Error("Invalid discovery run ID.");
     const model=normalizeDiscoveryModels(settings);
+    if(input.sessionId){
+      // Resume is keyed by run ID on the legacy Rust endpoint. Verify its
+      // session ownership before that mutating call or a stale UI tab could
+      // resume another session's work with the wrong budget and context.
+      const existing=await callBackend(input.projectId,`runs/${runId}`,"GET");
+      if(existing.sessionId!==input.sessionId)
+        throw Error("This run belongs to a different discovery session. Reopen its original session.");
+    }
     const run=await callBackend(input.projectId,`runs/${runId}/resume`,"POST",{});
     start(input,run,model);return run;
   }
@@ -333,3 +341,4 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
   return {create,get,list,resume,cancel};
 }
 export const discoveryJobManager=createDiscoveryJobManager();
+

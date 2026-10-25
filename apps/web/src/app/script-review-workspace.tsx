@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import {
   acceptScriptCandidate, approveScriptDraft, createScriptDraft, discardScriptCandidate,
-  editScriptSection, estimatedNarrationSeconds, fillScriptSection, loadScriptDraft,
-  proposeScriptCandidate, rebindEmptyScriptEvidence, saveScriptDraft, type ScriptDraft, type ScriptEvidence,
+  editScriptSection, estimatedNarrationSeconds, fillScriptSection, isScriptContextCurrent, loadScriptDraft,
+  proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, saveScriptDraft, scriptEvidenceFingerprint, type ScriptDraft, type ScriptEvidence,
   type ScriptGeneratedText, type ScriptLocale, type ScriptPlatform, type ScriptRole,
 } from "./script-review-model";
 
@@ -33,12 +33,6 @@ const secondsPerSection: Record<ScriptPlatform, number> = { youtube: 106, youtub
 const textField = "w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
 const secondary = "rounded-control border border-border bg-surface px-3 py-2 text-sm font-medium hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50";
 
-function fingerprint(evidence: ScriptEvidence[]): string {
-  const raw = JSON.stringify(evidence.map(e => [e.claimId, e.sourceId, e.quote, e.reviewStatus]));
-  let hash = 2166136261;
-  for (let i = 0; i < raw.length; i++) hash = Math.imul(hash ^ raw.charCodeAt(i), 16777619) >>> 0;
-  return `sources-${hash.toString(16)}`;
-}
 const duration = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 const outputId = (productionId: string, platform: ScriptPlatform) => `${productionId}:${platform}`;
 
@@ -47,10 +41,12 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
   const allowed = targetPlatforms.filter(platform => Object.hasOwn(platforms, platform));
   const first = allowed[0] ?? "youtube";
   const [platform, setPlatform] = useState<ScriptPlatform>(first);
-  const snapshotId = fingerprint(evidence);
+  const snapshotId = scriptEvidenceFingerprint(evidence);
   const context = useMemo(() => ({ productionId, projectId, platform, locale, title, viewerQuestion,
     audience, angle, brandVoice, evidenceSnapshotId: snapshotId }),
     [productionId, projectId, platform, locale, title, viewerQuestion, audience, angle, brandVoice, snapshotId]);
+  const contextRef = useRef(context);
+  contextRef.current = context;
   const open = (): ViewState => {
     const saved = loadScriptDraft(productionId, platform);
     return saved.draft || saved.warning ? saved : { draft: createScriptDraft(context), warning: null };
@@ -71,6 +67,8 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
   const [editedText, setEditedText] = useState("");
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const draft = view.draft;
+
+  useEffect(() => {setPlatform(first);}, [productionId, first]);
 
   // Preserve per-platform draft and abort a previous platform's expensive local generation.
   useEffect(() => {
@@ -119,6 +117,10 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
   async function generate(sectionId: ScriptRole, mode: "initial" | "regenerate", extraInstructions = "") {
     const before = viewRef.current.draft;
     if (!before || busyRef.current) return;
+    if (!isScriptContextCurrent(before, context)) {
+      setError("The script's research or creative brief changed. Review and adopt the updated context before generating.");
+      return;
+    }
     const index = before.sections.findIndex(section => section.id === sectionId);
     const section = before.sections[index];
     if (!section || !evidence.length) {
@@ -149,8 +151,9 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
       if (ownerRef.current !== identity || controller.signal.aborted) return;
       const latest = viewRef.current.draft;
       if (!latest) return;
-      if (latest.input.evidenceSnapshotId !== before.input.evidenceSnapshotId) {
-        setError("Captured source evidence changed while AI was drafting. The outdated response was discarded; retry the section with the latest evidence.");
+      if (!isScriptContextCurrent(latest, contextRef.current) ||
+          latest.input.evidenceSnapshotId !== before.input.evidenceSnapshotId) {
+        setError("Research or creative context changed while AI was drafting. The outdated response was discarded; review updated sources and retry.");
         return;
       }
       const candidate = { narration: result.narration ?? "", claimRefs: result.claimRefs ?? [],
@@ -175,6 +178,7 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
   // AI-first: as soon as the user selects an idea, generate missing sections one small request at a time.
   useEffect(() => {
     if (!draft || draft.input.productionId !== productionId || draft.input.platform !== platform ||
+        !isScriptContextCurrent(draft, context) ||
         busyRef.current || error || !evidence.length || view.warning) return;
     const next = draft.sections.find(section => !section.text &&
       !failuresRef.current.has(`${ownerRef.current}:${section.id}`));
@@ -188,7 +192,7 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
   const seconds = draft?.sections.reduce((total, section) => total + estimatedNarrationSeconds(section.text, locale), 0) ?? 0;
   const unreviewed = draft?.sections.some(section => section.claimRefs.some(id =>
     evidence.some(item => item.claimId === id && item.reviewStatus !== "verified" && item.reviewStatus !== "illustrative"))) ?? false;
-  const staleEvidence = draft && draft.input.evidenceSnapshotId !== snapshotId;
+  const staleContext = Boolean(draft && !isScriptContextCurrent(draft, context));
   const done = Boolean(draft?.sections.every(section => !!section.text.trim()));
 
   const revise = (sectionId: ScriptRole, text: string) => {
@@ -214,6 +218,20 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
       const approved = approveScriptDraft(current);
       if (persist(approved)) onApprove(approved);
     } catch (problem) {setError(problem instanceof Error ? problem.message : "Cannot approve incomplete script.");}
+  };
+  const adoptUpdatedContext = () => {
+    const current = viewRef.current.draft;
+    if (!current) return;
+    try {
+      if (persist(rebaseScriptDraftContext(current, context))) {
+        failuresRef.current.clear();
+        setReviewConfirmed(false);
+        setRegenerateId(null);
+        setError("");
+      }
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Could not update script research context.");
+    }
   };
   async function regenerateFullScript() {
     const identity = ownerRef.current;
@@ -245,9 +263,12 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
         </button>)}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">Each destination has its own script and revision history. Switching platforms never overwrites another output.</p>
-      {staleEvidence && <p role="status" className="mt-3 rounded-control border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-        Saved evidence has changed since this script began. Existing edits are preserved; review source links before approving.
-      </p>}
+      {staleContext && <div role="status" className="mt-3 space-y-3 rounded-control border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+        <p>The research, brand voice or creative brief changed since this script began. Existing narration and revisions will be preserved, but any previous approval must be renewed after reviewing source links.</p>
+        <button type="button" className={secondary} disabled={!!busy || batchBusy} onClick={adoptUpdatedContext}>
+          Use updated context and review again
+        </button>
+      </div>}
       {done && <div className="mt-3">
         <button type="button" className={secondary} disabled={!!busy || batchBusy}
           onClick={() => setFullRewriteOpen(value => !value)}>Regenerate full script</button>
@@ -356,10 +377,11 @@ export function ScriptReviewWorkspace({ productionId, projectId, platforms: targ
         checked={reviewConfirmed} onChange={event => setReviewConfirmed(event.target.checked)} />
         <span>I have reviewed the factual claims, source links and caveats in the script.</span></label>
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <Button disabled={!done || !!busy || !!view.warning || !reviewConfirmed || !!staleEvidence ||
+        <Button disabled={!done || !!busy || !!view.warning || !reviewConfirmed || staleContext ||
           Object.keys(draft.pending).length > 0} onClick={approve}>Approve script &amp; continue</Button>
         {draft.status === "approved" && <span className="flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="size-4" />Approved revision saved</span>}
       </div>
     </Surface>}
   </div>;
 }
+

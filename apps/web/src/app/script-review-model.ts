@@ -11,6 +11,14 @@ export interface ScriptEvidence {
   /** Captured passage is not by itself an independent fact check. */
   reviewStatus: "verified" | "unverified" | "illustrative" | "disputed";
 }
+
+export function scriptEvidenceFingerprint(evidence: readonly ScriptEvidence[]): string {
+  const raw = JSON.stringify(evidence.map(e => [e.claimId, e.claimText, e.sourceId,
+    e.sourceUrl, e.quote, e.reviewStatus]));
+  let hash = 2166136261;
+  for (let i = 0; i < raw.length; i++) hash = Math.imul(hash ^ raw.charCodeAt(i), 16777619) >>> 0;
+  return `sources-${hash.toString(16)}`;
+}
 export interface ScriptReviewInput {
   productionId: string;
   projectId: string;
@@ -128,6 +136,26 @@ export function rebindEmptyScriptEvidence(draft: ScriptDraft, evidenceSnapshotId
       draft.sections.some(section => section.revision || section.text || section.history.length)) return draft;
   if (draft.input.evidenceSnapshotId === snapshot) return draft;
   return { ...draft, input: { ...draft.input, evidenceSnapshotId: snapshot }, updatedAt: time(now) };
+}
+
+/** Compare every prompt/source input, not just the evidence ID. Editing the
+ * brand's voice or a production brief must also invalidate prior approvals. */
+export function isScriptContextCurrent(draft: ScriptDraft, input: ScriptReviewInput): boolean {
+  const current = inputDocument(input);
+  return Object.keys(current).every(key =>
+    draft.input[key as keyof ScriptReviewInput] === current[key as keyof ScriptReviewInput]);
+}
+
+/** User-initiated lineage update: keep authored words and revision history,
+ * discard pending AI candidates, and require a fresh factual approval. */
+export function rebaseScriptDraftContext(draft: ScriptDraft, input: ScriptReviewInput,
+  now = new Date().toISOString()): ScriptDraft {
+  const next = inputDocument(input);
+  if (next.productionId !== draft.input.productionId ||
+      next.projectId !== draft.input.projectId || next.platform !== draft.input.platform)
+    throw Error("Cannot rebase a different script production, project or platform.");
+  return { ...draft, input: next, status: "draft", approvedAt: null,
+    pending: {}, updatedAt: time(now) };
 }
 function normalizedGenerated(candidate: ScriptGeneratedText): ScriptGeneratedText {
   const value = exact(candidate, ["narration", "claimRefs", "sourceRefs"], "generated section");
@@ -261,3 +289,4 @@ export function estimatedNarrationSeconds(text: string, locale: ScriptLocale): n
   return locale === "ja" ? Math.ceil([...text].length / 240 * 60) :
     Math.ceil(text.trim().split(/\s+/u).length / 145 * 60);
 }
+

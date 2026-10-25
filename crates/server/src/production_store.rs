@@ -20,6 +20,37 @@ pub struct Production {
     pub updated_at: i64,
 }
 
+fn validate_brief(brief: &serde_json::Value, platforms: &[String]) -> Result<(), DiscoveryError> {
+    let invalid = || DiscoveryError::Invalid("Invalid production brief".into());
+    let obj = brief.as_object().ok_or_else(invalid)?;
+    if obj.keys().any(|key| !matches!(key.as_str(),
+        "topic" | "title" | "angle" | "description" | "keywords" | "platforms"))
+        || obj.len() != 6 {
+        return Err(invalid());
+    }
+    for (field, limit, required) in [
+        ("topic", 180, true), ("title", 180, true),
+        ("angle", 1200, false), ("description", 2400, false),
+    ] {
+        let value = obj.get(field).and_then(serde_json::Value::as_str).ok_or_else(invalid)?;
+        if value.chars().count() > limit || (required && value.trim().is_empty())
+            || value.chars().any(char::is_control) {
+            return Err(invalid());
+        }
+    }
+    let keywords = obj.get("keywords").and_then(serde_json::Value::as_array).ok_or_else(invalid)?;
+    if keywords.len() > 30 || keywords.iter().any(|word|
+        word.as_str().is_none_or(|s| s.trim().is_empty() || s.chars().count() > 120 || s.chars().any(char::is_control))) {
+        return Err(invalid());
+    }
+    let selected: Vec<String> = serde_json::from_value(
+        obj.get("platforms").ok_or_else(invalid)?.clone()).map_err(|_| invalid())?;
+    if selected.as_slice() != platforms {
+        return Err(DiscoveryError::Invalid("Production brief and selected platforms disagree".into()));
+    }
+    Ok(())
+}
+
 pub fn create_production(
     db: &Connection,
     project_id: &str,
@@ -30,8 +61,20 @@ pub fn create_production(
     now: i64,
 ) -> Result<Production, DiscoveryError> {
     validate_platforms(platforms)?;
-    if !brief.is_object() || brief.to_string().len() > 24_000 || now < 0 {
+    if brief.to_string().len() > 24_000 || now < 0 {
         return Err(DiscoveryError::Invalid("Invalid production brief".into()));
+    }
+    validate_brief(brief, platforms)?;
+    let session_platforms_json: String = db.query_row(
+        "SELECT platforms_json FROM content_discovery_sessions WHERE project_id=?1 AND id=?2",
+        params![project_id,session_id], |row| row.get(0),
+    ).optional()?.ok_or(DiscoveryError::NotFound)?;
+    let session_platforms: Vec<String> = serde_json::from_str(&session_platforms_json)
+        .map_err(|_| DiscoveryError::Invalid("Stored session platforms are invalid".into()))?;
+    // Imported legacy sessions have no known platform snapshot. For newly
+    // created sessions, a production must stay within its frozen destinations.
+    if !session_platforms.is_empty() && platforms.iter().any(|p| !session_platforms.contains(p)) {
+        return Err(DiscoveryError::Invalid("Production platform is not in this discovery session".into()));
     }
     let decision: Option<Option<String>> = db.query_row(
         "SELECT c.decision FROM discovery_candidates c JOIN discovery_runs r ON r.id=c.run_id
@@ -93,3 +136,4 @@ pub fn list_all_productions(db: &Connection) -> Result<Vec<Production>, Discover
     };
     ids.iter().map(|id|get_production(db,id)).collect()
 }
+
