@@ -141,6 +141,7 @@ const en = {
   diagInvalidDuration: (index: number, value: string) =>
     `Beat ${index} has an invalid duration (${value}); use a positive integer frame count.`,
   diagNoHook: "The storyboard does not open with a hook beat.",
+  diagRepeated: (index:number,previous:number)=>`Beat ${index} may repeat the idea in beat ${previous}. Change what the viewer learns or how the visual demonstrates it.`,
   diagNarrationMissing: (index: number) => `Beat ${index} has no narration.`,
   diagObjectiveMissing: (index: number) => `Beat ${index} has no learning objective.`,
   diagVisualObjectiveMissing: (index: number) => `Beat ${index} has no visual objective.`,
@@ -317,6 +318,7 @@ const ja = {
   diagInvalidDuration: (index: number, value: string) =>
     `ビート ${index} の長さ（${value}）が不正です。正の整数フレームを指定してください。`,
   diagNoHook: "ストーリーボードがフックのビートから始まっていません。",
+  diagRepeated: (index:number,previous:number)=>`ビート ${index} はビート ${previous} と内容が重複している可能性があります。新しい学びや映像上の変化を加えてください。`,
   diagNarrationMissing: (index: number) => `ビート ${index} にナレーションがありません。`,
   diagObjectiveMissing: (index: number) => `ビート ${index} に学習目標がありません。`,
   diagVisualObjectiveMissing: (index: number) => `ビート ${index} に視覚目標がありません。`,
@@ -394,6 +396,8 @@ export function describeDiagnostic(
       return t.diagInvalidDuration(index, value("value"));
     case "storyboard-no-opening-hook":
       return t.diagNoHook;
+    case "storyboard-repeated-information":
+      return t.diagRepeated(index,Number(params.previousIndex??0));
     case "storyboard-narration-missing":
       return t.diagNarrationMissing(index);
     case "storyboard-objective-missing":
