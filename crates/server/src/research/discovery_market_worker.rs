@@ -688,6 +688,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_google_trends_is_retried_after_cooldown_without_youtube_key() {
+        let (_dir, state, session_id, run_id) = setup();
+        process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
+        let mut db = state.connect().unwrap();
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
+        ).unwrap().is_empty(), "fresh provider failures must cool down");
+        db.execute(
+            "UPDATE idea_trends_runs SET started_at=?1 WHERE state='failed'",
+            [epoch_now() - 7 * 3_600],
+        ).unwrap();
+        let queued = discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
+        ).unwrap();
+        assert_eq!(queued, vec![run_id.clone()], "Trends must retry independently of YouTube");
+        drop(db);
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        process_pending_with(state.clone(), move |_run| {
+            let seen = seen.clone();
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Err("provider_unavailable")
+            }
+        }).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "retry must actually invoke provider");
+        let db = state.connect().unwrap();
+        let attempts: i64 = db.query_row(
+            "SELECT COUNT(*) FROM idea_trends_runs", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(attempts, 2, "retry must persist a new attempt");
+        let youtube: i64 = db.query_row(
+            "SELECT COUNT(*) FROM market_search_budget", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(youtube, 0, "no YouTube key must not consume budget");
+    }
+
+    #[test]
+    fn adding_youtube_key_requeues_previously_unavailable_assessment_immediately() {
+        let (_dir, state, session_id, run_id) = setup();
+        let db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate.id.clone();
+        drop(db);
+        let mut db = state.connect().unwrap();
+        idea_market::record_unavailable_assessment(
+            &mut db, "proj-homes", &session_id, &idea_id,
+            "home insulation costs", "long", "api_key_missing", epoch_now(),
+        ).unwrap();
+        // Keep Trends fresh so only YouTube can make this run eligible.
+        idea_trends::record_unavailable_assessment(
+            &mut db, &idea_id, "home insulation costs", "rate_limited", epoch_now(),
+        ).unwrap();
+        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1", [&run_id]).unwrap();
+        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), false)
+            .unwrap(), (false, false));
+        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true)
+            .unwrap(), (true, false));
+        assert!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
+        ).unwrap().is_empty());
+        assert_eq!(discovery_store::queue_missing_market_runs(
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), true,
+        ).unwrap(), vec![run_id]);
+    }
+
+    #[test]
+    fn rate_limited_provider_attempts_wait_a_day_and_completed_data_is_preserved() {
+        let (_dir, state, session_id, run_id) = setup();
+        let mut db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate.id.clone();
+        idea_market::record_unavailable_assessment(
+            &mut db, "proj-homes", &session_id, &idea_id,
+            "home insulation costs", "long", "budget_exhausted", epoch_now(),
+        ).unwrap();
+        idea_trends::record_unavailable_assessment(
+            &mut db, &idea_id, "home insulation costs", "rate_limited", epoch_now(),
+        ).unwrap();
+        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1", [&run_id]).unwrap();
+        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true)
+            .unwrap(), (false, false));
+        db.execute("UPDATE idea_market_runs SET started_at=?1 WHERE idea_id=?2",
+            rusqlite::params![epoch_now() - 25 * 3_600, idea_id]).unwrap();
+        db.execute("UPDATE idea_trends_runs SET started_at=?1 WHERE idea_id=?2",
+            rusqlite::params![epoch_now() - 25 * 3_600, idea_id]).unwrap();
+        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true)
+            .unwrap(), (true, true));
+    }
+
+    #[tokio::test]
     async fn unavailable_providers_complete_discovery_with_durable_partial_evidence() {
         let (_dir, state, session_id, run_id) = setup();
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
