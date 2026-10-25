@@ -38,6 +38,33 @@ export interface ScriptEvidence {
   reviewStatus: "verified" | "unverified" | "illustrative" | "disputed";
 }
 
+/** Descriptive observations from a single explicitly requested public YouTube search. */
+export interface IdeaMarketAssessment {
+  runId: string;
+  state: "running" | "succeeded" | "failed" | "expired";
+  query: string;
+  format: "long" | "shorts";
+  metricVersion?: string;
+  region?: string;
+  language?: string;
+  nextCollectionAt?: number | null;
+  observedAt: number | null;
+  searchedVideos: number;
+  sampleSize: number;
+  distinctChannels: number;
+  medianViews: number | null;
+  p75Views: number | null;
+  medianViewsPerDay: number | null;
+  recentUploads90d: number;
+  comparisonScore: number | null;
+  comparisonCohortSize: number;
+  errorCode: string | null;
+  videos: Array<{
+    videoId: string; title: string; channelTitle: string;
+    viewCount: number | null; publishedAt: string; sourceUrl: string;
+  }>;
+}
+
 export interface DiscoverySessionIdea {
   id: string;
   sessionId: string;
@@ -57,6 +84,7 @@ export interface DiscoverySessionIdea {
   platformFit: Partial<Record<DiscoveryPlatform, number | null>>;
   sources: DiscoverySourceSummary[];
   evidence?: ScriptEvidence[];
+  marketAssessment?: IdeaMarketAssessment | null;
 }
 
 export interface DiscoveryIdeaBrief {
@@ -152,7 +180,36 @@ function requireIdea(value: unknown): DiscoverySessionIdea {
     evidence: Array.isArray(value.evidence) ? value.evidence.slice(0, 100).filter(item => record(item) &&
       ["claimId", "claimText", "sourceId", "sourceUrl", "quote"].every(key => typeof item[key] === "string") &&
       ["verified", "unverified", "illustrative", "disputed"].includes(String(item.reviewStatus))) as ScriptEvidence[] : [],
+    marketAssessment: parseIdeaMarketAssessment(value.marketAssessment),
   } as DiscoverySessionIdea;
+}
+
+function parseIdeaMarketAssessment(raw: unknown): IdeaMarketAssessment | null {
+  if (!record(raw) || typeof raw.runId !== "string" || typeof raw.query !== "string" ||
+    !["running", "succeeded", "failed", "expired"].includes(String(raw.state)) ||
+    !["long", "shorts"].includes(String(raw.format))) return null;
+  const count = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+  const optionalNumber = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+  const videos = Array.isArray(raw.videos) ? raw.videos.slice(0, 25).filter(video => record(video) &&
+    ["videoId", "title", "channelTitle", "publishedAt", "sourceUrl"].every(key => typeof video[key] === "string") &&
+    (video.viewCount == null || optionalNumber(video.viewCount) !== null)) : [];
+  return {
+    runId: raw.runId, state: raw.state as IdeaMarketAssessment["state"], query: raw.query,
+    format: raw.format as IdeaMarketAssessment["format"],
+    ...(typeof raw.metricVersion === "string" ? { metricVersion: raw.metricVersion } : {}),
+    ...(typeof raw.region === "string" ? { region: raw.region } : {}),
+    ...(typeof raw.language === "string" ? { language: raw.language } : {}),
+    ...(raw.nextCollectionAt === null || typeof raw.nextCollectionAt === "number" && Number.isFinite(raw.nextCollectionAt)
+      ? { nextCollectionAt: raw.nextCollectionAt as number | null } : {}),
+    observedAt: optionalNumber(raw.observedAt), searchedVideos: count(raw.searchedVideos),
+    sampleSize: count(raw.sampleSize), distinctChannels: count(raw.distinctChannels),
+    medianViews: optionalNumber(raw.medianViews), p75Views: optionalNumber(raw.p75Views),
+    medianViewsPerDay: optionalNumber(raw.medianViewsPerDay),
+    recentUploads90d: count(raw.recentUploads90d), comparisonScore: optionalNumber(raw.comparisonScore),
+    comparisonCohortSize: count(raw.comparisonCohortSize),
+    errorCode: typeof raw.errorCode === "string" ? raw.errorCode : null,
+    videos: videos as IdeaMarketAssessment["videos"],
+  };
 }
 
 export async function listDiscoverySessions(projectId: string, signal?: AbortSignal): Promise<DiscoverySession[]> {
@@ -203,6 +260,24 @@ export async function listSessionIdeas(projectId: string, sessionId: string, sig
   const result = await call<{ ideas?: unknown }>(`${sessionPath(projectId, sessionId)}/ideas`, "GET", undefined, signal);
   if (!record(result) || !Array.isArray(result.ideas)) throw Error("Invalid saved discovery ideas response.");
   return result.ideas.map(requireIdea);
+}
+
+/** One explicit user action consumes at most one shared YouTube search reservation. */
+export function validIdeaMarketQuery(value: string): boolean {
+  const characters = Array.from(value.trim());
+  return characters.length >= 3 && characters.length <= 120 && !characters.some(character => {
+    const code = character.codePointAt(0) ?? 0;
+    return code < 32 || code === 127;
+  });
+}
+
+export async function collectIdeaMarketEvidence(projectId: string, sessionId: string, ideaId: string,
+  input: { query: string; format: "long" | "shorts" }): Promise<void> {
+  const query = input.query.trim();
+  if (!validIdeaMarketQuery(query))
+    throw Error("Use a search phrase between 3 and 120 characters without control characters.");
+  await call(`${sessionPath(projectId, sessionId)}/ideas/${encodeURIComponent(ideaId)}/market`, "POST",
+    { query, format: input.format });
 }
 
 export async function decideSessionIdea(projectId: string, sessionId: string, ideaId: string,

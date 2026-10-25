@@ -311,7 +311,7 @@ describe("Select idea", () => {
     expect(screen.getByText("Why home insurance keeps rising")).toBeInTheDocument();
   });
 
-  it("highlights three explainable evidence-backed picks while retaining every idea", async () => {
+  it("keeps legacy readiness explainable without manufacturing top market recommendations", async () => {
     const scored = ideas.map((idea, index) => index < 4 ? { ...idea,
       opportunityScore: [78, 70, 60, 55][index], scoreVersion: "evidence-readiness-v1",
       scoreInputs: { capturedPassages: 2, sourcePoints: 40, audienceDemand: "unknown" },
@@ -323,15 +323,16 @@ describe("Select idea", () => {
     });
     render(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText("Original housing question 7")).toBeInTheDocument();
-    expect(screen.getAllByText("Top 3 recommendation")).toHaveLength(3);
+    expect(screen.queryByText("Top 3 recommendation")).not.toBeInTheDocument();
+    expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
     expect(screen.getByText("78/100")).toBeInTheDocument();
     expect(screen.getAllByText("Not measured")).toHaveLength(3);
     await userEvent.setup().click(screen.getAllByRole("button", { name: "Explain this score" })[0]);
     expect(screen.getByText(/Audience demand: unknown/)).toBeInTheDocument();
     const rejected = screen.getByText("Why home insurance keeps rising").closest("article")!;
     await userEvent.setup().click(within(rejected).getByRole("button", { name: "Dismiss" }));
-    await waitFor(() => expect(within(rejected).queryByText("Top 3 recommendation")).not.toBeInTheDocument());
-    expect(screen.getAllByText("Top 3 recommendation")).toHaveLength(3);
+    await waitFor(() => expect(within(rejected).getByText("dismissed")).toBeInTheDocument());
+    expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
   });
 
   it("explains the source-based score in Japanese with an accessible disclosure", async () => {

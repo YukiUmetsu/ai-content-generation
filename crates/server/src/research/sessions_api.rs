@@ -6,6 +6,7 @@ use axum::{Json,Router};
 use serde::{Deserialize,Serialize};
 
 use super::{discovery_api::{editor_header,map_error},sessions_store};
+use super::{idea_market::{self,IdeaMarketError},youtube_api::YoutubeClient};
 use super::market_api::epoch_now;
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -18,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/projects/{id}/sessions/{session_id}/runs",get(runs))
         .route("/projects/{id}/sessions/{session_id}/ideas",get(ideas))
         .route("/projects/{id}/sessions/{session_id}/ideas/{idea_id}/decision",post(decide))
+        .route("/projects/{id}/sessions/{session_id}/ideas/{idea_id}/market",post(measure_market))
 }
 
 #[derive(Deserialize)]
@@ -96,4 +98,37 @@ async fn decide(Path((id,session_id,idea_id)):Path<(String,String,String)>,State
     let db=state.connect().map_err(|_|ApiError::Internal{message:"Discovery DB unavailable".into()})?;
     sessions_store::decide_idea(&db,&id,&session_id,&idea_id,&body.decision,body.reason.as_deref(),epoch_now()).map_err(map_error)?;
     Ok(Json(serde_json::json!({"saved":true})))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MeasureMarket { query:String, format:String }
+
+fn market_error(error:IdeaMarketError)->ApiError {
+    match error {
+        IdeaMarketError::Invalid=>ApiError::InvalidDocument{message:error.to_string()},
+        IdeaMarketError::NotFound=>ApiError::NotFound{message:error.to_string()},
+        IdeaMarketError::Busy=>ApiError::Conflict{message:error.to_string()},
+        IdeaMarketError::Budget=>ApiError::RateLimited{message:error.to_string()},
+        _=>ApiError::Internal{message:"Cannot reserve local idea measurement".into()},
+    }
+}
+
+/// Explicit local action only. Never expose the configured provider key to JS.
+async fn measure_market(
+    Path((id,session_id,idea_id)):Path<(String,String,String)>,State(state):State<AppState>,
+    headers:HeaderMap,Json(body):Json<MeasureMarket>,
+) -> Result<(axum::http::StatusCode,Json<serde_json::Value>),ApiError> {
+    editor_header(&headers)?;
+    let mut db=state.connect().map_err(|_|ApiError::Internal{message:"Discovery DB unavailable".into()})?;
+    let key=state.credentials().youtube_key().map_err(|_|ApiError::Unavailable{
+        message:"Configure a YouTube API key in local Settings before measuring ideas".into(),
+    })?;
+    let client=YoutubeClient::from_key(key).map_err(|_|ApiError::Unavailable{
+        message:"A YouTube Data API key is required to collect comparison data".into(),
+    })?;
+    let run=idea_market::claim_assessment(&mut db,&id,&session_id,&idea_id,&body.query,&body.format,epoch_now())
+        .map_err(market_error)?;
+    tokio::spawn(idea_market::run_assessment(state,run.clone(),client));
+    Ok((axum::http::StatusCode::ACCEPTED,Json(serde_json::json!({"runId":run.id,"state":"running"}))))
 }

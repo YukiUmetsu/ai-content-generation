@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDiscoverySession, createProduction, getProduction,
   listDiscoverySessions, listSessionIdeas, decideSessionIdea, discoverSession,
+  collectIdeaMarketEvidence,
 } from "./discovery-sessions";
 
 afterEach(() => vi.restoreAllMocks());
@@ -45,6 +46,51 @@ describe("discovery session API", () => {
     });
     await decideSessionIdea("brand-1", "session-a", "idea-1", "saved");
     expect(calls[1]).toContain("/projects/brand-1/sessions/session-a/ideas/idea-1/decision");
+  });
+
+  it("parses dated per-idea observations without replacing editorial readiness", async () => {
+    const assessment = { runId: "market-1", state: "succeeded", query: "roof replacement cost",
+      format: "long", observedAt: 1760000000, searchedVideos: 25, sampleSize: 11,
+      distinctChannels: 4, medianViews: 12400, p75Views: 28000, medianViewsPerDay: 32.5,
+      recentUploads90d: 3, comparisonScore: null, comparisonCohortSize: 2, errorCode: null,
+      videos: [{ videoId: "abc123", title: "Roof economics", channelTitle: "Builder",
+        viewCount: 12400, publishedAt: "2025-01-01T00:00:00Z", sourceUrl: "https://www.youtube.com/watch?v=abc123" }] };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ideas: [{
+      id: "idea-1", sessionId: "session-a", runId: "run-a", title: "Roof cost", opportunityScore: 62,
+      marketAssessment: assessment,
+    }] }), { status: 200 }));
+    const idea = (await listSessionIdeas("brand-1", "session-a"))[0];
+    expect(idea.opportunityScore).toBe(62);
+    expect(idea.marketAssessment).toEqual(assessment);
+    expect(idea.marketAssessment?.comparisonScore).toBeNull();
+  });
+
+  it("explicit collection sends only the search phrase and video format with a scoped local header", async () => {
+    const requests: {url:string; method:string | undefined; headers: Headers; body: unknown}[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {
+      requests.push({url:String(input), method:options?.method,
+        headers:new Headers(options?.headers), body:JSON.parse(String(options?.body))});
+      return new Response(JSON.stringify({ runId: "market-1", state: "running" }), { status: 202 });
+    });
+    await collectIdeaMarketEvidence("project 1", "session-1", "idea-1", {
+      query: "  roof replacement cost  ", format: "shorts",
+    });
+    expect(requests[0].url).toBe("/api/research/discovery/projects/project%201/sessions/session-1/ideas/idea-1/market");
+    expect(requests[0].method).toBe("POST");
+    expect(requests[0].headers.get("X-Contentgen-Discovery")).toBe("local-only");
+    expect(requests[0].body).toEqual({ query: "roof replacement cost", format: "shorts" });
+  });
+
+  it("rejects a search phrase that exceeds the local collector limit without making a request", async () => {
+    const fetcher = vi.spyOn(globalThis, "fetch");
+    await expect(collectIdeaMarketEvidence("project-1","session-1","idea-1",{
+      query:"x".repeat(121),format:"long",
+    })).rejects.toThrow(/120/);
+    expect(fetcher).not.toHaveBeenCalled();
+    await expect(collectIdeaMarketEvidence("project-1","session-1","idea-1",{
+      query:"valid phrase\ninvalid",format:"long",
+    })).rejects.toThrow(/control characters/);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("starts the real director worker with session ownership instead of creating an unprocessed Rust run", async () => {

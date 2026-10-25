@@ -113,7 +113,8 @@ async fn status(State(state): State<AppState>) -> Result<Json<MarketStatus>, Api
     let db = state.connect().map_err(db_error)?;
     let running: i64 = db
         .query_row(
-            "SELECT COUNT(*) FROM market_runs WHERE state='running'",
+            "SELECT (SELECT COUNT(*) FROM market_runs WHERE state='running') +
+                    (SELECT COUNT(*) FROM idea_market_runs WHERE state='running')",
             [],
             |r| r.get(0),
         )

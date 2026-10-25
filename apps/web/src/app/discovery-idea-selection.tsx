@@ -3,9 +3,12 @@ import { ArrowUpDown, CheckCircle2, ExternalLink, FileSearch, Search } from "luc
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/features/registry";
 import {
-  decideSessionIdea, getDiscoverySession, listSessionIdeas,
+  collectIdeaMarketEvidence, decideSessionIdea, getDiscoverySession, listSessionIdeas,
   type DiscoveryIdeaBrief, type DiscoveryPlatform, type DiscoverySessionIdea,
 } from "@/lib/api/discovery-sessions";
+import { loadMarketStatus, type MarketStatus } from "@/lib/api/market";
+import { IdeaMarketEvidence } from "./idea-market-evidence";
+import { usableComparison, type IdeaVideoFormat } from "./idea-market-comparison";
 
 const tr = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : en;
 const fieldClass = "mt-1.5 w-full rounded-control border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -14,7 +17,7 @@ const platforms: Record<DiscoveryPlatform, string> = {
   facebook: "Facebook", blog: "Blog / Website", website: "Blog / Website",
 };
 type Filter = "all" | "saved" | "dismissed" | "selected";
-type Sort = "opportunity" | "sources" | "title";
+type Sort = "market" | "opportunity" | "sources" | "title";
 
 function safeSourceUrl(value: string): string | null {
   try { const parsed = new URL(value); return ["https:", "http:"].includes(parsed.protocol) ? parsed.toString() : null; }
@@ -60,7 +63,12 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [sessionPlatforms, setSessionPlatforms] = useState<DiscoveryPlatform[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("opportunity");
+  const [sort, setSort] = useState<Sort>("market");
+  const [compareFormat, setCompareFormat] = useState<IdeaVideoFormat>("long");
+  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
+  const [marketStatusError, setMarketStatusError] = useState<string | null>(null);
+  const [collectingId, setCollectingId] = useState<string | null>(null);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [brief, setBrief] = useState<DiscoveryIdeaBrief | null>(null);
   const [keywordDraft, setKeywordDraft] = useState("");
@@ -85,6 +93,64 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     return () => { alive = false; };
   }, [projectId, sessionId]);
 
+  useEffect(() => {
+    let alive = true;
+    void loadMarketStatus().then(result => { if (alive) { setMarketStatus(result); setMarketStatusError(null); } })
+      .catch(failure => { if (alive) setMarketStatusError(failure instanceof Error ? failure.message : "Unavailable"); });
+    return () => { alive = false; };
+  }, [projectId, sessionId]);
+
+  // A saved 'running' assessment reactivates polling on reload. No provider calls happen here.
+  const hasPendingMarket = ideas.some(idea => idea.marketAssessment?.state === "running");
+  useEffect(() => {
+    if ((!hasPendingMarket && !collectingId) || pollTimedOut) return;
+    let alive = true;
+    let inFlight = false;
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      if (inFlight) return;
+      if (++attempts > 30) { window.clearInterval(timer); setPollTimedOut(true); return; }
+      inFlight = true;
+      void listSessionIdeas(projectId, sessionId).then(latest => {
+        if (!alive) return;
+        setIdeas(latest);
+        if (collectingId && latest.some(idea => idea.id === collectingId &&
+          idea.marketAssessment && idea.marketAssessment.state !== "running")) setCollectingId(null);
+        if (!latest.some(idea => idea.marketAssessment?.state === "running"))
+          void loadMarketStatus().then(status => {
+            if (alive) { setMarketStatus(status); setMarketStatusError(null); }
+          }).catch(() => {});
+      }).catch(failure => {
+        if (alive) setError(failure instanceof Error ? failure.message : "Could not refresh YouTube observations.");
+      }).finally(() => { inFlight = false; });
+    }, 2000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [projectId, sessionId, hasPendingMarket, collectingId, pollTimedOut]);
+
+  const collect = async (ideaId: string, query: string, format: IdeaVideoFormat) => {
+    setCollectingId(ideaId); setPollTimedOut(false); setError(null);
+    try {
+      await collectIdeaMarketEvidence(projectId, sessionId, ideaId, { query, format });
+      const latest = await listSessionIdeas(projectId, sessionId);
+      setIdeas(latest);
+      if (latest.some(idea => idea.id === ideaId && idea.marketAssessment &&
+        idea.marketAssessment.state !== "running")) setCollectingId(null);
+      void loadMarketStatus().then(setMarketStatus).catch(() => {});
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not collect YouTube evidence.");
+      setCollectingId(null);
+    }
+  };
+
+  const refreshMarket = async () => {
+    setError(null); setPollTimedOut(false);
+    try {
+      const [latest, status] = await Promise.all([listSessionIdeas(projectId, sessionId), loadMarketStatus()]);
+      setIdeas(latest); setMarketStatus(status); setMarketStatusError(null);
+    }
+    catch (failure) { setError(failure instanceof Error ? failure.message : "Could not refresh YouTube evidence."); }
+  };
+
   const visible = useMemo(() => {
     const term = search.toLocaleLowerCase().trim();
     const matched = ideas.filter(idea => (filter === "all" || (idea.decision ?? "") === filter) &&
@@ -93,6 +159,14 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     return matched.sort((a, b) => {
       if (sort === "title") return a.title.localeCompare(b.title);
       if (sort === "sources") return b.sources.length - a.sources.length || a.rank - b.rank;
+      if (sort === "market") {
+        const aMarket = usableComparison(a.marketAssessment, compareFormat);
+        const bMarket = usableComparison(b.marketAssessment, compareFormat);
+        if (aMarket !== null && bMarket !== null) return bMarket - aMarket || a.rank - b.rank;
+        if (aMarket !== null) return -1;
+        if (bMarket !== null) return 1;
+        return a.rank - b.rank;
+      }
       // Numeric heuristic exists only when the backend has measured enough inputs;
       // otherwise show and sort by the source-backed server rank, not a fake zero.
       if (a.opportunityScore !== null && b.opportunityScore !== null)
@@ -101,14 +175,17 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       if (b.opportunityScore !== null) return 1;
       return a.rank - b.rank;
     });
-  }, [ideas, search, filter, sort]);
+  }, [ideas, search, filter, sort, compareFormat]);
 
-  // The shortlist is based on the full saved session, not the current search
-  // or sort filter; otherwise a filtered-out idea would change the top picks.
-  const topPicks = useMemo(() => new Set(ideas.filter(idea => idea.opportunityScore !== null &&
-    (idea.decision === null || idea.decision === "saved"))
-    .sort((a, b) => (b.opportunityScore ?? 0) - (a.opportunityScore ?? 0) || a.rank - b.rank)
-    .slice(0, 3).map(idea => idea.id)), [ideas]);
+  // Only a unique leader of an adequately sampled same-format cohort is marked;
+  // ties and editorial readiness never manufacture a top-three recommendation.
+  const measuredLeader = useMemo(() => {
+    const eligible = ideas.filter(idea => idea.decision === null || idea.decision === "saved")
+      .map(idea => ({ id: idea.id, score: usableComparison(idea.marketAssessment, compareFormat) }))
+      .filter((entry): entry is { id: string; score: number } => entry.score !== null)
+      .sort((a, b) => b.score - a.score);
+    return eligible.length >= 3 && eligible[0].score > eligible[1].score ? eligible[0].id : null;
+  }, [ideas, compareFormat]);
 
   const decide = async (idea: DiscoverySessionIdea, decision: "saved" | "dismissed") => {
     setBusy(true); setError(null); setNotice("");
@@ -165,13 +242,31 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       <label className="min-w-44 flex-1 text-xs font-medium text-muted-foreground">{tr(locale, "Sort ideas", "並べ替え")}
         <span className="relative block"><ArrowUpDown className="pointer-events-none absolute bottom-3 left-3 size-4" aria-hidden="true" />
           <select className={`${fieldClass} pl-10`} value={sort} onChange={event => setSort(event.target.value as Sort)}>
+            <option value="market">{tr(locale, "Measured comparison / rank", "実測比較・順位")}</option>
             <option value="opportunity">{tr(locale, "Research readiness / rank", "調査準備度・順位")}</option>
             <option value="sources">{tr(locale, "Most source references", "参照元の数")}</option>
             <option value="title">{tr(locale, "Title A–Z", "タイトル順")}</option>
           </select>
         </span>
       </label>
+      <label className="min-w-36 flex-1 text-xs font-medium text-muted-foreground">{tr(locale, "Compare format", "比較する動画形式")}
+        <select className={fieldClass} value={compareFormat} onChange={event => setCompareFormat(event.target.value as IdeaVideoFormat)}>
+          <option value="long">{tr(locale, "Long videos", "長尺動画")}</option>
+          <option value="shorts">{tr(locale, "Shorts", "ショート")}</option>
+        </select>
+      </label>
     </div>
+
+    {ideas.length > 0 && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <p>{marketStatus?.apiKeyConfigured ? tr(locale,
+        `${Math.max(0, marketStatus.searchCallLimit - marketStatus.searchCallsLast24h)} shared YouTube searches left today`,
+        `今日の YouTube 検索残数: ${Math.max(0, marketStatus.searchCallLimit - marketStatus.searchCallsLast24h)} 件`)
+        : tr(locale, "YouTube collection is opt-in", "YouTube データの収集は任意です")}</p>
+      <button type="button" onClick={() => void refreshMarket()}
+        className="rounded-lg px-2 py-1 text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {tr(locale, "Refresh observations", "観測データを更新")}</button>
+      {pollTimedOut && <span role="status">{tr(locale, "Automatic checks paused; refresh to resume.", "自動確認を一時停止しました。更新して再開できます。")}</span>}
+    </div>}
 
     {loading && <p role="status" className="rounded-control border border-border bg-surface p-5 text-sm text-muted-foreground">
       {tr(locale, "Loading saved ideas and research evidence…", "保存済みアイデアを読み込み中…")}</p>}
@@ -184,24 +279,22 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     </div>}
     {!loading && ideas.length > 0 && <p className="text-xs text-muted-foreground" role="status">{tr(locale,
       `${visible.length} of ${ideas.length} saved ideas`, `${ideas.length} 件中 ${visible.length} 件表示`)}</p>}
-    <div className="space-y-3">{visible.map(idea => <article key={idea.id} className={`rounded-control border bg-surface p-5 shadow-sm ${topPicks.has(idea.id) ? "border-primary/50" : "border-border"}`}>
+    <div className="space-y-3">{visible.map(idea => <article key={idea.id} className={`rounded-[1.2rem] border bg-surface p-4 shadow-sm sm:p-5 ${measuredLeader === idea.id ? "border-primary/45" : "border-border"}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-[2]">
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {tr(locale, "Idea", "アイデア")} {idea.rank > 0 ? `#${idea.rank}` : ""}
-            {topPicks.has(idea.id) && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-primary normal-case tracking-normal">
-              {tr(locale, "Top 3 recommendation", "おすすめ上位3件")}</span>}
+            {measuredLeader === idea.id && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-primary normal-case tracking-normal">
+              {tr(locale, "Leads measured cohort", "実測比較で首位")}</span>}
             {idea.decision && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 normal-case tracking-normal">{idea.decision}</span>}
           </p>
           <h3 className="font-serif text-xl font-semibold leading-snug">{idea.title}</h3>
           {idea.hook && <p className="mt-2 text-sm font-medium">{idea.hook}</p>}
           {idea.premise && <p className="mt-2 text-sm leading-6 text-muted-foreground">{idea.premise}</p>}
         </div>
-        <div className="min-w-[140px] rounded-control bg-muted/50 p-3 text-right">
+        <div className="min-w-[120px] rounded-control bg-muted/40 px-3 py-2 text-right">
           <p className="text-xs text-muted-foreground">{tr(locale, "Research readiness", "調査準備度")}</p>
-          <p className="mt-1 text-base font-semibold">{opportunityText(idea, locale)}</p>
-          {idea.opportunityScore !== null && <p className="mt-1 text-[11px] text-muted-foreground">{tr(locale,
-            "Internal heuristic · not audience demand", "内部推定・視聴需要の測定ではありません")}</p>}
+          <p className="mt-1 text-sm font-semibold tabular-nums">{opportunityText(idea, locale)}</p>
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
@@ -223,6 +316,9 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
                 : value === null ? tr(locale, "unknown", "不明") : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>)}
         </div>}
       </div>}
+      <IdeaMarketEvidence key={idea.id} ideaId={idea.id} title={idea.title} locale={locale} format={compareFormat}
+        assessment={idea.marketAssessment} status={marketStatus} statusError={marketStatusError}
+        collecting={collectingId === idea.id} onCollect={collect} />
       <div className="mt-4 rounded-control border border-border-subtle bg-surface-subtle p-3">
         <p className="text-xs font-semibold"><FileSearch className="mr-1 inline size-3.5" aria-hidden="true" />
           {tr(locale, "Sources and provenance", "出典と取得記録")} · {idea.sources.length}</p>

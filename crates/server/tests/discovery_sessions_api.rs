@@ -83,6 +83,13 @@ async fn session_and_production_api_preserve_scope_and_return_expected_shapes() 
     assert_eq!(idea["evidence"][0]["quote"],"Verified illustrative housing expenses");
     assert_eq!(idea["evidence"][0]["reviewStatus"],"unverified");
     let idea_id=idea["id"].as_str().unwrap();
+    let market_path=format!("{own}/ideas/{idea_id}/market");
+    let market_request=json!({"query":"hidden homeownership costs","format":"long"});
+    assert_eq!(call(&router,Method::POST,&market_path,market_request.clone(),false).await.0,
+        StatusCode::FORBIDDEN,"an unrelated web page cannot spend YouTube quota");
+    assert_eq!(call(&router,Method::POST,&market_path,market_request,true).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,"without a configured key the backend must not collect");
+    assert_eq!(conn.query_row("SELECT COUNT(*) FROM market_search_budget",[],|r|r.get::<_,i64>(0)).unwrap(),0);
     let make=json!({"projectId":"brand-one","sessionId":id,"ideaId":idea_id,
         "brief":{"topic":"Homeownership expenses","title":"A better title",
             "angle":"The hidden costs","description":"Costs of ownership",

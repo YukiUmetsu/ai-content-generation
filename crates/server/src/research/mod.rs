@@ -21,6 +21,7 @@ pub mod market_api;
 pub mod market_store;
 pub mod market_worker;
 pub mod youtube_api;
+pub mod idea_market;
 
 pub fn router() -> Router<AppState> {
     Router::new()
