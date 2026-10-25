@@ -70,6 +70,15 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("rejects a saved project without any editable shots instead of crashing the scene editor",async()=>{
+    const emptyBundle={...bundle,plan:{...plan,shots:[]}};
+    render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle:emptyBundle})],"empty-project.json",{type:"application/json"})]}});
+    expect(await screen.findByText("Saved project has no editable shots.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox",{name:"Visible scene layout"})).not.toBeInTheDocument();
+  });
+
   it("loads two matched files, generates 3 local alternatives and independently selects script/visual/SFX",async()=>{
     const calls:Array<{url:string;body:Record<string,unknown>}>= [];
     const api=vi.spyOn(globalThis,"fetch").mockImplementation(async (url,opts)=>{

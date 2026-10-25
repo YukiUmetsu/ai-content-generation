@@ -176,6 +176,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       if(input.dossier?.kind!=="research-dossier"||input.bundle?.kind!=="preproduction-bundle"||
         input.dossier.id!==input.bundle.researchId)
         throw Error("Expected a matching ContentGen saved project.");
+      if(!Array.isArray(input.bundle.plan?.shots)||input.bundle.plan.shots.length===0)
+        throw Error("Saved project has no editable shots.");
       acceptProject(input.dossier,input.bundle);
     }catch(error){setStatus(error instanceof Error?error.message:"Project import failed.");}
   }
@@ -299,7 +301,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     setStatus("Unsaved scene edits discarded. The saved storyboard is unchanged.");
   }
   const nextStage=nextDirectorStage(stage) as DirectorStage|null;
-  const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId;
+  const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId&&!!shot;
   const mergedImpact={
     speech:new Set(revisions.flatMap(x=>x.impacts.speechRegenerate)),
     visuals:new Set(revisions.flatMap(x=>x.impacts.visualRerender)),
@@ -424,7 +426,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
               <div className="flex flex-col gap-3">
                 <label className={header}>Visible scene layout
                   <select className={field+" mt-2"} aria-label="Visible scene layout" value={draft.family}
-                    disabled={busy||!!shot.sceneRecipe||shot.id===bundle.plan.shots[0].id||shot.id===bundle.plan.shots.at(-1)?.id}
+                    disabled={busy||!shot||!!shot.sceneRecipe||shot.id===bundle.plan.shots[0]?.id||shot.id===bundle.plan.shots.at(-1)?.id}
                     onChange={e=>setDraft({...draft,family:e.target.value})}>
                     <option value="question">Question · connected stages</option>
                     <option value="process">Process · connected stages</option>

@@ -18,6 +18,16 @@ async function previewView(spy: ReturnType<typeof vi.fn>) {
 }
 
 describe("StoryboardPlanner", () => {
+  it("shows essential scene fields first and keeps specialist controls on demand",async()=>{
+    const user=userEvent.setup();
+    render(<StoryboardPlanner locale="en"/>);
+    expect(screen.getByLabelText("Narration")).toBeVisible();
+    expect(screen.getByLabelText("On-screen text")).toBeVisible();
+    expect(screen.queryByLabelText("Camera / focus intent")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Advanced scene controls"}));
+    expect(screen.getByLabelText("Camera / focus intent")).toBeVisible();
+  });
+
   it("loads the HVAC example with a coherent sequence and runtime", () => {
     const spy = vi.fn();
     render(<StoryboardPlanner locale="en" onPreviewChange={spy} />);
