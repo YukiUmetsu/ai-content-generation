@@ -27,7 +27,7 @@ const assessment = (format: "long" | "shorts", comparisonScore: number | null): 
     sourceUrl: "https://www.youtube.com/watch?v=videoABC123" }],
 });
 
-function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boolean; afterCollect?: DiscoverySessionIdea[] } = {}) {
+function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boolean; afterCollect?: DiscoverySessionIdea[]; lastRun?: Record<string, unknown> } = {}) {
   const posts: Array<{query:string;format:string}> = [];
   let collected = false;
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
@@ -41,13 +41,27 @@ function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boo
     }
     if (url.endsWith("/ideas")) return new Response(JSON.stringify({ideas: collected && opts.afterCollect
       ? opts.afterCollect : initialIdeas}), {status:200});
-    if (url.endsWith("/session-1")) return new Response(JSON.stringify(session),{status:200});
+    if (url.endsWith("/session-1")) return new Response(JSON.stringify({...session, ...(opts.lastRun ? {lastRun:opts.lastRun} : {})}),{status:200});
     throw Error(`Unexpected route: ${url}`);
   });
   return {posts, fetcher};
 }
 
 describe("per-idea YouTube market evidence", () => {
+  it("shows the saved partial market collection summary even when Discovery completed", async () => {
+    serve([idea("idea-1")], {lastRun:{
+      id:"discover_"+"a".repeat(24), projectId:"project-1", inputRevision:"revision",
+      status:"completed", stage:"completed", createdAt:1760000000, updatedAt:1760000000,
+      errorCode:null, candidates:[],
+      providerHealth:{market:{state:"partial",
+        youtube:{succeeded:0,unavailable:1}, googleTrends:{succeeded:0,unavailable:1}}},
+    }});
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    expect(await screen.findByText(/Discovery market collection: Partial/)).toBeInTheDocument();
+    expect(screen.getByText(/YouTube: 0 succeeded, 1 unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Google Trends: 0 succeeded, 1 unavailable/)).toBeInTheDocument();
+  });
+
   it("shows readiness and why older ideas have no automatic market observations", async () => {
     serve([idea("idea-1")], {keyConfigured:false});
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
