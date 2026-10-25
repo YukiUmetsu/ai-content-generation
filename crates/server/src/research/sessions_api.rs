@@ -101,8 +101,10 @@ async fn backfill_market(
     let mut db = state.connect().map_err(|_| ApiError::Internal {
         message: "Discovery DB unavailable".into(),
     })?;
+    let youtube_ready = state.credentials().youtube_key().ok()
+        .and_then(|key| YoutubeClient::from_key(key).ok()).is_some();
     let queued = discovery_store::queue_missing_market_runs(
-        &mut db, Some((&id, &session_id)), epoch_now(),
+        &mut db, Some((&id, &session_id)), epoch_now(), youtube_ready,
     ).map_err(map_error)?;
     let active: i64 = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM discovery_runs
@@ -113,11 +115,22 @@ async fn backfill_market(
     ).map_err(|_| ApiError::Internal {
         message: "Cannot read Discovery market job status".into(),
     })?;
+    let pending: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM discovery_runs
+         WHERE project_id=?1 AND session_id=?2 AND status='running'
+           AND stage='measure_market')",
+        rusqlite::params![id, session_id],
+        |row| row.get(0),
+    ).map_err(|_| ApiError::Internal {
+        message: "Cannot read pending Discovery market jobs".into(),
+    })?;
     let status = if !queued.is_empty() { "queued" }
         else if active != 0 { "running" }
         else { "no_pending" };
     drop(db);
-    if !queued.is_empty() {
+    // A job may already be queued after restart or another browser action.
+    // Do not rely on this request having created it to wake the worker.
+    if !queued.is_empty() || pending != 0 {
         tokio::spawn(super::discovery_market_worker::process_pending(state));
     }
     Ok((axum::http::StatusCode::ACCEPTED,
