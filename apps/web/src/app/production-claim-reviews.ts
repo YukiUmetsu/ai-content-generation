@@ -6,7 +6,7 @@ import type { ClaimEvidenceIssue } from "./claim-evidence";
 import type { ResearchDraftResult } from "./researched-storyboard";
 
 const PREFIX="contentgen:claim-reviews:v1:";
-const PROJECT_ID=/^[a-z0-9][a-z0-9-]{1,79}$/iu;
+const PROJECT_ID=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
 export interface ClaimReviewReceipt { fingerprint:string; reviewedAt:string }
 export type ClaimReviewReceipts=Record<string,ClaimReviewReceipt>;
 

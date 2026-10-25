@@ -1,5 +1,6 @@
-/** Pure stage derivation for the guided Production workspace. Status is never a UI progress guess. */
-export type ProductionStageId = "brief" | "research" | "storyboard" | "visuals" | "audio" | "export";
+/** Persisted artifact state—not a decorative completion percentage—drives the eight-stage navigator. */
+export const PRODUCTION_STAGE_ORDER = ["setup", "discover", "select", "script", "storyboard", "produce", "optimize", "export"] as const;
+export type ProductionStageId = typeof PRODUCTION_STAGE_ORDER[number];
 export type ProductionStageStatus = "not_started" | "running" | "complete" | "needs_review" | "failed" | "stale";
 export interface ProductionStage {
   id: ProductionStageId;
@@ -7,67 +8,88 @@ export interface ProductionStage {
   reason: string;
   primaryAction: string;
 }
+type Job = {
+  status: "queued" | "running" | "paused" | "failed" | "cancelled" | "completed";
+  stage: string;
+  artifactId?: string;
+};
 export interface ProductionProgressInput {
-  briefReady: boolean;
-  researchJob?: {
-    status: "queued" | "running" | "paused" | "failed" | "cancelled" | "completed";
-    stage: string;
-    artifactId?: string;
-  } | null;
-  researchArtifactId?: string | null;
+  setupReady?: boolean;
+  sessionId?: string | null;
+  ideaId?: string | null;
+  scriptReady?: boolean;
+  scriptStale?: boolean;
+  discoveryJob?: Job | null;
+  discoveryArtifactId?: string | null;
+  discoveryReady?: boolean;
   storyboardReady?: boolean;
+  storyboardScriptStale?: boolean;
   storyboardResearchArtifactId?: string | null;
   missingEvidenceClaims?: number;
   unreviewedClaims?: number;
   storyboardEditorialWarnings?: number;
   visualReady?: boolean;
   audioReady?: boolean;
+  optimizationReady?: boolean;
   exportReady?: boolean;
+  /** Legacy names remain accepted while saved project-level research is migrated. */
+  briefReady?: boolean;
+  researchJob?: Job | null;
+  researchArtifactId?: string | null;
 }
-const stage=(id:ProductionStageId,status:ProductionStageStatus,reason:string,primaryAction:string):ProductionStage=>
+const stage = (id:ProductionStageId,status:ProductionStageStatus,reason:string,primaryAction:string):ProductionStage =>
   ({id,status,reason,primaryAction});
 
 export function getProductionStages(input:ProductionProgressInput): ProductionStage[] {
-  const research=input.researchJob;
-  const artifactId=research?.artifactId??input.researchArtifactId;
-  const researchComplete=Boolean(artifactId) && (!research || research.status==="completed");
-  const researchStatus:ProductionStageStatus = research?.status==="running" || research?.status==="queued"?"running":
-    research?.status==="paused" && research.stage==="evidence-repair"?"needs_review":
-    research?.status==="failed" || research?.status==="paused" || research?.status==="cancelled"?"failed":
-      researchComplete?"complete":"not_started";
-  const stale=Boolean(input.storyboardReady && input.storyboardResearchArtifactId &&
-    artifactId && input.storyboardResearchArtifactId!==artifactId);
+  const job=input.discoveryJob??input.researchJob;
+  const evidenceId=job?.artifactId??input.discoveryArtifactId??input.researchArtifactId;
+  const evidenceComplete=(Boolean(evidenceId)&&(!job||job.status==="completed"))||
+    Boolean(input.discoveryReady||input.ideaId);
+  const discoverStatus:ProductionStageStatus = job?.status==="running"||job?.status==="queued"?"running":
+    job?.status==="paused"&&job.stage==="evidence-repair"?"needs_review":
+    job?.status==="failed"||job?.status==="paused"||job?.status==="cancelled"?"failed":
+    evidenceComplete?"complete":"not_started";
+  const stale=Boolean(input.storyboardScriptStale || input.scriptStale ||
+    (input.storyboardReady&&input.storyboardResearchArtifactId&&evidenceId&&
+    input.storyboardResearchArtifactId!==evidenceId));
   const missing=input.missingEvidenceClaims??0;
   const reviews=input.unreviewedClaims??0;
-  const editorial=input.storyboardEditorialWarnings??0;
-  const storyboardStatus:ProductionStageStatus = stale?"stale":!input.storyboardReady?"not_started":
-    missing>0 || reviews>0 || editorial>0?"needs_review":"complete";
-  const downstream=(ready:boolean):ProductionStageStatus=>stale&&ready?"stale":ready?"complete":"not_started";
-
+  const repeated=input.storyboardEditorialWarnings??0;
+  const boardStatus:ProductionStageStatus=!input.storyboardReady?"not_started":stale?"stale":
+    missing>0||reviews>0||repeated>0?"needs_review":"complete";
+  const downstream=(ready:boolean,hasSavedWork=ready):ProductionStageStatus=>
+    stale&&hasSavedWork?"stale":ready?"complete":"not_started";
   return [
-    stage("brief",input.briefReady?"complete":"not_started",
-      input.briefReady?"Video question saved.":"Start with a clear viewer question.","Create brief"),
-    stage("research",researchStatus,
-      researchStatus==="running"?"Research is progressing through saved stages.":
-        researchStatus==="needs_review"?"Captured source links need editorial review or a fresh capture.":
-        researchStatus==="failed"?"Saved research needs attention or retry.":
-          researchComplete?"Captured research saved.":"Collect and assess captured sources.",
-      researchStatus==="needs_review"?"Review source links":researchStatus==="failed"?"Retry research":"Start research"),
-    stage("storyboard",storyboardStatus,
-      stale?"Research changed; review the existing storyboard before replacing anything.":
-        missing>0?`${missing} claim${missing===1?"":"s"} lack resolved source evidence.`:
-          reviews>0?`${reviews} sourced claim${reviews===1?"":"s"} need factual review.`:
-            editorial>0?`${editorial} scene${editorial===1?"":"s"} may repeat earlier information.`:
-            input.storyboardReady?"Editable storyboard saved.":"Turn research into teachable visual beats.",
-      input.storyboardReady?"Review storyboard":"Create editable storyboard"),
-    stage("visuals",downstream(Boolean(input.visualReady)),
-      stale&&input.visualReady?"Existing visuals need review against newer research.":
-        input.visualReady?"Visual plan saved.":"Plan on-screen actions and motion.","Plan visuals"),
-    stage("audio",downstream(Boolean(input.audioReady)),
-      stale&&input.audioReady?"Existing audio needs review against newer research.":
-        input.audioReady?"Narration audio saved.":"Generate or edit narration.","Create audio"),
+    stage("setup",input.setupReady||input.briefReady?"complete":"not_started",
+      input.setupReady||input.briefReady?"Brand and destinations selected.":"Choose a project and at least one platform.","Choose project"),
+    stage("discover",discoverStatus,
+      discoverStatus==="running"?"Source and opportunity collection is running.":
+      discoverStatus==="needs_review"?"Captured sources require review.":
+      discoverStatus==="failed"?"The saved discovery job can be retried.":
+      evidenceComplete?"A captured research snapshot is available.":
+      input.sessionId?"This session is ready to discover ideas.":"Create or resume a discovery session.",
+      discoverStatus==="needs_review"?"Review source links":discoverStatus==="failed"?"Retry discovery":"Discover ideas"),
+    stage("select",input.ideaId?"complete":"not_started",
+      input.ideaId?"An idea has been selected for this production.":"Review saved opportunities and select one idea.","Select an idea"),
+    stage("script",input.scriptStale?"stale":input.scriptReady?"complete":"not_started",
+      input.scriptStale?"Research or creative inputs changed. Reapprove the updated script.":
+      input.scriptReady?"The script has an approved revision.":"Review the AI-written script and its evidence.","Review script"),
+    stage("storyboard",boardStatus,
+      stale?"Research changed. Review the previous storyboard before rebuilding.":
+      missing>0?`${missing} claims lack resolved source evidence.`:
+      reviews>0?`${reviews} claims need factual review.`:
+      repeated>0?`${repeated} scenes may repeat earlier information.`:
+      input.storyboardReady?"An editable storyboard is saved.":"Plan visuals from the approved script.",
+      input.storyboardReady?"Review storyboard":"Create storyboard"),
+    stage("produce",downstream(Boolean(input.visualReady&&input.audioReady),Boolean(input.visualReady||input.audioReady)),
+      stale&&(input.visualReady||input.audioReady)?"Existing media may need rebuilding against updated evidence.":
+      input.visualReady&&input.audioReady?"Video and audio artifacts are available.":"Produce and review visuals, narration and sound.","Open producer"),
+    stage("optimize",downstream(Boolean(input.optimizationReady)),
+      stale&&input.optimizationReady?"Upload packages need review after source changes.":
+      input.optimizationReady?"Platform packages approved.":"Generate and review each destination's upload package.","Review packages"),
     stage("export",downstream(Boolean(input.exportReady)),
-      stale&&input.exportReady?"Previous export belongs to an earlier research version.":
-        input.exportReady?"Export artifact saved.":"Review the video and export when ready.","Preview & export"),
+      stale&&input.exportReady?"Previous export belongs to an older research revision.":
+      input.exportReady?"An export artifact is available.":"Review and download platform-ready files.","Preview & export"),
   ];
 }
+

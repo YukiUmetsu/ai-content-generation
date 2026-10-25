@@ -13,6 +13,8 @@ use crate::state::AppState;
 pub mod discovery_api;
 pub mod discovery_projects;
 pub mod discovery_store;
+pub mod sessions_api;
+pub mod sessions_store;
 pub mod evidence_api;
 pub mod graph_store;
 pub mod market_api;

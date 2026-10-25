@@ -33,6 +33,41 @@ test("variants, brief variants and combined research-to-plan resolve their disti
   assert.deepEqual(calls,[["variants","hooks-model"],["brief","hooks-model"],["research","research-model","story","story-model"]]);
 });
 
+test("script section route selects dedicated installed script model and returns a candidate only",async()=>{
+  const chosen=[],supplied={sectionId:"hook",mode:"regenerate",extraInstructions:"Make the first sentence specific"};
+  const result=await post("/script-regenerate-section",supplied,{
+    model:async task=>{chosen.push(task);return {model:"local-script",endpoint:"http://127.0.0.1:11434/v1/chat/completions"};},
+    script:async (input,options)=>{
+      assert.deepEqual(input,supplied);
+      assert.equal(options.modelSettings.model,"local-script");
+      return {narration:"A better hook",claimRefs:[],sourceRefs:[]};
+    },
+  });
+  assert.equal(result.status,200);
+  assert.deepEqual(chosen,["script"]);
+  assert.equal(result.result.narration,"A better hook");
+  assert.equal(result.result.status,"candidate-needs-acceptance");
+});
+
+test("approved script Director handoff compiles locally and enforces the same-origin boundary",async()=>{
+  let called=0;
+  const input={productionId:"production-"+"a".repeat(24),script:{status:"approved"},evidence:[],sources:[]};
+  const compiled={dossier:{kind:"research-dossier"},bundle:{kind:"preproduction-bundle"}};
+  const deps={compileApprovedScript:received=>{called++;assert.deepEqual(received,input);return compiled;},
+    model:async()=>{throw Error("No model should load for an approved script handoff.");}};
+  assert.deepEqual(await post("/compile-approved-script",input,deps),{status:200,result:compiled});
+  assert.equal((await post("/compile-approved-script",{...input,unexpected:"x"},deps)).status,422);
+  assert.equal(called,1);
+  const req=Readable.from([Buffer.from(JSON.stringify(input))]);
+  Object.assign(req,{method:"POST",url:"/compile-approved-script",headers:{host:"127.0.0.1:5173",
+    origin:"https://foreign.example","x-contentgen-director":"local-only"}});
+  let status=0;
+  const res={writeHead(value){status=value;},end(){}};
+  await handleDirectorRequest(req,res,deps);
+  assert.equal(status,403);
+  assert.equal(called,1);
+});
+
 test("search-only Studio API saves and retrieves leads without consulting local models",async()=>{
   const brief={title:"Heat pumps",viewerQuestion:"Why expensive?",audience:"Homeowners",locale:"en-US"};
   const snapshot={artifactId:"search_20261024T015250000Z-aaaaaaaaaaaa",kind:"studio-search-snapshot",
@@ -124,6 +159,18 @@ test("project discovery routes load saved history without starting discovery unt
   assert.equal(cancelled.status,200);
   assert.equal(cancelled.result.status,"cancelled");
   assert.equal(cancels,1);
+});
+
+test("project discovery route preserves session identity for the existing Node discovery worker",async()=>{
+  const payload={projectId:"project-house",projectName:"Home Costs",description:"Household finances",sessionId:"session-abc123"};
+  let forwarded;
+  const result=await post("/project-discovery",payload,{
+    model:async()=>({model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"}),
+    discovery:{create:async(input)=>{forwarded=input;return {id:"discover_"+"a".repeat(24),sessionId:payload.sessionId,status:"queued"};}},
+  });
+  assert.equal(result.status,202);
+  assert.deepEqual(forwarded,payload);
+  assert.equal(result.result.sessionId,payload.sessionId);
 });
 
 test("project discovery forwards an explicitly configured secondary research profile for create and resume",async()=>{
@@ -255,4 +302,5 @@ test("closing a keyword stream aborts its own running generator",async()=>{
   assert.equal(signalSeen.aborted,true);
   assert.equal(wasAborted,true);
 });
+
 

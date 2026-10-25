@@ -1,18 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, Circle, Loader2, Menu, RotateCcw } from "lucide-react";
+import { AlertCircle, Check, Circle, Loader2, Menu, RotateCcw, ArrowRight, ExternalLink } from "lucide-react";
 import type { Locale } from "@/features/registry";
 import type { StudioCatalog } from "./catalog-model";
 import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
+import type { SemanticStoryboard } from "@/features/storyboard-planner/model/types";
 import { repairStoryboardEvidence } from "./storyboard-evidence-repair";
-import { ResearchWorkspace } from "./research-workspace";
 import { inspectClaimEvidence, matchesStoryboardResearch } from "./claim-evidence";
 import { ProductionClaimIssues } from "./production-claim-issues";
 import { createClaimReviewReceipt, isClaimReviewCurrent, loadClaimReviews,
   saveClaimReviews } from "./production-claim-reviews";
-import { getProductionStages, type ProductionStageId, type ProductionStageStatus } from "./production-progress";
+import { getProductionStages, PRODUCTION_STAGE_ORDER, type ProductionStageId, type ProductionStageStatus } from "./production-progress";
 import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
+import { DiscoverySessionWorkspace } from "./discovery-session-workspace";
+import { DiscoveryIdeaSelection } from "./discovery-idea-selection";
+import { createProduction, getDiscoverySession, listProductions, listSessionIdeas, type DiscoverySessionIdea, type DiscoveryIdeaBrief,
+  type DiscoveryProduction, type DiscoveryPlatform } from "@/lib/api/discovery-sessions";
+import { ScriptReviewWorkspace } from "./script-review-workspace";
+import { isScriptContextCurrent, loadScriptDraft, scriptEvidenceFingerprint, type ScriptDraft } from "./script-review-model";
+import { PlatformOptimization, type PlatformOptimizationInput } from "@/features/platform-optimization";
+import { loadPlatformOptimization } from "@/features/platform-optimization/storage";
+import { sourceSignature, type PlatformAsset } from "@/features/platform-optimization/model";
+import { resolveProjectAppearance, snapshotProjectAppearance } from "./project-brand-appearance";
+import { scriptToStoryboard } from "./script-storyboard-handoff";
 
 interface JobState {
   jobId: string;
@@ -25,30 +36,65 @@ interface JobState {
     issues?:{claimId:string;reason:string}[]};
   error?: {message?:string};
 }
+interface MediaSnapshot {
+  productionId:string;
+  status:"loading"|"ready"|"error";
+  assets:PlatformAsset[];
+  error?:string;
+}
 interface Props {
   locale: Locale;
   catalog: StudioCatalog;
   onSelectProject: (projectId:string)=>void;
   onOpenResearch: ()=>void;
-  onOpenStoryboard: ()=>void;
-  onOpenVisuals: (artifactId?:string)=>void;
-  onOpenAudio: (artifactId?:string)=>void;
-  onOpenExport: (artifactId?:string)=>void;
+  onOpenStoryboard: (productionId?:string)=>void;
+  onOpenVisuals: (artifactId?:string,productionId?:string)=>void;
+  onOpenAudio: (artifactId?:string,productionId?:string)=>void;
+  onOpenExport: (artifactId?:string,productionId?:string)=>void;
   onOpenNav: ()=>void;
+  onOpenProjects?: ()=>void;
   onCreateStoryboard: (draft:EditorialDraft,research?:ResearchDraftResult)=>boolean;
   onUseVideo: (idea:{title:string;sourceUrl:string})=>boolean;
 }
 const stageLabels:Record<ProductionStageId,{en:string;ja:string;enDetail:string;jaDetail:string}>={
-  brief:{en:"Brief",ja:"企画",enDetail:"Define the viewer question and what the video will teach.",jaDetail:"視聴者の疑問と動画で伝える内容を決めます。"},
-  research:{en:"Research",ja:"調査",enDetail:"Capture sources, generate teaching units, and check evidence links.",jaDetail:"根拠を収集し、説明構成と出典を確認します。"},
+  setup:{en:"Setup",ja:"準備",enDetail:"Choose your project brand and where this content will be published.",jaDetail:"ブランドと配信先を選びます。"},
+  discover:{en:"Discover",ja:"テーマ発見",enDetail:"Run a saved discovery session and reuse its captured evidence.",jaDetail:"保存できるリサーチセッションで根拠を収集します。"},
+  select:{en:"Select Idea",ja:"テーマ選択",enDetail:"Compare evidence and decide which original idea to produce.",jaDetail:"根拠を比較し、制作するアイデアを選びます。"},
+  script:{en:"Script",ja:"台本",enDetail:"Review the AI-written draft, regenerate individual sections or edit when needed.",jaDetail:"AI作成の台本を確認し、必要な箇所だけ再生成します。"},
   storyboard:{en:"Storyboard",ja:"構成案",enDetail:"Review the story, claims, and visual learning beats.",jaDetail:"構成・主張・視覚的な説明を確認します。"},
-  visuals:{en:"Visuals",ja:"映像",enDetail:"Turn each teaching beat into clear on-screen actions.",jaDetail:"各シーンに伝わる動きと視覚表現を付けます。"},
-  audio:{en:"Audio",ja:"音声",enDetail:"Prepare narration and sound effects.",jaDetail:"ナレーションと効果音を準備します。"},
-  export:{en:"Preview & Export",ja:"確認と書き出し",enDetail:"Inspect the result and export only after review.",jaDetail:"動画を確認し、承認後に書き出します。"},
+  produce:{en:"Produce",ja:"映像制作",enDetail:"Create and review animation, narration, sound and final cuts.",jaDetail:"映像、ナレーション、効果音と編集を確認します。"},
+  optimize:{en:"Optimize",ja:"最適化",enDetail:"Review automatically prepared metadata and upload packages by platform.",jaDetail:"プラットフォーム別に自動作成された投稿情報を確認します。"},
+  export:{en:"Export",ja:"書き出し",enDetail:"Inspect and export your approved platform packages. Publishing stays under your control.",jaDetail:"承認したパッケージを確認・書き出しします。"},
 };
 const lastJobKey="contentgen:studio-research-job:latest:v1";
 const lastResearchKey="contentgen:studio-research:latest:v1";
 const stagesKey=(projectId:string)=>"contentgen:production-step:v1:"+projectId;
+const flowKey=(projectId:string)=>"contentgen:production-flow:v2:"+projectId;
+const storyboardBackupKey=(productionId:string)=>"contentgen:storyboard-before-script-sync:v1:"+productionId;
+const PLATFORM_CHOICES:{id:DiscoveryPlatform;label:string}[]=[
+  {id:"youtube",label:"YouTube"},{id:"youtube_shorts",label:"YouTube Shorts"},{id:"tiktok",label:"TikTok"},
+  {id:"instagram",label:"Instagram"},{id:"facebook",label:"Facebook"},{id:"blog",label:"Blog / Website"},
+];
+interface FlowSelection {
+  platforms:DiscoveryPlatform[];
+  sessionId:string|null;
+  production:DiscoveryProduction|null;
+}
+function loadFlowSelection(projectId:string):FlowSelection {
+  const fallback:FlowSelection={platforms:["youtube"],sessionId:null,production:null};
+  try{
+    const raw=JSON.parse(localStorage.getItem(flowKey(projectId))??"null") as Partial<FlowSelection>|null;
+    if(!raw||typeof raw!=="object")return fallback;
+    const platforms=Array.isArray(raw.platforms)?raw.platforms.filter((id):id is DiscoveryPlatform=>
+      PLATFORM_CHOICES.some(choice=>choice.id===id)):fallback.platforms;
+    const production=raw.production?.id&&raw.production.projectId===projectId?raw.production:null;
+    const frozen=production?.platforms?.filter((id):id is DiscoveryPlatform=>
+      PLATFORM_CHOICES.some(choice=>choice.id===id))??[];
+    return {platforms:frozen.length?frozen:platforms.length?platforms:fallback.platforms,
+      sessionId:typeof raw.sessionId==="string"?raw.sessionId:null,
+      production};
+  }catch{return fallback;}
+}
 function storedForTopic(key:string,topic:string,field:string):string|null{
   if(typeof localStorage==="undefined"||!topic.trim())return null;
   try{
@@ -61,8 +107,11 @@ function storedForTopic(key:string,topic:string,field:string):string|null{
 function previousStep(projectId:string):ProductionStageId{
   try{
     const value=localStorage.getItem(stagesKey(projectId));
-    return value && value in stageLabels?value as ProductionStageId:"brief";
-  }catch{return "brief";}
+    if(value==="brief")return "setup";
+    if(value==="research")return "discover";
+    if(value==="visuals"||value==="audio")return "produce";
+    return value && value in stageLabels?value as ProductionStageId:"setup";
+  }catch{return "setup";}
 }
 function statusLabel(status:ProductionStageStatus,ja:boolean){
   const labels={
@@ -79,17 +128,83 @@ function StatusIcon({status}:{status:ProductionStageStatus}){
   if(status==="stale")return <RotateCcw className="size-4 text-status-warning" aria-hidden/>;
   return <Circle className="size-4 text-muted-foreground" aria-hidden/>;
 }
-export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResearch,onOpenStoryboard,
-  onOpenVisuals,onOpenAudio,onOpenExport,onOpenNav,onCreateStoryboard,onUseVideo}:Props){
+export function ProductionWorkspace(props:Props){
+  return <ProductionWorkspaceProject key={props.catalog.activeProjectId} {...props}/>;
+}
+function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenStoryboard,
+  onOpenVisuals,onOpenAudio,onOpenExport,onOpenNav}:Props){
   const ja=locale==="ja";
   const tr=(en:string,jp:string)=>ja?jp:en;
   const projectId=catalog.activeProjectId;
   const project=catalog.projects.find(item=>item.id===projectId);
+  const appearance=resolveProjectAppearance(project??{});
+  const [flow,setFlow]=useState<FlowSelection>(()=>loadFlowSelection(projectId));
+  const {platforms,sessionId,production}=flow;
+  const [selectedIdea,setSelectedIdea]=useState<DiscoverySessionIdea|null>(null);
+  const currentIdea=selectedIdea?.id===production?.ideaId?selectedIdea:null;
+  const [,refreshScriptState]=useState(0);
+  const [loadedProductions,setLoadedProductions]=useState<{
+    projectId:string;productionId:string|undefined;items:DiscoveryProduction[];
+  }|null>(null);
+  const savedProductions=loadedProductions?.projectId===projectId?loadedProductions.items:[];
+  const loadingProductions=Boolean(projectId&&(loadedProductions?.projectId!==projectId||
+    loadedProductions.productionId!==production?.id));
+  const [startingProduction,setStartingProduction]=useState(false);
+  const [openingDirector,setOpeningDirector]=useState(false);
+  const [mediaRefresh,setMediaRefresh]=useState(0);
+  const [mediaResult,setMediaResult]=useState<(MediaSnapshot&{refresh:number})|null>(null);
+  const mediaSnapshot:MediaSnapshot|null=production?
+    mediaResult?.productionId===production.id&&mediaResult.refresh===mediaRefresh?mediaResult:
+      {productionId:production.id,status:"loading",assets:[]}:null;
+  const productionKey=production?.id??projectId;
+  const renderAssets=mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"?mediaSnapshot.assets:[];
+  useEffect(()=>{
+    if(!production)return;
+    const controller=new AbortController();
+    void fetch("/api/contentgen-video/assets/"+encodeURIComponent(production.id),{signal:controller.signal,
+      credentials:"same-origin",cache:"no-store"}).then(async response=>{
+      if(!response.ok)throw Error(`Rendered-file lookup failed (HTTP ${response.status}).`);
+      const data=await response.json() as {assets?:unknown};
+      if(!Array.isArray(data.assets))throw Error("Rendered-file response is invalid.");
+      const assets:PlatformAsset[]=data.assets.filter((value:unknown):value is PlatformAsset=>
+        value!==null&&typeof value==="object"&&
+        typeof (value as PlatformAsset).id==="string"&&
+        ["video","captions","thumbnail","hero"].includes((value as PlatformAsset).kind)&&
+        typeof (value as PlatformAsset).downloadUrl==="string"&&
+        (value as PlatformAsset).downloadUrl!.startsWith("/api/contentgen-video/media/"));
+      if(!controller.signal.aborted)setMediaResult({productionId:production.id,refresh:mediaRefresh,status:"ready",assets});
+    }).catch(reason=>{
+      if(!controller.signal.aborted)setMediaResult({productionId:production.id,refresh:mediaRefresh,status:"error",assets:[],
+        error:reason instanceof Error?reason.message:"Could not read rendered files."});
+    });
+    return ()=>controller.abort();
+  },[production,mediaRefresh]);
+  const allScriptsApproved=()=>Boolean(production&&currentIdea)&&
+    platforms.length>0&&platforms.every(platform=>{
+      const saved=loadScriptDraft(production!.id,platform).draft;
+      return saved?.status==="approved"&&isScriptContextCurrent(saved,{
+        productionId:production!.id,projectId,platform,locale,
+        title:production!.brief.title,viewerQuestion:production!.brief.topic||production!.brief.title,
+        audience:project?.notes?.trim()||"English-speaking learners",
+        angle:production!.brief.angle??"",brandVoice:project?.notes??"",
+        evidenceSnapshotId:scriptEvidenceFingerprint(currentIdea?.evidence??[]),
+      });
+    });
+  const scriptApproved=allScriptsApproved();
+  const anyApprovedScript=Boolean(production&&platforms.some(platform=>
+    loadScriptDraft(production.id,platform).draft?.status==="approved"));
+  const scriptStale=anyApprovedScript&&!scriptApproved&&Boolean(currentIdea);
+  const platformScripts:Record<string,{id:string;heading:string;text:string}[]>=
+    Object.fromEntries(platforms.flatMap(platform=>{
+      const saved=production?loadScriptDraft(production.id,platform).draft:null;
+      return saved?.sections.length ? [[platform,saved.sections.map(section=>
+        ({id:section.id,heading:section.heading,text:section.text}))] as const] : [];
+    }));
   const video=catalog.content.filter(item=>item.projectId===projectId&&item.kind==="video").at(-1);
-  const topic=video?.name??(project?.name==="My project"?"":project?.name??"");
-  const [step,setStep]=useState<ProductionStageId>(()=>previousStep(projectId));
-  const [board,setBoard]=useState(()=>loadProjectStoryboard(projectId).board);
-  const [boardError]=useState<string|null>(()=>loadProjectStoryboard(projectId).warning);
+  const topic=production?.brief?.title??video?.name??"";
+  const [step,setStep]=useState<ProductionStageId>(()=>previousStep(productionKey));
+  const [board,setBoard]=useState(()=>loadProjectStoryboard(productionKey).board);
+  const [boardError,setBoardError]=useState<string|null>(()=>loadProjectStoryboard(productionKey).warning);
   const [jobId,setJobId]=useState<string|null>(()=>storedForTopic(lastJobKey,topic,"jobId"));
   const [researchArtifactId,setResearchArtifactId]=useState<string|null>(()=>
     storedForTopic(lastResearchKey,topic,"artifactId"));
@@ -98,7 +213,83 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const [error,setError]=useState("");
   const [retryBusy,setRetryBusy]=useState(false);
   const [repairSummary,setRepairSummary]=useState("");
-  const [claimReviews,setClaimReviews]=useState(()=>loadClaimReviews(projectId));
+  const [confirmStoryboardRefresh,setConfirmStoryboardRefresh]=useState(false);
+  const [hasStoryboardBackup,setHasStoryboardBackup]=useState(()=>{
+    try{return Boolean(localStorage.getItem(storyboardBackupKey(productionKey)));}catch{return false;}
+  });
+  const [claimReviews,setClaimReviews]=useState(()=>loadClaimReviews(productionKey));
+  const [previousProductionKey,setPreviousProductionKey]=useState(productionKey);
+  // Reinitialize production-scoped editor state before React commits a new production.
+  if(previousProductionKey!==productionKey){
+    const saved=loadProjectStoryboard(productionKey);
+    setPreviousProductionKey(productionKey);
+    setBoard(saved.board);setBoardError(saved.warning);
+    setClaimReviews(loadClaimReviews(productionKey));
+    setConfirmStoryboardRefresh(false);
+    try{setHasStoryboardBackup(Boolean(localStorage.getItem(storyboardBackupKey(productionKey))));}
+    catch{setHasStoryboardBackup(false);}
+    setStep(previousStep(productionKey));
+  }
+  // A landscape YouTube film is the Director's currently supported media
+  // format; never silently source its storyboard from a Shorts/blog script.
+  const primaryPlatform=platforms.includes("youtube")?"youtube":platforms[0]??"youtube";
+  const primaryScript=production?loadScriptDraft(production.id,primaryPlatform).draft:null;
+  const videoScript=production&&platforms.includes("youtube")?
+    loadScriptDraft(production.id,"youtube").draft:null;
+  const boardScriptStale=Boolean(production&&board&&(
+    primaryScript?.status!=="approved"||
+    !board.assumptions.includes(`Approved script revision: ${primaryScript.updatedAt}.`)));
+  const optimizationInput:PlatformOptimizationInput={
+    productionId:production?.id??projectId,projectId,
+    title:production?.brief.title??"",platforms,
+    scriptSections:(primaryScript?.sections??[]).map(section=>({id:section.id,heading:section.heading,text:section.text})),
+    platformScripts,
+    assets:renderAssets,
+    summary:production?.brief.description,audience:project?.notes||undefined,
+    brandColors:{...snapshotProjectAppearance(project??{}).palette,
+      custom:appearance.palette.custom.map(item=>item.hex)},
+    sourceRevision:`project-palette-${appearance.revision};scripts-${platforms.map(platform=>
+      loadScriptDraft(production?.id??projectId,platform).draft?.updatedAt??"none").join("|")}`,
+  };
+  const savedOptimization=production?loadPlatformOptimization(production.id,projectId).manifest:null;
+  const optimizationReady=Boolean(savedOptimization?.packages.length===platforms.length&&
+    savedOptimization.packages.every(item=>item.status==="approved"&&!item.stale&&
+      item.sourceSignature===sourceSignature(optimizationInput,item.platform)));
+
+  function updateFlow(next:FlowSelection){
+    try{localStorage.setItem(flowKey(projectId),JSON.stringify(next));}
+    catch{setError("This selection is open, but browser storage is unavailable. It may not survive a reload.");}
+    setFlow(next);
+  }
+  useEffect(()=>{
+    if(!projectId)return;
+    const controller=new AbortController();
+    void listProductions(projectId).then(items=>{
+      if(!controller.signal.aborted)setLoadedProductions({projectId,productionId:production?.id,items});
+    }).catch(()=>{
+      if(!controller.signal.aborted)setLoadedProductions({projectId,productionId:production?.id,items:[]});
+    });
+    return ()=>controller.abort();
+  },[projectId,production?.id]);
+  useEffect(()=>{
+    if(!production)return;
+    let active=true;
+    void listSessionIdeas(projectId,production.sessionId).then(ideas=>{
+      if(active)setSelectedIdea(ideas.find(item=>item.id===production.ideaId)??null);
+    }).catch(()=>{if(active)setSelectedIdea(null);});
+    return ()=>{active=false;};
+  },[projectId,production]);
+  async function startProduction(idea:DiscoverySessionIdea,brief:DiscoveryIdeaBrief){
+    if(!sessionId||startingProduction)return;
+    setStartingProduction(true);setError("");
+    try{
+      const next=await createProduction({projectId,sessionId,ideaId:idea.id,brief,platforms:brief.platforms});
+      updateFlow({...flow,production:next,platforms:brief.platforms});
+      setSelectedIdea(idea);refreshScriptState(value=>value+1);
+      setStep("script");localStorage.setItem(stagesKey(next.id),"script");
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not save this production.");throw reason;}
+    finally{setStartingProduction(false);}
+  }
 
   useEffect(()=>{
     const refresh=()=>{
@@ -158,19 +349,50 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
   const unreviewed=issues.filter(issue=>issue.kind==="source_unchecked"||
     (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
-  const stages=getProductionStages({briefReady:Boolean(draft?.dossier?.topic?.viewerQuestion?.trim()||job?.jobId),researchJob:job,
-    researchArtifactId:artifactId,storyboardReady:Boolean(board),
+  const stages=getProductionStages({setupReady:Boolean(project&&platforms.length),sessionId,
+    ideaId:production?.ideaId,scriptReady:scriptApproved,scriptStale,discoveryReady:Boolean(production?.ideaId),
+    discoveryArtifactId:artifactId,discoveryJob:sessionId?null:job,
+    storyboardReady:Boolean(board),storyboardScriptStale:boardScriptStale,
     storyboardResearchArtifactId,missingEvidenceClaims:unresolved,unreviewedClaims:unreviewed,
-    storyboardEditorialWarnings:repeatedScenes.length});
+    storyboardEditorialWarnings:repeatedScenes.length,optimizationReady});
   const current=stages.find(item=>item.id===step)!;
   function selectStep(next:ProductionStageId){
     setStep(next);
-    try{localStorage.setItem(stagesKey(projectId),next);}catch{/* Navigation still works without local storage. */}
+    try{localStorage.setItem(stagesKey(productionKey),next);}catch{/* Navigation still works without local storage. */}
+  }
+  async function openDirector(stage:"visuals"|"audio"|"export"){
+    if(openingDirector)return;
+    if(matchingDraft?.artifactId){
+      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(matchingDraft.artifactId,productionKey);
+      return;
+    }
+    if(!production||!videoScript||videoScript.status!=="approved"||!scriptApproved||!board||boardScriptStale){
+      setError("Approve the current YouTube script and update its storyboard before opening Director. Other formats cannot yet render in this local video exporter.");
+      return;
+    }
+    setOpeningDirector(true);setError("");
+    try{
+      const response=await fetch("/api/contentgen-director/compile-approved-script",{
+        method:"POST",headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
+        body:JSON.stringify({productionId:production.id,script:videoScript,
+          evidence:currentIdea?.evidence??[],sources:currentIdea?.sources??[],storyboard:board}),
+        signal:AbortSignal.timeout(20000),
+      });
+      const result=await response.json() as Record<string,unknown>;
+      if(!response.ok)throw Error(String(result.error??"Cannot compile the approved script into a Director draft."));
+      if((result.dossier as {kind?:string}|undefined)?.kind!=="research-dossier"||
+        (result.bundle as {kind?:string}|undefined)?.kind!=="preproduction-bundle")
+        throw Error("The local Director returned an invalid draft.");
+      sessionStorage.setItem("contentgen:director-approved-script:v1:"+production.id,JSON.stringify({
+        productionId:production.id,scriptRevision:videoScript.updatedAt,...result}));
+      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(undefined,production.id);
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not open approved script in Director.");}
+    finally{setOpeningDirector(false);}
   }
   function editScene(beatId:string){
-    try{sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,beatId);}
+    try{sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+productionKey,beatId);}
     catch{/* Navigation remains available without session storage. */}
-    onOpenStoryboard();
+    onOpenStoryboard(productionKey);
   }
   async function retryEvidence(){
     if(!jobId||retryBusy)return;
@@ -191,13 +413,13 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
     try{
       const receipt=createClaimReviewReceipt(issue,matchingDraft);
       const next={...claimReviews,[claimId]:receipt};
-      saveClaimReviews(projectId,next);
+      saveClaimReviews(productionKey,next);
       setClaimReviews(next);
     }catch(reason){setError(reason instanceof Error?reason.message:"Claim review could not be recorded.");}
   }
   function undoClaimReview(claimId:string){
     const next={...claimReviews};delete next[claimId];
-    try{saveClaimReviews(projectId,next);setClaimReviews(next);setError("");}
+    try{saveClaimReviews(productionKey,next);setClaimReviews(next);setError("");}
     catch(reason){setError(reason instanceof Error?reason.message:"Claim review could not be removed.");}
   }
   function fixStoryboardSources(){
@@ -205,7 +427,7 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
     if(!draft){setError("Load a saved research snapshot before repairing source links.");return;}
     try{
       // Always re-read the live draft. Never write an obsolete in-memory copy over an edit.
-      const saved=loadProjectStoryboard(projectId);
+      const saved=loadProjectStoryboard(productionKey);
       if(!saved.board)throw Error(saved.warning??"No saved storyboard was found.");
       const result=repairStoryboardEvidence(saved.board,draft);
       if(result.reason){setError("This storyboard does not belong to the loaded research snapshot. Open its original research before repairing references.");return;}
@@ -214,15 +436,49 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
           "安全に修復できる参照はありません。新しい根拠を探すか、主張を手動で修正してください。"));
         return;
       }
-      saveProjectStoryboard(projectId,result.board);
+      saveProjectStoryboard(productionKey,result.board);
       setBoard(result.board);
       setRepairSummary(tr(`${result.fixed.length} source link(s) repaired from saved evidence. These claims still need factual review.`,
         `保存された根拠から${result.fixed.length}件の参照を修復しました。事実確認は引き続き必要です。`));
     }catch(reason){setError(reason instanceof Error?reason.message:"Storyboard repair could not be saved.");}
   }
+  function createStoryboardOutline(script:ScriptDraft){
+    if(board){setError("An editable storyboard already exists. Review it before importing a different script revision.");return;}
+    try{
+      const next=scriptToStoryboard(script,currentIdea?.evidence??[]);
+      saveProjectStoryboard(productionKey,next);
+      saveClaimReviews(productionKey,{});
+      setBoard(next);setError("");
+    }catch(reason){setError(reason instanceof Error?reason.message:"The script could not be mapped to a storyboard outline.");}
+  }
+  function refreshStoryboardOutline(){
+    if(!board||!primaryScript||primaryScript.status!=="approved"||!scriptApproved)return;
+    try{
+      const next=scriptToStoryboard(primaryScript,currentIdea?.evidence??[]);
+      // Existing hand-edited scenes are recoverable; refuse to overwrite if
+      // the backup cannot be persisted.
+      localStorage.setItem(storyboardBackupKey(productionKey),JSON.stringify(board));
+      saveProjectStoryboard(productionKey,next);
+      setHasStoryboardBackup(true);setBoard(next);setConfirmStoryboardRefresh(false);
+      setClaimReviews({});setError("");setRepairSummary("");
+    }catch(reason){setError(reason instanceof Error?reason.message:"Storyboard update failed; the existing outline is still saved.");}
+  }
+  function restorePreviousStoryboard(){
+    try{
+      const previous=JSON.parse(localStorage.getItem(storyboardBackupKey(productionKey))??"null") as SemanticStoryboard|null;
+      if(!previous||validateStoryboard(previous).some(issue=>issue.severity==="error"))
+        throw Error("The previous storyboard backup cannot be restored safely.");
+      saveProjectStoryboard(productionKey,previous);
+      saveClaimReviews(productionKey,{});
+      setBoard(previous);setClaimReviews({});setError("");
+      localStorage.removeItem(storyboardBackupKey(productionKey));
+      setHasStoryboardBackup(false);
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not restore the previous storyboard.");}
+  }
   const contentCard="rounded-surface border border-border bg-surface p-5 sm:p-6";
   const primaryButton="rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
   const secondaryButton="rounded-control border border-border px-4 py-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
+  const activeIndex=PRODUCTION_STAGE_ORDER.indexOf(step);
   return <section id="workspace" aria-label={tr("Guided production","制作ガイド")}
     className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-5 py-4">
@@ -230,36 +486,35 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
         <button type="button" onClick={onOpenNav} aria-label={tr("Open navigation","メニューを開く")}
           className="rounded-control p-2 hover:bg-muted lg:hidden"><Menu className="size-5"/></button>
         <div><h1 className="font-serif text-2xl font-semibold">{tr("Production","動画制作")}</h1>
-          <p className="text-xs text-muted-foreground">{tr("One video, six clear steps. Your progress is saved.","6ステップで動画を制作。進行状況は保存されます。")}</p>
+          <p className="text-xs text-muted-foreground">{tr("From discovery to export · eight connected steps · saved along the way","発見から書き出しまで8ステップで進めます。")}</p>
         </div>
       </div>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        {tr("Project","プロジェクト")}
-        <select className="max-w-[240px] rounded-control border border-border bg-surface px-3 py-2 text-sm text-foreground"
-          value={projectId} onChange={event=>onSelectProject(event.target.value)}>
-          {catalog.projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span className="hidden sm:inline">{project?.name}</span>
+        {production&&<span className="rounded-full border border-border bg-surface-subtle px-3 py-1.5">
+          {tr("Production saved","制作を保存済み")}
+        </span>}
+      </div>
     </header>
-    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-      <nav aria-label={tr("Production stages","制作ステップ")}
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-surface-subtle p-3 md:w-[216px] md:flex-col md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
-        {stages.map((item,index)=><button key={item.id} type="button" onClick={()=>selectStep(item.id)}
-          aria-current={step===item.id?"step":undefined}
-          aria-label={stageLabels[item.id].en+" stage"}
-          className={`flex min-w-[152px] items-center gap-3 rounded-control px-3 py-3 text-left transition-colors hover:bg-surface md:min-w-0 ${step===item.id?"bg-surface text-foreground shadow-sm ring-1 ring-border":"text-muted-foreground"}`}>
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-border text-xs font-medium tabular-nums">{index+1}</span>
-          <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">{ja?stageLabels[item.id].ja:stageLabels[item.id].en}</span>
-            <span className="block truncate text-[11px]">{statusLabel(item.status,ja)}</span></span>
-          <StatusIcon status={item.status}/>
-        </button>)}
-      </nav>
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
+    <nav aria-label={tr("Production stages","制作ステップ")}
+      className="z-10 flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-surface-subtle px-3 py-3 lg:justify-between lg:gap-2 lg:px-5">
+      {stages.map((item,index)=><button key={item.id} type="button" onClick={()=>selectStep(item.id)}
+        aria-current={step===item.id?"step":undefined}
+        aria-label={stageLabels[item.id].en+" stage"}
+        title={item.reason}
+        className={`flex min-w-[132px] flex-1 items-center gap-2 rounded-control px-3 py-2.5 text-left transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${step===item.id?"border border-primary/40 bg-surface text-foreground shadow-sm":"border border-transparent text-muted-foreground"}`}>
+        <span className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${step===item.id?"bg-primary text-primary-foreground":"border border-border"}`}>{index+1}</span>
+        <span className="min-w-0 flex-1"><span className="block whitespace-nowrap text-xs font-semibold xl:text-sm">{ja?stageLabels[item.id].ja:stageLabels[item.id].en}</span>
+          <span className="block truncate text-[10px]">{statusLabel(item.status,ja)}</span></span>
+        {item.status==="complete"?<StatusIcon status={item.status}/>:null}
+      </button>)}
+    </nav>
+    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
         <div className="mx-auto flex max-w-5xl flex-col gap-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-                {tr("Step","ステップ")} {stages.findIndex(item=>item.id===step)+1} / 6
+                {tr("Step","ステップ")} {activeIndex+1} / {PRODUCTION_STAGE_ORDER.length}
               </p>
               <h2 className="mt-1 font-serif text-3xl font-semibold">{ja?stageLabels[step].ja:stageLabels[step].en}</h2>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{ja?stageLabels[step].jaDetail:stageLabels[step].enDetail}</p>
@@ -270,46 +525,106 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
           </div>
           {error&&<p role="alert" className="rounded-control border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</p>}
           {boardError&&<p role="alert" className="rounded-control border border-danger/40 px-4 py-3 text-sm text-danger">{boardError}</p>}
-          {step==="brief"&&<div className={contentCard}>
-            <h3 className="font-serif text-xl font-semibold">{topic||tr("Start with one question","まず1つの疑問から")}</h3>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              {project?.notes||tr("Your research brief defines the audience, viewer question, and learning payoff.",
-                "誰に、何を、どう伝えるかを調査用ブリーフで決めます。")}
-            </p>
-            {draft?.dossier?.topic?.viewerQuestion&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm">
-              <p className="text-xs font-medium text-muted-foreground">{tr("Viewer question","視聴者の疑問")}</p>
-              <p className="mt-1">{draft.dossier.topic.viewerQuestion}</p>
-              <p className="mt-2 text-xs text-muted-foreground">{tr("Audience","対象視聴者")}: {draft.dossier.topic.audience}</p>
-            </div>}
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button type="button" className={primaryButton} onClick={()=>selectStep("research")}>
-                {tr("Continue to research","調査へ進む")}
-              </button>
-              <button type="button" className={secondaryButton} onClick={onOpenResearch}>
-                {tr("Edit the detailed brief","詳しい企画を編集")}
-              </button>
+          {step==="setup"&&<div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(260px,1fr)]">
+            <div className={contentCard+" space-y-6"}>
+              <div>
+                <label htmlFor="production-project" className="text-sm font-semibold">{tr("Project / brand","プロジェクト / ブランド")}</label>
+                <p className="mt-1 text-xs text-muted-foreground">{tr("Your identity and appearance carry across every video.","動画に共通するブランドです。")}</p>
+                <select id="production-project" value={projectId} onChange={event=>onSelectProject(event.target.value)}
+                  className="mt-3 w-full rounded-control border border-input bg-surface px-4 py-3 text-base font-medium">
+                  {catalog.projects.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground line-clamp-2">{project?.notes||tr("Set your audience, positioning and brand appearance in Projects.","プロジェクトで対象視聴者とデザインを設定します。")}</p>
+                  {onOpenProjects&&<button className={secondaryButton+" shrink-0"} onClick={onOpenProjects} type="button">
+                    {tr("Edit brand","ブランドを編集")}<ExternalLink className="ml-1 inline size-3"/>
+                  </button>}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">{tr("Where should this content go?","配信先を選択")}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">{tr("Select one or more. Each gets its own optimized export package.","複数選択できます。配信先ごとに最適化します。")}</p>
+                <div role="group" aria-label="Target platforms" className="mt-3 flex flex-wrap gap-2">
+                  {PLATFORM_CHOICES.map(choice=><button type="button" key={choice.id} aria-label={choice.label} aria-pressed={platforms.includes(choice.id)}
+                    disabled={Boolean(production)}
+                    onClick={()=>{
+                      const next=platforms.includes(choice.id)?platforms.filter(id=>id!==choice.id):[...platforms,choice.id];
+                      if(next.length)updateFlow({...flow,platforms:next});
+                    }} className={`rounded-full border px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-65 ${platforms.includes(choice.id)?"border-primary bg-primary/10 text-foreground":"border-border bg-surface text-muted-foreground hover:bg-muted"}`}>
+                    {platforms.includes(choice.id)?"✓ ":"+ "}{choice.label}
+                  </button>)}
+                </div>
+                {production&&<p className="mt-2 text-xs text-muted-foreground" role="status">
+                  Production destinations are frozen to keep script and export versions consistent. Choose another idea in Select Idea to create a new production with different destinations.
+                </p>}
+              </div>
+              <div className="flex flex-wrap gap-3 border-t border-border pt-5">
+                <button type="button" className={primaryButton+" inline-flex items-center gap-2"} onClick={()=>selectStep("discover")}
+                  disabled={!platforms.length}>{tr("Continue to discovery","テーマ発見へ")}<ArrowRight className="size-4"/></button>
+                <button type="button" className={secondaryButton} onClick={onOpenResearch}>{tr("Open research tools","リサーチツール")}</button>
+              </div>
             </div>
+            <aside className={contentCard+" space-y-3"}>
+              <div className="flex items-center justify-between gap-2"><h3 className="font-semibold">{tr("Resume a production","制作を再開")}</h3>
+                {loadingProductions&&<Loader2 className="size-4 animate-spin" aria-label="Loading productions"/>}</div>
+              {savedProductions.length? <div className="space-y-2">{savedProductions.map(item=><button type="button" key={item.id}
+                onClick={()=>{updateFlow({...flow,sessionId:item.sessionId,production:item,platforms:item.platforms});selectStep("script");}}
+                className="w-full rounded-control border border-border bg-surface-subtle p-3 text-left hover:border-primary/50">
+                <span className="block text-sm font-semibold line-clamp-2">{item.brief.title}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">{item.platforms.join(" · ")}</span>
+              </button>)}</div>:<p className="text-sm leading-6 text-muted-foreground">{tr("Your saved productions will appear here after you select an idea.","テーマを選ぶと制作履歴がここに表示されます。")}</p>}
+            </aside>
           </div>}
-          {step==="research"&&<>
-            {job&&<div className={contentCard}>
-              <p className="text-sm font-medium">{tr("Saved research job","保存された調査ジョブ")} · {job.stage}</p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {job.completedScenes??0} / {job.totalScenes??0} {tr("teaching units saved","個の説明単位を保存")}
-                {job.evidenceRepair&&` · ${job.evidenceRepair.autoFixed} ${tr("links repaired","件の参照修復")}`}
-              </p>
-              {job.evidenceRepair?.needsReview?<p className="mt-2 text-sm text-status-warning">
-                {job.evidenceRepair.needsReview} {tr("source references need review","件の出典を確認してください")}
-              </p>:null}
-              {job.status==="paused"&&job.stage==="evidence-repair"&&<button type="button" disabled={retryBusy}
-                className={primaryButton+" mt-3"} onClick={()=>void retryEvidence()}>
-                {tr("Refresh sources and retry","出典を再取得して再試行")}
-              </button>}
-            </div>}
-            <div className="flex min-h-[620px] flex-col overflow-hidden rounded-surface border border-border bg-surface">
-              <ResearchWorkspace key={projectId} locale={locale} projectTopic={topic}
-                onUseVideo={onUseVideo} onCreateStoryboard={onCreateStoryboard}/>
-            </div>
-          </>}
+          {step==="discover"&&<div className="space-y-4">
+            <DiscoverySessionWorkspace project={project!} content={catalog.content} platforms={platforms} locale={locale}
+              selectedSessionId={sessionId} onSelectSession={(next)=>{
+                const selection={...flow,sessionId:next,production:flow.production?.sessionId===next?flow.production:null};
+                updateFlow(selection);
+                void getDiscoverySession(projectId,next).then(saved=>{
+                  // A session's destinations are a durable snapshot: reopening it restores those choices.
+                  if(saved.platforms.length)setFlow(current=>{
+                    if(current.sessionId!==next)return current;
+                    const refreshed={...current,platforms:saved.platforms};
+                    try{localStorage.setItem(flowKey(projectId),JSON.stringify(refreshed));}catch{/* Keep the in-memory selection. */}
+                    return refreshed;
+                  });
+                }).catch(()=>{/* The existing selection remains navigable while the local server is unavailable. */});
+              }}/>
+            {sessionId&&<div className="flex justify-end"><button type="button" className={primaryButton+" inline-flex items-center gap-2"}
+              onClick={()=>selectStep("select")}>{tr("Review ideas","アイデアを比較")}<ArrowRight className="size-4"/></button></div>}
+          </div>}
+          {step==="select"&&(sessionId?<DiscoveryIdeaSelection projectId={projectId} sessionId={sessionId} locale={locale}
+            onStartProduction={startProduction}/>:<div className={contentCard}>
+            <p className="text-sm text-muted-foreground">{tr("Create or reopen a discovery session first.","最初にテーマ発見セッションを作成・選択してください。")}</p>
+            <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("discover")}>{tr("Go to Discover","テーマ発見へ")}</button>
+          </div>)}
+          {step==="script"&&(production?<div className="space-y-4">
+            {currentIdea&&currentIdea.sources.length>0&&!currentIdea.evidence?.length&&<p role="status" className="rounded-control border border-amber-400/40 bg-amber-400/10 px-4 py-3 text-sm">
+              {tr("The idea has source leads but no captured passages yet. Complete evidence collection in Discover before generating factual narration.","出典候補はありますが引用文が未収集です。台本の前に出典を補完してください。")}
+              <button type="button" className="ml-2 underline" onClick={()=>selectStep("discover")}>{tr("Review sources","出典を確認")}</button>
+            </p>}
+            <ScriptReviewWorkspace
+            productionId={production.id} projectId={projectId} platforms={platforms} locale={locale}
+            title={production.brief.title} viewerQuestion={production.brief.topic||production.brief.title}
+            audience={project?.notes?.trim()||"English-speaking learners"} angle={production.brief.angle??""}
+            brandVoice={project?.notes??""} evidence={currentIdea?.evidence??[]}
+            onDraftChange={()=>refreshScriptState(value=>value+1)}
+            onApprove={()=>{refreshScriptState(value=>value+1);
+              const ready=allScriptsApproved();
+              if(ready){
+                const primary=loadScriptDraft(production.id,primaryPlatform).draft;
+                if(!board&&primary)createStoryboardOutline(primary);
+                selectStep("storyboard");
+              }
+            }}/>
+            {!scriptApproved&&platforms.length>1&&<p className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm text-muted-foreground" role="status">
+              {tr("Approve each selected destination's script before moving to the storyboard. Completed destinations remain saved while you work on the others.",
+                "構成案へ進む前に、配信先ごとの台本を承認してください。承認済みの内容は保存されます。")}
+            </p>}
+          </div>:<div className={contentCard}>
+            <p className="text-sm text-muted-foreground">{tr("Choose a discovery idea to let AI draft the script.","アイデアを選択するとAIが台本を作成します。")}</p>
+            <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select an idea","テーマを選択")}</button>
+          </div>)}
           {step==="storyboard"&&<>
             {repairSummary&&<p role="status" className="rounded-control border border-border bg-surface p-3 text-sm">{repairSummary}</p>}
             {board?<div className={contentCard}>
@@ -327,6 +642,20 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
                   </button>
                 </div>
               </div>
+              {boardScriptStale&&<div role="status" className="mt-4 rounded-control border border-amber-400/40 bg-amber-400/10 p-3 text-sm">
+                <p>The approved script changed after this storyboard was created. Old narration and visuals are preserved, but this outline needs an explicit update before production.</p>
+                {primaryScript?.status==="approved"&&scriptApproved&&
+                  (confirmStoryboardRefresh?<div className="mt-3 space-y-2">
+                    <p>Replace the current scene outline with the approved script? Existing scene edits will be saved as a restorable backup.</p>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" className={primaryButton} onClick={refreshStoryboardOutline}>Save backup and update</button>
+                      <button type="button" className={secondaryButton} onClick={()=>setConfirmStoryboardRefresh(false)}>Keep existing scenes</button>
+                    </div>
+                  </div>:<button type="button" className={secondaryButton+" mt-3"}
+                    onClick={()=>setConfirmStoryboardRefresh(true)}>Update from approved script</button>)}
+              </div>}
+              {hasStoryboardBackup&&<button type="button" className={secondaryButton+" mt-3"}
+                onClick={restorePreviousStoryboard}>Restore previous storyboard outline</button>}
               {repeatedScenes.length>0&&<p role="status" className="mt-4 rounded-control border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-foreground">
                 {repeatedScenes.length} {tr(repeatedScenes.length===1?"potentially repeated scene":"potentially repeated scenes","件のシーンで内容が重複している可能性があります")} · {tr("Review before making visuals.","映像制作の前に確認してください。")}
               </p>}
@@ -354,54 +683,88 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
                 })}
               </ol>
               <div className="mt-5 flex justify-end border-t border-border pt-4">
-                <button type="button" className={secondaryButton} onClick={()=>selectStep("visuals")}>
-                  {tr("Continue to visuals","映像制作へ進む")}
+                <button type="button" className={secondaryButton} onClick={()=>selectStep("produce")}>
+                  {tr("Continue to production","映像制作へ進む")}
                 </button>
               </div>
             </div>:<div className={contentCard}>
               <h3 className="font-serif text-xl font-semibold">{tr("Create your storyboard","構成案を作成")}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{tr("Start from saved research.","保存した調査から始めます。")}</p>
-              <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("research")}>
-                {tr("Create from research","調査から作成")}
-              </button>
+              <p className="mt-2 text-sm text-muted-foreground">{tr("Start with your approved script. Use the existing storyboard planner to arrange the scenes.","承認した台本からシーンを構成します。")}</p>
+              {production&&primaryScript?.status==="approved"&&<button type="button" className={primaryButton+" mt-4"}
+                onClick={()=>createStoryboardOutline(primaryScript)}>{tr("Create editable outline from approved script","承認済み台本から構成案を生成")}</button>}
+              {(!production||primaryScript?.status!=="approved")&&<button type="button" className={primaryButton+" mt-4"}
+                onClick={()=>selectStep("script")}>{tr("Review script first","先に台本を確認")}</button>}
             </div>}
             {board&&<ProductionClaimIssues issues={issues} draft={matchingDraft} locale={locale}
               reviewedClaims={reviewedClaims} onMarkReviewed={markClaimReviewed} onUndoReviewed={undoClaimReview}
-              onOpenBeat={editScene} onFindEvidence={()=>selectStep("research")}
+              onOpenBeat={editScene} onFindEvidence={()=>selectStep("discover")}
               onRetryRepair={job?.status==="paused"&&job.stage==="evidence-repair"?()=>void retryEvidence():undefined}/>}
           </>}
-          {step==="visuals"&&<div className={contentCard}>
-            <h3 className="font-serif text-xl font-semibold">{tr("Design the explanation visually","説明を映像にする")}</h3>
+          {step==="produce"&&<div className={contentCard}>
+            <h3 className="font-serif text-xl font-semibold">{tr("Produce your video or article","動画や記事を制作")}</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              {tr("Plan meaningful movement, assets, and camera actions for each beat. Existing visual and Kumiki tools remain available.",
-                "各シーンに意味のある動き、素材、カメラ演出を設計します。既存の映像制作ツールを利用できます。")}
+              {tr("Continue in the existing Kumiki-powered director for visual scenes, narration and sound. Your saved script, brand and storyboard stay separate from the rendering engine.",
+                "既存のディレクターで映像、ナレーション、音声を制作します。")}
             </p>
-            <p className="mt-3 text-xs text-muted-foreground">{matchingDraft?.artifactId
-              ?tr("Opens the saved research and carries over edited narration, on-screen text, and visual actions. Other storyboard changes are flagged for review; no AI runs.","保存済みの調査を開き、編集された音声原稿・画面テキスト・映像動作を引き継ぎます。他の構成案の変更は確認が必要です。AIは再実行しません。")
-              :tr("No matching saved research is linked to this storyboard yet. You can still import a project or start in Video Director.","一致する保存済み調査がまだありません。Video Directorから読み込みや新規作成ができます。")}</p>
-            <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenVisuals(matchingDraft?.artifactId)}
-              aria-label="Open visual tools">{tr("Open visual tools","映像ツールを開く")}</button>
+            {!matchingDraft?.artifactId&&<p role="status" className="mt-4 rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm text-muted-foreground">
+              {tr("Approved YouTube scripts can become editable, source-linked Director drafts. Schematic animation requires further visual editing, and claims, media rights and playback still require review. Shorts, social videos and articles need dedicated exporters.",
+                "承認したYouTube台本を編集可能なディレクター下書きに変換できます。映像、引用、利用権の確認が必要です。")}
+            </p>}
+            {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm" role="status">
+              {mediaSnapshot.status==="loading"?"Checking saved local render files…":
+                mediaSnapshot.status==="error"?`Unable to read saved renders: ${mediaSnapshot.error}`:
+                renderAssets.some(asset=>asset.kind==="video")?
+                  "A completed local MP4 was found. Review playback and rights before export; this is not a published release.":
+                  "No completed render is registered for this production yet."}
+              <button type="button" className="ml-3 text-primary underline" onClick={()=>setMediaRefresh(value=>value+1)}>
+                Refresh files
+              </button>
+            </div>}
+            <div className="mt-5 flex flex-wrap gap-3">
+              <button type="button" className={secondaryButton} onClick={()=>onOpenStoryboard(productionKey)}>
+                {tr("Edit storyboard outline","構成案を編集")}</button>
+              <button type="button" className={primaryButton} disabled={openingDirector} onClick={()=>void openDirector("visuals")} aria-label="Open visual tools">
+                {openingDirector?"Preparing Director…":tr("Open video director","映像ディレクターを開く")}</button>
+              <button type="button" className={secondaryButton} disabled={openingDirector} onClick={()=>void openDirector("audio")}>
+                {tr("Narration & sound","ナレーションと音声")}</button>
+            </div>
+            {platforms.includes("blog")&&<p className="mt-4 text-sm text-muted-foreground">{tr("For blog content, keep the researched script as an article draft until a dedicated article export is available.","ブログ記事は記事の書き出しに対応するまで台本を保存してください。")}</p>}
           </div>}
-          {step==="audio"&&<div className={contentCard}>
-            <h3 className="font-serif text-xl font-semibold">{tr("Narration and sound effects","ナレーションと効果音")}</h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              {tr("Use the existing video studio to produce and review authorized narration and sound effects.",
-                "既存の制作スタジオでナレーションと効果音を作成・確認します。")}
-            </p>
-            <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenAudio(matchingDraft?.artifactId)}>
-              {tr("Open audio tools","音声ツールを開く")}</button>
-          </div>}
+          {step==="optimize"&&(production&&mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready"?
+            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>:<div className={contentCard}>
+            <p className="text-sm text-muted-foreground">{!production?
+              tr("Select an idea and create a production to prepare platform metadata.","制作するアイデアを選んでください。"):
+              mediaSnapshot?.status==="error"?
+                `The local renderer's saved-file catalog is unavailable: ${mediaSnapshot.error} Your existing metadata has not been changed.`:
+                "Checking local rendered assets before opening saved metadata. This prevents an incomplete file list from invalidating previous approvals."}</p>
+            {production?<button type="button" className={secondaryButton+" mt-4"} onClick={()=>setMediaRefresh(value=>value+1)}>
+              Retry rendered-file lookup</button>:
+              <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select idea","テーマを選択")}</button>}
+          </div>)}
           {step==="export"&&<div className={contentCard}>
             <h3 className="font-serif text-xl font-semibold">{tr("Preview before exporting","書き出し前に確認")}</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              {tr("Inspect playback and evidence before rendering. Completing steps here never automatically approves or publishes a video.",
-                "再生と根拠を確認してから書き出します。各ステップの完了は自動的な承認や公開を意味しません。")}
+              {tr("Review playback, captions, source claims and rights. Download local renders and platform metadata here; no upload or publishing happens automatically.",
+                "再生、字幕、根拠と利用権を確認します。映像ファイルや投稿情報をダウンロードできますが、自動公開は行われません。")}
             </p>
-            <button type="button" className={primaryButton+" mt-5"} onClick={()=>onOpenExport(matchingDraft?.artifactId)}>
+            <button type="button" className={primaryButton+" mt-5"} disabled={openingDirector} onClick={()=>void openDirector("export")}>
               {tr("Open preview & export","確認と書き出しを開く")}</button>
+            {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"&&
+              <div className="mt-5 space-y-2 border-t border-border pt-4">
+                <p className="text-sm font-semibold">Saved local render files</p>
+                {renderAssets.length?renderAssets.map(asset=><a key={asset.id} href={asset.downloadUrl}
+                  download={asset.filename} className={secondaryButton+" mr-2 inline-flex items-center gap-2"}>
+                  {asset.kind==="video"?"Download MP4":asset.kind==="captions"?"Download captions":`Download ${asset.kind}`}
+                  <ExternalLink className="size-3"/></a>):<p className="text-sm text-muted-foreground">
+                  No completed renders are registered. Open Director to render an MP4 before preparing an upload.</p>}
+              </div>}
+            {production&&mediaSnapshot?.status!=="ready"&&<p className="mt-4 text-sm text-muted-foreground">
+              The render catalog is loading or unavailable. Retry from Produce; previous metadata is preserved.</p>}
           </div>}
+          {step==="export"&&production&&mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready"&&
+            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>}
         </div>
-      </main>
-    </div>
+    </main>
   </section>;
 }
+

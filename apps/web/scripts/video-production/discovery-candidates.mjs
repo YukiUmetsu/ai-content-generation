@@ -87,7 +87,9 @@ async function generateDiscoveryCandidatesBatch(input,{modelSettings,transport=f
 export async function generateDiscoveryCandidates(input,options={}) {
   const sources=input.graph?.sources??[];
   const ideas=[],seen=new Set();
-  for(let index=0;index<Math.min(3,Math.ceil(sources.length/4));index++){
+  const sessionBudget=input.sessionId?Math.max(3,Math.min(30,Number(input.resultBudget)||12)):9;
+  const batchLimit=input.sessionId?Math.ceil(sessionBudget/3):3;
+  for(let index=0;index<Math.min(batchLimit,Math.ceil(sources.length/4));index++){
     const group=sources.slice(index*4,index*4+4);
     let suggested=await options.readBatch?.(index);
     if(!Array.isArray(suggested)){
@@ -99,7 +101,7 @@ export async function generateDiscoveryCandidates(input,options={}) {
     suggested=validateDiscoveryCandidates(suggested,group.map(source=>source.id));
     if(suggested.length>3)throw Error("Local model returned too many ideas for a short batch.");
     for(const idea of suggested){
-      if(!seen.has(idea.angleKey)){seen.add(idea.angleKey);ideas.push(idea);}
+      if(!seen.has(idea.angleKey)){seen.add(idea.angleKey);if(ideas.length<sessionBudget)ideas.push(idea);}
     }
   }
   return ideas;

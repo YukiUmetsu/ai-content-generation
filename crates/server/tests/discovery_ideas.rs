@@ -52,6 +52,48 @@ fn discovery_runs_deduplicate_active_clicks_and_preserve_history() {
 }
 
 #[test]
+fn selected_ideas_snapshot_each_distinct_captured_source_once() {
+    let mut db = ready();
+    let mut sources = Vec::new();
+    for suffix in ["risk", "rebuilding"] {
+        sources.push(graph_store::import_source(
+            &db,
+            "proj-houses",
+            graph_store::SourceDraft {
+                url: format!("https://example.org/insurance/{suffix}"),
+                title: format!("Insurance {suffix} information"),
+                provider: "captured-web".into(),
+                published_at: None,
+                observed_at: 100,
+                passage: Some(format!("The {suffix} factor influences insurance decisions.")),
+            },
+        ).unwrap());
+    }
+    let run = discovery_store::start_or_get_active(&mut db, "proj-houses", "source-snapshots", 100).unwrap();
+    discovery_store::finish_run(&mut db, &run.id, vec![discovery_store::CandidateDraft {
+        title: "Why Home Insurance Renewals Change".into(),
+        hook: "What changed since last year?".into(),
+        premise: "Compare risks and rebuilding costs".into(),
+        why_now: "Homeowner education".into(),
+        angle_key: "insurance renewal and reconstruction changes".into(),
+        source_ids: vec![sources[0].clone(), sources[0].clone(), sources[1].clone()],
+        confidence: "high".into(),
+    }], "completed", 101).unwrap();
+    let ideas = discovery_store::get_run(&db, "proj-houses", &run.id).unwrap().candidates;
+    assert_eq!(ideas.len(), 1);
+    let distinct: i64 = db.query_row(
+        "SELECT COUNT(DISTINCT source_id) FROM discovery_candidate_sources WHERE candidate_id=?1",
+        [&ideas[0].id], |row| row.get(0),
+    ).unwrap();
+    let rows: i64 = db.query_row(
+        "SELECT COUNT(*) FROM discovery_candidate_sources WHERE candidate_id=?1",
+        [&ideas[0].id], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(distinct, 2);
+    assert_eq!(rows, 2, "Repeated citations must not create repeated frozen source records");
+}
+
+#[test]
 fn discovery_run_freezes_server_inputs_even_after_project_and_keyword_edits() {
     let mut db = ready();
     discovery_projects::patch_keywords(
@@ -488,3 +530,4 @@ fn cancelling_an_active_discovery_is_terminal_and_releases_the_project_slot() {
         discovery_store::start_or_get_active(&mut db, "proj-houses", "new-revision", 104).unwrap();
     assert_ne!(new_run.id, run.id);
 }
+

@@ -414,3 +414,33 @@ describe("saved research to Video Director handoff",()=>{
     expect(screen.queryByText("Video project loaded")).not.toBeInTheDocument();
   });
 });
+
+describe("approved script to Director handoff",()=>{
+  it("opens a compiled script's scenes without fetching a second research plan",async()=>{
+    const productionId="production-"+"a".repeat(24);
+    const sha="b".repeat(64);
+    const dossier={kind:"research-dossier",id:"script_"+"a".repeat(24),
+      topic:{title:"Actual renewal factors",audience:"Homeowners"}};
+    const bundle={kind:"preproduction-bundle",researchId:dossier.id,researchSha256:"a".repeat(64),
+      planSha256:sha,plan:{story:{question:"Why did prices change?"},
+        shots:[{id:"shot_1",family:"question",purpose:"hook",onScreenText:"Renewal factors",
+          visualChange:"Reveal changed risk"}],
+        sound:[{shotId:"shot_1",narration:"Look at the individual coverage factors.",sfxIntent:null}],
+        teachingSequences:[]}};
+    sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,
+      JSON.stringify({productionId,scriptRevision:"2026-10-25T12:00:00.000Z",dossier,bundle}));
+    const calls:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
+      calls.push(String(url));
+      const sidecar=localMediaCatalogResponse(url);
+      if(sidecar)return sidecar;
+      throw Error("Unexpected research compilation request");
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
+    expect(await screen.findByText("Actual renewal factors")).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/02 Visual assets/i})).toHaveAttribute("aria-current","step");
+    expect(calls).not.toContain("/api/contentgen-director/compile-saved-research");
+    sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
+  });
+});
+
