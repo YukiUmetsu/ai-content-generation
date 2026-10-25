@@ -33,7 +33,7 @@ function Ring({ score, large = false }: { score: number | null; large?: boolean 
         strokeDasharray={circumference}
         initial={{ strokeDashoffset: reduceMotion ? offset : circumference }}
         animate={{ strokeDashoffset: offset }}
-        transition={reduceMotion ? { duration: 0 } : { duration: 0.65, ease: [0.2, 0.8, 0.2, 1] }} />}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.65, ease: "easeOut" }} />}
     </svg>
     <span className={`absolute inset-0 flex items-center justify-center font-semibold tabular-nums tracking-tight ${large ? "text-2xl" : "text-xl"}`}>
       {score ?? "—"}
