@@ -79,6 +79,23 @@ export interface IdeaGoogleTrends {
   errorCode: string | null;
 }
 
+/** Evidence-based relative opportunity estimate; not a probability or view forecast. */
+export interface ViralPotential {
+  score: number | null;
+  state: "measured" | "partial" | "insufficient_data";
+  scoreVersion: "viral-potential-v1";
+  format: "long" | "shorts" | null;
+  youtubeScore: number | null;
+  trendScore: number | null;
+  trendChangePercent: number | null;
+  coveragePercent: number;
+  sampleSize: number;
+  distinctChannels: number;
+  comparisonCohortSize: number;
+  youtubeObservedAt: number | null;
+  trendsObservedAt: number | null;
+}
+
 export interface DiscoverySessionIdea {
   id: string;
   sessionId: string;
@@ -100,6 +117,7 @@ export interface DiscoverySessionIdea {
   evidence?: ScriptEvidence[];
   marketAssessment?: IdeaMarketAssessment | null;
   googleTrends?: IdeaGoogleTrends | null;
+  viralPotential?: ViralPotential | null;
 }
 
 export interface DiscoveryIdeaBrief {
@@ -197,7 +215,31 @@ function requireIdea(value: unknown): DiscoverySessionIdea {
       ["verified", "unverified", "illustrative", "disputed"].includes(String(item.reviewStatus))) as ScriptEvidence[] : [],
     marketAssessment: parseIdeaMarketAssessment(value.marketAssessment),
     googleTrends: parseIdeaGoogleTrends(value.googleTrends),
+    viralPotential: parseViralPotential(value.viralPotential),
   } as DiscoverySessionIdea;
+}
+
+function parseViralPotential(raw: unknown): ViralPotential | null {
+  if (!record(raw) || raw.scoreVersion !== "viral-potential-v1" ||
+    !["measured", "partial", "insufficient_data"].includes(String(raw.state)) ||
+    !(raw.format === null || raw.format === "long" || raw.format === "shorts")) return null;
+  const score = raw.score === null ? null : raw.score;
+  const numberOrNull = (value: unknown) => value === null ||
+    typeof value === "number" && Number.isFinite(value);
+  const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const percent = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+  if (!(score === null || Number.isInteger(score) && percent(score)) ||
+    !numberOrNull(raw.youtubeScore) || !numberOrNull(raw.trendScore) ||
+    !numberOrNull(raw.trendChangePercent) || !percent(raw.coveragePercent) ||
+    !count(raw.sampleSize) || !count(raw.distinctChannels) || !count(raw.comparisonCohortSize) ||
+    !numberOrNull(raw.youtubeObservedAt) || !numberOrNull(raw.trendsObservedAt) ||
+    raw.youtubeScore !== null && !percent(raw.youtubeScore) ||
+    raw.trendScore !== null && !percent(raw.trendScore) ||
+    (score === null) !== (raw.state === "insufficient_data") ||
+    (score !== null && (raw.youtubeScore === null || raw.format === null)) ||
+    (raw.state === "measured" && (raw.youtubeScore === null || raw.trendScore === null)) ||
+    (raw.state === "partial" && (raw.youtubeScore === null || raw.trendScore !== null))) return null;
+  return raw as unknown as ViralPotential;
 }
 
 function parseIdeaGoogleTrends(raw: unknown): IdeaGoogleTrends | null {
