@@ -685,7 +685,7 @@ pub fn low_sample_retry_query(
     let Some(latest) = latest else { return Ok(None) };
     if latest.state != "succeeded"
         || (latest.sample_size >= 8 && latest.distinct_channels >= 3)
-        || latest.observed_at.is_none_or(|at| at.saturating_add(HOUR) > now)
+        || latest.observed_at.map_or(true, |at| at.saturating_add(HOUR) > now)
     {
         return Ok(None);
     }
