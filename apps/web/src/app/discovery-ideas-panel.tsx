@@ -84,9 +84,20 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
       <summary className="cursor-pointer font-medium">{say(locale,"Provider availability and evidence gaps","データ提供元の状態")}</summary>
       <ul className="mt-2 list-inside list-disc space-y-1">{Object.entries(run.providerHealth).map(([name,value])=><li key={name}>{name}: {value}</li>)}</ul>
     </details>}
-    {run?.status==="insufficient_evidence"&&<p role="status" className="mb-4 text-sm text-muted-foreground">{say(locale,
-      "Not enough relevant, source-linked evidence to suggest credible ideas. Link a YouTube watchlist, collect videos, or add focused keywords and try again.",
-      "信頼できる情報源が足りません。YouTube のウォッチリストを連携して収集してから再実行してください。")}</p>}
+    {run?.status==="insufficient_evidence"&&<div role="status" className="mb-4 space-y-2 rounded-control border border-border bg-muted/30 p-4 text-sm">
+      {run.providerHealth?.news?.includes("SearXNG unavailable")?<>
+        <p className="font-semibold">{say(locale,"Search service is unavailable or its JSON API is disabled.","検索サービスが利用できないか、JSON API が無効です。")}</p>
+        <p className="text-muted-foreground">{say(locale,"In the ContentGen repo, start and check local search, then click Discover 5 Ideas again:","ContentGen のリポジトリでローカル検索を起動・確認し、再実行してください。")}</p>
+        <code className="block select-text break-all rounded bg-surface px-3 py-2 text-xs">pnpm --dir apps/web research:up</code>
+        <code className="block select-text break-all rounded bg-surface px-3 py-2 text-xs">pnpm --dir apps/web research:check</code>
+      </>:<>
+        <p>{say(locale,"Not enough captured passages or measured videos to rank credible ideas yet.","信頼できるアイデアを選ぶには、記事本文や計測済み動画がまだ不足しています。")}</p>
+        {run.providerHealth?.news&&<p className="text-xs text-muted-foreground">{run.providerHealth.news}</p>}
+      </>}
+      <p className="text-xs text-muted-foreground">{say(locale,
+        "You can also link a relevant YouTube watchlist and collect its public videos. Unverified search links alone are not treated as evidence.",
+        "関連する YouTube ウォッチリストの動画を収集・連携することもできます。検索リンクだけでは証拠として扱いません。")}</p>
+    </div>}
     {run?.status==="failed"&&<p role="alert" className="mb-4 text-sm text-danger">{say(locale,"Discovery stopped:","実行が停止しました:")} {run.errorCode??"local model unavailable"}</p>}
     <div className="space-y-3">{run?.candidates.map(idea=><article key={idea.id} className="rounded-control border border-border p-4">
       <div className="flex flex-wrap items-start justify-between gap-2"><h3 className="max-w-2xl font-serif text-lg font-semibold">{idea.rank}. {idea.title}</h3>

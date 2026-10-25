@@ -14,6 +14,73 @@ test("query selection favors project intent over arbitrary first generic keyword
     ["home insurance premiums","property tax costs"]);
 });
 
+test("a described project can search for evidence before accepting any AI keyword",()=>{
+  const queries=selectDiscoveryQueries([],"House Math",
+    "Understand homeowner insurance premiums, property tax reassessments and expensive roof repairs.");
+  assert.ok(queries.length>=1);
+  assert.match(queries[0],/insurance|property tax|roof/iu);
+  assert.doesNotMatch(queries.join(" "),/House Math/iu,"A channel brand is not a useful search query");
+});
+
+test("discovery falls back to description search when accepted search phrases have no captured evidence",async()=>{
+  const id="discover_"+"1".repeat(24),searched=[],imported=[];
+  let run={id,status:"queued",candidates:[],providerHealth:{}},candidateInput=null;
+  const passage="County assessors may reassess property values after a home purchase, changing annual tax bills.";
+  const source={id:"source-captured",title:"Home property tax guide",url:"https://example.org/tax-assessments",
+    provider:"searxng",evidenceState:"captured",publishedAt:null,observedAt:100};
+  const backend=async(_project,route,_method,body)=>{
+    if(route==="discover")return run;
+    if(route==="keywords")return {keywords:[{text:"calculate total cost of ownership",kind:"query",origin:"manual",active:true}]};
+    if(route==="graph")return {nodes:[],sources:imported.length?[source]:[],signals:[]};
+    if(route==="graph/batches"||route==="graph/import-market")return {imported:0};
+    if(route==="sources/import"){imported.push(...body.sources);return {imported:body.sources.length};}
+    if(route==="sources/captured")return {sources:imported.length?[{...source,passage}]:[]};
+    if(route.endsWith("checkpoint")){run={...run,status:"running",providerHealth:body.providerHealth??run.providerHealth};return run;}
+    if(route.endsWith("finish")){run={...run,status:body.status,candidates:body.candidates};return run;}
+    throw Error(`unexpected ${route}`);
+  };
+  const manager=createDiscoveryJobManager({backend,searchEndpoint:()=>"http://127.0.0.1:8080/search",
+    search:async({viewerQuestion})=>{
+      searched.push(viewerQuestion);
+      return {results:searched.length===1?[]:[{url:source.url,title:source.title,
+        snippet:"Property tax reassessments for a home purchase"}]};
+    },capture:async()=>passage,extract:async()=>({nodes:[],edges:[]}),
+    generate:async input=>{candidateInput=input;return [{title:"Why Property Taxes Jump After Buying a Home",
+      hook:"What changes your bill?",premise:"Understand reassessments and annual property taxes",
+      whyNow:"Evergreen ownership decision",angleKey:"tax-reassessment-after-purchase",
+      sourceIds:[source.id],confidence:"medium"}];}});
+  await manager.create({projectId:"house",projectName:"House Math",
+    description:"Explaining homeownership costs, property tax reassessments, insurance premiums and maintenance."},
+    {model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"});
+  for(let i=0;i<40&&!(["completed","insufficient_evidence","failed"].includes(run.status));i++)
+    await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(run.status,"completed");
+  assert.ok(searched.length>=2,"After an empty query, the worker should try a distinct description-derived query");
+  assert.ok(candidateInput?.graph.sources.some(item=>item.id===source.id));
+});
+
+test("discovery identifies SearXNG connection failure instead of claiming no search results",async()=>{
+  let run={id:"discover_"+"2".repeat(24),status:"queued",providerHealth:{}};
+  const backend=async(_id,route,_method,body)=>{
+    if(route==="discover")return run;
+    if(route==="keywords")return {keywords:[{text:"home insurance premiums",kind:"query",active:true}]};
+    if(route==="graph")return {nodes:[],sources:[],signals:[]};
+    if(route==="graph/batches"||route==="graph/import-market")return {imported:0};
+    if(route==="sources/captured")return {sources:[]};
+    if(route.endsWith("checkpoint")){run={...run,status:"running",providerHealth:body.providerHealth??run.providerHealth};return run;}
+    if(route.endsWith("finish")){run={...run,status:body.status};return run;}
+  };
+  const manager=createDiscoveryJobManager({backend,searchEndpoint:()=>"http://127.0.0.1:8080/search",
+    search:async()=>{throw Error("Local SearXNG is unavailable or JSON search is disabled.");},
+    generate:async()=>{throw Error("No evidence to cite");}});
+  await manager.create({projectId:"house",projectName:"House Math",description:"Homeownership costs"},
+    {model:"local",endpoint:"http://127.0.0.1:11434/v1/chat/completions"});
+  for(let i=0;i<40&&run.status!=="insufficient_evidence";i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(run.status,"insufficient_evidence");
+  assert.match(run.providerHealth.news,/unavailable|not running|disabled/iu);
+  assert.match(run.providerHealth.news,/research:up/iu);
+});
+
 test("generic house tours and arithmetic videos are not relevant to homeowner insurance searches",()=>{
   assert.equal(isRelevantDiscoveryLead({title:"Amazing house tour",snippet:"Beautiful interior design"},"home insurance premiums",["arithmetic"]),false);
   assert.equal(isRelevantDiscoveryLead({title:"Mental arithmetic tricks",snippet:"How to calculate faster"},"property tax costs",["arithmetic"]),false);

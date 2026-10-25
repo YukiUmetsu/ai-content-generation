@@ -3,6 +3,7 @@ import { localChatEndpoint } from "./topic-generator.mjs";
 import { withLocalInferenceResponse } from "./local-inference-gate.mjs";
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const qwenThinkingModel=model=>/\bqwen3[._-][56]\b/iu.test(model);
 function parseKeywordJSON(value) {
   if (typeof value !== "string") throw Error("Local keyword model returned no text.");
   const trimmed=value.trim();
@@ -104,9 +105,10 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
       if(requestCounter)requestCounter.calls++;
       const {response,raw} = await withLocalInferenceResponse(()=>transport(endpoint,{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({model:modelSettings.model,temperature:0.2,stream:false,response_format:{type:"json_object"},
-          max_tokens:600,messages:[{role:"system",content:[...system,`FOCUS: ${lens}`,`Propose ${requested} distinct suggestions, with short text and rationale. No other keys.`].join("\n")},
+          max_tokens:[1200,1800,2400][attempt],messages:[{role:"system",content:[...system,`FOCUS: ${lens}`,`Propose ${requested} distinct suggestions, with short text and rationale. No other keys.`].join("\n")},
             {role:"user",content:JSON.stringify({name,description,existingKeywords:keywords,alreadySuggested:requestedBefore,
-              ...(attempt?{feedback:`Prior JSON was incomplete or invalid. Reply with only ${requested} complete entries in one JSON object.`}:{})})}]}),
+              ...(attempt?{feedback:`Prior JSON was incomplete or invalid. Reply with only ${requested} complete entries in one JSON object.`}:{})})}],
+          ...(qwenThinkingModel(modelSettings.model)?{chat_template_kwargs:{enable_thinking:false}}:{})}),
         signal:signal?AbortSignal.any([signal,AbortSignal.timeout(90000)]):AbortSignal.timeout(90000)}),signal);
       if (!response.ok) {
         if(![408,429,500,502,503,504].includes(response.status))throw Error(`Local keyword model returned HTTP ${response.status}.`);

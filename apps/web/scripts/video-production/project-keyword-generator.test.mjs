@@ -47,6 +47,45 @@ test("keyword generation retries temporary local model transport and 503 errors"
   assert.equal(response.suggestions.length,1);
 });
 
+test("keyword output truncation increases the retry budget and still yields a first useful batch",async()=>{
+  const budgets=[],progress=[];
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    budgets.push(request.max_tokens);
+    const enough=request.max_tokens>=1700;
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:enough?"stop":"length",
+      message:{content:enough?JSON.stringify({suggestions:[{
+        text:"How property tax reassessments affect homeowners",kind:"query",rationale:"Understand annual tax bills"
+      }]}):'{"suggestions":[{"text":"unfinished'}
+    }]})};
+  };
+  const result=await generateProjectKeywords({name:"House Math",description:"Homeownership expenses",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,
+      sleep:async()=>{},targetCount:1,onBatch:batch=>progress.push(batch)});
+  assert.deepEqual(result.suggestions.map(row=>row.text),["How property tax reassessments affect homeowners"]);
+  assert.equal(budgets.length,2,"One bounded retry should recover from output truncation");
+  assert.ok(budgets[1]>budgets[0],"The retry must allow more complete JSON output");
+  assert.equal(progress[0].suggestions.length,1,"A recovered keyword is shown as soon as it is validated");
+});
+
+test("Qwen3 structured keyword requests suppress expendable thinking tokens",async()=>{
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    const supported=request.chat_template_kwargs?.enable_thinking===false;
+    return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
+      finish_reason:supported?"stop":"length",
+      message:{content:supported?JSON.stringify({suggestions:[{
+        text:"What drives homeowners insurance premium renewals",kind:"topic",rationale:"Explain premium changes"
+      }]}):""}
+    }]})};
+  };
+  const result=await generateProjectKeywords({name:"House Math",description:"The cost of insuring a home",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"Qwen3.5-35B-A3B"},transport,
+      sleep:async()=>{},targetCount:1});
+  assert.equal(result.suggestions[0].text,"What drives homeowners insurance premium renewals");
+});
+
 test("truncated local replies retry with a smaller keyword request",async()=>{
   const requested=[];
   const transport=async (_url,options)=>{
