@@ -33,7 +33,8 @@ test("outline assembly rejects a rephrased question with the same teaching payof
   }];
   assert.throws(()=>assembleOutline(dossier,{pattern:outline.pattern,premise:outline.premise,
     hook:outline.hook,beatCount:2},repeated),error=>
-    error.code==="schema_invalid"&&error.field==="beats[1].payoff");
+    error.code==="schema_invalid"&&error.field==="beats[1].payoff"&&
+    error.schemaIssue==="duplicate_previous");
 });
 
 test("a new scene direction receives prior teaching context and rejects repeated outcomes",async()=>{
