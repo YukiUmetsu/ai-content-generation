@@ -12,6 +12,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::research::router())
         .merge(crate::creative::router())
         .merge(crate::jobs::router())
+        .merge(crate::production_api::router())
         .nest("/api/settings", crate::settings::router())
         .with_state(state)
 }

@@ -60,6 +60,26 @@ describe("Studio menu workspaces", () => {
     expect(stored).not.toContain("apiKey");
     expect(stored).not.toContain("voiceId");
   });
+
+  it("edits and reloads a project-owned brand palette without repeating the section heading", async () => {
+    const user=userEvent.setup();
+    render(<App/>);
+    await user.click(screen.getByRole("link",{name:"Projects"}));
+    expect(screen.getAllByRole("heading",{name:"My project"})).toHaveLength(1);
+    await user.click(screen.getByRole("tab",{name:"Brand & appearance"}));
+    expect(screen.getByRole("heading",{name:"Brand color palette"})).toBeInTheDocument();
+    expect(screen.queryByRole("heading",{name:"Brand & appearance"})).not.toBeInTheDocument();
+    const primary=screen.getByRole("textbox",{name:"Primary HEX"});
+    await user.clear(primary);
+    await user.type(primary,"#265E81");
+    await user.click(screen.getByRole("button",{name:"Save changes"}));
+    const stored=JSON.parse(localStorage.getItem(CATALOG_KEY)??"null");
+    expect(stored.projects[0].brandAppearance).toMatchObject({revision:1,palette:{primary:"#265E81"}});
+    await user.click(screen.getByRole("link",{name:"Settings"}));
+    await user.click(screen.getByRole("link",{name:"Projects"}));
+    await user.click(screen.getByRole("tab",{name:"Brand & appearance"}));
+    expect(screen.getByRole("textbox",{name:"Primary HEX"})).toHaveValue("#265E81");
+  });
 });
 
 describe("Settings navigation", () => {

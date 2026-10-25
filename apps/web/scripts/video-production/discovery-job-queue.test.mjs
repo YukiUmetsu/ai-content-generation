@@ -2,6 +2,78 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createDiscoveryJobManager, selectDiscoveryQueries, isRelevantDiscoveryLead } from "./discovery-job-queue.mjs";
 
+test("a session discovery allocates its run in the saved session before executing the existing research checkpoints",async()=>{
+  const sessionId="session_"+"a".repeat(24),runId="discover_"+"b".repeat(24),routes=[];
+  let status="queued";
+  const manager=createDiscoveryJobManager({
+    backend:async(_project,route,method,body)=>{
+      routes.push(`${method} ${route}`);
+      if(route===`sessions/${sessionId}/discover`)return {id:runId,status:"queued",stage:"queued",inputSnapshot:{version:1,
+        projectName:"Margin Atlas",description:"Home costs",keywords:[],content:[],projectRevision:1}};
+      if(route==="graph")return {nodes:[],sources:[],signals:[]};
+      if(route==="graph/import-market")return {imported:0};
+      if(route==="sources/captured")return {sources:[]};
+      if(route.endsWith("checkpoint"))return {id:runId,status:"running"};
+      if(route.endsWith("finish")){status=body.status;return {id:runId,status};}
+      if(route.includes("/artifacts/"))return {artifact:null};
+      throw Error(`Unexpected ${method} ${route}`);
+    },
+    searchEndpoint:()=>null,
+  });
+  const run=await manager.create({projectId:"brand-one",projectName:"Margin Atlas",description:"Home costs",sessionId},
+    {model:"local",endpoint:"http://localhost:1234/v1/chat/completions"});
+  assert.equal(run.id,runId);
+  for(let i=0;i<35&&status==="queued";i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(status,"insufficient_evidence");
+  assert.equal(routes[0],`POST sessions/${sessionId}/discover`);
+  assert.ok(routes.includes(`POST runs/${runId}/checkpoint`));
+  assert.ok(routes.includes(`POST runs/${runId}/finish`));
+  assert.equal(routes.includes("POST discover"),false,"Session launch must not create an unlinked legacy run");
+});
+
+test("session discovery rejects forged session identifiers before touching the research backend",async()=>{
+  let calls=0;
+  const manager=createDiscoveryJobManager({backend:async()=>{calls++;return null;}});
+  await assert.rejects(()=>manager.create({projectId:"brand-one",projectName:"Margin Atlas",description:"Home costs",
+    sessionId:"../other-brand"},{model:"local",endpoint:"http://localhost:1234/v1/chat/completions"}),
+  /invalid|unsupported/iu);
+  assert.equal(calls,0);
+});
+
+test("a saved session passes its bounded idea budget and frozen prior content to candidate generation",async()=>{
+  const sessionId="session_"+"d".repeat(24),runId="discover_"+"e".repeat(24);
+  const source={id:"public-video-1",title:"Annual insurance cost comparison",url:"https://example.org/watch",
+    provider:"youtube-data-api",evidenceState:"lead_only",publishedAt:null,observedAt:123};
+  let status="queued",candidateInput;
+  const backend=async(_project,route,_method,body)=>{
+    if(route===`sessions/${sessionId}/discover`)return {id:runId,status:"queued",inputSnapshot:{version:1,
+      projectName:"Margin Atlas",description:"Frozen brand focus",keywords:[],
+      content:[{name:"Already published cost explainer",stage:"published"}]}};
+    if(route==="graph")return {nodes:[],sources:[source],signals:[{sourceId:source.id,
+      provider:"youtube-data-api",metric:"views",value:100,unit:"count",collectedAt:123}]};
+    if(route==="graph/import-market")return {imported:0};
+    if(route==="sources/captured")return {sources:[]};
+    if(route.endsWith("checkpoint"))return {id:runId,status:"running"};
+    if(route.endsWith("finish")){status=body.status;return {id:runId,status};}
+    if(route.includes("/artifacts/"))return {artifact:_method==="POST"?body.artifact:null};
+    throw Error(`Unexpected ${route}`);
+  };
+  const manager=createDiscoveryJobManager({backend,searchEndpoint:()=>null,generate:async input=>{
+    candidateInput=input;
+    return [{title:"A New Insurance Ownership Question",hook:"Where is the premium going?",
+      premise:"An original cost breakdown",whyNow:"Evergreen decision",
+      angleKey:"homeowner-insurance-new-comparison",sourceIds:[source.id],confidence:"low"}];
+  }});
+  await manager.create({projectId:"brand-one",projectName:"Margin Atlas",description:"Unfrozen change",
+    sessionId,resultBudget:18,content:[]},
+  {model:"local",endpoint:"http://localhost:1234/v1/chat/completions"});
+  for(let i=0;i<35&&status==="queued";i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(status,"completed");
+  assert.equal(candidateInput.resultBudget,18);
+  assert.equal(candidateInput.description,"Frozen brand focus");
+  assert.deepEqual(candidateInput.content,[{name:"Already published cost explainer",stage:"published"}]);
+});
+
 test("query selection favors project intent over arbitrary first generic keywords",()=>{
   const keywords=[
     {text:"math tricks",kind:"topic",active:true},

@@ -76,6 +76,23 @@ test("discovery divides many sources into short candidate batches and honors loc
   assert.ok(calls.every(call=>call.user.knownContent.length<=35));
 });
 
+test("a saved session supports a configurable discovery budget beyond the legacy five ideas",async()=>{
+  const sources=Array.from({length:24},(_,i)=>({...sample.graph.sources[0],id:`source-${i}`}));
+  const inputs=[];
+  const rows=await generateDiscoveryCandidates({...sample,sessionId:"session_"+"a".repeat(24),
+    resultBudget:18,graph:{...sample.graph,sources}}, {modelSettings,sleep:async()=>{},transport:async(_url,request)=>{
+    const user=JSON.parse(JSON.parse(request.body).messages[1].content);
+    inputs.push(user);
+    const batch=inputs.length;
+    return {ok:true,text:async()=>JSON.stringify({choices:[{message:{content:JSON.stringify({candidates:[0,1].map(index=>({
+      ...candidate,title:`Cost analysis ${batch} variant ${index}`,angleKey:`cost-analysis-${batch}-${index}`,
+      sourceIds:[user.sources[index].id],
+    }))})}}]})};
+  }});
+  assert.equal(inputs.length,6,"Six small batches should be eligible for an 18-idea session budget");
+  assert.equal(rows.length,12,"Distinct evidence-backed ideas must not be truncated to five");
+});
+
 test("repeated temporary model HTTP errors remain identifiable after all retries",async()=>{
   await assert.rejects(generateDiscoveryCandidates(sample,{modelSettings,sleep:async()=>{},
     transport:async()=>({ok:false,status:503})}),/503/);

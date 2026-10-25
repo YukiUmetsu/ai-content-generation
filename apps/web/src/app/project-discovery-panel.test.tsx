@@ -102,8 +102,8 @@ describe("Project discovery author controls",()=>{
       if(!body)throw Error(`Unexpected discovery route: ${path}`);
       return new Response(JSON.stringify(body),{status:200});
     });
-    render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Homeowner economics",createdAt:"2026-10-20T00:00:00Z"}}
-      content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
+    render(<DiscoveryIdeasPanel project={{id:"project-local",name:"House Math",notes:"Homeowner economics",createdAt:"2026-10-20T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" sources={[]} onSaveIdea={()=>true} onRunFinished={()=>{}}/>);
     await userEvent.setup().click(await screen.findByRole("button",{name:"Cancel run"}));
     await waitFor(()=>expect(cancelled).toBe(true));
     expect(await screen.findByText("cancelled")).toBeInTheDocument();
@@ -130,43 +130,30 @@ describe("Project discovery author controls",()=>{
       return new Response(JSON.stringify(body),{status:200});
     });
     let received:unknown=null;
-    render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Homeowner economics",createdAt:"2026-10-20T00:00:00Z"}}
-      content={[]} locale="en" syncStatus="synced" onSaveIdea={(item,openResearch,sources)=>{
+    render(<DiscoveryIdeasPanel project={{id:"project-local",name:"House Math",notes:"Homeowner economics",createdAt:"2026-10-20T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" sources={[source]} onSaveIdea={(item,openResearch)=>{
+        const sources=[source];
         received={item,openResearch,sources};return true;
-      }}/>);
+      }} onRunFinished={()=>{}}/>);
     await userEvent.setup().click(await screen.findByRole("button",{name:"Save & research"}));
     await waitFor(()=>expect(received).toEqual({item:idea,openResearch:true,sources:[source]}));
     await waitFor(()=>expect(persistedDecision).toBe("saved"));
   });
 
-  it("shows clickable sources imported by a finished discovery run without manual refresh",async()=>{
-    let complete=false;
-    const source={id:"source-new",provider:"searxng",title:"Rising homeowner premiums",url:"https://example.com/insurance",
-      publishedAt:null,observedAt:1760000000,evidenceState:"lead_only"};
-    const run={id:"discover-demo",projectId:"project-local",inputRevision:"one",status:"completed",stage:"completed",
-      createdAt:1760000000,updatedAt:1760000000,errorCode:null,providerHealth:{googleTrends:"unavailable"},candidates:[{
-        id:"idea-demo",rank:1,title:"Why Home Insurance Premiums Rise",hook:"See what drives premiums",premise:"Explain rate changes for homeowners",
-        whyNow:"Evergreen homeowner cost topic",angleKey:"insurance-premium-mechanism",sourceIds:[source.id],confidence:"low",decision:null}]};
-    const fetchMock=vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
+  it("keeps Project settings focused on keywords and watchlists rather than a duplicate idea generator",async()=>{
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(input)=>{
       const path=String(input);
-      const body=path.endsWith("/graph")?{nodes:[],edges:[],sources:complete?[source]:[],signals:[],topicCount:0,sourceCount:complete?1:0,supportedEdgeCount:0}
-        :path.endsWith("/keywords")?{keywords:[]}
-          :path.endsWith("/watchlists")?{watchlists:[],watchlistIds:[]}
-            :path.endsWith("/runs")?{runs:[]}
-              :path.endsWith("/project-discovery")?{...run,status:"queued",stage:"select_topics",candidates:[]}
-                :path.endsWith("/runs/discover-demo")?(complete=true,run):null;
-      if(!body)throw Error(`Unexpected discovery route: ${path}`);
-      return new Response(JSON.stringify(body),{status:200,headers:{"content-type":"application/json"}});
+      const body=path.endsWith("/keywords")?{keywords:[]}:path.endsWith("/graph")?{
+        nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0,
+      }:path.endsWith("/watchlists")?{watchlists:[],watchlistIds:[]}:null;
+      if(!body)throw Error(`Unexpected Project settings request: ${path}`);
+      return new Response(JSON.stringify(body),{status:200});
     });
-    const user=userEvent.setup();
     render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Home ownership costs",createdAt:"2026-10-20T00:00:00Z"}}
       content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
-    await screen.findByRole("button",{name:"Discover 5 Ideas"});
-    await waitFor(()=>expect(fetchMock.mock.calls.some(([url])=>String(url).endsWith("/graph"))).toBe(true));
-    await user.click(screen.getByRole("button",{name:"Discover 5 Ideas"}));
-    await waitFor(()=>expect(screen.getAllByRole("link",{name:/Rising homeowner premiums/}).some(link=>
-      link.getAttribute("href")===source.url&&link.textContent?.includes("searxng"))).toBe(true),{timeout:6500});
-  },8000);
+    expect(await screen.findByRole("heading",{name:"Project topics & search keywords"})).toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Discover 5 Ideas"})).not.toBeInTheDocument();
+  });
 
   it("keeps suggested keywords pending until accepted and never modifies localStorage",async()=>{
     localStorage.clear();
@@ -283,8 +270,8 @@ describe("Project discovery author controls",()=>{
       if(!body)throw Error(`Unexpected route: ${path}`);
       return new Response(JSON.stringify(body),{status:200});
     });
-    render(<ProjectDiscoveryPanel project={{id:"project-local",name:"House Math",notes:"Housing costs",createdAt:"2026-10-20T00:00:00Z"}}
-      content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
+    render(<DiscoveryIdeasPanel project={{id:"project-local",name:"House Math",notes:"Housing costs",createdAt:"2026-10-20T00:00:00Z"}}
+      content={[]} locale="en" syncStatus="synced" sources={[]} onSaveIdea={()=>true} onRunFinished={()=>{}}/>);
     await userEvent.setup().click(await screen.findByRole("button",{name:"Discover 5 Ideas"}));
     expect(await screen.findByRole("alert")).toHaveTextContent(/invalid discovery run response/i);
     expect(screen.getByRole("heading",{name:"Discover 5 Ideas"})).toBeInTheDocument();

@@ -18,6 +18,7 @@ import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
 import { deleteDiscoveryProject, syncDiscoveryProject } from "@/lib/api/discovery";
 import { enqueueProjectDeletion, flushProjectDeletions, pendingProjectDeletions } from "./project-deletion-queue";
+import { listDiscoverySessions, listProductions } from "@/lib/api/discovery-sessions";
 
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -30,8 +31,10 @@ export function Shell() {
   const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("production");
   const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"export"}|null>(null);
+  const [storyboardOwnerId,setStoryboardOwnerId] = useState<string|null>(null);
   const selectSection = (next:SectionId) => {
     if(next==="video-director")setDirectorEntry(null);
+    if(next==="create")setStoryboardOwnerId(null);
     setActiveSection(next);
   };
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
@@ -81,9 +84,21 @@ export function Shell() {
       return false;
     }
   }, []);
-  const queueProjectDeletion = useCallback((projectId:string):boolean=>{
-    try{enqueueProjectDeletion(window.localStorage,projectId);return true;}
-    catch(error){setCatalogError(error instanceof Error?error.message:"Could not queue server cleanup for this project.");return false;}
+  const queueProjectDeletion = useCallback(async (projectId:string):Promise<boolean>=>{
+    try{
+      // The browser catalog is not the durable source of discovery history.
+      // Never remove a brand locally until the Rust server confirms no saved work.
+      const [sessions,productions]=await Promise.all([listDiscoverySessions(projectId),listProductions(projectId)]);
+      if(sessions.length||productions.length){
+        setCatalogError("This project owns saved discovery sessions or productions. Preserve or explicitly export that work before deleting the brand.");
+        return false;
+      }
+      enqueueProjectDeletion(window.localStorage,projectId);return true;
+    }catch(error){
+      setCatalogError(error instanceof Error?`Cannot verify saved project work before deletion: ${error.message}`:
+        "Cannot verify saved project work while the local server is unavailable. Nothing was deleted.");
+      return false;
+    }
   },[]);
   const saveVideoIdea = useCallback((idea: {title: string; sourceUrl: string}): boolean => {
     const item: LocalContent = {
@@ -195,19 +210,20 @@ export function Shell() {
                   saveCatalog({...catalog,activeProjectId:projectId});
               }}
               onOpenNav={() => setMobileNavOpen(true)}
+              onOpenProjects={() => setActiveSection("projects")}
               onOpenResearch={() => setActiveSection("research")}
-              onOpenStoryboard={() => {setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
-              onOpenVisuals={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
-              onOpenAudio={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
-              onOpenExport={(artifactId) => {setDirectorEntry({projectId:catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
+              onOpenStoryboard={(productionId) => {setStoryboardOwnerId(productionId??catalog.activeProjectId);setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
+              onOpenVisuals={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
+              onOpenAudio={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
+              onOpenExport={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
               onCreateStoryboard={startEditorialStoryboard}
               onUseVideo={saveVideoIdea}
             />
           ) : activeSection === "create" ? (
             <Workspace
-              key={catalog.activeProjectId}
+              key={storyboardOwnerId??catalog.activeProjectId}
               locale={locale}
-              projectId={catalog.activeProjectId}
+              projectId={storyboardOwnerId??catalog.activeProjectId}
               activeFeatureId={activeFeatureId}
               onFeatureChange={setActiveFeatureId}
               onOpenNav={() => setMobileNavOpen(true)}
@@ -216,10 +232,10 @@ export function Shell() {
             />
           ) : activeSection === "video-director" ? (
             <VideoDirectorWorkspace
-              key={catalog.activeProjectId+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
-              locale={locale} projectId={catalog.activeProjectId}
-              researchArtifactId={directorEntry?.projectId===catalog.activeProjectId?directorEntry.artifactId:undefined}
-              focusStage={directorEntry?.projectId===catalog.activeProjectId?directorEntry.stage:undefined}/>
+              key={(directorEntry?.projectId??catalog.activeProjectId)+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
+              locale={locale} projectId={directorEntry?.projectId??catalog.activeProjectId}
+              researchArtifactId={directorEntry?.artifactId}
+              focusStage={directorEntry?.stage}/>
           ) : activeSection === "research" ? (
             <ResearchWorkspace key={catalog.activeProjectId+":"+(researchHandoff?.title??"")} locale={locale}
               handoff={researchHandoff} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}

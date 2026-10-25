@@ -8,6 +8,7 @@ import { normalizeDiscoveryModels } from "./discovery-models.mjs";
 
 const ID=/^[a-z0-9][a-z0-9-]{1,79}$/iu;
 const RUN=/^discover_[a-f0-9]{24}$/u;
+const SESSION=/^session_[a-f0-9]{24}$/u;
 const defaultApi=process.env.CONTENTGEN_LOCAL_API_URL??"http://127.0.0.1:8787";
 function endpoint() {
   const parsed=new URL(defaultApi);
@@ -34,13 +35,17 @@ function safeError(error) {
 }
 function validateInput(input) {
   if(!input||typeof input!=="object"||Array.isArray(input)||
-    Object.keys(input).some(x=>!["projectId","projectName","description","content"].includes(x)))
+    Object.keys(input).some(x=>!["projectId","projectName","description","content","sessionId","resultBudget"].includes(x)))
     throw Error("Discovery request contains unsupported fields.");
   if(!ID.test(input.projectId)||typeof input.projectName!=="string"||input.projectName.length>160||
     typeof input.description!=="string"||input.description.length>2000||
-    (input.content!==undefined&&(!Array.isArray(input.content)||input.content.length>2000)))
+    (input.content!==undefined&&(!Array.isArray(input.content)||input.content.length>2000))||
+    (input.sessionId!==undefined&&!SESSION.test(input.sessionId))||
+    (input.resultBudget!==undefined&&(!Number.isInteger(input.resultBudget)||input.resultBudget<3||input.resultBudget>30)))
     throw Error("Invalid project discovery request.");
   return {projectId:input.projectId,projectName:input.projectName,description:input.description,
+    ...(input.sessionId?{sessionId:input.sessionId}:{}),
+    ...(input.sessionId?{resultBudget:input.resultBudget??12}:{}),
     content:(input.content??[]).slice(0,300).map(c=>({name:String(c.name??"").slice(0,160),stage:String(c.stage??"").slice(0,40)}))};
 }
 
@@ -265,10 +270,11 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
         await callBackend(projectId,`runs/${runId}/finish`,"POST",{status:"insufficient_evidence",candidates:[]},signal);
         return;
       }
-      const selectedSources=eligibleSources.slice(0,12);
+      const selectedSources=eligibleSources.slice(0,input.sessionId?24:12);
       const sourceIds=new Set(selectedSources.map(source=>source.id));
       const candidateInput=await preserve("candidate-input",{projectName:input.projectName,
         description:input.description,keywords:keywords.filter(keyword=>keyword.active).slice(0,30),
+        ...(input.sessionId?{sessionId:input.sessionId,resultBudget:input.resultBudget}:{}),
         graph:{nodes:(graph.nodes??[]).slice(0,40),sources:selectedSources,
           signals:(graph.signals??[]).filter(signal=>sourceIds.has(signal.sourceId)).slice(0,60)},
         content:input.content.slice(0,35)});
@@ -284,25 +290,29 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
     }
   };
   const start=(input,run,models)=>{
-    const old=active.get(input.projectId);
+    // A brand may have multiple independent saved sessions in flight. Legacy
+    // project-only runs retain their original single-worker behavior.
+    const key=input.sessionId??input.projectId;
+    const old=active.get(key);
     if(old?.id===run.id)return;
     if(old)old.controller.abort(Error("Superseded by a new explicit discovery run."));
-    const controller=new AbortController();active.set(input.projectId,{id:run.id,controller});
+    const controller=new AbortController();active.set(key,{id:run.id,controller});
     queueMicrotask(()=>{void execute(input,run,models,controller).finally(()=>{
-      if(active.get(input.projectId)?.id===run.id)active.delete(input.projectId);
+      if(active.get(key)?.id===run.id)active.delete(key);
     });});
   };
   async function create(raw,modelSettings) {
     const input=validateInput(raw);
     const models=normalizeDiscoveryModels(modelSettings);
-    const run=await callBackend(input.projectId,"discover","POST",{inputRevision:new Date().toISOString()});
+    const route=input.sessionId?`sessions/${input.sessionId}/discover`:"discover";
+    const run=await callBackend(input.projectId,route,"POST",{inputRevision:new Date().toISOString()});
     if(["queued","running"].includes(run.status))start(input,run,models);
     return run;
   }
   async function get(projectId,runId) {
     if(!RUN.test(runId))throw Error("Invalid discovery run ID.");
     const run=await callBackend(projectId,`runs/${runId}`,"GET");
-    if(["queued","running"].includes(run.status)&&active.get(projectId)?.id!==runId) {
+    if(["queued","running"].includes(run.status)&&![...active.values()].some(task=>task.id===runId)) {
       return callBackend(projectId,`runs/${runId}/pause`,"POST",{});
     }
     return run;
@@ -317,8 +327,7 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
   }
   async function cancel(projectId,runId) {
     if(!ID.test(projectId)||!RUN.test(runId))throw Error("Invalid discovery cancellation target.");
-    const task=active.get(projectId);
-    if(task?.id===runId)task.controller.abort(Error("Discovery cancelled by creator."));
+    for(const task of active.values())if(task.id===runId)task.controller.abort(Error("Discovery cancelled by creator."));
     return callBackend(projectId,`runs/${runId}/cancel`,"POST",{});
   }
   return {create,get,list,resume,cancel};

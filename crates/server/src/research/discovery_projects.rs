@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 pub enum DiscoveryError {
     #[error("project not found")]
     NotFound,
+    #[error("project has saved research or productions")]
+    HasSavedResearch,
     #[error("invalid project discovery data: {0}")]
     Invalid(String),
     #[error("stale project snapshot")]
@@ -178,6 +180,11 @@ pub fn delete_project(db: &mut Connection, project_id: &str) -> Result<(), Disco
             "Invalid project deletion target".into(),
         ));
     }
+    let has_sessions: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM content_discovery_sessions WHERE project_id=?1)",
+        [project_id], |row| row.get(0),
+    )?;
+    if has_sessions != 0 { return Err(DiscoveryError::HasSavedResearch); }
     let tx = db.transaction()?;
     tx.execute(
         "DELETE FROM kg_node_search WHERE project_id=?1",

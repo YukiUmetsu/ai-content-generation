@@ -1,51 +1,57 @@
 import { describe, expect, it } from "vitest";
-import { getProductionStages } from "./production-progress";
+import { getProductionStages, PRODUCTION_STAGE_ORDER } from "./production-progress";
 
-describe("guided production stage progression", () => {
-  it("starts at Brief and does not mark unbuilt media ready", () => {
-    const stages=getProductionStages({briefReady:false});
-    expect(stages.map(item=>item.id)).toEqual([
-      "brief","research","storyboard","visuals","audio","export",
+describe("eight-step production progress", () => {
+  it("always displays the full navigable workflow without inventing completion", () => {
+    const stages = getProductionStages({});
+    expect(stages.map(stage => stage.id)).toEqual(PRODUCTION_STAGE_ORDER);
+    expect(stages.map(stage => stage.id)).toEqual([
+      "setup", "discover", "select", "script", "storyboard", "produce", "optimize", "export",
     ]);
-    expect(stages[0].status).toBe("not_started");
-    expect(stages.filter(item=>item.status==="complete")).toHaveLength(0);
+    expect(stages.every(stage => stage.status === "not_started")).toBe(true);
   });
-  it("resumes a persisted research job without restarting it", () => {
-    const stages=getProductionStages({briefReady:true,
-      researchJob:{status:"running",stage:"scene:2"}});
+
+  it("tracks discovery sessions and a running job independently of a production", () => {
+    const stages = getProductionStages({setupReady:true, sessionId:"session-1",
+      discoveryJob:{status:"running",stage:"source-collection"}});
     expect(stages[0].status).toBe("complete");
     expect(stages[1].status).toBe("running");
     expect(stages[2].status).toBe("not_started");
-  });
-  it("shows an evidence-repair pause as review needed, not a failed research generation", () => {
-    const stages=getProductionStages({briefReady:true,
-      researchJob:{status:"paused",stage:"evidence-repair"}});
-    expect(stages[1].status).toBe("needs_review");
-    expect(stages[1].primaryAction).toBe("Review source links");
-  });
-  it("keeps sourced claims in human review instead of declaring sources missing", () => {
-    const stages=getProductionStages({briefReady:true,
-      researchJob:{status:"completed",stage:"completed",artifactId:"research_test-0123456789ab"},
-      storyboardReady:true,unreviewedClaims:3,missingEvidenceClaims:0});
-    expect(stages[1].status).toBe("complete");
-    expect(stages[2].status).toBe("needs_review");
-    expect(stages[2].reason).toMatch(/3/);
     expect(stages[3].status).toBe("not_started");
   });
-  it("marks downstream artifacts stale when a newer research version appears", () => {
-    const stages=getProductionStages({briefReady:true,
-      researchJob:{status:"completed",stage:"completed",artifactId:"research_new-0123456789ab"},
-      storyboardReady:true,storyboardResearchArtifactId:"research_old-0123456789ab",
-      visualReady:true,audioReady:true,exportReady:true});
-    expect(stages[2].status).toBe("stale");
-    expect(stages[3].status).toBe("stale");
-    expect(stages[4].status).toBe("stale");
-    expect(stages[5].status).toBe("stale");
+
+  it("shows partial research as review, never false completion", () => {
+    const stages=getProductionStages({setupReady:true,sessionId:"session-1",
+      discoveryJob:{status:"paused",stage:"evidence-repair"}});
+    expect(stages[1].status).toBe("needs_review");
+    expect(stages[1].primaryAction).toMatch(/Review/);
   });
-  it("keeps saved but repetitive storyboards in editorial review",()=>{
-    const stage=getProductionStages({briefReady:true,storyboardReady:true,
-      storyboardEditorialWarnings:2}).find(item=>item.id==="storyboard");
-    expect(stage?.status).toBe("needs_review");
-    expect(stage?.reason).toMatch(/2 scenes/);
+
+  it("allows an approved idea to advance directly to Script without a research stage", () => {
+    const stages=getProductionStages({setupReady:true,sessionId:"session-1",
+      discoveryJob:{status:"completed",stage:"completed",artifactId:"evidence-1"},
+      ideaId:"idea-1",scriptReady:true});
+    expect(stages[1].status).toBe("complete");
+    expect(stages[2].status).toBe("complete");
+    expect(stages[3].status).toBe("complete");
+    expect(stages[4].status).toBe("not_started");
+  });
+
+  it("marks saved downstream work stale after upstream evidence changes", () => {
+    const stages=getProductionStages({setupReady:true,sessionId:"session-1",ideaId:"idea-1",
+      discoveryArtifactId:"new",scriptReady:true,storyboardReady:true,
+      storyboardResearchArtifactId:"old",visualReady:true,optimizationReady:true,exportReady:true});
+    for(const id of ["storyboard","produce","optimize","export"]){
+      expect(stages.find(stage=>stage.id===id)?.status).toBe("stale");
+    }
+    expect(stages.find(stage=>stage.id==="script")?.status).toBe("complete");
+  });
+
+  it("keeps storyboard warnings as explicit review even with saved media", () => {
+    const stages=getProductionStages({storyboardReady:true,missingEvidenceClaims:2,
+      storyboardEditorialWarnings:1,visualReady:true});
+    const storyboard=stages.find(stage=>stage.id==="storyboard");
+    expect(storyboard?.status).toBe("needs_review");
+    expect(storyboard?.reason).toMatch(/2/);
   });
 });

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  CATALOG_KEY, catalogCounts, loadCatalog, newCatalog, parseCatalog, persistCatalog,
+  CATALOG_KEY, catalogCounts, loadCatalog, newCatalog, parseCatalog, persistCatalog, saveProjectAppearance,
   validateCatalog, withoutProject, type StudioCatalog,
 } from "./catalog-model";
+import { DEFAULT_PROJECT_PALETTE } from "./project-brand-appearance";
 
 describe("Studio local metadata catalog", () => {
   beforeEach(() => localStorage.clear());
@@ -60,5 +61,36 @@ describe("Studio local metadata catalog", () => {
     expect(catalogCounts(catalog,second.id).published).toBe(0);
     expect(catalogCounts(catalog,second.id).rightsCleared).toBe(1);
     expect(JSON.stringify(catalogCounts(catalog,second.id))).not.toMatch(/views|revenue|viral|watchtime/i);
+  });
+
+  it("keeps Project brand revisions and reusable colors isolated across save/load", () => {
+    const original = fixture();
+    const now = "2026-10-25T00:00:00.000Z";
+    const first = saveProjectAppearance(original, second.id, {
+      palette: {...DEFAULT_PROJECT_PALETTE, accent:"#CA581D", custom:[]},
+      typographyPreset:"calm-editorial",
+    }, now);
+    expect(first.projects.find(p=>p.id===second.id)?.brandAppearance?.revision).toBe(1);
+    expect(first.projects[0].brandAppearance).toBeUndefined();
+    const secondSave = saveProjectAppearance(first,second.id,{
+      palette:{...DEFAULT_PROJECT_PALETTE,accent:"#1B758A",custom:[]},
+      typographyPreset:"calm-editorial",
+    },"2026-10-25T01:00:00.000Z");
+    const changed = secondSave.projects.find(p=>p.id===second.id)!;
+    expect(changed.brandAppearance?.revision).toBe(2);
+    expect(changed.brandAppearanceHistory?.map(v=>v.palette.accent)).toEqual(["#CA581D"]);
+    persistCatalog(secondSave);
+    expect(loadCatalog().catalog).toEqual(secondSave);
+    expect(original.projects[1].brandAppearance).toBeUndefined();
+  });
+
+  it("preserves imported legacy projects with no appearance fields and rejects corrupt history", () => {
+    const old = fixture();
+    expect(parseCatalog(JSON.stringify(old))).toEqual(old);
+    const fresh = saveProjectAppearance(old,second.id,{
+      palette:{...DEFAULT_PROJECT_PALETTE,custom:[]}, typographyPreset:"modern-analytical",
+    },"2026-10-25T00:00:00.000Z");
+    const invalid = {...fresh,projects:fresh.projects.map(p=>p.id===second.id?{...p,brandAppearanceHistory:[{...p.brandAppearance, revision:1000}]}:p)};
+    expect(()=>validateCatalog(invalid)).toThrow(/revision|history/i);
   });
 });

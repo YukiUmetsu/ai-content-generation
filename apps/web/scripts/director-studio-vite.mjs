@@ -4,6 +4,7 @@ import { resolveModelForTask, readModelProfiles } from "./video-production/model
 import { generateHookVariants } from "./video-production/hook-variants.mjs";
 import { editPreproductionShot } from "./video-production/video-revisions.mjs";
 import { generateEditorialVariants } from "./video-production/editorial-variants.mjs";
+import { generateScriptSection } from "./video-production/script-generation.mjs";
 import { createStudioResearchDraft, loadStudioResearchDraft } from "./video-production/studio-research.mjs";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
 import { reconcileStoryboardPlan } from "./video-production/storyboard-director-sync.mjs";
@@ -85,6 +86,13 @@ export async function handleDirectorRequest(req,res,deps={}){
       const settings=await (deps.model??resolveModelForTask)("hooks");
       const approaches=await (deps.editorial??generateEditorialVariants)(request,{modelSettings:settings});
       send(res,200,{approaches,editorialStatus:"unverified-draft"});
+    }else if(req.method==="POST"&&(route==="/script-generate"||route==="/script-regenerate-section")){
+      const request=await readBody(req);
+      const expectedMode=route==="/script-generate"?"initial":"regenerate";
+      if(request?.mode!==expectedMode)throw Error("Script action does not match its endpoint.");
+      const settings=await (deps.model??resolveModelForTask)("script");
+      const proposal=await (deps.script??generateScriptSection)(request,{modelSettings:settings});
+      send(res,200,{...proposal,status:expectedMode==="initial"?"generated-draft":"candidate-needs-acceptance"});
     }else if(req.method==="POST"&&route==="/market-queries"){
       const request=await readBody(req);
       if(!request || typeof request!=="object" || Array.isArray(request) ||

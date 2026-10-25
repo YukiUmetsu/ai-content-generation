@@ -7,7 +7,7 @@ import { CATALOG_KEY, parseCatalog } from "./catalog-model";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Studio shell", () => {
-  it("enables the real Projects discovery controls after the browser catalog syncs", async () => {
+  it("keeps project keyword preferences without the former five-idea generator", async () => {
     localStorage.removeItem(CATALOG_KEY);
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
@@ -22,7 +22,8 @@ describe("Studio shell", () => {
     const user=userEvent.setup();
     render(<App/>);
     await user.click(screen.getByRole("link",{name:"Projects"}));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Discover 5 Ideas"})).toBeEnabled());
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled());
+    expect(screen.queryByRole("button",{name:"Discover 5 Ideas"})).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox",{name:"Keyword or search phrase"}),"Home insurance premiums");
     expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled();
   });

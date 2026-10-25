@@ -7,18 +7,14 @@ import { loadProjectKeywords, patchProjectKeywords, streamProjectKeywords,
   type KeywordKind, type KeywordSuggestion, type KeywordSuggestionQuality, type ProjectKeyword, type GraphOverview,
   type DiscoveryCandidate } from "@/lib/api/discovery";
 import { ProjectKnowledgePanel } from "./project-knowledge-panel";
-import { DiscoveryIdeasPanel } from "./discovery-ideas-panel";
 
 const input = "w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const msg = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : en;
 
-export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveIdea}: {
+export function ProjectDiscoveryPanel({project,locale,syncStatus}: {
   project: LocalProject; content: LocalContent[]; locale: Locale; syncStatus: "syncing" | "synced" | "offline";
   onSaveIdea:(idea:DiscoveryCandidate,openResearch:boolean,sources?:GraphOverview["sources"])=>boolean;
 }) {
-  const [graph,setGraph] = useState<GraphOverview|null>(null);
-  const [graphRevision,setGraphRevision] = useState(0);
-  const onRunFinished = useCallback(()=>setGraphRevision(value=>value+1),[]);
   const [keywords, setKeywords] = useState<ProjectKeyword[]>([]);
   const [suggestions, setSuggestions] = useState<KeywordSuggestion[]>([]);
   const [suggestionQuality,setSuggestionQuality]=useState<KeywordSuggestionQuality|null>(null);
@@ -148,9 +144,6 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
       {notice&&<p role="status" className="mt-3 text-xs text-muted-foreground">{notice}</p>}
       {error&&<p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
     </Surface>
-    <ProjectKnowledgePanel projectId={project.id} locale={locale} syncStatus={syncStatus} revision={graphRevision} onGraph={setGraph}/>
-    <DiscoveryIdeasPanel project={project} content={content} locale={locale} syncStatus={syncStatus}
-      sources={graph?.sources??[]} onSaveIdea={(idea,openResearch)=>onSaveIdea(idea,openResearch,
-        (graph?.sources??[]).filter(source=>idea.sourceIds.includes(source.id)))} onRunFinished={onRunFinished}/>
+    <ProjectKnowledgePanel projectId={project.id} locale={locale} syncStatus={syncStatus} revision={0} onGraph={()=>{}}/>
   </section>;
 }

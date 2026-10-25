@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::discovery_projects::{self, DiscoveryError, KeywordPatch, ProjectSnapshot};
 use super::discovery_store::{self, CandidateDraft};
+use super::sessions_api;
 use super::graph_store::{self, SourceDraft};
 use super::market_api::epoch_now;
 use crate::error::ApiError;
@@ -17,6 +18,7 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(sessions_api::router())
         .route("/projects/{id}", delete(delete_project))
         .route("/projects/{id}/sync", post(sync_project))
         .route(
@@ -67,7 +69,7 @@ async fn require_local_host(request: Request, next: Next) -> Result<Response, Ap
     Ok(next.run(request).await)
 }
 
-fn editor_header(headers: &HeaderMap) -> Result<(), ApiError> {
+pub(crate) fn editor_header(headers: &HeaderMap) -> Result<(), ApiError> {
     if headers
         .get("x-contentgen-discovery")
         .and_then(|value| value.to_str().ok())
@@ -81,10 +83,13 @@ fn editor_header(headers: &HeaderMap) -> Result<(), ApiError> {
     }
 }
 
-fn map_error(error: DiscoveryError) -> ApiError {
+pub(crate) fn map_error(error: DiscoveryError) -> ApiError {
     match error {
         DiscoveryError::NotFound => ApiError::NotFound {
             message: "Discovery project not found".into(),
+        },
+        DiscoveryError::HasSavedResearch => ApiError::Conflict {
+            message: "This Project has saved discovery sessions or productions. Preserve or explicitly manage that work before deleting the Project.".into(),
         },
         DiscoveryError::StaleSnapshot => ApiError::Conflict {
             message: "Server has a newer project snapshot".into(),

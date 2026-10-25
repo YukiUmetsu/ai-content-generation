@@ -8,7 +8,7 @@ import type { Locale } from "@/features/registry";
 import type { SectionId } from "./navigation";
 import { sectionLabel } from "./navigation";
 import {
-  catalogCounts, makeCatalogId, newCatalog, parseCatalog, withoutProject,
+  catalogCounts, makeCatalogId, newCatalog, parseCatalog, saveProjectAppearance, withoutProject,
   type LocalAsset, type LocalContent, type LocalProduct,
   type StudioCatalog, type ContentKind, type ContentStage, type AssetKind,
   type Rights, type ProductKind, type ProductStage,
@@ -18,6 +18,7 @@ import { ResearchModelSettings } from "./research-model-settings";
 import { PromptStudio } from "./prompt-studio";
 import { ProviderConnections } from "./provider-connections";
 import { ProjectDiscoveryPanel } from "./project-discovery-panel";
+import { ProjectBrandAppearancePanel } from "./project-brand-appearance-panel";
 import type {DiscoveryCandidate,GraphSource} from "@/lib/api/discovery";
 
 interface Props {
@@ -27,7 +28,7 @@ interface Props {
   save: (next: StudioCatalog) => boolean;
   onCreate: () => void;
   onResearchIdea?: (idea:DiscoveryCandidate,sources:GraphSource[])=>void;
-  onDeleteProject?: (projectId:string)=>boolean;
+  onDeleteProject?: (projectId:string)=>boolean|Promise<boolean>;
   discoverySync?: "syncing" | "synced" | "offline";
 }
 const inputClass = "min-w-0 w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -70,6 +71,7 @@ function Dropdown<T extends string>({name,selected,choices,onSelect}: {
   </label>;
 }
 function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteProject,discoverySync}: Omit<Props,"section">) {
+  const [projectTab,setProjectTab] = useState(0);
   const [name,setName] = useState("");
   const [notes,setNotes] = useState("");
   const [editName,setEditName] = useState(catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "");
@@ -81,7 +83,7 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
     if (!name.trim()) return;
     const id = makeCatalogId("project");
     const next = {...catalog,activeProjectId:id,projects:[...catalog.projects,{id,name:name.trim(),notes:notes.trim(),createdAt:new Date().toISOString()}]};
-    if (save(next)) {setName("");setNotes("");setEditName(next.projects.at(-1)!.name);setEditNotes(next.projects.at(-1)!.notes);}
+    if (save(next)) {setName("");setNotes("");setEditName(next.projects.at(-1)!.name);setEditNotes(next.projects.at(-1)!.notes);setProjectTab(1);}
   };
   function select(id:string) {
     const project = catalog.projects.find(p=>p.id===id);
@@ -89,9 +91,26 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
     if(save({...catalog,activeProjectId:id})){setEditName(project.name);setEditNotes(project.notes);}
   }
   return <>
-    <SectionIntro section="projects" locale={locale} description={localMessage(locale,
-      "Organize local projects and choose which project the Create tools receive. Production assets and video files are not stored here.",
-      "ローカルのプロジェクトを整理し、作成ツールで使用するプロジェクトを選べます。動画ファイルは保存されません。")}/>
+    <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-4">
+        <div className="flex size-14 shrink-0 items-center justify-center rounded-xl text-lg font-bold"
+          style={{background:current.brandAppearance?.palette.primary??"#152A45",color:current.brandAppearance?.palette.background??"#F6F3EC"}} aria-hidden="true">
+          {current.name.trim().split(/\s+/).slice(0,2).map(word=>word.charAt(0)).join("").toUpperCase()}
+        </div>
+        <div className="min-w-0"><h1 className="break-words font-serif text-3xl font-semibold text-foreground">{current.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{localMessage(locale,"Manage your brand identity and project defaults.","ブランドの設定とプロジェクトの既定値を管理します。")}</p>
+        </div>
+      </div>
+      <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">{localMessage(locale,"Local project", "ローカルプロジェクト")}</span>
+    </header>
+    <Tabs activeIndex={projectTab} onChange={next=>setProjectTab(next??0)} label={localMessage(locale,"Project sections","プロジェクトの項目")}
+      className="min-w-0 space-y-5">
+    <Tabs.List className="w-fit max-w-full" aria-label={localMessage(locale,"Project sections","プロジェクトの項目")}>
+      <Tabs.Tab value={0}>{localMessage(locale,"Overview","概要")}</Tabs.Tab>
+      <Tabs.Tab value={1}>{localMessage(locale,"Brand & appearance","ブランドと外観")}</Tabs.Tab>
+      <Tabs.Tab value={2}>{localMessage(locale,"Discovery preferences","リサーチ設定")}</Tabs.Tab>
+    </Tabs.List>
+    <Tabs.Panel value={0} className="min-w-0 space-y-4">
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,.85fr)]">
       <Surface header={<h2 className="font-medium">Projects · {catalog.projects.length}</h2>}>
         {catalog.projects.map(project=>{
@@ -107,8 +126,10 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
               </Button>
               <Button variant="subtle" size="icon" aria-label={"Delete "+project.name} disabled={catalog.projects.length<=1}
                 onClick={()=>{if(window.confirm("Delete project "+project.name+" and its content, assets, products, and local research history?")){
-                  if(onDeleteProject&&!onDeleteProject(project.id))return;
-                  save(withoutProject(catalog,project.id));
+                  void (async()=>{
+                    if(onDeleteProject&&!(await onDeleteProject(project.id)))return;
+                    save(withoutProject(catalog,project.id));
+                  })();
                 }}}>
                 <Trash2 aria-hidden className="size-4"/>
               </Button>
@@ -140,6 +161,12 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
         </Surface>
       </div>
     </div>
+    </Tabs.Panel>
+    <Tabs.Panel value={1} className="min-w-0">
+      <ProjectBrandAppearancePanel key={`${current.id}:${current.brandAppearance?.revision??0}`} project={current} locale={locale}
+        onSave={draft=>save(saveProjectAppearance(catalog,current.id,draft))}/>
+    </Tabs.Panel>
+    <Tabs.Panel value={2} className="min-w-0">
     <ProjectDiscoveryPanel key={current.id} project={current} content={catalog.content.filter(item=>item.projectId===current.id)}
       locale={locale} syncStatus={discoverySync??"offline"}
       onSaveIdea={(idea,openResearch,sources=[])=>{
@@ -153,6 +180,8 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
         if(openResearch)onResearchIdea?.(idea,sources);
         return true;
       }}/>
+    </Tabs.Panel>
+    </Tabs>
   </>;
 }
 function InventoryWorkspace({section,locale,catalog,save}:Props) {

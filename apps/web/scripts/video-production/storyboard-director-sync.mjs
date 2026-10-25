@@ -35,7 +35,7 @@ const originalDuration=voice=>{
 function reject(message){throw Error("Storyboard sync: "+message);}
 
 export function reconcileStoryboardPlan({artifactId,projectId,dossier,plan,storyboard,compile=compilePreproductionBundle}){
-  if(!/^[a-z0-9][a-z0-9-]{1,79}$/iu.test(projectId??"")||
+  if(!/^[a-z0-9][a-z0-9_-]{1,79}$/iu.test(projectId??"")||
     storyboard?.schemaVersion!==1||storyboard?.kind!=="contentgen-semantic-storyboard"||
     storyboard.id!=="storyboard-"+projectId)
     reject("storyboard must belong to the selected project.");

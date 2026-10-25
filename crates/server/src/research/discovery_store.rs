@@ -35,6 +35,7 @@ pub struct Candidate {
 pub struct DiscoveryRun {
     pub id: String,
     pub project_id: String,
+    pub session_id: Option<String>,
     pub input_revision: String,
     pub input_snapshot: serde_json::Value,
     pub status: String,
@@ -68,6 +69,17 @@ pub fn start_or_get_active(
     input_revision: &str,
     now: i64,
 ) -> Result<DiscoveryRun, DiscoveryError> {
+    let session_id = super::sessions_store::ensure_legacy_session(db, project_id, now)?;
+    start_or_get_active_for_session(db, project_id, &session_id, input_revision, now)
+}
+
+pub fn start_or_get_active_for_session(
+    db: &mut Connection,
+    project_id: &str,
+    session_id: &str,
+    input_revision: &str,
+    now: i64,
+) -> Result<DiscoveryRun, DiscoveryError> {
     if input_revision.len() > 180 {
         return Err(DiscoveryError::Invalid("Invalid snapshot revision".into()));
     }
@@ -75,8 +87,11 @@ pub fn start_or_get_active(
     // The partial unique index is a second line of defense against double-clicks.
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     exists(&tx, project_id)?;
-    let active:Option<String>=tx.query_row("SELECT id FROM discovery_runs WHERE project_id=?1 AND status IN ('queued','running','paused')",
-        [project_id],|r|r.get(0)).optional()?;
+    let scoped: i64 = tx.query_row("SELECT EXISTS(SELECT 1 FROM content_discovery_sessions WHERE id=?1 AND project_id=?2)",
+        params![session_id,project_id],|r|r.get(0))?;
+    if scoped == 0 { return Err(DiscoveryError::NotFound); }
+    let active:Option<String>=tx.query_row("SELECT id FROM discovery_runs WHERE project_id=?1 AND session_id=?2 AND status IN ('queued','running','paused')",
+        params![project_id,session_id],|r|r.get(0)).optional()?;
     if let Some(active) = active {
         return get_run(&tx, project_id, &active);
     }
@@ -112,8 +127,26 @@ pub fn start_or_get_active(
         [project_id],
         |row| row.get(0),
     )?;
-    let snapshot = serde_json::json!({"version":1,"projectName":name,"description":description,
-        "content":content,"keywords":keywords,"projectRevision":revision,
+    let (platforms_json,settings_json):(String,String)=tx.query_row(
+        "SELECT platforms_json,settings_snapshot_json FROM content_discovery_sessions
+         WHERE id=?1 AND project_id=?2",params![session_id,project_id],
+        |r|Ok((r.get(0)?,r.get(1)?)))?;
+    let platforms:serde_json::Value=serde_json::from_str(&platforms_json)
+        .map_err(|_|DiscoveryError::Invalid("Stored session platforms are invalid".into()))?;
+    let session_settings:serde_json::Value=serde_json::from_str(&settings_json)
+        .map_err(|_|DiscoveryError::Invalid("Stored session settings are invalid".into()))?;
+    let pinned = session_id.starts_with("session_");
+    let frozen_name = if pinned { session_settings.pointer("/project/name").and_then(serde_json::Value::as_str) } else { None }
+        .map(str::to_owned).unwrap_or(name);
+    let frozen_description = if pinned { session_settings.pointer("/project/description").and_then(serde_json::Value::as_str) } else { None }
+        .map(str::to_owned).unwrap_or(description);
+    let frozen_revision = if pinned { session_settings.pointer("/project/revision").and_then(serde_json::Value::as_i64) } else { None };
+    let frozen_keywords = if pinned { session_settings.pointer("/project/keywords").cloned() } else { None };
+    let snapshot = serde_json::json!({"version":1,"projectName":frozen_name,
+        "description":frozen_description,
+        "content":content,"keywords":frozen_keywords.unwrap_or_else(||serde_json::json!(keywords)),
+        "projectRevision":frozen_revision.unwrap_or(revision),
+        "sessionId":session_id,"platforms":platforms,"sessionSettings":session_settings,
         "graphRevision":graph_revision,"researchFreshness":research_freshness,
         "providerAvailability":{"googleTrends":"unavailable"}});
     let mut randomness = [0u8; 12];
@@ -126,8 +159,8 @@ pub fn start_or_get_active(
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>()
     );
-    tx.execute("INSERT INTO discovery_runs(id,project_id,input_revision,input_snapshot_json,status,stage,created_at,updated_at)
-        VALUES (?1,?2,?3,?4,'queued','queued',?5,?5)",params![id,project_id,input_revision,snapshot.to_string(),now])?;
+    tx.execute("INSERT INTO discovery_runs(id,project_id,session_id,input_revision,input_snapshot_json,status,stage,created_at,updated_at)
+        VALUES (?1,?2,?3,?4,?5,'queued','queued',?6,?6)",params![id,project_id,session_id,input_revision,snapshot.to_string(),now])?;
     tx.commit()?;
     get_run(db, project_id, &id)
 }
@@ -434,15 +467,16 @@ pub fn finish_run(
     if !matches!(
         status,
         "completed" | "insufficient_evidence" | "failed" | "cancelled"
-    ) || candidates.len() > 20
+    ) || candidates.len() > 100
     {
         return Err(DiscoveryError::Invalid(
             "Invalid result status or candidate count".into(),
         ));
     }
     let tx = db.transaction()?;
-    let project_id:String=tx.query_row("SELECT project_id FROM discovery_runs WHERE id=?1 AND status IN ('queued','running','paused')",
-        [run_id],|r|r.get(0)).optional()?.ok_or(DiscoveryError::NotFound)?;
+    let (project_id,session_id):(String,Option<String>)=tx.query_row("SELECT project_id,session_id FROM discovery_runs WHERE id=?1 AND status IN ('queued','running','paused')",
+        [run_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(DiscoveryError::NotFound)?;
+    let result_limit = if session_id.as_deref().is_some_and(|id| id.starts_with("session_")) { 100 } else { 5 };
     // Validate *before* persisting any candidate. A search lead is not evidence,
     // and observed_at is only the import time (not a video's publishing date).
     let mut ranked = Vec::new();
@@ -512,7 +546,7 @@ pub fn finish_run(
             .then_with(|| a.1.angle_key.cmp(&b.1.angle_key))
     });
     // Reserve breadth across specific, already-known project topics before
-    // filling the remaining five slots from a dominant topic. This never
+    // filling the remaining slots from a dominant topic. This never
     // invents trending velocity, and low-confidence entries still retain
     // their honest confidence labels.
     let aliases = topic_aliases(&tx, &project_id)?;
@@ -553,7 +587,7 @@ pub fn finish_run(
     let mut selected: Vec<(String, String)> = vec![];
     let mut rank = 0;
     for (_, draft) in prioritized {
-        if rank >= 5 {
+        if rank >= result_limit {
             break;
         }
         // An idea with no source cannot be presented as an evidence-backed discovery.
@@ -575,6 +609,16 @@ pub fn finish_run(
         tx.execute("INSERT INTO discovery_candidates(id,project_id,run_id,rank,title,hook,premise,why_now,angle_key,confidence,source_ids_json)
             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",params![id,project_id,run_id,rank,draft.title,
                 draft.hook,draft.premise,draft.why_now,draft.angle_key,draft.confidence,serde_json::to_string(&draft.source_ids).unwrap_or_default()])?;
+        // Keep a bounded source version alongside each candidate even if
+        // the project graph is refreshed later. Source leads alone are not
+        // treated as verified factual passages.
+        for source_id in unique_sources {
+            tx.execute("INSERT INTO discovery_candidate_sources
+                (candidate_id,source_id,provider,url,title,observed_at,published_at,evidence_state,passage)
+                SELECT ?1,id,provider,url,title,observed_at,published_at,evidence_state,substr(passage,1,1000)
+                FROM kg_sources WHERE id=?2 AND project_id=?3",
+                params![id,source_id,project_id])?;
+        }
     }
     let final_status = if status == "completed" && rank == 0 {
         "insufficient_evidence"
@@ -668,7 +712,7 @@ pub fn decide(
     reason: Option<&str>,
     now: i64,
 ) -> Result<(), DiscoveryError> {
-    if !matches!(decision, "saved" | "dismissed" | "storyboard")
+    if !matches!(decision, "saved" | "dismissed" | "storyboard" | "selected")
         || reason.is_some_and(|s| s.len() > 300)
     {
         return Err(DiscoveryError::Invalid("Invalid idea decision".into()));
@@ -690,11 +734,11 @@ pub fn get_run(
     run_id: &str,
 ) -> Result<DiscoveryRun, DiscoveryError> {
     exists(db, project_id)?;
-    let base=db.query_row("SELECT id,project_id,input_revision,status,stage,created_at,updated_at,error_code,provider_health_json,input_snapshot_json
+    let base=db.query_row("SELECT id,project_id,input_revision,status,stage,created_at,updated_at,error_code,provider_health_json,input_snapshot_json,session_id
         FROM discovery_runs WHERE project_id=?1 AND id=?2",params![project_id,run_id],|r|Ok((
             r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,
             r.get::<_,String>(4)?,r.get::<_,i64>(5)?,r.get::<_,i64>(6)?,r.get::<_,Option<String>>(7)?,
-            r.get::<_,String>(8)?,r.get::<_,String>(9)?))).optional()?.ok_or(DiscoveryError::NotFound)?;
+            r.get::<_,String>(8)?,r.get::<_,String>(9)?,r.get::<_,Option<String>>(10)?))).optional()?.ok_or(DiscoveryError::NotFound)?;
     let mut stmt = db.prepare(
         "SELECT id,rank,title,hook,premise,why_now,angle_key,source_ids_json,confidence,decision
         FROM discovery_candidates WHERE run_id=?1 AND project_id=?2 ORDER BY rank",
@@ -719,6 +763,7 @@ pub fn get_run(
     Ok(DiscoveryRun {
         id: base.0,
         project_id: base.1,
+        session_id: base.10,
         input_revision: base.2,
         input_snapshot: serde_json::from_str(&base.9)
             .unwrap_or_else(|_| serde_json::json!({"version":0})),
