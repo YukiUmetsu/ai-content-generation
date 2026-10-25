@@ -758,7 +758,7 @@ pub fn queue_missing_market_runs(
             "SELECT r.id FROM discovery_runs r
              JOIN content_discovery_sessions s ON s.id=r.session_id
              WHERE r.status='completed' AND r.stage='completed'
-               AND r.session_id LIKE 'session_%' AND s.archived_at IS NULL
+               AND s.archived_at IS NULL
                AND (?1 IS NULL OR r.project_id=?1)
                AND (?2 IS NULL OR r.session_id=?2)
                AND EXISTS (SELECT 1 FROM discovery_candidates c WHERE c.run_id=r.id)
