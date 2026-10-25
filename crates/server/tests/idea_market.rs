@@ -291,8 +291,8 @@ fn automatic_retry_blockers_are_persisted_without_overwriting_success_or_spammin
     // The key was added, but the provider quota is exhausted. Do not leave
     // the stale missing-key error eligible for an immediate retry loop.
     idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
-        "roof repair", "long", "budget_exhausted", now + 1).unwrap();
-    let latest = idea_market::latest_assessment(&db, &idea, now + 2).unwrap().unwrap();
+        "roof repair", "long", "budget_exhausted", now).unwrap();
+    let latest = idea_market::latest_assessment(&db, &idea, now + 1).unwrap().unwrap();
     assert_eq!(latest.error_code.as_deref(), Some("budget_exhausted"));
     idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
         "roof repair", "long", "budget_exhausted", now + 2).unwrap();
