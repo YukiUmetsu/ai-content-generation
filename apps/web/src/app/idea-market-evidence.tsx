@@ -116,7 +116,7 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
             {date(matching.observedAt, locale)}</time>}
         </div>
         <div className="mt-1 flex items-baseline gap-2">
-          {comparing !== null ? <span className="text-2xl font-semibold leading-none tabular-nums tracking-tight">
+          {comparing !== null ? <span className="text-base font-semibold leading-none tabular-nums tracking-tight">
             {Math.round(comparing)}<span className="ml-0.5 text-xs font-medium text-muted-foreground">/100</span></span>
             : <span className="text-sm font-semibold text-muted-foreground">{running ? tr(locale, "Collecting…", "収集中…")
               : finished ? tr(locale, "Comparison unavailable", "比較データ不足")
@@ -150,7 +150,7 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
         <div className="mt-1 flex items-center gap-1.5">
           {momentumPositive ? <TrendingUp className="size-5 shrink-0 text-success" aria-hidden="true" />
             : momentumNegative ? <TrendingDown className="size-5 shrink-0 text-status-warning" aria-hidden="true" /> : null}
-          {trendChangeText ? <span className={`text-2xl font-semibold leading-none tabular-nums tracking-tight ${momentumPositive ? "text-success" : ""}`}>
+          {trendChangeText ? <span className={`text-base font-semibold leading-none tabular-nums tracking-tight ${momentumPositive ? "text-success" : ""}`}>
             {trendChangeText}</span> : <span className="text-sm font-semibold text-muted-foreground">
             {googleTrends?.state === "running" ? tr(locale, "Checking…", "取得中…")
               : googleTrends?.state === "failed" || googleTrends?.state === "unavailable" ? tr(locale, "Google Trends unavailable", "Google Trends を利用できません")
