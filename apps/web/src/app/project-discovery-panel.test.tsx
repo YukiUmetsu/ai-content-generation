@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import {ProjectDiscoveryPanel} from "./project-discovery-panel";
 import {ProjectKnowledgePanel} from "./project-knowledge-panel";
 import {DiscoveryIdeasPanel} from "./discovery-ideas-panel";
+import type {GraphSource} from "@/lib/api/discovery";
 
 afterEach(()=>vi.restoreAllMocks());
 
@@ -110,7 +111,7 @@ describe("Project discovery author controls",()=>{
   });
 
   it("hands the selected idea and matching source leads to Research when requested",async()=>{
-    const source={id:"source-one",provider:"searxng",title:"Homeowner policy explanation",url:"https://example.com/policy",
+    const source:GraphSource={id:"source-one",provider:"searxng",title:"Homeowner policy explanation",url:"https://example.com/policy",
       publishedAt:null,observedAt:1760000000,evidenceState:"lead_only"};
     const idea={id:"idea-one",rank:1,title:"Why Home Insurance Premiums Change",hook:"What's behind your premium?",
       premise:"Explain replacement costs and local risks",whyNow:"Evergreen",angleKey:"premium-explained",sourceIds:[source.id],confidence:"low",decision:null};
@@ -277,3 +278,4 @@ describe("Project discovery author controls",()=>{
     expect(screen.getByRole("heading",{name:"Discover 5 Ideas"})).toBeInTheDocument();
   });
 });
+

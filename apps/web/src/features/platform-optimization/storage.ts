@@ -41,8 +41,9 @@ function validPackage(value: unknown): value is PlatformPackage {
   if (!["private", "unlisted", "public"].includes(fields.visibility as string)) return false;
   if (value.approvedRevision !== null && (!Number.isInteger(value.approvedRevision) || (value.approvedRevision as number) < 1)) return false;
   if (value.status === "approved" && value.approvedRevision !== value.revision) return false;
-  return ["video", "thumbnail", "captions", "hero"].every((key) => value.assetIds &&
-    (value.assetIds[key] === null || typeof value.assetIds[key] === "string"));
+  const assetIds = value.assetIds;
+  return ["video", "thumbnail", "captions", "hero"].every((key) =>
+    assetIds[key] === null || typeof assetIds[key] === "string");
 }
 
 function validateManifest(value: unknown): value is PlatformOptimizationManifest {
@@ -79,3 +80,4 @@ export function loadPlatformOptimization(productionId: string, projectId: string
     return { manifest: null, warning: error instanceof Error ? error.message : "Could not load saved platform packages." };
   }
 }
+

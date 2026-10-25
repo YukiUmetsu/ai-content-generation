@@ -114,7 +114,7 @@ describe("platform optimization authoring", () => {
     expect(approved.packages[0].status).toBe("approved");
     expect(review.metadataReady).toBe(true);
     expect(review.readyToUpload).toBe(false);
-    expect(manifest.packages.every((item) => item.status !== "published")).toBe(true);
+    expect(manifest.packages.every((item) => item.status === "draft")).toBe(true);
   });
 
   it("uses each destination's revised script without marking unrelated destination metadata stale", () => {

@@ -57,7 +57,8 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
   const repeated=input.storyboardEditorialWarnings??0;
   const boardStatus:ProductionStageStatus=!input.storyboardReady?"not_started":stale?"stale":
     missing>0||reviews>0||repeated>0?"needs_review":"complete";
-  const downstream=(ready:boolean):ProductionStageStatus=>stale&&ready?"stale":ready?"complete":"not_started";
+  const downstream=(ready:boolean,hasSavedWork=ready):ProductionStageStatus=>
+    stale&&hasSavedWork?"stale":ready?"complete":"not_started";
   return [
     stage("setup",input.setupReady||input.briefReady?"complete":"not_started",
       input.setupReady||input.briefReady?"Brand and destinations selected.":"Choose a project and at least one platform.","Choose project"),
@@ -80,8 +81,8 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       repeated>0?`${repeated} scenes may repeat earlier information.`:
       input.storyboardReady?"An editable storyboard is saved.":"Plan visuals from the approved script.",
       input.storyboardReady?"Review storyboard":"Create storyboard"),
-    stage("produce",downstream(Boolean(input.visualReady&&input.audioReady)),
-      stale&&input.visualReady?"Existing media may need rebuilding against updated evidence.":
+    stage("produce",downstream(Boolean(input.visualReady&&input.audioReady),Boolean(input.visualReady||input.audioReady)),
+      stale&&(input.visualReady||input.audioReady)?"Existing media may need rebuilding against updated evidence.":
       input.visualReady&&input.audioReady?"Video and audio artifacts are available.":"Produce and review visuals, narration and sound.","Open producer"),
     stage("optimize",downstream(Boolean(input.optimizationReady)),
       stale&&input.optimizationReady?"Upload packages need review after source changes.":

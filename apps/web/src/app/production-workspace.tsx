@@ -157,7 +157,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     mediaResult?.productionId===production.id&&mediaResult.refresh===mediaRefresh?mediaResult:
       {productionId:production.id,status:"loading",assets:[]}:null;
   const productionKey=production?.id??projectId;
-  const renderAssets=mediaSnapshot?.productionId===production?.id&&mediaSnapshot.status==="ready"?mediaSnapshot.assets:[];
+  const renderAssets=mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"?mediaSnapshot.assets:[];
   useEffect(()=>{
     if(!production)return;
     const controller=new AbortController();
@@ -178,7 +178,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
         error:reason instanceof Error?reason.message:"Could not read rendered files."});
     });
     return ()=>controller.abort();
-  },[production?.id,mediaRefresh]);
+  },[production,mediaRefresh]);
   const allScriptsApproved=()=>Boolean(production&&currentIdea)&&
     platforms.length>0&&platforms.every(platform=>{
       const saved=loadScriptDraft(production!.id,platform).draft;
@@ -278,7 +278,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
       if(active)setSelectedIdea(ideas.find(item=>item.id===production.ideaId)??null);
     }).catch(()=>{if(active)setSelectedIdea(null);});
     return ()=>{active=false;};
-  },[projectId,production?.id,production?.sessionId,production?.ideaId]);
+  },[projectId,production]);
   async function startProduction(idea:DiscoverySessionIdea,brief:DiscoveryIdeaBrief){
     if(!sessionId||startingProduction)return;
     setStartingProduction(true);setError("");
@@ -710,7 +710,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
               {tr("Approved YouTube scripts can become editable, source-linked Director drafts. Schematic animation requires further visual editing, and claims, media rights and playback still require review. Shorts, social videos and articles need dedicated exporters.",
                 "承認したYouTube台本を編集可能なディレクター下書きに変換できます。映像、引用、利用権の確認が必要です。")}
             </p>}
-            {mediaSnapshot?.productionId===production?.id&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm" role="status">
+            {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm" role="status">
               {mediaSnapshot.status==="loading"?"Checking saved local render files…":
                 mediaSnapshot.status==="error"?`Unable to read saved renders: ${mediaSnapshot.error}`:
                 renderAssets.some(asset=>asset.kind==="video")?
@@ -749,7 +749,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             </p>
             <button type="button" className={primaryButton+" mt-5"} disabled={openingDirector} onClick={()=>void openDirector("export")}>
               {tr("Open preview & export","確認と書き出しを開く")}</button>
-            {mediaSnapshot?.productionId===production?.id&&mediaSnapshot.status==="ready"&&
+            {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"&&
               <div className="mt-5 space-y-2 border-t border-border pt-4">
                 <p className="text-sm font-semibold">Saved local render files</p>
                 {renderAssets.length?renderAssets.map(asset=><a key={asset.id} href={asset.downloadUrl}

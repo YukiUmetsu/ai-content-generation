@@ -47,6 +47,12 @@ describe("eight-step production progress", () => {
     expect(stages.find(stage=>stage.id==="script")?.status).toBe("complete");
   });
 
+  it("flags partial media as stale instead of hiding work when upstream evidence changes", () => {
+    const stages=getProductionStages({scriptStale:true,storyboardReady:true,
+      audioReady:true,visualReady:false});
+    expect(stages.find(stage=>stage.id==="produce")?.status).toBe("stale");
+  });
+
   it("keeps storyboard warnings as explicit review even with saved media", () => {
     const stages=getProductionStages({storyboardReady:true,missingEvidenceClaims:2,
       storyboardEditorialWarnings:1,visualReady:true});

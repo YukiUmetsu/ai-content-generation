@@ -9,6 +9,7 @@ import {
   validateProjectAppearance,
   type ProjectAppearance,
 } from "./project-brand-appearance";
+import type { LocalProject } from "./catalog-model";
 
 describe("Project brand appearance", () => {
   const createdAt = "2026-10-25T00:00:00.000Z";
@@ -22,7 +23,8 @@ describe("Project brand appearance", () => {
   }
 
   it("resolves a safe branded default for older projects without appearance settings", () => {
-    const appearance = resolveProjectAppearance({id: "project-legacy",name: "Margin Atlas",notes:"",createdAt});
+    const legacyProject: LocalProject = {id: "project-legacy",name: "Margin Atlas",notes:"",createdAt};
+    const appearance = resolveProjectAppearance(legacyProject);
     expect(appearance.revision).toBe(0);
     expect(appearance.palette.primary).toMatch(/^#[0-9A-F]{6}$/);
     expect(appearance.palette.custom).toEqual([]);
@@ -70,3 +72,4 @@ describe("Project brand appearance", () => {
     expect(snapshot.revision).toBe(appearance.revision);
   });
 });
+
