@@ -237,7 +237,7 @@ describe("Project discovery author controls",()=>{
         const quality={modelRequests:1,batches:1,proposed:2,rejected:0,partial:true,evidence:"unverified"};
         const frame=JSON.stringify({type:"batch",suggestions:[{
           text:"Why home insurance renewal costs rise",kind:"query",rationale:"Explains annual policy changes"}],
-          quality,step:1,totalSteps:6})+"\n";
+          quality,step:1,totalSteps:10})+"\n";
         const body=new ReadableStream({start(controller){
           controller.enqueue(new TextEncoder().encode(frame));
           options?.signal?.addEventListener("abort",()=>controller.error(Error("cancelled")),{once:true});
@@ -261,6 +261,7 @@ describe("Project discovery author controls",()=>{
       content={[]} locale="en" syncStatus="synced" onSaveIdea={()=>true}/>);
     await user.click(await screen.findByRole("button",{name:"Suggest Keywords with Local AI"}));
     expect(await screen.findByText("Why home insurance renewal costs rise")).toBeInTheDocument();
+    expect(screen.getByText(/Local AI is working in small batches/)).toHaveTextContent("Batch 1 complete (up to 10 batches)");
     expect(screen.getByRole("button",{name:"Stop keyword generation"})).toBeEnabled();
     expect(screen.getByRole("button",{name:"Accept"})).toBeEnabled();
     expect(writes).toHaveLength(0);
