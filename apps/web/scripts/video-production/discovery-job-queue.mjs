@@ -9,6 +9,7 @@ import { normalizeDiscoveryModels } from "./discovery-models.mjs";
 const ID=/^[a-z0-9][a-z0-9-]{1,79}$/iu;
 const RUN=/^discover_[a-f0-9]{24}$/u;
 const SESSION=/^session_[a-f0-9]{24}$/u;
+const rustMarketStage=run=>typeof run?.stage==="string"&&run.stage.startsWith("measure_market");
 const defaultApi=process.env.CONTENTGEN_LOCAL_API_URL??"http://127.0.0.1:8787";
 function endpoint() {
   const parsed=new URL(defaultApi);
@@ -139,8 +140,8 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
         callBackend(projectId,"graph","GET",undefined,signal)]);
       const keywords=currentKeywords.keywords,graphAtStart=initialGraph;
       let graph=graphAtStart;
-      const providerHealth={googleTrends:"unavailable: official API access not configured",
-        youtube:"cached observations when linked watchlists have collected",
+      const providerHealth={googleTrends:"Best-effort measurement scheduled after idea generation",
+        youtube:"Quota-limited measurement scheduled after idea generation",
         news:"local SearXNG not configured (search leads would be unverified)"};
       await checkpoint("refresh_sources",providerHealth);
       const accepted=keywords.filter(keyword=>keyword.active&&keyword.kind!=="exclusion");
@@ -306,13 +307,14 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
     const models=normalizeDiscoveryModels(modelSettings);
     const route=input.sessionId?`sessions/${input.sessionId}/discover`:"discover";
     const run=await callBackend(input.projectId,route,"POST",{inputRevision:new Date().toISOString()});
-    if(["queued","running"].includes(run.status))start(input,run,models);
+    if(["queued","running"].includes(run.status)&&!rustMarketStage(run))start(input,run,models);
     return run;
   }
   async function get(projectId,runId) {
     if(!RUN.test(runId))throw Error("Invalid discovery run ID.");
     const run=await callBackend(projectId,`runs/${runId}`,"GET");
-    if(["queued","running"].includes(run.status)&&![...active.values()].some(task=>task.id===runId)) {
+    if(["queued","running"].includes(run.status)&&!rustMarketStage(run)&&
+      ![...active.values()].some(task=>task.id===runId)) {
       return callBackend(projectId,`runs/${runId}/pause`,"POST",{});
     }
     return run;
@@ -331,7 +333,8 @@ export function createDiscoveryJobManager({backend:callBackend=backend,generate=
         throw Error("This run belongs to a different discovery session. Reopen its original session.");
     }
     const run=await callBackend(input.projectId,`runs/${runId}/resume`,"POST",{});
-    start(input,run,model);return run;
+    if(!rustMarketStage(run))start(input,run,model);
+    return run;
   }
   async function cancel(projectId,runId) {
     if(!ID.test(projectId)||!RUN.test(runId))throw Error("Invalid discovery cancellation target.");

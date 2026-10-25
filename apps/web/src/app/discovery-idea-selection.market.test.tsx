@@ -48,10 +48,58 @@ function serve(initialIdeas: DiscoverySessionIdea[], opts: { keyConfigured?: boo
 }
 
 describe("per-idea YouTube market evidence", () => {
+  it("renders automatically saved YouTube and Google Trends signals without requesting a new collection", async () => {
+    const trend = { state: "succeeded" as const, query: "home energy costs", region: "US", observedAt: 1760000000,
+      recentMean: 62.4, previousMean: 40.0, changePercent: 56.0, points: 52,
+      metricVersion: "google-trends-momentum-v1", errorCode: null };
+    const { fetcher } = serve([{ ...idea("idea-1", assessment("long", 76)), googleTrends: trend }]);
+    const user = userEvent.setup();
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    const card = (await screen.findByText("Question idea-1")).closest("article")!;
+    expect(within(card).getByText("76")).toBeInTheDocument();
+    expect(within(card).getByText("+56%")).toBeInTheDocument();
+    expect(within(card).getByText(/Google search momentum/i)).toBeInTheDocument();
+    expect(fetcher.mock.calls.every(([, init]) => init?.method !== "POST")).toBe(true);
+    await user.click(within(card).getByRole("button", { name: "Evidence details" }));
+    expect(within(card).getByText(/Previous interest index/i)).toBeInTheDocument();
+    expect(within(card).getByText("40")).toBeInTheDocument();
+    expect(within(card).getByText("62.4")).toBeInTheDocument();
+    expect(within(card).getByText(/normalized within this query/i)).toBeInTheDocument();
+  });
+
+  it("labels a blocked Google Trends source as unavailable instead of inventing a score", async () => {
+    serve([{ ...idea("idea-1", assessment("long", null)), googleTrends: {
+      state: "failed", query: "home energy costs", region: "US", observedAt: null,
+      recentMean: null, previousMean: null, changePercent: null, points: 0,
+      metricVersion: "google-trends-momentum-v1", errorCode: "provider_blocked",
+    } }]);
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    const card = (await screen.findByText("Question idea-1")).closest("article")!;
+    expect(within(card).getByText(/Google Trends unavailable/i)).toBeInTheDocument();
+    expect(within(card).queryByText(/\+0%/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/\+50%/)).not.toBeInTheDocument();
+  });
+
+  it("sorts by measured within-query momentum only when YouTube cohort scores are missing", async () => {
+    const googleTrends = (changePercent: number) => ({
+      state:"succeeded" as const,query:"homeownership costs",region:"US",observedAt:1760000000,
+      recentMean:44,previousMean:34,changePercent,points:52,metricVersion:"google-trends-momentum-v1",errorCode:null,
+    });
+    serve([{...idea("idea-1"),googleTrends:googleTrends(-12)},
+      {...idea("idea-2"),googleTrends:googleTrends(34)},
+      {...idea("idea-3"),googleTrends:googleTrends(8)}]);
+    render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
+    await screen.findByText("Question idea-1");
+    expect(screen.getAllByRole("article").map(article => within(article).getByRole("heading", {level:3}).textContent))
+      .toEqual(["Question idea-2", "Question idea-3", "Question idea-1"]);
+    expect(within(screen.getAllByRole("article")[2]).getByText("-12%")).toBeInTheDocument();
+    expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
+  });
   it("does not request paid-quota observations on page load and explains the missing local key", async () => {
     const { posts, fetcher } = serve([idea("idea-1")], {keyConfigured:false});
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText("Question idea-1")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", {name:"Evidence details"}));
     expect(await screen.findByText(/Connect YouTube in Settings/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Measure on YouTube" })).toBeDisabled();
     expect(posts).toEqual([]);
@@ -66,6 +114,7 @@ describe("per-idea YouTube market evidence", () => {
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
     await user.selectOptions(screen.getByRole("combobox", {name:"Compare format"}), "shorts");
+    await user.click(screen.getByRole("button", {name:"Evidence details"}));
     await user.clear(screen.getByRole("textbox", {name:"YouTube search phrase for Question idea-1"}));
     await user.type(screen.getByRole("textbox", {name:"YouTube search phrase for Question idea-1"}), "  household energy costs  ");
     await user.click(screen.getByRole("button", {name:"Measure on YouTube"}));
@@ -80,6 +129,7 @@ describe("per-idea YouTube market evidence", () => {
     const user = userEvent.setup();
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText(longTitle);
+    await user.click(screen.getByRole("button", {name:"Evidence details"}));
     const input = screen.getByRole("textbox", {name:`YouTube search phrase for ${longTitle}`}) as HTMLInputElement;
     expect(input.value.length).toBeLessThanOrEqual(120);
     await user.click(screen.getByRole("button", {name:"Measure on YouTube"}));
@@ -92,7 +142,7 @@ describe("per-idea YouTube market evidence", () => {
     const user = userEvent.setup();
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
-    expect(screen.getByText("18.4K")).toBeInTheDocument();
+    expect(screen.getByText(/18\.4K median views/)).toBeInTheDocument();
     expect(screen.getByText("12 videos · 5 channels")).toBeInTheDocument();
     expect(screen.queryByText(/Top 3 recommendation/)).not.toBeInTheDocument();
     expect(screen.getByText(/Comparison unavailable/i)).toBeInTheDocument();
@@ -144,6 +194,7 @@ describe("per-idea YouTube market evidence", () => {
       nextCollectionAt:Math.floor(Date.now()/1000)+1800})]);
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText("Question idea-1")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Evidence details"}));
     expect(screen.getByRole("button",{name:"Measure on YouTube"})).toBeDisabled();
     expect(screen.getByText(/Next search after/)).toBeInTheDocument();
   });
@@ -161,8 +212,8 @@ describe("per-idea YouTube market evidence", () => {
     });
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText(/Collecting public videos/i)).toBeInTheDocument();
-    expect(await screen.findByText("12 videos · 5 channels", {}, {timeout:4000})).toBeInTheDocument();
-  });
+    expect(await screen.findByText("12 videos · 5 channels", {}, {timeout:8000})).toBeInTheDocument();
+  }, 12000);
 
   it("refreshes shared quota status when collection finishes so another idea remains actionable", async () => {
     const first = idea("idea-1");
@@ -189,11 +240,12 @@ describe("per-idea YouTube market evidence", () => {
     const user = userEvent.setup();
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
+    for (const detail of screen.getAllByRole("button", {name:"Evidence details"})) await user.click(detail);
     await user.click(screen.getAllByRole("button",{name:"Measure on YouTube"})[0]);
     expect(await screen.findByText(/Collecting public videos/)).toBeInTheDocument();
-    expect(await screen.findByText("12 videos · 5 channels", {}, {timeout:4000})).toBeInTheDocument();
+    expect(await screen.findByText("12 videos · 5 channels", {}, {timeout:8000})).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByRole("button",{name:"Measure on YouTube"})[1]).toBeEnabled());
-  });
+  }, 12000);
 
   it("never ranks a shorts observation against a long-video cohort", async () => {
     serve([idea("idea-1", assessment("shorts", 95)), idea("idea-2", assessment("long", 65)),

@@ -65,6 +65,22 @@ describe("discovery session API", () => {
     expect(idea.marketAssessment?.comparisonScore).toBeNull();
   });
 
+  it("parses a saved Google Trends momentum change but never substitutes a value for unavailable data", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[
+      {id:"idea-1",sessionId:"session-a",runId:"run-a",title:"Repair costs",googleTrends:{
+        state:"succeeded",query:"roof repair cost",region:"US",observedAt:1760000000,
+        recentMean:34.5,previousMean:49.0,changePercent:-29.6,points:52,
+        metricVersion:"google-trends-momentum-v1",errorCode:null}},
+      {id:"idea-2",sessionId:"session-a",runId:"run-a",title:"Insulation costs",googleTrends:{
+        state:"unavailable",query:"insulation cost",region:"US",observedAt:null,
+        recentMean:0,previousMean:null,changePercent:null,points:0,errorCode:"rate_limited"}},
+    ]}),{status:200}));
+    const results=await listSessionIdeas("brand-1","session-a");
+    expect(results[0].googleTrends).toMatchObject({state:"succeeded",changePercent:-29.6,points:52});
+    expect(results[1].googleTrends).toMatchObject({state:"unavailable",changePercent:null,errorCode:"rate_limited"});
+    expect(results[1].marketAssessment).toBeNull();
+  });
+
   it("explicit collection sends only the search phrase and video format with a scoped local header", async () => {
     const requests: {url:string; method:string | undefined; headers: Headers; body: unknown}[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, options) => {

@@ -394,7 +394,9 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
           </div>
           {run && <div role="status" className="rounded-control border border-border px-4 py-3 text-sm">
             <p className="font-medium">{tr(locale, "Latest job", "直近のジョブ")}: {run.status.replaceAll("_", " ")}</p>
-            <p className="mt-1 text-xs text-muted-foreground">{tr(locale, "Current operation", "現在の操作")}: {run.stage.replaceAll("_", " ")}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{tr(locale, "Current operation", "現在の操作")}: {run.stage === "measure_market"
+              ? tr(locale, "Measuring YouTube and Google Trends", "YouTube と Google Trends のデータを測定中")
+              : run.stage.replaceAll("_", " ")}</p>
             {run.errorCode && <p className="mt-2 text-sm text-danger">{run.errorCode}</p>}
             {run.providerHealth && Object.keys(run.providerHealth).length > 0 && <details className="mt-2 text-xs text-muted-foreground">
               <summary className="cursor-pointer">{tr(locale, "Provider availability and evidence gaps", "データ提供元・根拠の不足")}</summary>

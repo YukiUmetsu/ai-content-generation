@@ -54,6 +54,26 @@ test("resuming a run from another saved session is refused before changing backe
   assert.deepEqual(calls,[`GET runs/${runId}`]);
 });
 
+test("Rust-owned market measurement is not paused or restarted by Node job polling",async()=>{
+  const runId="discover_"+"9".repeat(24),sessionId="session_"+"8".repeat(24);
+  const calls=[];
+  const measuring={id:runId,sessionId,status:"running",stage:"measure_market_collecting"};
+  const manager=createDiscoveryJobManager({backend:async(_project,route,method)=>{
+    calls.push(`${method} ${route}`);
+    if(route===`runs/${runId}`)return measuring;
+    if(route===`sessions/${sessionId}/discover`)return measuring;
+    if(route===`runs/${runId}/resume`)return {...measuring,stage:"measure_market"};
+    throw Error("Rust collection must not be restarted by the Node candidate worker");
+  }});
+  const config={projectId:"brand-one",projectName:"Home Economics",description:"Household costs",sessionId};
+  assert.equal((await manager.get("brand-one",runId)).stage,"measure_market_collecting");
+  await manager.create(config,{model:"local",endpoint:"http://localhost:1234/v1/chat/completions"});
+  await manager.resume(config,runId,{model:"local",endpoint:"http://localhost:1234/v1/chat/completions"});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(calls,[`GET runs/${runId}`,`POST sessions/${sessionId}/discover`,
+    `GET runs/${runId}`,`POST runs/${runId}/resume`]);
+});
+
 test("a saved session passes its bounded idea budget and frozen prior content to candidate generation",async()=>{
   const sessionId="session_"+"d".repeat(24),runId="discover_"+"e".repeat(24);
   const source={id:"public-video-1",title:"Annual insurance cost comparison",url:"https://example.org/watch",

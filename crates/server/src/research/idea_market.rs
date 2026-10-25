@@ -122,16 +122,18 @@ pub fn claim_assessment(
     if exists == 0 {
         return Err(IdeaMarketError::NotFound);
     }
-    let recent: Option<(String, i64)> = txn
+    let recent: Option<(String, i64, i64)> = txn
         .query_row(
-            "SELECT state,started_at FROM idea_market_runs WHERE idea_id=?1
+            "SELECT state,started_at,
+             EXISTS(SELECT 1 FROM market_search_budget WHERE run_id=idea_market_runs.id)
+             FROM idea_market_runs WHERE idea_id=?1
          ORDER BY started_at DESC,id DESC LIMIT 1",
             [idea],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()?;
-    if recent.is_some_and(|(state, started)| {
-        state == "running" || now < started.saturating_add(MIN_RETRY)
+    if recent.is_some_and(|(state, started, reserved)| {
+        state == "running" || (reserved != 0 && now < started.saturating_add(MIN_RETRY))
     }) {
         return Err(IdeaMarketError::Busy);
     }
@@ -168,6 +170,58 @@ pub fn claim_assessment(
         language: "en".into(),
         started_at: now,
     })
+}
+
+/// Record why automatic discovery could not measure an idea *without spending*
+/// YouTube quota. Manual recheck remains available as soon as credentials or
+/// budget become available. A real observation always wins over a placeholder.
+#[allow(clippy::too_many_arguments)] // Mirrors the quota-reserving claim's scoped ownership arguments.
+pub fn record_unavailable_assessment(
+    db: &mut Connection,
+    project: &str,
+    session: &str,
+    idea: &str,
+    query: &str,
+    format: &str,
+    error_code: &str,
+    now: i64,
+) -> Result<(), IdeaMarketError> {
+    if !(3..=120).contains(&query.trim().chars().count())
+        || !matches!(format, "long" | "shorts")
+        || !matches!(error_code,
+            "api_key_missing" | "credential_denied" | "credential_unavailable"
+                | "budget_exhausted" | "collection_limit" | "provider_unavailable")
+        || now < 1
+    {
+        return Err(IdeaMarketError::Invalid);
+    }
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let exists: i64 = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM discovery_candidates c JOIN discovery_runs r ON r.id=c.run_id
+         WHERE c.id=?1 AND c.project_id=?2 AND r.session_id=?3)",
+        params![idea, project, session], |row| row.get(0),
+    )?;
+    if exists == 0 {
+        return Err(IdeaMarketError::NotFound);
+    }
+    let prior: i64 = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM idea_market_runs WHERE idea_id=?1)",
+        [idea], |row| row.get(0),
+    )?;
+    if prior != 0 {
+        return Ok(());
+    }
+    let mut bytes = [0u8; 12];
+    getrandom::getrandom(&mut bytes).map_err(|_| IdeaMarketError::Identifier)?;
+    let id = format!("idea_market_{}",bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    tx.execute(
+        "INSERT INTO idea_market_runs(id,idea_id,query,format,metric_version,region,language,
+         state,started_at,finished_at,error_code)
+         VALUES(?1,?2,?3,?4,?5,'US','en','failed',?6,?6,?7)",
+        params![id,idea,query.trim(),format,METRIC_VERSION,now,error_code],
+    )?;
+    tx.commit()?;
+    Ok(())
 }
 
 /// Save every raw observation in API relevance order. Eligibility filters are
@@ -346,6 +400,10 @@ pub fn latest_assessment(
     };
     let expired =
         state == "succeeded" && finished.is_some_and(|at| at.saturating_add(RETENTION) <= now);
+    let charged: i64 = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM market_search_budget WHERE run_id=?1)",
+        [&run_id], |row| row.get(0),
+    )?;
     let mut result = IdeaMarketAssessment {
         run_id: run_id.clone(),
         state: if expired {
@@ -359,7 +417,7 @@ pub fn latest_assessment(
         region,
         language,
         observed_at: finished,
-        next_collection_at: started.saturating_add(MIN_RETRY),
+        next_collection_at: started.saturating_add(if charged != 0 { MIN_RETRY } else { 0 }),
         searched_videos: searched as usize,
         sample_size: 0,
         distinct_channels: 0,

@@ -144,6 +144,10 @@ describe("Content discovery sessions", () => {
       expect(await screen.findByText("Latest job: completed")).toBeInTheDocument();
       expect(onIdeasReady).not.toHaveBeenCalled();
       await userEvent.setup().click(screen.getByRole("button",{name:"Discover opportunities"}));
+      currentRun={...startedRun,status:"running",stage:"measure_market",candidates:[candidate]};
+      await act(async()=>{await vi.advanceTimersByTimeAsync(3600);});
+      expect(screen.getByText(/Measuring YouTube and Google Trends/)).toBeInTheDocument();
+      expect(onIdeasReady).not.toHaveBeenCalled();
       currentRun={...startedRun,status:"completed",stage:"complete",candidates:[candidate]};
       await act(async()=>{await vi.advanceTimersByTimeAsync(3600);});
       await waitFor(()=>expect(onIdeasReady).toHaveBeenCalledWith("session-1","run-new"));
@@ -325,9 +329,10 @@ describe("Select idea", () => {
     expect(await screen.findByText("Original housing question 7")).toBeInTheDocument();
     expect(screen.queryByText("Top 3 recommendation")).not.toBeInTheDocument();
     expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
-    expect(screen.getByText("78/100")).toBeInTheDocument();
-    expect(screen.getAllByText("Not measured")).toHaveLength(3);
+    expect(screen.queryByText("78/100")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Not measured").length).toBeGreaterThanOrEqual(7);
     await userEvent.setup().click(screen.getAllByRole("button", { name: "Explain this score" })[0]);
+    expect(screen.getByText(/Editorial research readiness: 78\/100/)).toBeInTheDocument();
     expect(screen.getByText(/Audience demand: unknown/)).toBeInTheDocument();
     const rejected = screen.getByText("Why home insurance keeps rising").closest("article")!;
     await userEvent.setup().click(within(rejected).getByRole("button", { name: "Dismiss" }));

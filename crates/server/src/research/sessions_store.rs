@@ -5,6 +5,7 @@ use serde::Serialize;
 use super::discovery_projects::DiscoveryError;
 use super::discovery_store::{self, Candidate, CandidateDraft, DiscoveryRun};
 use super::idea_market::{self, IdeaMarketAssessment};
+use super::idea_trends::{self, GoogleTrendsAssessment};
 
 /// Keep v1 semantics unchanged for saved runs; newer formulas must use a new
 /// version and a separate evaluator rather than reinterpreting old scores.
@@ -66,6 +67,7 @@ pub struct SessionIdea {
     pub sources: Vec<IdeaSource>,
     pub evidence: Vec<SessionEvidence>,
     pub market_assessment: Option<IdeaMarketAssessment>,
+    pub google_trends: Option<GoogleTrendsAssessment>,
 }
 
 pub(crate) fn random_id(prefix: &str) -> Result<String, DiscoveryError> {
@@ -364,6 +366,7 @@ pub fn list_ideas(
                 opportunity_score,score_version:Some(score_version.into()),
                 score_inputs,platform_fit:serde_json::json!({}),sources,evidence,
                 market_assessment:None,
+                google_trends:None,
             });
         }
     }
@@ -375,6 +378,9 @@ pub fn list_ideas(
     idea_market::assign_session_percentiles(&mut assessments);
     for (idea, assessment) in ideas.iter_mut().zip(assessments) {
         idea.market_assessment = assessment;
+        idea.google_trends = idea_trends::latest_assessment(
+            db, &idea.candidate.id, super::market_api::epoch_now(),
+        ).map_err(|_| DiscoveryError::Invalid("Saved Google Trends assessment unavailable".into()))?;
     }
     Ok(ideas)
 }

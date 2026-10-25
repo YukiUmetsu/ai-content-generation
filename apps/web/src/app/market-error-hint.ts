@@ -1,6 +1,8 @@
 /** Stable, provider-safe advice. Raw Google API responses are never stored or shown. */
 export function marketErrorHint(code: string | null, ja: boolean): string {
   const messages: Record<string, readonly [string, string]> = {
+    credential_denied: ["macOS Keychain or the OS credential store denied access. Check ContentGen's permissions.", "OS の認証情報ストアがアクセスを拒否しました。ContentGen のアクセス権限を確認してください。"],
+    credential_unavailable: ["The OS credential store is unavailable. Check local credentials or configure the environment key.", "OS の認証情報ストアを利用できません。認証情報か環境変数のキーを確認してください。"],
     permission: ["Google rejected the API request. Check YouTube Data API v3 enablement and key restrictions.", "Google が API リクエストを拒否しました。YouTube Data API v3 の有効化とキー制限を確認してください。"],
     api_not_enabled: ["Enable YouTube Data API v3 in the Google Cloud project that owns this key.", "このキーの Google Cloud プロジェクトで YouTube Data API v3 を有効にしてください。"],
     api_key_invalid: ["Check or replace the YouTube API key in Studio Settings. The saved Keychain key takes priority over the environment.", "Studio 設定で YouTube API キーを確認してください。キーチェーンのキーが環境変数より優先されます。"],

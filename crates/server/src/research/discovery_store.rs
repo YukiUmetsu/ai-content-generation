@@ -149,7 +149,7 @@ pub fn start_or_get_active_for_session(
         "projectRevision":frozen_revision.unwrap_or(revision),
         "sessionId":session_id,"platforms":platforms,"sessionSettings":session_settings,
         "graphRevision":graph_revision,"researchFreshness":research_freshness,
-        "providerAvailability":{"googleTrends":"unavailable"}});
+        "providerAvailability":{"googleTrends":"best_effort_unofficial"}});
     let mut randomness = [0u8; 12];
     getrandom::getrandom(&mut randomness)
         .map_err(|_| DiscoveryError::Invalid("Unable to create secure run ID".into()))?;
@@ -260,10 +260,20 @@ pub fn checkpoint(
     {
         return Err(DiscoveryError::Invalid("Invalid discovery stage".into()));
     }
+    // A delayed/retried Node checkpoint cannot move a durable market phase
+    // backward into candidate generation or reopen a paused collection.
+    let current: Option<String> = db.query_row(
+        "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2",
+        params![project_id,run_id], |r| r.get(0),
+    ).optional()?;
+    if current.as_deref().is_some_and(|stage| stage.starts_with("measure_market")) {
+        return Ok(());
+    }
     let changed = db.execute(
         "UPDATE discovery_runs SET stage=?3,status='running',updated_at=?4,
         provider_health_json=COALESCE(?5,provider_health_json)
-        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running','paused')",
+        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running','paused')
+          AND stage NOT LIKE 'measure_market%'",
         params![
             project_id,
             run_id,
@@ -273,6 +283,16 @@ pub fn checkpoint(
         ],
     )?;
     if changed == 0 {
+        // The Node checkpoint may race the candidate finish transaction.
+        // That transition must win atomically, even if the SELECT above
+        // observed the previous generation stage.
+        let actual: Option<String> = db.query_row(
+            "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2",
+            params![project_id,run_id], |r| r.get(0),
+        ).optional()?;
+        if actual.as_deref().is_some_and(|stage| stage.starts_with("measure_market")) {
+            return Ok(());
+        }
         return Err(DiscoveryError::NotFound);
     }
     Ok(())
@@ -630,10 +650,71 @@ pub fn finish_run(
     } else {
         status
     };
-    tx.execute("UPDATE discovery_runs SET status=?2,stage='completed',updated_at=?3,finished_at=?3 WHERE id=?1",
-        params![run_id,final_status,now])?;
+    // A named editorial session includes provider measurements in the same
+    // Discovery job. Candidates are durable already, but the job is NOT ready
+    // to navigate until every bounded market attempt has finished or failed.
+    let measure_market = final_status == "completed"
+        && session_id.as_deref().is_some_and(|id| id.starts_with("session_"));
+    if measure_market {
+        tx.execute("UPDATE discovery_runs SET status='running',stage='measure_market',updated_at=?2,finished_at=NULL WHERE id=?1",
+            params![run_id,now])?;
+    } else {
+        tx.execute("UPDATE discovery_runs SET status=?2,stage='completed',updated_at=?3,finished_at=?3 WHERE id=?1",
+            params![run_id,final_status,now])?;
+    }
     tx.commit()?;
     Ok(())
+}
+
+/// Atomically claim one saved Discovery result for automatic enrichment. The
+/// two stages are a SQLite lease: other collectors cannot duplicate provider
+/// requests while a claimant is alive; restart reconciles stale claims.
+pub fn claim_pending_market_run(
+    db: &mut Connection,
+    now: i64,
+) -> Result<Option<String>, DiscoveryError> {
+    let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let run: Option<String> = tx.query_row(
+        "SELECT id FROM discovery_runs WHERE status='running' AND stage='measure_market'
+         ORDER BY updated_at ASC,id ASC LIMIT 1",
+        [], |row| row.get(0),
+    ).optional()?;
+    if let Some(ref id) = run {
+        tx.execute("UPDATE discovery_runs SET stage='measure_market_collecting',updated_at=?2
+                    WHERE id=?1 AND status='running' AND stage='measure_market'",
+            params![id,now])?;
+    }
+    tx.commit()?;
+    Ok(run)
+}
+
+/// The collector can be interrupted after provider reservations were written;
+/// reset only its run claim on restart. Per-provider durable reservations are
+/// independently reconciled and never silently replayed.
+pub fn recover_interrupted_market_runs(db: &Connection, now: i64) -> Result<(), DiscoveryError> {
+    db.execute("UPDATE discovery_runs SET stage='measure_market',updated_at=?1
+                WHERE status='running' AND stage='measure_market_collecting'", [now])?;
+    Ok(())
+}
+
+/// Complete exactly one claimed run, preserving provider-level partial status.
+/// A cancellation or pause wins over an in-flight provider response.
+pub fn finish_market_run(
+    db: &Connection,
+    run_id: &str,
+    summary: &serde_json::Value,
+    now: i64,
+) -> Result<bool, DiscoveryError> {
+    if !summary.is_object() || summary.to_string().len() > 3_000 {
+        return Err(DiscoveryError::Invalid("Invalid market summary".into()));
+    }
+    Ok(db.execute(
+        "UPDATE discovery_runs
+         SET status='completed',stage='completed',updated_at=?2,finished_at=?2,
+         provider_health_json=json_set(provider_health_json,'$.market',json(?3))
+         WHERE id=?1 AND status='running' AND stage='measure_market_collecting'",
+        params![run_id, now, summary.to_string()],
+    )? == 1)
 }
 
 pub fn fail_run(
@@ -650,7 +731,8 @@ pub fn fail_run(
     }
     if db.execute(
         "UPDATE discovery_runs SET status='failed',error_code=?3,updated_at=?4
-        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running','paused')",
+        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running','paused')
+          AND stage NOT LIKE 'measure_market%'",
         params![project_id, run_id, code, now],
     )? == 0
     {
@@ -666,11 +748,23 @@ pub fn pause_run(
     now: i64,
 ) -> Result<(), DiscoveryError> {
     if db.execute(
-        "UPDATE discovery_runs SET status='paused',stage='interrupted',updated_at=?3
-        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running')",
+        "UPDATE discovery_runs SET status='paused',
+         stage='interrupted',updated_at=?3
+        WHERE project_id=?1 AND id=?2 AND status IN ('queued','running')
+          AND stage NOT LIKE 'measure_market%'",
         params![project_id, run_id, now],
     )? == 0
     {
+        // The Node orphan detector may have fetched the previous stage just
+        // before Rust persisted candidates. Market work is Rust-owned and
+        // cannot be abandoned merely because no Node generator is active.
+        let stage: Option<String> = db.query_row(
+            "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2 AND status='running'",
+            params![project_id,run_id], |r| r.get(0),
+        ).optional()?;
+        if stage.as_deref().is_some_and(|value| value.starts_with("measure_market")) {
+            return Ok(());
+        }
         return Err(DiscoveryError::NotFound);
     }
     Ok(())
@@ -699,7 +793,10 @@ pub fn resume_run(
     now: i64,
 ) -> Result<(), DiscoveryError> {
     if db.execute(
-        "UPDATE discovery_runs SET status='queued',stage='queued',error_code=NULL,updated_at=?3
+        "UPDATE discovery_runs SET
+            status=CASE WHEN stage='measure_market_paused' THEN 'running' ELSE 'queued' END,
+            stage=CASE WHEN stage='measure_market_paused' THEN 'measure_market' ELSE 'queued' END,
+            error_code=NULL,updated_at=?3
         WHERE project_id=?1 AND id=?2 AND status IN ('paused','failed')",
         params![project_id, run_id, now],
     )? == 0

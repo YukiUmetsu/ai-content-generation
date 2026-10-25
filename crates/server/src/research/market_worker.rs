@@ -16,12 +16,19 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let _ = market_store::prune_expired(&db, epoch_now());
             let _ = market_store::reconcile_orphaned_runs(&db, epoch_now());
             let _ = super::idea_market::prune_expired(&db, epoch_now());
+            let _ = super::idea_trends::prune_expired(&db, epoch_now());
             let _ = super::idea_market::reconcile_interrupted(&db, epoch_now());
+            let _ = super::idea_trends::reconcile_interrupted(&db, epoch_now());
+            let _ = super::discovery_store::recover_interrupted_market_runs(&db, epoch_now());
         }
+        tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
         let mut ticks = tokio::time::interval(Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
+            // Discovery enrichment has its own completion state and must run
+            // even if no YouTube key is configured (Google Trends is independent).
+            tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
             let Ok(key) = state.credentials().youtube_key() else {
                 continue;
             };
@@ -32,6 +39,7 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let now = epoch_now();
             let _ = market_store::prune_expired(&db, now);
             let _ = super::idea_market::prune_expired(&db, now);
+            let _ = super::idea_trends::prune_expired(&db, now);
             let Ok(due) = market_store::list_due_watchlist_ids(&db, now) else {
                 continue;
             };
