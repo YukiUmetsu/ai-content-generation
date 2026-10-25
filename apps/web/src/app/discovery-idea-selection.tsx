@@ -185,8 +185,15 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const refreshMarket = async () => {
     setError(null); setPollTimedOut(false);
     try {
-      const [latest, status] = await Promise.all([listSessionIdeas(projectId, sessionId), loadMarketStatus()]);
+      const [latest, status, session] = await Promise.all([
+        listSessionIdeas(projectId, sessionId), loadMarketStatus(), getDiscoverySession(projectId, sessionId),
+      ]);
       setIdeas(latest); setMarketStatus(status); setMarketStatusError(null);
+      setRunMarketHealth(session.lastRun?.providerHealth.market ?? null);
+      if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
+        const queued = await queueMissingMarketEvidence(projectId, sessionId);
+        setBackfillState(queued.state);
+      }
     }
     catch (failure) { setError(failure instanceof Error ? failure.message : "Could not refresh YouTube evidence."); }
   };
