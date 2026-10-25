@@ -76,7 +76,9 @@ async fn session_and_production_api_preserve_scope_and_return_expected_shapes() 
     let (found,ideas)=call(&router,Method::GET,&format!("{own}/ideas"),json!({}),false).await;
     assert_eq!(found,StatusCode::OK);
     let idea=&ideas["ideas"][0];
-    assert!(idea["opportunityScore"].is_null());
+    assert_eq!(idea["opportunityScore"],60);
+    assert_eq!(idea["scoreVersion"],"evidence-readiness-v1");
+    assert_eq!(idea["scoreInputs"]["audienceDemand"],"unknown");
     assert_eq!(idea["sources"][0]["title"],"House cost source");
     assert_eq!(idea["evidence"][0]["quote"],"Verified illustrative housing expenses");
     assert_eq!(idea["evidence"][0]["reviewStatus"],"unverified");
@@ -98,3 +100,4 @@ async fn session_and_production_api_preserve_scope_and_return_expected_shapes() 
     assert_eq!(call(&router,Method::GET,&format!("/api/productions/{production_id}"),json!({}),false).await.0,StatusCode::OK);
     assert_eq!(conn.query_row("SELECT COUNT(*) FROM discovery_projects",[],|r|r.get::<_,i64>(0)).unwrap(),2);
 }
+
