@@ -15,7 +15,7 @@ describe("Studio menu workspaces", () => {
     expect(screen.queryByText(/outside this foundation/i)).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("textbox",{name:"Name"}),{target:{value:"Short documentaries"}});
     await user.click(screen.getByRole("button",{name:"Create project"}));
-    expect(screen.getByText("Short documentaries")).toBeInTheDocument();
+    expect(screen.getByRole("heading",{name:"Short documentaries"})).toBeInTheDocument();
 
     await navigate("Content");
     fireEvent.change(screen.getByRole("textbox",{name:"Title / label"}),{target:{value:"Why data travels in packets"}});
@@ -136,3 +136,4 @@ describe("Research model setup in Settings", () => {
     }
   });
 });
+

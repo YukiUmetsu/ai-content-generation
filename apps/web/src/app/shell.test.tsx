@@ -9,8 +9,15 @@ afterEach(() => vi.unstubAllGlobals());
 describe("Studio shell", () => {
   it("keeps project keyword preferences without the former five-idea generator", async () => {
     localStorage.removeItem(CATALOG_KEY);
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    let keywordPatch:unknown=null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL,init?:RequestInit) => {
       const path = String(input);
+      if(path.endsWith("/keywords")&&init?.method==="PATCH"){
+        keywordPatch=JSON.parse(String(init.body));
+        return new Response(JSON.stringify({keywords:[{
+          id:"keyword-saved",text:"Home insurance premiums",kind:"topic",origin:"manual",active:true,manualLock:true,
+        }]}),{status:200,headers:{"content-type":"application/json"}});
+      }
       const data = path.endsWith("/sync") ? {id:"server-project",snapshotRevision:1,contentCount:0}
         : path.endsWith("/keywords") ? {keywords:[]}
           : path.endsWith("/graph") ? {nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
@@ -22,10 +29,14 @@ describe("Studio shell", () => {
     const user=userEvent.setup();
     render(<App/>);
     await user.click(screen.getByRole("link",{name:"Projects"}));
-    await waitFor(()=>expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled());
+    await user.click(screen.getByRole("tab",{name:"Discovery preferences"}));
+    expect(screen.getByRole("button",{name:"Add keyword"})).toBeDisabled();
     expect(screen.queryByRole("button",{name:"Discover 5 Ideas"})).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox",{name:"Keyword or search phrase"}),"Home insurance premiums");
-    expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled();
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled());
+    await user.click(screen.getByRole("button",{name:"Add keyword"}));
+    expect(await screen.findByText("Home insurance premiums")).toBeInTheDocument();
+    expect(keywordPatch).toEqual({add:[{text:"Home insurance premiums",kind:"topic",origin:"manual"}]});
   });
 
   it("opens the guided Production workspace by default", () => {
@@ -139,3 +150,4 @@ describe("Studio shell", () => {
     expect(screen.getByText("The Real Cost of Heat Pumps in Oklahoma")).toBeInTheDocument();
   });
 });
+

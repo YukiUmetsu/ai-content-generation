@@ -110,8 +110,8 @@ describe("Content discovery sessions", () => {
       selectedSessionId="session-1" onSelectSession={()=>{}} />);
     await user.click(await screen.findByRole("button", { name: "Archive session" }));
     expect(archived).toBe(true);
-    await user.click(screen.getByRole("button", { name: /Show archived/ }));
-    await user.click(screen.getByRole("button", { name: "Restore session" }));
+    expect(await screen.findByRole("button", { name: /Hide archived/ })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Restore session" }));
     expect(archived).toBe(false);
     expect(await screen.findByText("Insurance costs")).toBeInTheDocument();
   });
