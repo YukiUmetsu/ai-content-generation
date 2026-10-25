@@ -58,6 +58,10 @@ function verboseKeyword(text) {
   return words.length<2 || words.length>4 ||
     (hasComparison(text)&&words.length!==3) ||
     (words.length===4&&/\b(?:decision|impact|options|strategy|planning|funds|timing)\b/iu.test(text)) ||
+    // Timelines and trailing cost/benefit frames are headings, not specific terms.
+    // "impact" is ambiguous in other niches and gets semantic review instead.
+    (words.length>=3&&/\b(?:timeline|cost[\s-]+benefit)\s*$/iu.test(text)) ||
+    (words.length===4&&/\b(?:increase|decrease|growth|decline|escalation|depreciation|fluctuation)\s+risk\s*$/iu.test(text)) ||
     /\blifecycle maintenance\b|^timing to\b/iu.test(text) ||
     /^(?:comparing\b|tradeoffs? between\b|(?:the )?(?:effect|impact) of\b|(?:the )?effects of\b)/iu.test(text) ||
     (words.length>3&&/\b(?:economics|analysis|calculation|variations|impact)\s*$/iu.test(text));
@@ -81,7 +85,7 @@ function weakSuggestion({text,rationale},name) {
 // Ordinary short phrases stay on the fast deterministic path. Only meaning-
 // sensitive comparisons and jargon get an additional bounded local check.
 function needsSemanticReview({text}) {
-  return hasComparison(text)||/\b(?:strategy|planning|yield|timing|reserve)\b/iu.test(text);
+  return hasComparison(text)||/\b(?:strategy|planning|yield|timing|reserve|volatility|impact)\b/iu.test(text);
 }
 
 /** Local-AI output is only a hypothesis; weak or redundant ideas never become persisted keywords. */
@@ -114,8 +118,11 @@ async function assessAmbiguousKeywords(rows,candidate,{modelSettings,transport=f
       method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({model:modelSettings.model,temperature:0,stream:false,response_format:{type:"json_object"},
         max_tokens:300,messages:[{role:"system",content:[
-          "Evaluate comparison suitability, semantic relevance, and natural wording for search keywords in an educational project.",
-          "Mark suitable=true only if a keyword is natural to search, directly on topic and a distinct useful concept.",
+          "Evaluate comparison suitability, topical relevance, and natural search language for an educational project.",
+          "Mark suitable=true only when someone in the project's intended audience could type the EXACT keyword verbatim into a search box, and it is distinct and directly within the described scope.",
+          "Reject abstract analyst-style report headings and padded noun stacks even when they are grammatical and relevant to the overall subject.",
+          "Reject adjacent topics beyond the described project scope, and jargon unfamiliar to its expected audience. Established specialist terms remain valid for specialist projects.",
+          "The rationale explains the viewer's question; it does NOT make an unnatural keyword phrase suitable.",
           "For X vs Y, both sides MUST be alternative choices for the SAME decision, not merely two expenses or unrelated measurements.",
           "Mark contrived combinations, vague jargon, and off-topic investment strategies false.",
           "Return exactly {\"assessments\":[{\"text\":\"exact input text\",\"suitable\":true}]}; one true/false verdict for EACH input in order, no extra keys.",
@@ -164,9 +171,10 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
     "Return ONE compact JSON object with {\"suggestions\":[{\"text\":\"...\",\"kind\":\"topic|query|exclusion\",\"rationale\":\"...\"}]}.",
     "Be SPECIFIC: name the subject, system, decision or underlying factor in each phrase. Never simply paraphrase the project name or description.",
     "Each keyword must be a natural, recognizable search phrase of 2–3 meaningful words, at most FOUR words for a specific technical subject. No more than FOUR words, even for comparisons.",
-    "Use plain subject names and familiar terminology; remove analytical filler, editorial phrases, and unnecessary qualifiers. Keep the detailed viewer question in rationale, not text.",
+    "Imagine the target viewer typing the EXACT phrase into a Google or YouTube search box; don't write a video title, research-paper heading, or made-up label for an abstract risk or impact.",
+    "Use familiar terminology for the intended audience; remove analytical filler, editorial phrases, and unnecessary qualifiers. Keep the detailed viewer question in rationale, not text.",
     "Use X vs Y only for two genuine alternatives in the same choice, and only when the COMPLETE keyword has exactly THREE words (X, vs, Y).",
-    "Every suggestion must explore a DIFFERENT useful project-specific question. Avoid unrelated financial strategy or duplicate concepts.",
+    "Every suggestion must explore a DIFFERENT useful project-specific question. Do not drift into adjacent topics outside the project or generate duplicate concepts.",
     ...(verboseReminder?["Previous keyword batch contained verbose phrases. Replace them with concrete 2–3-word search terms, at most four words."]:[]),
     "Rationales must describe a practical viewer question in under 12 words. Never mention prompts, project descriptions, authority or search intent.",
     "No numbers pretending to be search volume, popularity, citations, discovered trends or provider calls.",
@@ -220,18 +228,18 @@ async function generateKeywordBatch(candidate,{modelSettings,transport=fetch,sig
 }
 
 const TOPIC_LENSES=[
-  "Concrete subtopics and mechanisms: distinct real-world factors, not an overview of the project.",
-  "Audience questions and decisions: what would someone need to calculate, do or understand?",
-  "Comparisons: specific alternative choices, tradeoffs or approaches relevant to the subject.",
-  "Hidden consequences: overlooked constraints, costs, risks or common mistakes.",
-  "Long-term outcomes: lifecycle, timing, maintenance, renewal or future implications where appropriate.",
-  "Uncovered questions: useful distinct subtopics not already suggested in the previous batches.",
+  "Concrete subtopics and mechanisms: specific named things and how they work, not general analysis.",
+  "Audience tasks and questions: exact plain-language terms someone would search to solve a real problem.",
+  "Alternative choices: named real alternatives relevant to the described subject, not analytical category comparisons.",
+  "Overlooked details: specific real-world requirements, fees, constraints, mistakes or failure modes where applicable.",
+  "Long-term developments: concrete events, renewals, replacements, changes or recurring obligations that apply to this project.",
+  "Uncovered search intent: useful distinct practical subtopics not already suggested in previous batches.",
 ];
 const REFILL_LENSES=[
-  "Refill: Find an uncovered concrete cost, mechanism or failure mode, not previously accepted or rejected phrases.",
-  "Refill: Find a different buyer or owner decision, not another variant of the same comparison.",
-  "Refill: Find an overlooked real-world consequence or maintenance question.",
-  "Refill: One final specific, distinct, natural search phrase; no filler or contrived terminology."
+  "Refill: Find an uncovered specific mechanism, task or event; do not restate previous suggestions.",
+  "Refill: Find a different genuine audience decision inside this project's subject, not another comparison heading.",
+  "Refill: Find an overlooked real-world question that can be expressed as an ordinary search-box phrase.",
+  "Refill: One final distinct, natural search phrase with a named concept; no analyst jargon or filler."
 ];
 
 /** Generate review-only keyword hypotheses in small, serial and topically varied local model calls. */
@@ -254,7 +262,10 @@ export async function generateProjectKeywords(candidate,options={}) {
         requestedBefore:suggestions.map(item=>item.text),rejectedCount:rejectedBefore.length,requestCounter:counter});
       quality.proposed+=rows.length;
       verboseReminder=rows.some(row=>typeof row?.text==="string"&&verboseKeyword(row.text));
-      const screened=qualityKeywordSuggestions(rows,{name:candidate.name.trim(),existing:candidate.keywords??[],accepted:suggestions});
+      // Previously rejected hypotheses must not repeatedly spend judgment calls.
+      // This exclusion is local only; neither rejected wording nor verdicts enter future prompts.
+      const screened=qualityKeywordSuggestions(rows,{name:candidate.name.trim(),
+        existing:[...(candidate.keywords??[]),...rejectedBefore],accepted:suggestions});
       quality.rejected+=screened.rejected;
       const assessed=await assessAmbiguousKeywords(screened.suggestions,candidate,{...options,requestCounter:counter});
       quality.rejected+=assessed.rejected;
