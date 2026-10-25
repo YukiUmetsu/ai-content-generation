@@ -5,6 +5,10 @@ use serde::Serialize;
 use super::discovery_projects::DiscoveryError;
 use super::discovery_store::{self, Candidate, CandidateDraft, DiscoveryRun};
 
+/// Keep v1 semantics unchanged for saved runs; newer formulas must use a new
+/// version and a separate evaluator rather than reinterpreting old scores.
+pub(crate) const IDEA_SCORE_VERSION_V1: &str = "evidence-readiness-v1";
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoverySession {
@@ -282,7 +286,7 @@ pub fn finish_session_run(
 /// search demand, clicks, retention, revenue or the odds of a video succeeding.
 /// Use only the immutable source excerpts saved with the candidate so older
 /// sessions remain comparable if the live research graph changes later.
-fn score_idea(candidate: &Candidate, sources: &[IdeaSource]) -> (Option<f64>, serde_json::Value) {
+fn score_idea_v1(candidate: &Candidate, sources: &[IdeaSource]) -> (Option<f64>, serde_json::Value) {
     let mut unique = std::collections::HashSet::new();
     let mut captured_passages = 0u32;
     let mut public_video_leads = 0u32;
@@ -325,6 +329,13 @@ pub fn list_ideas(
     let runs = list_session_runs(db, project_id, session_id)?;
     let mut ideas = Vec::new();
     for run in runs {
+        // Runs created before score versioning are grandfathered into v1.
+        // A future v2 must dispatch to another evaluator, not rewrite v1.
+        let score_version = run.input_snapshot.get("ideaScoreVersion")
+            .and_then(serde_json::Value::as_str).unwrap_or(IDEA_SCORE_VERSION_V1);
+        if score_version != IDEA_SCORE_VERSION_V1 {
+            return Err(DiscoveryError::Invalid("Unsupported frozen idea scoring version".into()));
+        }
         for candidate in run.candidates {
             let sources = {
                 let mut stmt = db.prepare("SELECT source_id,provider,url,title,observed_at,published_at,evidence_state,passage
@@ -345,10 +356,10 @@ pub fn list_ideas(
                     quote:passage.to_owned(),review_status:"unverified".into(),
                 })
             }).collect();
-            let (opportunity_score, score_inputs) = score_idea(&candidate, &sources);
+            let (opportunity_score, score_inputs) = score_idea_v1(&candidate, &sources);
             ideas.push(SessionIdea {
                 candidate,session_id:session_id.to_owned(),run_id:run.id.clone(),
-                opportunity_score,score_version:Some("evidence-readiness-v1".into()),
+                opportunity_score,score_version:Some(score_version.into()),
                 score_inputs,platform_fit:serde_json::json!({}),sources,evidence,
             });
         }
