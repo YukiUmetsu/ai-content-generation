@@ -50,6 +50,14 @@ describe("ViralScore", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", {name:"Viral score evidence"})).not.toBeInTheDocument());
   });
 
+  it("opens on hover without requiring a click", async () => {
+    const user = userEvent.setup();
+    render(<ViralScore potential={potential} assessment={market} googleTrends={trends}
+      format="long" locale="en" />);
+    await user.hover(screen.getByRole("button", {name:/Viral score: 77 out of 100/}));
+    expect(await screen.findByRole("dialog", {name:"Viral score evidence"})).toBeInTheDocument();
+  });
+
   it("never substitutes an editorial score when market evidence is absent", async () => {
     const user = userEvent.setup();
     render(<ViralScore potential={null} assessment={null} googleTrends={null}
