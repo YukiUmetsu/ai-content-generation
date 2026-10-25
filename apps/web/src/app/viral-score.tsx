@@ -83,12 +83,12 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
   const change = momentum === null ? null : `${momentum > 0 ? "+" : ""}${compact(momentum, locale)}%`;
 
   return <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
-    <PopoverPrimitive.Trigger render={<button type="button"
+    <PopoverPrimitive.Trigger openOnHover delay={180} render={<button type="button"
       aria-label={tr(locale,
         `Viral score: ${score === null ? "insufficient data" : `${score} out of 100`}. Open evidence breakdown.`,
         `バイラルスコア: ${score === null ? "データ不足" : `${score} / 100`}。評価の根拠を開く。`)}
       className="group inline-flex min-h-[70px] shrink-0 items-center gap-2 rounded-xl border border-border/80 bg-surface-subtle px-2.5 py-1.5 text-left transition-[border-color,background-color,box-shadow] duration-150 hover:border-primary/40 hover:bg-surface-elevated hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
-    /> } openOnHover delay={180} >
+    >
       <Ring score={score} />
       <span className="flex flex-col gap-0.5">
         <span className="text-[10px] font-bold uppercase tracking-[.12em] text-muted-foreground">
@@ -100,7 +100,7 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
             : tr(locale, "Measured signals", "実測データ")}</span>
       </span>
       <Info className="ml-0.5 size-3.5 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden="true" />
-    </PopoverPrimitive.Trigger>
+    </button>} />
     <AnimatePresence>
       {open && <PopoverPrimitive.Portal key="viral-score-panel">
         <PopoverPrimitive.Positioner side="bottom" align="end" sideOffset={8}
@@ -165,6 +165,10 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
                 <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{tr(locale,
                   "When both signals exist: 75% YouTube within-session, same-format percentile + 25% Google Trends change (−100% to +100% mapped to 0–100). With Trends missing, show only the YouTube percentile and mark the result partial. Trends indices are normalized per query, not search volume. This is a heuristic, not a prediction of virality or revenue.",
                   "両方ある場合は、同一セッション・同形式の YouTube 百分位75%と、Google Trends の変化率25%（−100%〜+100%を0〜100に変換）を合成します。トレンドがない場合は YouTube のみを表示し、部分的な評価と明記します。Trends は検索語ごとに正規化され、検索量ではありません。再生数や収益の予測ではありません。")}</p>
+                {sample?.query && <p className="mt-2 break-words text-[11px] leading-relaxed text-muted-foreground">
+                  {tr(locale, "YouTube query", "YouTube 検索語")}: {sample.query}</p>}
+                {googleTrends?.query && <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
+                  {tr(locale, "Trends query", "Trends 検索語")}: {googleTrends.query}</p>}
                 <p className="mt-2 text-[10px] text-muted-foreground">{matching?.scoreVersion ?? "viral-potential-v1"}</p>
               </details>
             </PopoverPrimitive.Popup>
