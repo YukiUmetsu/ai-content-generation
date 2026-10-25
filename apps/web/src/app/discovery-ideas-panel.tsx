@@ -5,6 +5,7 @@ import type { Locale } from "@/features/registry";
 import type { LocalContent, LocalProject } from "./catalog-model";
 import { cancelDiscoveryRun, decideDiscoveryIdea, discoverFiveIdeas, listDiscoveryRuns, loadDiscoveryRun, resumeDiscoveryRun,
   type DiscoveryCandidate, type DiscoveryRun, type GraphSource } from "@/lib/api/discovery";
+import { formatDiscoveryProviderHealth } from "./discovery-provider-health";
 
 const say=(locale:Locale,en:string,ja:string)=>locale==="ja"?ja:en;
 const active=(run:DiscoveryRun|null)=>run&&["queued","running"].includes(run.status);
@@ -17,6 +18,7 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
   const [history,setHistory]=useState<DiscoveryRun[]>([]);
   const [busy,setBusy]=useState(false);
   const [message,setMessage]=useState<string|null>(null);
+  const newsHealth=typeof run?.providerHealth?.news==="string"?run.providerHealth.news:null;
   const sourceById=useMemo(()=>new Map(sources.map(source=>[source.id,source])),[sources]);
   useEffect(()=>{
     let mounted=true;
@@ -82,17 +84,17 @@ export function DiscoveryIdeasPanel({project,content,locale,syncStatus,sources,o
     </div>}
     {run?.providerHealth&&Object.keys(run.providerHealth).length>0&&<details className="mb-4 text-xs text-muted-foreground">
       <summary className="cursor-pointer font-medium">{say(locale,"Provider availability and evidence gaps","データ提供元の状態")}</summary>
-      <ul className="mt-2 list-inside list-disc space-y-1">{Object.entries(run.providerHealth).map(([name,value])=><li key={name}>{name}: {value}</li>)}</ul>
+      <ul className="mt-2 list-inside list-disc space-y-1">{Object.entries(run.providerHealth).map(([name,value])=><li key={name}>{name}: {formatDiscoveryProviderHealth(value, locale)}</li>)}</ul>
     </details>}
     {run?.status==="insufficient_evidence"&&<div role="status" className="mb-4 space-y-2 rounded-control border border-border bg-muted/30 p-4 text-sm">
-      {run.providerHealth?.news?.includes("SearXNG unavailable")?<>
+      {newsHealth?.includes("SearXNG unavailable")?<>
         <p className="font-semibold">{say(locale,"Search service is unavailable or its JSON API is disabled.","検索サービスが利用できないか、JSON API が無効です。")}</p>
         <p className="text-muted-foreground">{say(locale,"In the ContentGen repo, start and check local search, then click Discover 5 Ideas again:","ContentGen のリポジトリでローカル検索を起動・確認し、再実行してください。")}</p>
         <code className="block select-text break-all rounded bg-surface px-3 py-2 text-xs">pnpm --dir apps/web research:up</code>
         <code className="block select-text break-all rounded bg-surface px-3 py-2 text-xs">pnpm --dir apps/web research:check</code>
       </>:<>
         <p>{say(locale,"Not enough captured passages or measured videos to rank credible ideas yet.","信頼できるアイデアを選ぶには、記事本文や計測済み動画がまだ不足しています。")}</p>
-        {run.providerHealth?.news&&<p className="text-xs text-muted-foreground">{run.providerHealth.news}</p>}
+        {newsHealth&&<p className="text-xs text-muted-foreground">{newsHealth}</p>}
       </>}
       <p className="text-xs text-muted-foreground">{say(locale,
         "You can also link a relevant YouTube watchlist and collect its public videos. Unverified search links alone are not treated as evidence.",

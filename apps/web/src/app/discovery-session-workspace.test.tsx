@@ -17,6 +17,25 @@ function mockFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Pr
 }
 
 describe("Content discovery sessions", () => {
+  it("keeps structured market provider health readable in an existing run", async () => {
+    const savedRun = {id:"run-market",projectId:"brand-1",inputRevision:"revision",status:"completed",
+      stage:"complete",createdAt:1760000000,updatedAt:1760000000,errorCode:null,candidates:[],
+      providerHealth:{market:{state:"partial",youtube:{succeeded:2,unavailable:1,attempts:3},
+        googleTrends:{succeeded:1,unavailable:2,attempts:3}}}};
+    mockFetch(async input => {
+      const path=String(input);
+      if(path.endsWith("/sessions"))return new Response(JSON.stringify({sessions:[session]}));
+      if(path.endsWith("/sessions/session-1"))return new Response(JSON.stringify(session));
+      if(path.endsWith("/runs"))return new Response(JSON.stringify({runs:[savedRun]}));
+      if(path.endsWith("/ideas"))return new Response(JSON.stringify({ideas:[]}));
+      throw Error(`Unexpected discovery route ${path}`);
+    });
+    render(<DiscoverySessionWorkspace project={project} platforms={["youtube"]} locale="en"
+      selectedSessionId="session-1" onSelectSession={()=>{}} />);
+    expect(await screen.findByText("Latest job: completed")).toBeInTheDocument();
+    expect(screen.getByText(/YouTube: 2 succeeded, 1 unavailable/)).toBeInTheDocument();
+    expect(screen.getByText(/Google Trends: 1 succeeded, 2 unavailable/)).toBeInTheDocument();
+  });
   it("creates a named saved session with the selected platforms and announces its stable identifier", async () => {
     const selected = vi.fn();
     let stored: typeof session[] = [];

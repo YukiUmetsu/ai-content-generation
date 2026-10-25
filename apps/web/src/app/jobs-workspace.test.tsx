@@ -28,9 +28,29 @@ const pipelineDetail = {
   progress: { total: 0, pending: 0, ready: 0, running: 0, succeeded: 0, failed: 0, cancelled: 0 },
 };
 
+const marketProviderHealth = {
+  market: { state: "partial", youtube: { succeeded: 2, unavailable: 1, attempts: 3 },
+    googleTrends: { succeeded: 1, unavailable: 2, attempts: 3 } },
+};
+
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); window.localStorage.removeItem("contentgen.jobs.list-width"); });
 
 describe("Jobs & QA discovery visibility", () => {
+  it("shows structured YouTube and Google Trends health without crashing the discovery details", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = String(input);
+      if (path === "/api/jobs") return new Response(JSON.stringify({ jobs: [] }));
+      if (path.endsWith("/projects/brand-1/sessions")) return new Response(JSON.stringify({ sessions: [
+        { ...session, lastRun: { ...running, providerHealth: marketProviderHealth } },
+      ] }));
+      throw Error(`Unexpected Jobs request: ${path}`);
+    });
+    render(<JobsWorkspace locale="en" projects={[project]} />);
+    const provider = await screen.findByRole("region", { name: "Provider health" });
+    expect(provider).toHaveTextContent("Partial");
+    expect(provider).toHaveTextContent("YouTube: 2 succeeded, 1 unavailable");
+    expect(provider).toHaveTextContent("Google Trends: 1 succeeded, 2 unavailable");
+  });
   it("shows a running discovery search when the DAG job queue is empty", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
       const path = String(input);

@@ -24,7 +24,7 @@ export type DiscoveryRun = { id: string; projectId: string; inputRevision: strin
   inputSnapshot?: {version:number;projectName:string;description:string;content:{name:string;stage:string}[];
     keywords:ProjectKeyword[];projectRevision:number;graphRevision:number;researchFreshness:number};
   status: "queued" | "running" | "paused" | "completed" | "insufficient_evidence" | "failed" | "cancelled";
-  stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: Record<string,string>;
+  stage: string; createdAt: number; updatedAt: number; errorCode: string | null; providerHealth: Record<string,unknown>;
   candidates: DiscoveryCandidate[] };
 const PREFIX = "/api/research/discovery";
 
@@ -43,8 +43,7 @@ function requireDiscoveryRun(value: unknown): DiscoveryRun {
     !["queued", "running", "paused", "completed", "insufficient_evidence", "failed", "cancelled"].includes(String(data.status)) ||
     typeof data.stage !== "string" || !Number.isFinite(data.createdAt) || !Number.isFinite(data.updatedAt) ||
     !Array.isArray(data.candidates) || !data.candidates.every(candidate) ||
-    (data.providerHealth !== undefined && (!object(data.providerHealth) ||
-      Object.values(data.providerHealth).some(item => typeof item !== "string")))) {
+    (data.providerHealth !== undefined && !object(data.providerHealth))) {
     throw Error("Invalid discovery run response. Restart or rebuild the local server, then retry.");
   }
   return { ...data, providerHealth: data.providerHealth ?? {} } as DiscoveryRun;
