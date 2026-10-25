@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { IdeaGoogleTrends, IdeaMarketAssessment, ViralPotential } from "@/lib/api/discovery-sessions";
 import { ViralScore } from "./viral-score";
@@ -47,7 +47,7 @@ describe("ViralScore", () => {
     expect(within(panel).getByText(/75% YouTube within-session/)).toBeInTheDocument();
     expect(within(panel).getByText(/YouTube query/)).toBeInTheDocument();
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", {name:"Viral score evidence"})).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog", {name:"Viral score evidence"})).not.toBeInTheDocument());
   });
 
   it("never substitutes an editorial score when market evidence is absent", async () => {
