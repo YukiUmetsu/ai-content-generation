@@ -164,9 +164,12 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       if(handoff.productionId!==projectId||typeof handoff.scriptRevision!=="string"||
         handoff.dossier?.kind!=="research-dossier"||handoff.bundle?.kind!=="preproduction-bundle"||
         !handoff.dossier.id||handoff.bundle.researchId!==handoff.dossier.id||
-        !handoff.bundle.researchSha256||!handoff.bundle.plan?.shots?.length)
+        !handoff.bundle.researchSha256||!/^[a-f0-9]{64}$/u.test(handoff.bundle.planSha256??"")||
+        !handoff.bundle.plan?.shots?.length)
         throw Error("The approved script handoff is invalid. Return to Production and reopen the approved script.");
-      const sourceId="approved-script:"+handoff.scriptRevision;
+      // Two storyboard edits can share one script revision. Scope resumes to
+      // the exact compiled visual plan so old edits never mask new visuals.
+      const sourceId="approved-script:"+handoff.scriptRevision+":"+handoff.bundle.planSha256;
       const resumed=readDirectorSession(projectId,sourceId,handoff.bundle);
       acceptProject(resumed?.dossier??handoff.dossier,resumed?.bundle??handoff.bundle,"topic",sourceId);
       setStatus(resumed?"Resumed your saved edits from this approved script revision. Factual review and rights remain outstanding.":
