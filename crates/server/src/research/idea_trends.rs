@@ -226,7 +226,7 @@ pub fn claim_assessment(
     let recent: Option<(String, i64)> = transaction
         .query_row(
             "SELECT state,started_at FROM idea_trends_runs WHERE idea_id=?1
-         ORDER BY started_at DESC,id DESC LIMIT 1",
+         ORDER BY started_at DESC,rowid DESC LIMIT 1",
             [idea_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -400,7 +400,7 @@ pub fn record_unavailable_assessment(
     let previous: Option<(String, String, i64)> = transaction
         .query_row(
             "SELECT state,query,started_at FROM idea_trends_runs WHERE idea_id=?1
-         ORDER BY started_at DESC,id DESC LIMIT 1",
+         ORDER BY started_at DESC,rowid DESC LIMIT 1",
             [idea_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -464,7 +464,7 @@ pub fn latest_assessment(
     db.query_row(
         "SELECT state,query,region,observed_at,recent_mean,previous_mean,change_percent,
                 points,metric_version,error_code FROM idea_trends_runs
-         WHERE idea_id=?1 AND started_at>?2 ORDER BY started_at DESC,id DESC LIMIT 1",
+         WHERE idea_id=?1 AND started_at>?2 ORDER BY started_at DESC,rowid DESC LIMIT 1",
         params![idea_id, now.saturating_sub(RETENTION)],
         |row| {
             Ok(GoogleTrendsAssessment {
