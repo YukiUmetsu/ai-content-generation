@@ -176,11 +176,61 @@ fn a_session_can_persist_more_than_five_distinct_evidence_backed_ideas() {
     assert_eq!(first_source.evidence.len(), 1);
     assert_eq!(first_source.evidence[0].quote, "Captured explanatory evidence for topic 0");
     assert_eq!(first_source.evidence[0].review_status, "unverified");
-    assert!(ideas[0].opportunity_score.is_none());
+    assert_eq!(ideas[0].opportunity_score, Some(50.0));
+    assert_eq!(ideas[0].score_version.as_deref(), Some("evidence-readiness-v1"));
+    assert_eq!(ideas[0].score_inputs["capturedPassages"], 1);
+    assert_eq!(ideas[0].score_inputs["audienceDemand"], "unknown");
     sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].id, "saved", None, 103).unwrap();
     assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].decision.as_deref(), Some("saved"));
     sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].id, "selected", None, 104).unwrap();
     assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].decision.as_deref(), Some("selected"));
+}
+
+#[test]
+fn scoring_uses_frozen_evidence_and_never_invents_audience_demand() {
+    let mut conn = ready();
+    let session = sessions_store::create_session(&conn, "brand-one", "Evidence review",
+        &["youtube".into()], &serde_json::json!({"version":1}), 100).unwrap();
+    let run = sessions_store::start_or_get_active(&mut conn, "brand-one", &session.id, "score", 101).unwrap();
+    for (id, provider, state, passage) in [
+        ("s1", "searxng", "captured", Some("Source one excerpt")),
+        ("s2", "searxng", "captured", Some("Source two excerpt")),
+        ("s3", "youtube-data-api", "lead_only", None),
+        ("s4", "searxng", "captured", None),
+    ] {
+        conn.execute("INSERT INTO kg_sources(id,project_id,provider,url,title,observed_at,passage,evidence_state)
+            VALUES (?1,'brand-one',?2,?3,'Source',100,?4,?5)",
+            rusqlite::params![id,provider,format!("https://example.org/{id}"),passage,state]).unwrap();
+    }
+    // A public-video lead must actually have a measured observation to qualify for the run.
+    let topic = contentgen_server::research::graph_store::upsert_node(
+        &conn, "brand-one", "topic", "Insurance costs", 100).unwrap();
+    conn.execute("INSERT INTO kg_trend_observations(id,project_id,node_id,source_id,provider,metric,value,unit,collected_at)
+        VALUES ('observation','brand-one',?1,'s3','youtube-data-api','views',1000,'count',100)", [topic]).unwrap();
+    sessions_store::finish_session_run(&mut conn, "brand-one", &session.id, &run.id,
+        vec![
+            discovery_store::CandidateDraft { title:"Insurance costs explained with multiple sources".into(),
+                hook:"Why costs rise".into(),premise:"Explain each component".into(),
+                why_now:"A timely homeowner question".into(),angle_key:"many-sources".into(),
+                source_ids:vec!["s1".into(),"s2".into(),"s3".into()],confidence:"high".into() },
+            discovery_store::CandidateDraft { title:"Solar battery repairs without a quoted source".into(),
+                hook:"Unquoted".into(),premise:"No captured passage".into(),
+                why_now:"Question".into(),angle_key:"no-passage".into(),
+                source_ids:vec!["s4".into()],confidence:"high".into() },
+        ], "completed", 102).unwrap();
+    let ideas = sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap();
+    let strong = ideas.iter().find(|i| i.candidate.angle_key == "many-sources").unwrap();
+    assert_eq!(strong.opportunity_score, Some(90.0));
+    assert_eq!(strong.score_inputs["capturedPassages"], 2);
+    assert_eq!(strong.score_inputs["publicVideoLeads"], 1);
+    assert_eq!(strong.score_inputs["sourcePoints"], 50);
+    assert_eq!(strong.score_inputs["audienceDemand"], "unknown");
+    assert!(strong.platform_fit.as_object().unwrap().is_empty());
+    let unquoted = ideas.iter().find(|i| i.candidate.angle_key == "no-passage").unwrap();
+    assert!(unquoted.opportunity_score.is_none(), "an empty passage is not usable evidence");
+    assert_eq!(unquoted.score_inputs["capturedPassages"], 0);
+    assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()
+        .iter().find(|i| i.candidate.angle_key == "many-sources").unwrap().opportunity_score, Some(90.0));
 }
 
 #[test]
