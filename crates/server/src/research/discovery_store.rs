@@ -777,9 +777,11 @@ pub fn finish_market_run(
     Ok(db.execute(
         "UPDATE discovery_runs
          SET status='completed',stage='completed',updated_at=?2,finished_at=?2,
-         provider_health_json=json_set(provider_health_json,'$.market',json(?3),
-             '$.marketBackfill',CASE WHEN json_type(provider_health_json,'$.marketBackfill') IS NULL
-               THEN NULL ELSE 'completed' END)
+         provider_health_json=CASE
+             WHEN json_type(provider_health_json,'$.marketBackfill') IS NULL
+               THEN json_set(provider_health_json,'$.market',json(?3))
+             ELSE json_set(provider_health_json,'$.market',json(?3),'$.marketBackfill','completed')
+             END
          WHERE id=?1 AND status='running' AND stage='measure_market_collecting'",
         params![run_id, now, summary.to_string()],
     )? == 1)
