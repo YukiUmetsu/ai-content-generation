@@ -9,8 +9,9 @@ import {
 } from "@/lib/api/discovery-sessions";
 import { loadMarketStatus, type MarketStatus } from "@/lib/api/market";
 import { IdeaMarketEvidence } from "./idea-market-evidence";
+import { ViralScore } from "./viral-score";
 import { formatDiscoveryProviderHealth } from "./discovery-provider-health";
-import { usableComparison, type IdeaVideoFormat } from "./idea-market-comparison";
+import type { IdeaVideoFormat } from "./idea-market-comparison";
 
 const tr = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : en;
 const fieldClass = "mt-1.5 w-full rounded-control border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -19,39 +20,18 @@ const platforms: Record<DiscoveryPlatform, string> = {
   facebook: "Facebook", blog: "Blog / Website", website: "Blog / Website",
 };
 type Filter = "all" | "saved" | "dismissed" | "selected";
-type Sort = "market" | "opportunity" | "sources" | "title";
+type Sort = "viral" | "sources" | "title";
 
 function safeSourceUrl(value: string): string | null {
   try { const parsed = new URL(value); return ["https:", "http:"].includes(parsed.protocol) ? parsed.toString() : null; }
   catch { return null; }
 }
 
-function opportunityText(idea: DiscoverySessionIdea, locale: Locale): string {
-  return idea.opportunityScore === null ? tr(locale, "Not measured", "未測定") : `${Math.round(idea.opportunityScore)}/100`;
-}
-
-/** A within-phrase rate of change, not a cross-phrase search-volume comparison. */
-function usableSearchMomentum(idea: DiscoverySessionIdea): number | null {
-  const trend = idea.googleTrends;
-  return trend?.state === "succeeded" && trend.points >= 26 &&
-    typeof trend.changePercent === "number" && Number.isFinite(trend.changePercent) ? trend.changePercent : null;
-}
-
-function inputLabel(key: string, locale: Locale): string {
-  const labels: Record<string, [string, string]> = {
-    capturedPassages: ["Captured passages", "取得済みの引用"],
-    publicVideoLeads: ["Public video leads", "公開動画の手掛かり"],
-    sourcePoints: ["Source points", "出典の点数"],
-    candidateConfidence: ["Draft confidence", "下書きの確度"],
-    confidencePoints: ["Confidence points", "確度の点数"],
-    editorialReadinessPoints: ["Story completeness points", "構成の完成度"],
-    audienceDemand: ["Audience demand", "視聴者の需要"],
-    searchVolume: ["Search volume", "検索ボリューム"],
-    scoreMeaning: ["Score interpretation", "点数の意味"],
-  };
-  const known = labels[key];
-  return known ? known[locale === "ja" ? 1 : 0]
-    : key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, value => value.toUpperCase());
+/** No cross-format or legacy editorial score may be used as viral potential. */
+function viralScore(idea: DiscoverySessionIdea, format: IdeaVideoFormat): number | null {
+  const potential = idea.viralPotential;
+  return potential?.format === format && potential.scoreVersion === "viral-potential-v1"
+    ? potential.score : null;
 }
 
 export interface DiscoveryIdeaSelectionProps {
@@ -72,7 +52,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [sessionPlatforms, setSessionPlatforms] = useState<DiscoveryPlatform[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("market");
+  const [sort, setSort] = useState<Sort>("viral");
   const [compareFormat, setCompareFormat] = useState<IdeaVideoFormat>("long");
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
   const [runMarketHealth, setRunMarketHealth] = useState<unknown>(null);
@@ -84,7 +64,6 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [brief, setBrief] = useState<DiscoveryIdeaBrief | null>(null);
   const [keywordDraft, setKeywordDraft] = useState("");
-  const [expandedScoreId, setExpandedScoreId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -219,25 +198,13 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     return matched.sort((a, b) => {
       if (sort === "title") return a.title.localeCompare(b.title);
       if (sort === "sources") return b.sources.length - a.sources.length || a.rank - b.rank;
-      if (sort === "market") {
-        const aMarket = usableComparison(a.marketAssessment, compareFormat);
-        const bMarket = usableComparison(b.marketAssessment, compareFormat);
-        if (aMarket !== null && bMarket !== null) return bMarket - aMarket || a.rank - b.rank;
-        if (aMarket !== null) return -1;
-        if (bMarket !== null) return 1;
-        const aMomentum = usableSearchMomentum(a);
-        const bMomentum = usableSearchMomentum(b);
-        if (aMomentum !== null && bMomentum !== null) return bMomentum - aMomentum || a.rank - b.rank;
-        if (aMomentum !== null) return -1;
-        if (bMomentum !== null) return 1;
-        return a.rank - b.rank;
+      if (sort === "viral") {
+        const aScore = viralScore(a, compareFormat);
+        const bScore = viralScore(b, compareFormat);
+        if (aScore !== null && bScore !== null) return bScore - aScore || a.rank - b.rank;
+        if (aScore !== null) return -1;
+        if (bScore !== null) return 1;
       }
-      // Numeric heuristic exists only when the backend has measured enough inputs;
-      // otherwise show and sort by the source-backed server rank, not a fake zero.
-      if (a.opportunityScore !== null && b.opportunityScore !== null)
-        return b.opportunityScore - a.opportunityScore || a.rank - b.rank;
-      if (a.opportunityScore !== null) return -1;
-      if (b.opportunityScore !== null) return 1;
       return a.rank - b.rank;
     });
   }, [ideas, search, filter, sort, compareFormat]);
@@ -246,7 +213,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   // ties and editorial readiness never manufacture a top-three recommendation.
   const measuredLeader = useMemo(() => {
     const eligible = ideas.filter(idea => idea.decision === null || idea.decision === "saved")
-      .map(idea => ({ id: idea.id, score: usableComparison(idea.marketAssessment, compareFormat) }))
+      .map(idea => ({ id: idea.id, score: idea.viralPotential?.state === "measured" ? viralScore(idea, compareFormat) : null }))
       .filter((entry): entry is { id: string; score: number } => entry.score !== null)
       .sort((a, b) => b.score - a.score);
     return eligible.length >= 3 && eligible[0].score > eligible[1].score ? eligible[0].id : null;
@@ -307,8 +274,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       <label className="min-w-44 flex-1 text-xs font-medium text-muted-foreground">{tr(locale, "Sort ideas", "並べ替え")}
         <span className="relative block"><ArrowUpDown className="pointer-events-none absolute bottom-3 left-3 size-4" aria-hidden="true" />
           <select className={`${fieldClass} pl-10`} value={sort} onChange={event => setSort(event.target.value as Sort)}>
-            <option value="market">{tr(locale, "YouTube comparison / trend momentum", "YouTube 比較・検索の勢い")}</option>
-            <option value="opportunity">{tr(locale, "Research readiness / rank", "調査準備度・順位")}</option>
+            <option value="viral">{tr(locale, "Viral score / rank", "バイラルスコア・順位")}</option>
             <option value="sources">{tr(locale, "Most source references", "参照元の数")}</option>
             <option value="title">{tr(locale, "Title A–Z", "タイトル順")}</option>
           </select>
@@ -357,36 +323,19 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {tr(locale, "Idea", "アイデア")} {idea.rank > 0 ? `#${idea.rank}` : ""}
             {measuredLeader === idea.id && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-primary normal-case tracking-normal">
-              {tr(locale, "Leads measured cohort", "実測比較で首位")}</span>}
+              {tr(locale, "Highest measured viral score", "実測バイラルスコア首位")}</span>}
             {idea.decision && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 normal-case tracking-normal">{idea.decision}</span>}
           </p>
           <h3 className="font-serif text-xl font-semibold leading-snug">{idea.title}</h3>
           {idea.hook && <p className="mt-2 text-sm font-medium">{idea.hook}</p>}
           {idea.premise && <p className="mt-2 text-sm leading-6 text-muted-foreground">{idea.premise}</p>}
         </div>
+        <ViralScore potential={idea.viralPotential} assessment={idea.marketAssessment}
+          googleTrends={idea.googleTrends} format={compareFormat} locale={locale} />
       </div>
-      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-        <span>{tr(locale, "Research readiness", "調査準備度")}: {opportunityText(idea, locale)}</span>
-        <span>{tr(locale, "Draft confidence (AI-assigned)", "下書きの確度（AI による判断）")}: {idea.confidence}</span>
-        {idea.whyNow && <span>{tr(locale, "Why consider", "選定理由")}: {idea.whyNow}</span>}
-      </div>
-      {(idea.opportunityScore !== null || idea.scoreVersion || Object.keys(idea.scoreInputs).length > 0) && <div className="mt-3">
-        <button className="text-xs font-medium text-primary underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-ring"
-          aria-expanded={expandedScoreId === idea.id}
-          aria-controls={expandedScoreId === idea.id ? `score-details-${idea.id}` : undefined}
-          onClick={() => setExpandedScoreId(value => value === idea.id ? null : idea.id)}>
-          {expandedScoreId === idea.id ? tr(locale, "Hide score details", "評価の詳細を閉じる") : tr(locale, "Explain this score", "評価の根拠を確認")}
-        </button>
-        {expandedScoreId === idea.id && <div id={`score-details-${idea.id}`} className="mt-2 rounded-control bg-muted/30 p-3 text-xs text-muted-foreground">
-          <p>{tr(locale, "Editorial research readiness", "編集用の調査準備度")}: {opportunityText(idea, locale)} · {tr(locale,
-            "Source completeness, not predicted audience demand.", "出典の充実度であり、視聴者需要の予測ではありません。")}</p>
-          <p>{tr(locale, "Formula revision", "計算式の版")}: {idea.scoreVersion ?? tr(locale, "not recorded", "記録なし")}</p>
-          {Object.entries(idea.scoreInputs).slice(0, 12).map(([key, value]) => <p key={key} className="mt-1 break-words">
-            {inputLabel(key, locale)}: {key === "scoreMeaning" && locale === "ja" ? "調査準備度のみ。動画の成果予測ではありません"
-              : value === "unknown" ? tr(locale, "unknown", "不明")
-                : value === null ? tr(locale, "unknown", "不明") : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>)}
-        </div>}
-      </div>}
+      {idea.whyNow && <p className="mt-3 text-xs text-muted-foreground">
+        <span className="font-medium">{tr(locale, "Why consider", "選定理由")}:</span> {idea.whyNow}
+      </p>}
       <IdeaMarketEvidence key={idea.id} ideaId={idea.id} title={idea.title} locale={locale} format={compareFormat}
         assessment={idea.marketAssessment} googleTrends={idea.googleTrends}
         status={marketStatus} statusError={marketStatusError}
