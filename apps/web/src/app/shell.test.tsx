@@ -41,7 +41,8 @@ describe("Studio shell", () => {
 
   it("opens the guided Production workspace by default", () => {
     render(<App />);
-    expect(screen.getByRole("heading", { name: "Production" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Guided production" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Production stages" })).toBeInTheDocument();
   });
 

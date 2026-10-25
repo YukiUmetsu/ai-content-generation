@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowUpDown, CheckCircle2, ExternalLink, FileSearch, Search, Sparkles } from "lucide-react";
+import { ArrowUpDown, CheckCircle2, ExternalLink, FileSearch, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/features/registry";
 import {
@@ -148,16 +148,6 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   };
 
   return <section aria-label={tr(locale, "Select an idea", "アイデアを選択")} className="space-y-5">
-    <div>
-      <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-        <Sparkles className="size-4" aria-hidden="true" /> {tr(locale, "Editorial selection", "編集テーマの選択")}
-      </div>
-      <h2 className="font-serif text-2xl font-semibold">{tr(locale, "Choose the story worth telling", "伝える価値のあるテーマを選ぶ")}</h2>
-      <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{tr(locale,
-        "Compare all saved ideas. Up to three highlighted picks use a research-readiness heuristic: source excerpts, public-video leads, draft confidence, and story completeness. It does not measure search demand or predict views, CTR, or revenue.",
-        "保存した全アイデアを比較できます。最大3件のおすすめは、出典の引用・公開動画の手掛かり・下書きの確度・構成の完成度による調査準備度の推定です。検索需要、再生回数、CTR、収益は予測しません。")}</p>
-    </div>
-
     <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface p-4">
       <label className="relative min-w-52 flex-[2] text-xs font-medium text-muted-foreground">{tr(locale, "Search ideas", "アイデアを検索")}
         <Search className="pointer-events-none absolute bottom-3 left-3 size-4" aria-hidden="true" />

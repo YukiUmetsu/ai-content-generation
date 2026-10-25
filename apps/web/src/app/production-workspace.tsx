@@ -10,13 +10,14 @@ import { inspectClaimEvidence, matchesStoryboardResearch } from "./claim-evidenc
 import { ProductionClaimIssues } from "./production-claim-issues";
 import { createClaimReviewReceipt, isClaimReviewCurrent, loadClaimReviews,
   saveClaimReviews } from "./production-claim-reviews";
-import { getProductionStages, PRODUCTION_STAGE_ORDER, type ProductionStageId, type ProductionStageStatus } from "./production-progress";
+import { getProductionStages, type ProductionStageId, type ProductionStageStatus } from "./production-progress";
 import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
 import { DiscoverySessionWorkspace } from "./discovery-session-workspace";
 import { DiscoveryIdeaSelection } from "./discovery-idea-selection";
 import { createProduction, getDiscoverySession, listProductions, listSessionIdeas, type DiscoverySessionIdea, type DiscoveryIdeaBrief,
   type DiscoveryProduction, type DiscoveryPlatform } from "@/lib/api/discovery-sessions";
+import type { DiscoveryRun } from "@/lib/api/discovery";
 import { ScriptReviewWorkspace } from "./script-review-workspace";
 import { isScriptContextCurrent, loadScriptDraft, scriptEvidenceFingerprint, type ScriptDraft } from "./script-review-model";
 import { PlatformOptimization, type PlatformOptimizationInput } from "@/features/platform-optimization";
@@ -140,6 +141,9 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const appearance=resolveProjectAppearance(project??{});
   const [flow,setFlow]=useState<FlowSelection>(()=>loadFlowSelection(projectId));
   const {platforms,sessionId,production}=flow;
+  const [sessionDiscovery,setSessionDiscovery]=useState<{
+    sessionId:string;run:DiscoveryRun|null;ideaCount:number|null
+  }|null>(null);
   const [selectedIdea,setSelectedIdea]=useState<DiscoverySessionIdea|null>(null);
   const currentIdea=selectedIdea?.id===production?.ideaId?selectedIdea:null;
   const [,refreshScriptState]=useState(0);
@@ -272,6 +276,20 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     return ()=>controller.abort();
   },[projectId,production?.id]);
   useEffect(()=>{
+    if(!sessionId){return;}
+    if(step==="discover")return; // The visible Discover panel owns polling while it is mounted.
+    const controller=new AbortController();
+    const refresh=()=>{
+      void getDiscoverySession(projectId,sessionId,controller.signal).then(saved=>{
+        if(!controller.signal.aborted)setSessionDiscovery({
+          sessionId,run:saved.lastRun??null,ideaCount:saved.ideaCount??null});
+      }).catch(()=>{/* Keep last confirmed state when the local server is temporarily unreachable. */});
+    };
+    refresh();
+    const timer=window.setInterval(refresh,3500);
+    return ()=>{controller.abort();window.clearInterval(timer);};
+  },[projectId,sessionId,step]);
+  useEffect(()=>{
     if(!production)return;
     let active=true;
     void listSessionIdeas(projectId,production.sessionId).then(ideas=>{
@@ -349,9 +367,11 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const unreviewed=issues.filter(issue=>issue.kind==="source_unchecked"||
     (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
+  const activeDiscovery=sessionDiscovery?.sessionId===sessionId?sessionDiscovery:null;
   const stages=getProductionStages({setupReady:Boolean(project&&platforms.length),sessionId,
     ideaId:production?.ideaId,scriptReady:scriptApproved,scriptStale,discoveryReady:Boolean(production?.ideaId),
-    discoveryArtifactId:artifactId,discoveryJob:sessionId?null:job,
+    discoveryArtifactId:sessionId?null:artifactId,discoveryJob:sessionId?null:job,
+    discoverySessionRun:activeDiscovery?.run,discoveryIdeaCount:activeDiscovery?.ideaCount,
     storyboardReady:Boolean(board),storyboardScriptStale:boardScriptStale,
     storyboardResearchArtifactId,missingEvidenceClaims:unresolved,unreviewedClaims:unreviewed,
     storyboardEditorialWarnings:repeatedScenes.length,optimizationReady});
@@ -478,45 +498,28 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const contentCard="rounded-surface border border-border bg-surface p-5 sm:p-6";
   const primaryButton="rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
   const secondaryButton="rounded-control border border-border px-4 py-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
-  const activeIndex=PRODUCTION_STAGE_ORDER.indexOf(step);
   return <section id="workspace" aria-label={tr("Guided production","制作ガイド")}
     className="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-5 py-4">
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={onOpenNav} aria-label={tr("Open navigation","メニューを開く")}
-          className="rounded-control p-2 hover:bg-muted lg:hidden"><Menu className="size-5"/></button>
-        <div><h1 className="font-serif text-2xl font-semibold">{tr("Production","動画制作")}</h1>
-          <p className="text-xs text-muted-foreground">{tr("From discovery to export · eight connected steps · saved along the way","発見から書き出しまで8ステップで進めます。")}</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-        <span className="hidden sm:inline">{project?.name}</span>
-        {production&&<span className="rounded-full border border-border bg-surface-subtle px-3 py-1.5">
-          {tr("Production saved","制作を保存済み")}
-        </span>}
-      </div>
-    </header>
     <nav aria-label={tr("Production stages","制作ステップ")}
-      className="z-10 flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-surface-subtle px-3 py-3 lg:justify-between lg:gap-2 lg:px-5">
+      className="z-10 flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-surface-subtle px-3 py-2 lg:justify-between lg:gap-2 lg:px-5">
+      <button type="button" onClick={onOpenNav} aria-label={tr("Open navigation","メニューを開く")}
+        className="shrink-0 rounded-control p-2 hover:bg-muted lg:hidden"><Menu className="size-5"/></button>
       {stages.map((item,index)=><button key={item.id} type="button" onClick={()=>selectStep(item.id)}
         aria-current={step===item.id?"step":undefined}
         aria-label={stageLabels[item.id].en+" stage"}
         title={item.reason}
-        className={`flex min-w-[132px] flex-1 items-center gap-2 rounded-control px-3 py-2.5 text-left transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${step===item.id?"border border-primary/40 bg-surface text-foreground shadow-sm":"border border-transparent text-muted-foreground"}`}>
+        className={`flex min-w-[132px] flex-1 items-center gap-2 rounded-control px-3 py-2 text-left transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${step===item.id?"border border-primary/40 bg-surface text-foreground shadow-sm":"border border-transparent text-muted-foreground"}`}>
         <span className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${step===item.id?"bg-primary text-primary-foreground":"border border-border"}`}>{index+1}</span>
         <span className="min-w-0 flex-1"><span className="block whitespace-nowrap text-xs font-semibold xl:text-sm">{ja?stageLabels[item.id].ja:stageLabels[item.id].en}</span>
           <span className="block truncate text-[10px]">{statusLabel(item.status,ja)}</span></span>
         {item.status==="complete"?<StatusIcon status={item.status}/>:null}
       </button>)}
     </nav>
-    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8">
+    <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8">
         <div className="mx-auto flex max-w-5xl flex-col gap-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-                {tr("Step","ステップ")} {activeIndex+1} / {PRODUCTION_STAGE_ORDER.length}
-              </p>
-              <h2 className="mt-1 font-serif text-3xl font-semibold">{ja?stageLabels[step].ja:stageLabels[step].en}</h2>
+               <h2 className="font-serif text-2xl font-semibold">{ja?stageLabels[step].ja:stageLabels[step].en}</h2>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{ja?stageLabels[step].jaDetail:stageLabels[step].enDetail}</p>
             </div>
             <span className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs">
@@ -577,6 +580,8 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
           </div>}
           {step==="discover"&&<div className="space-y-4">
             <DiscoverySessionWorkspace project={project!} content={catalog.content} platforms={platforms} locale={locale}
+               onDiscoveryStateChange={(active,run,ideaCount)=>setSessionDiscovery({sessionId:active,run,ideaCount})}
+               onIdeasReady={(active)=>{if(active===sessionId)selectStep("select");}}
               selectedSessionId={sessionId} onSelectSession={(next)=>{
                 const selection={...flow,sessionId:next,production:flow.production?.sessionId===next?flow.production:null};
                 updateFlow(selection);

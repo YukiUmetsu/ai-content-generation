@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, Clock3, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Locale } from "@/features/registry";
@@ -33,6 +33,8 @@ export interface DiscoverySessionWorkspaceProps {
   locale: Locale;
   selectedSessionId?: string | null;
   onSelectSession: (sessionId: string) => void;
+  onDiscoveryStateChange?: (sessionId: string, run: DiscoveryRun | null, ideaCount: number | null) => void;
+  onIdeasReady?: (sessionId: string, runId: string) => void;
 }
 
 interface ActiveSessionDetails {
@@ -48,7 +50,8 @@ export function DiscoverySessionWorkspace(props: DiscoverySessionWorkspaceProps)
   return <ProjectDiscoverySessions key={props.project.id} {...props} />;
 }
 
-function ProjectDiscoverySessions({ project, platforms, content = [], locale, selectedSessionId, onSelectSession }:
+function ProjectDiscoverySessions({ project, platforms, content = [], locale, selectedSessionId, onSelectSession,
+  onDiscoveryStateChange, onIdeasReady }:
   DiscoverySessionWorkspaceProps) {
   const [sessions, setSessions] = useState<DiscoverySession[]>([]);
   const [localSelection, setLocalSelection] = useState<string | null>(null);
@@ -63,6 +66,13 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
   const [activeDetails, setActiveDetails] = useState<ActiveSessionDetails | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
+  const [searchState, setSearchState] = useState<"checking"|"ready"|"not_configured"|"unavailable">("checking");
+  const [searchDetail, setSearchDetail] = useState("");
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const newlyStartedRunId = useRef<string | null>(null);
+  const latestCallbacks = useRef({onDiscoveryStateChange,onIdeasReady});
+  useEffect(()=>{latestCallbacks.current={onDiscoveryStateChange,onIdeasReady};},
+    [onDiscoveryStateChange,onIdeasReady]);
   const currentId = selectedSessionId ?? localSelection;
   // An external selection can change without a click in this component.
   // Do not display the previous session's run while the new one is fetched.
@@ -73,6 +83,40 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
   const selected = useMemo(() => sessions.find(item => item.id === currentId) ?? null, [currentId, sessions]);
   const visibleSessions = useMemo(() => sessions.filter(item => showArchived || item.archivedAt === null), [sessions, showArchived]);
   const archivedCount = sessions.filter(item => item.archivedAt !== null).length;
+
+  useEffect(() => {
+    const controller=new AbortController();
+    const check=async()=>{
+      try {
+        const response=await fetch("/api/local-research-model/readiness",{
+          signal:controller.signal,credentials:"same-origin",cache:"no-store"});
+        if(!response.ok)throw Error("Could not check local search.");
+        const data=await response.json() as {version?:number;search?:{state?:string;detail?:string}};
+        if(data.version!==1||!data.search||
+          !["ready","unavailable","not_configured"].includes(data.search.state??""))
+          throw Error("The local search check returned an invalid response.");
+        if(!controller.signal.aborted){
+          setSearchState(data.search.state as "ready"|"unavailable"|"not_configured");
+          setSearchDetail(data.search.detail??"");
+        }
+      } catch {
+        if(!controller.signal.aborted){
+          setSearchState("unavailable");setSearchDetail("Could not reach the local search readiness check.");
+        }
+      }
+    };
+    void check();
+    const timer=window.setInterval(()=>{if(!controller.signal.aborted)void check();},30000);
+    return ()=>{controller.abort();window.clearInterval(timer);};
+  },[searchAttempt]);
+
+  const searchUnavailableReason=searchState==="checking"
+    ? tr(locale,"Checking local search…","ローカル検索を確認しています…")
+    : searchState==="not_configured"
+      ? tr(locale,"Local SearXNG is not configured. Run pnpm --dir apps/web research:up, then research:check.",
+        "SearXNG 未設定です。pnpm --dir apps/web research:up の後に research:check を実行してください。")
+      : tr(locale,"SearXNG is not responding. Run pnpm --dir apps/web research:status, then research:check.",
+        "SearXNG に接続できません。pnpm --dir apps/web research:status と research:check を実行してください。");
 
   const refreshList = useCallback(async () => {
     const saved = await listDiscoverySessions(project.id);
@@ -104,8 +148,9 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
       : (await listSessionIdeas(project.id, sessionId, signal)).length;
     if (signal?.aborted) return;
     setSessions(previous => previous.map(item => item.id === detail.id ? detail : item));
-    setActiveDetails({ sessionId, runHistory: runs, run: runs[0] ?? detail.lastRun ?? null,
-      candidateCount: count });
+    const latestRun=runs[0]??detail.lastRun??null;
+    setActiveDetails({ sessionId, runHistory: runs, run: latestRun, candidateCount: count });
+    latestCallbacks.current.onDiscoveryStateChange?.(sessionId,latestRun,count);
   }, [project.id]);
 
   useEffect(() => {
@@ -121,7 +166,19 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
     return () => { alive = false; controller.abort(); window.clearInterval(timer); };
   }, [currentId, refreshActive]);
 
+  useEffect(()=>{
+    if(!run||run.id!==newlyStartedRunId.current)return;
+    if((run.status==="completed"||run.status==="insufficient_evidence")&&
+       candidateCount!==null&&candidateCount>0&&run.candidates.length>0){
+      newlyStartedRunId.current=null;
+      latestCallbacks.current.onIdeasReady?.(currentId!,run.id);
+    }else if(run.status==="failed"||run.status==="cancelled"){
+      newlyStartedRunId.current=null;
+    }
+  },[run,candidateCount,currentId]);
+
   const selectSession = (sessionId: string) => {
+    newlyStartedRunId.current=null;
     setLocalSelection(sessionId);
     setActiveDetails(null);
     setNotice("");
@@ -176,6 +233,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
         { projectName: project.name, description: project.notes,
           resultBudget: Number.isInteger(budget) && budget >= 3 && budget <= 30 ? budget : 12,
           content: content.filter(item => item.projectId === project.id).map(({name,stage}) => ({name,stage})) });
+      newlyStartedRunId.current=started.id;
       setActiveDetails(current => ({
         sessionId: selected.id,
         run: started,
@@ -183,6 +241,8 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
           ? current.runHistory.filter(item => item.id !== started.id) : [])],
         candidateCount: current?.sessionId === selected.id ? current.candidateCount : null,
       }));
+      latestCallbacks.current.onDiscoveryStateChange?.(selected.id,started,
+        currentDetails?.sessionId===selected.id?currentDetails.candidateCount:null);
       await refreshList();
       setNotice(tr(locale, "Discovery job started. Collected results are saved as they arrive.",
         "調査ジョブを開始しました。収集済みの結果は順次保存されます。"));
@@ -204,6 +264,8 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
         ...current, run: updated,
         runHistory: current.runHistory.map(item => item.id === updated.id ? updated : item),
       } : current);
+      if(action==="resume")newlyStartedRunId.current=updated.id;
+      latestCallbacks.current.onDiscoveryStateChange?.(selected.id,updated,candidateCount);
       setNotice(action === "cancel" ? tr(locale, "Run cancelled. Saved ideas and evidence were kept.",
         "ジョブを中止しました。保存済みのアイデアと根拠は保持されます。") :
         tr(locale, "Resuming the saved discovery job.", "保存済みジョブを再開中です。"));
@@ -324,7 +386,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
               <p className="mt-1 text-sm font-semibold">{runHistory.length}</p></div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button disabled={busy || isRunning(run) || run?.status === "paused" || selected.archivedAt !== null}
+            <Button disabled={busy || searchState!=="ready" || isRunning(run) || run?.status === "paused" || selected.archivedAt !== null}
               onClick={() => void discover()}>
               <Sparkles className="size-4" aria-hidden="true" /> {isRunning(run) ? tr(locale, "Discovery running…", "調査中…")
                 : tr(locale, "Discover opportunities", "アイデアを探す")}</Button>
@@ -332,8 +394,12 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
               onClick={() => void controlRun("cancel")}>{tr(locale, "Cancel run", "ジョブを中止")}</Button>}
             {(run?.status === "paused" || run?.status === "failed") && <Button variant="outline" disabled={busy}
               onClick={() => void controlRun("resume")}>{tr(locale, "Resume saved run", "保存済みジョブを再開")}</Button>}
-            <p className="text-xs text-muted-foreground">{tr(locale,
-              "Previous results remain saved when you run discovery again.", "再実行しても以前の結果は保存されます。")}</p>
+            {searchState!=="ready"&&<div role="status" className="flex flex-wrap items-center gap-2 text-xs text-status-warning">
+              <span>{searchUnavailableReason}{searchDetail&&` ${searchDetail}`}</span>
+              <Button size="sm" variant="outline" disabled={searchState==="checking"}
+                onClick={()=>{setSearchState("checking");setSearchDetail("");setSearchAttempt(n=>n+1);}}>
+                {tr(locale,"Retry search check","検索を再確認")}</Button>
+            </div>}
           </div>
           {run && <div role="status" className="rounded-control border border-border px-4 py-3 text-sm">
             <p className="font-medium">{tr(locale, "Latest job", "直近のジョブ")}: {run.status.replaceAll("_", " ")}</p>
@@ -345,9 +411,6 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
                 <li key={provider}>{provider}: {status}</li>)}</ul>
             </details>}
           </div>}
-          <p className="text-xs text-muted-foreground">{tr(locale,
-            "Next, open Select Idea to compare results, inspect sources and choose what to produce.",
-            "次に『アイデア選択』で結果と出典を確認し、制作テーマを選びます。")}</p>
         </div>}
       </section>
     </div>

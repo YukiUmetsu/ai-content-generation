@@ -13,6 +13,10 @@ type Job = {
   stage: string;
   artifactId?: string;
 };
+type SessionRun = {
+  status: Job["status"] | "insufficient_evidence";
+  stage: string;
+};
 export interface ProductionProgressInput {
   setupReady?: boolean;
   sessionId?: string | null;
@@ -20,6 +24,8 @@ export interface ProductionProgressInput {
   scriptReady?: boolean;
   scriptStale?: boolean;
   discoveryJob?: Job | null;
+  discoverySessionRun?: SessionRun | null;
+  discoveryIdeaCount?: number | null;
   discoveryArtifactId?: string | null;
   discoveryReady?: boolean;
   storyboardReady?: boolean;
@@ -41,13 +47,20 @@ const stage = (id:ProductionStageId,status:ProductionStageStatus,reason:string,p
   ({id,status,reason,primaryAction});
 
 export function getProductionStages(input:ProductionProgressInput): ProductionStage[] {
-  const job=input.discoveryJob??input.researchJob;
-  const evidenceId=job?.artifactId??input.discoveryArtifactId??input.researchArtifactId;
-  const evidenceComplete=(Boolean(evidenceId)&&(!job||job.status==="completed"))||
-    Boolean(input.discoveryReady||input.ideaId);
+  const sessionRun=input.discoverySessionRun;
+  const researchJob=input.discoveryJob??input.researchJob;
+  const job=sessionRun??researchJob;
+  const evidenceId=researchJob?.artifactId??input.discoveryArtifactId??input.researchArtifactId;
+  const hasSavedIdeas=Boolean(input.discoveryIdeaCount&&input.discoveryIdeaCount>0);
+  const sessionComplete=Boolean(sessionRun&&(sessionRun.status==="completed"||
+    sessionRun.status==="insufficient_evidence"));
+  const evidenceComplete=Boolean(input.discoveryReady||input.ideaId) ||
+    (sessionRun?sessionComplete&&hasSavedIdeas:
+      Boolean(evidenceId)&&(!researchJob||researchJob.status==="completed"));
   const discoverStatus:ProductionStageStatus = job?.status==="running"||job?.status==="queued"?"running":
     job?.status==="paused"&&job.stage==="evidence-repair"?"needs_review":
     job?.status==="failed"||job?.status==="paused"||job?.status==="cancelled"?"failed":
+    sessionComplete&&!evidenceComplete?"needs_review":
     evidenceComplete?"complete":"not_started";
   const stale=Boolean(input.storyboardScriptStale || input.scriptStale ||
     (input.storyboardReady&&input.storyboardResearchArtifactId&&evidenceId&&
@@ -64,7 +77,8 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       input.setupReady||input.briefReady?"Brand and destinations selected.":"Choose a project and at least one platform.","Choose project"),
     stage("discover",discoverStatus,
       discoverStatus==="running"?"Source and opportunity collection is running.":
-      discoverStatus==="needs_review"?"Captured sources require review.":
+      discoverStatus==="needs_review"?(job?.status==="paused"&&job.stage==="evidence-repair"
+        ?"Captured sources require review.":"Discovery finished without usable saved ideas. Review this session or try again."):
       discoverStatus==="failed"?"The saved discovery job can be retried.":
       evidenceComplete?"A captured research snapshot is available.":
       input.sessionId?"This session is ready to discover ideas.":"Create or resume a discovery session.",
