@@ -19,6 +19,7 @@ export interface ProductionProgressInput {
   storyboardResearchArtifactId?: string | null;
   missingEvidenceClaims?: number;
   unreviewedClaims?: number;
+  storyboardEditorialWarnings?: number;
   visualReady?: boolean;
   audioReady?: boolean;
   exportReady?: boolean;
@@ -38,8 +39,9 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
     artifactId && input.storyboardResearchArtifactId!==artifactId);
   const missing=input.missingEvidenceClaims??0;
   const reviews=input.unreviewedClaims??0;
+  const editorial=input.storyboardEditorialWarnings??0;
   const storyboardStatus:ProductionStageStatus = stale?"stale":!input.storyboardReady?"not_started":
-    missing>0 || reviews>0?"needs_review":"complete";
+    missing>0 || reviews>0 || editorial>0?"needs_review":"complete";
   const downstream=(ready:boolean):ProductionStageStatus=>stale&&ready?"stale":ready?"complete":"not_started";
 
   return [
@@ -55,6 +57,7 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       stale?"Research changed; review the existing storyboard before replacing anything.":
         missing>0?`${missing} claim${missing===1?"":"s"} lack resolved source evidence.`:
           reviews>0?`${reviews} sourced claim${reviews===1?"":"s"} need factual review.`:
+            editorial>0?`${editorial} scene${editorial===1?"":"s"} may repeat earlier information.`:
             input.storyboardReady?"Editable storyboard saved.":"Turn research into teachable visual beats.",
       input.storyboardReady?"Review storyboard":"Create editable storyboard"),
     stage("visuals",downstream(Boolean(input.visualReady)),
