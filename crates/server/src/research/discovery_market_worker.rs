@@ -570,11 +570,11 @@ mod tests {
         db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
                     WHERE id=?1", [&run_id]).unwrap();
         let queued = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap();
         assert_eq!(queued, vec![run_id.clone()]);
         assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap().is_empty(), "double-click must not enqueue twice");
         let pending = discovery_store::get_run(&db, "proj-homes", &run_id).unwrap();
         assert_eq!(pending.stage, "measure_market");
@@ -590,7 +590,7 @@ mod tests {
         assert!(ideas[0].market_assessment.is_some());
         assert!(ideas[0].google_trends.is_some());
         assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap().is_empty(), "completed backfill must not loop");
         let budget: i64 = db.query_row(
             "SELECT COUNT(*) FROM market_search_budget", [], |row| row.get(0),
@@ -620,18 +620,18 @@ mod tests {
         db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
                     WHERE id=?1", [&second.id]).unwrap();
         let first_batch = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap();
         assert_eq!(first_batch, vec![first_id.clone()]);
         assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap().is_empty(), "only one active market job per session");
         drop(db);
 
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
         let mut db = state.connect().unwrap();
         let second_batch = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap();
         assert_eq!(second_batch, vec![second.id.clone()]);
         drop(db);
@@ -652,7 +652,7 @@ mod tests {
             "SELECT COUNT(*) FROM idea_market_runs", [], |row| row.get(0),
         ).unwrap();
         let queued = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap();
         assert_eq!(queued, vec![run_id]);
         drop(db);
@@ -673,17 +673,17 @@ mod tests {
         let (_dir, state, session_id, run_id) = setup();
         let mut db = state.connect().unwrap();
         assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("other-project", &session_id)), epoch_now(),
+            &mut db, Some(("other-project", &session_id)), epoch_now(), false,
         ).is_err(), "cross-project session must not be writable");
         assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(),
+            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
         ).unwrap().is_empty(), "initial market job is already active");
         db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
                     WHERE id=?1", [&run_id]).unwrap();
         db.execute("UPDATE content_discovery_sessions SET archived_at=?2 WHERE id=?1",
             rusqlite::params![session_id, epoch_now()]).unwrap();
         assert!(discovery_store::queue_missing_market_runs(
-            &mut db, None, epoch_now(),
+            &mut db, None, epoch_now(), false,
         ).unwrap().is_empty(), "archived sessions must not be reactivated");
     }
 
