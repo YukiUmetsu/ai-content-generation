@@ -95,22 +95,52 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     return () => { alive = false; };
   }, [projectId, sessionId]);
 
-  // A missing observation is a durable background job, not a passive "Not measured" label.
-  // The POST is idempotent; the server also queues historical gaps on startup.
-  const hasMissingMarket = ideas.some(idea => !idea.marketAssessment || !idea.googleTrends);
+  // A saved provider success is not necessarily a usable Viral Score:
+  // too few relevant videos or a missing cohort can leave score=null.
+  // The server decides whether a safe, quota-bounded retry is possible.
+  const hasMarketAttention = ideas.some(idea =>
+    idea.viralPotential?.score == null ||
+    !idea.marketAssessment || idea.marketAssessment.state !== "succeeded" ||
+    !idea.googleTrends || idea.googleTrends.state !== "succeeded");
+  const missingViralScores = ideas.filter(idea => idea.viralPotential?.score == null).length;
   useEffect(() => {
-    if (loading || !hasMissingMarket) return;
+    if (loading || ideas.length === 0 || !hasMarketAttention) return;
     let alive = true;
     void queueMissingMarketEvidence(projectId, sessionId).then(result => {
       if (alive) setBackfillState(result.state);
     }).catch(failure => {
       if (alive) {
         setBackfillState("error");
-        setError(failure instanceof Error ? failure.message : "Could not queue missing market observations.");
+        setError(failure instanceof Error ? failure.message : "Could not queue market observations.");
       }
     });
     return () => { alive = false; };
-  }, [projectId, sessionId, loading, hasMissingMarket]);
+  }, [projectId, sessionId, loading, ideas.length, hasMarketAttention]);
+
+  // Retries become eligible later without navigating away. Server also
+  // checks on startup and every minute even when the page is closed.
+  useEffect(() => {
+    if (loading || !hasMarketAttention ||
+      (backfillState !== "no_pending" && backfillState !== "error")) return;
+    let alive = true;
+    let inFlight = false;
+    const timer = window.setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      void Promise.all([
+        queueMissingMarketEvidence(projectId, sessionId),
+        listSessionIdeas(projectId, sessionId),
+      ]).then(([result, latest]) => {
+        if (alive) {
+          setBackfillState(result.state);
+          setIdeas(latest);
+        }
+      }).catch(failure => {
+        if (alive) setError(failure instanceof Error ? failure.message : "Market retry check failed.");
+      }).finally(() => { inFlight = false; });
+    }, 60_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, [projectId, sessionId, loading, hasMarketAttention, backfillState]);
 
   const hasPendingMarket = ideas.some(idea => idea.marketAssessment?.state === "running") ||
     ["queued", "running"].includes(backfillState) || discoveryRunning;
@@ -136,7 +166,9 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           if (backfillState === "queued" || backfillState === "running") {
             if (activeBackfill) {
               setBackfillState("running");
-            } else if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
+            } else if (latest.some(idea => idea.viralPotential?.score == null ||
+              !idea.marketAssessment || idea.marketAssessment.state !== "succeeded" ||
+              !idea.googleTrends || idea.googleTrends.state !== "succeeded")) {
               // A session can have several completed runs. Queue the next
               // missing run only after the previous one releases its lease.
               const next = await queueMissingMarketEvidence(projectId, sessionId);
@@ -182,7 +214,9 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       setIdeas(latest); setMarketStatus(status); setMarketStatusError(null);
       setRunMarketHealth(session.lastRun?.providerHealth.market ?? null);
       setDiscoveryRunning(["queued", "running"].includes(session.lastRun?.status ?? ""));
-      if (latest.some(idea => !idea.marketAssessment || !idea.googleTrends)) {
+      if (latest.some(idea => idea.viralPotential?.score == null ||
+        !idea.marketAssessment || idea.marketAssessment.state !== "succeeded" ||
+        !idea.googleTrends || idea.googleTrends.state !== "succeeded")) {
         const queued = await queueMissingMarketEvidence(projectId, sessionId);
         setBackfillState(queued.state);
       }
@@ -288,14 +322,15 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       </label>
     </div>
 
-    {backfillState !== "idle" && <p role="status" className="text-xs text-muted-foreground">
-      {backfillState === "queued" ? tr(locale, "Missing market data queued for background collection.", "未測定の市場データをバックグラウンド収集に登録しました。")
-        : backfillState === "running" ? tr(locale, "Collecting missing YouTube and Google Trends observations…", "未測定の YouTube と Google Trends データを収集中…")
-        : backfillState === "error" ? tr(locale, "Could not start market backfill. Check the local server.", "市場データの補完を開始できません。ローカルサーバーを確認してください。")
-        : discoveryRunning ? tr(locale, "Discovery is still running; market collection follows idea generation.", "調査を実行中です。アイデア生成後に市場データを収集します。")
-          : hasMissingMarket ? tr(locale, "No new market job is eligible; inspect saved provider failures or refresh.", "新たに実行できる市場データ収集はありません。保存済みのエラーを確認してください。")
-            : tr(locale, "Missing market observations have been processed.", "未測定の市場データの処理が完了しました。")}
-    </p>}
+    {backfillState !== "idle" && (hasMarketAttention || ["queued", "running"].includes(backfillState)) &&
+      <p role="status" className="text-xs text-muted-foreground">
+        {backfillState === "queued" ? tr(locale, "Viral-score evidence queued for background collection.", "バイラルスコア用データをバックグラウンド収集に登録しました。")
+          : backfillState === "running" ? tr(locale, "Collecting evidence for missing Viral Scores…", "未測定のバイラルスコア用データを収集中…")
+          : backfillState === "error" ? tr(locale, "Could not start market collection. Check the local server.", "市場データ収集を開始できません。ローカルサーバーを確認してください。")
+          : discoveryRunning ? tr(locale, "Discovery is running; market collection follows idea generation.", "調査実行中です。アイデア生成後に市場データを収集します。")
+            : tr(locale, `${missingViralScores} idea(s) still lack a Viral Score. No collection job is eligible right now: check the YouTube API key, provider cooldown/quota, or insufficient comparable videos/ideas. The server rechecks every minute.`,
+                `${missingViralScores} 件のバイラルスコアが未測定です。現在実行可能な収集ジョブはありません。YouTube API キー、待機時間・利用上限、比較できる動画・アイデアの不足を確認してください。サーバーは毎分再確認します。`)}
+      </p>}
     {runMarketHealth !== null && <p role="status" className="text-xs text-muted-foreground">
       {tr(locale, "Discovery market collection", "調査時の市場データ収集")}: {formatDiscoveryProviderHealth(runMarketHealth, locale)}
     </p>}
