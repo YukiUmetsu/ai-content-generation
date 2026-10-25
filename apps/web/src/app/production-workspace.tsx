@@ -3,6 +3,7 @@ import { AlertCircle, Check, Circle, Loader2, Menu, RotateCcw } from "lucide-rea
 import type { Locale } from "@/features/registry";
 import type { StudioCatalog } from "./catalog-model";
 import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
+import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
 import { repairStoryboardEvidence } from "./storyboard-evidence-repair";
 import { ResearchWorkspace } from "./research-workspace";
 import { inspectClaimEvidence, matchesStoryboardResearch } from "./claim-evidence";
@@ -152,16 +153,24 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
     isClaimReviewCurrent(issue,matchingDraft,claimReviews[issue.claimId])).map(issue=>issue.claimId)),
     [issues,matchingDraft,claimReviews]);
   const unresolved=issues.filter(issue=>issue.kind==="source_missing"||issue.kind==="source_mismatch").length;
+  const repeatedScenes=useMemo(()=>board?validateStoryboard(board).filter(issue=>issue.code==="storyboard-repeated-information"):[],[board]);
+  const repeatedByBeat=new Map(repeatedScenes.map(issue=>[issue.beatId,issue]));
   const unreviewed=issues.filter(issue=>issue.kind==="source_unchecked"||
     (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
   const stages=getProductionStages({briefReady:Boolean(draft?.dossier?.topic?.viewerQuestion?.trim()||job?.jobId),researchJob:job,
     researchArtifactId:artifactId,storyboardReady:Boolean(board),
-    storyboardResearchArtifactId,missingEvidenceClaims:unresolved,unreviewedClaims:unreviewed});
+    storyboardResearchArtifactId,missingEvidenceClaims:unresolved,unreviewedClaims:unreviewed,
+    storyboardEditorialWarnings:repeatedScenes.length});
   const current=stages.find(item=>item.id===step)!;
   function selectStep(next:ProductionStageId){
     setStep(next);
     try{localStorage.setItem(stagesKey(projectId),next);}catch{/* Navigation still works without local storage. */}
+  }
+  function editScene(beatId:string){
+    try{sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,beatId);}
+    catch{/* Navigation remains available without session storage. */}
+    onOpenStoryboard();
   }
   async function retryEvidence(){
     if(!jobId||retryBusy)return;
@@ -305,39 +314,60 @@ export function ProductionWorkspace({locale,catalog,onSelectProject,onOpenResear
             {repairSummary&&<p role="status" className="rounded-control border border-border bg-surface p-3 text-sm">{repairSummary}</p>}
             {board?<div className={contentCard}>
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div><h3 className="font-serif text-xl font-semibold">{board.title}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">{board.beats.length} {tr("editable teaching beats","個の編集可能な説明シーン")}</p>
+                <div><h3 className="font-serif text-xl font-semibold">{tr("Review your scenes","シーンを確認")}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">{board.beats.length} {tr("scenes","シーン")} · {board.title}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {unresolved>0&&draft&&<button type="button" className={secondaryButton} onClick={fixStoryboardSources}>
-                    {tr("Auto-fix safe source links","安全な出典参照を自動修復")}
+                    {tr("Repair source links","出典参照を修復")}
                   </button>}
-                  <button type="button" className={primaryButton} onClick={onOpenStoryboard}>
-                    {tr("Open editable storyboard","構成案を編集")}
+                  <button type="button" className={primaryButton}
+                    onClick={()=>editScene(repeatedScenes[0]?.beatId??board.beats[0]?.id??"")}>
+                    {repeatedScenes.length?tr("Review flagged scene","指摘されたシーンを確認"):tr("Edit storyboard","構成案を編集")}
                   </button>
                 </div>
               </div>
-              <ol className="mt-5 grid gap-2">
-                {board.beats.map((beat,index)=><li key={beat.id} className="rounded-control border border-border bg-surface-subtle p-3">
-                  <div className="flex gap-3"><span className="text-xs tabular-nums text-muted-foreground">{index+1}</span>
-                    <div><p className="text-sm font-semibold">{beat.onScreenText||beat.objective}</p>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{beat.visualObjective}</p></div>
-                  </div>
-                </li>)}
+              {repeatedScenes.length>0&&<p role="status" className="mt-4 rounded-control border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-sm text-foreground">
+                {repeatedScenes.length} {tr(repeatedScenes.length===1?"potentially repeated scene":"potentially repeated scenes","件のシーンで内容が重複している可能性があります")} · {tr("Review before making visuals.","映像制作の前に確認してください。")}
+              </p>}
+              <ol className="mt-4 grid gap-3">
+                {board.beats.map((beat,index)=>{
+                  const repeated=repeatedByBeat.get(beat.id);
+                  return <li key={beat.id} className="rounded-control border border-border bg-surface-subtle p-4">
+                    <div className="flex items-start gap-3">
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-surface text-xs font-semibold tabular-nums">{index+1}</span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{beat.role}</p>
+                        <p className="mt-0.5 font-semibold leading-6">{beat.onScreenText||beat.objective}</p>
+                        <p className="mt-1 text-sm leading-5 text-muted-foreground">{beat.objective}</p>
+                        <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{tr("Visual: ","映像: ")}{beat.visualObjective}</p>
+                        {repeated&&<p className="mt-2 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                          {tr("Similar to scene","シーンと類似")} {String(repeated.params?.previousIndex??"?")}
+                        </p>}
+                      </div>
+                      <button type="button" className={secondaryButton+" shrink-0"}
+                        aria-label={`Edit scene ${index+1}`} onClick={()=>editScene(beat.id)}>
+                        {tr("Edit","編集")}
+                      </button>
+                    </div>
+                  </li>;
+                })}
               </ol>
-            </div>:<div className={contentCard}><p className="text-sm text-muted-foreground">
-              {tr("No storyboard has been saved for this project. Finish research, then create an editable storyboard.",
-                "このプロジェクトには構成案がありません。調査を完了して構成案を作成してください。")}</p>
+              <div className="mt-5 flex justify-end border-t border-border pt-4">
+                <button type="button" className={secondaryButton} onClick={()=>selectStep("visuals")}>
+                  {tr("Continue to visuals","映像制作へ進む")}
+                </button>
+              </div>
+            </div>:<div className={contentCard}>
+              <h3 className="font-serif text-xl font-semibold">{tr("Create your storyboard","構成案を作成")}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">{tr("Start from saved research.","保存した調査から始めます。")}</p>
               <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("research")}>
-                {tr("Go to research","調査へ")}
-              </button></div>}
+                {tr("Create from research","調査から作成")}
+              </button>
+            </div>}
             {board&&<ProductionClaimIssues issues={issues} draft={matchingDraft} locale={locale}
               reviewedClaims={reviewedClaims} onMarkReviewed={markClaimReviewed} onUndoReviewed={undoClaimReview}
-              onOpenBeat={beatId=>{
-                try { sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,beatId); }
-                catch { /* The planner still opens when session storage is unavailable. */ }
-                onOpenStoryboard();
-              }} onFindEvidence={()=>selectStep("research")}
+              onOpenBeat={editScene} onFindEvidence={()=>selectStep("research")}
               onRetryRepair={job?.status==="paused"&&job.stage==="evidence-repair"?()=>void retryEvidence():undefined}/>}
           </>}
           {step==="visuals"&&<div className={contentCard}>
