@@ -181,6 +181,10 @@ fn a_session_can_persist_more_than_five_distinct_evidence_backed_ideas() {
     assert_eq!(ideas[0].score_version.as_deref(), Some("evidence-readiness-v1"));
     assert_eq!(ideas[0].score_inputs["capturedPassages"], 1);
     assert_eq!(ideas[0].score_inputs["audienceDemand"], "unknown");
+    assert_eq!(ideas[0].viral_potential.score, None,
+        "editorial research readiness must never become a viral score");
+    assert_eq!(ideas[0].viral_potential.state, "insufficient_data");
+    assert_eq!(ideas[0].viral_potential.coverage_percent, 0);
     sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].candidate.id, "saved", None, 103).unwrap();
     assert_eq!(sessions_store::list_ideas(&conn, "brand-one", &session.id).unwrap()[0].candidate.decision.as_deref(), Some("saved"));
     sessions_store::decide_idea(&conn, "brand-one", &session.id, &ideas[0].candidate.id, "selected", None, 104).unwrap();
@@ -226,6 +230,8 @@ fn scoring_uses_frozen_evidence_and_never_invents_audience_demand() {
     assert_eq!(strong.score_inputs["publicVideoLeads"], 1);
     assert_eq!(strong.score_inputs["sourcePoints"], 50);
     assert_eq!(strong.score_inputs["audienceDemand"], "unknown");
+    assert_eq!(strong.viral_potential.score, None,
+        "even 90/100 editorial readiness is not evidence of viral potential");
     assert!(strong.platform_fit.as_object().unwrap().is_empty());
     let unquoted = ideas.iter().find(|i| i.candidate.angle_key == "no-passage").unwrap();
     assert!(unquoted.opportunity_score.is_none(), "an empty passage is not usable evidence");
