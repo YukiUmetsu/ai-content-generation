@@ -61,7 +61,7 @@ describe("per-idea YouTube market evidence", () => {
     await waitFor(() => expect(backfills).toEqual([
       "/api/research/discovery/projects/project-1/sessions/session-1/market/backfill",
     ]));
-    expect(await screen.findByText(/Missing market data queued for background collection/)).toBeInTheDocument();
+    expect(await screen.findByText(/Market observations queued for background collection/)).toBeInTheDocument();
   });
 
   it("automatically queues saved failed and unavailable provider observations", async () => {
@@ -77,7 +77,7 @@ describe("per-idea YouTube market evidence", () => {
       locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
     await waitFor(() => expect(backfills).toHaveLength(1));
-    expect(await screen.findByText(/Missing market data queued for background collection/))
+    expect(await screen.findByText(/Market observations queued for background collection/))
       .toBeInTheDocument();
   });
 
@@ -90,7 +90,7 @@ describe("per-idea YouTube market evidence", () => {
     await waitFor(() => expect(backfills).toHaveLength(1));
     expect(await screen.findByText(/Waiting to retry market collection/))
       .toBeInTheDocument();
-    expect(screen.queryByText(/Collecting missing YouTube and Google Trends observations/))
+    expect(screen.queryByText(/Collecting YouTube and Google Trends observations/))
       .not.toBeInTheDocument();
   });
 
