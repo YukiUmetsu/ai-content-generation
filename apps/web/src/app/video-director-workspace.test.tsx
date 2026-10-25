@@ -163,7 +163,8 @@ describe("first-run complete Studio demo",()=>{
     expect(screen.getByRole("button",{name:"Save project"})).toBeInTheDocument();
     expect(screen.queryByText(/Import both the matching research dossier/)).not.toBeInTheDocument();
     expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
-    await user.click(screen.getByRole("button",{name:/01 Storyboard/i}));
+    await user.click(screen.getByRole("button",{name:"Edit this shot in Video Director"}));
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
     await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
     expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
     expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"],
@@ -171,6 +172,41 @@ describe("first-run complete Studio demo",()=>{
   });
 });
 
+describe("storyboard scene layout editing",()=>{
+  it("sends a visual-only family revision from the shot editor for a general middle scene",async()=>{
+    const dossier={kind:"research-dossier",id:"r-family",topic:{title:"Roof economics",audience:"Homeowners"}};
+    const plan={story:{question:"What makes roof work expensive?"},
+      shots:["hook","middle","closing"].map((id,index)=>({id,
+        family:index===0?"question":index===2?"summary":"mechanism",
+        purpose:id,visualChange:"Show costs",onScreenText:"Roof costs"})),
+      sound:["hook","middle","closing"].map(shotId=>({shotId,narration:"Why do repairs add up?",sfxIntent:null})),
+      teachingSequences:[{phases:["hook","middle","closing"].map(shotId=>({shotId,kind:"mechanism",visualAction:"Show costs"}))}]};
+    const bundle={kind:"preproduction-bundle",researchId:dossier.id,plan};
+    const calls:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(!String(url).endsWith("/edit"))throw Error("Unexpected request");
+      const data=JSON.parse(String(opts?.body)) as {changes:{family:string};shotId:string};
+      calls.push(data as unknown as Record<string,unknown>);
+      const revised=structuredClone(bundle);
+      revised.plan.shots[1].family=data.changes.family;
+      return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:revised,reviewRequired:true,
+        impacts:{changedFields:["family"],speechRegenerate:[],visualRerender:["middle"],sfxRemix:[],
+          downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"roof.json",{type:"application/json"})]}});
+    await screen.findByText("Video project loaded");
+    expect(screen.getByRole("combobox",{name:"Visible scene layout"})).toBeDisabled();
+    await user.selectOptions(screen.getByRole("combobox",{name:"Selected video shot"}),"middle");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Visible scene layout"}),"comparison");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(calls).toHaveLength(1));
+    expect(calls[0].shotId).toBe("middle");
+    expect(calls[0].changes).toEqual({family:"comparison"});
+    expect(screen.getByRole("combobox",{name:"Visible scene layout"})).toHaveValue("comparison");
+  });
+});
 
 describe("editing meaningful visible teaching elements as a normal Studio user",()=>{
  it("accepts readable label + explanation lines and saves only the selected visual shot",async()=>{

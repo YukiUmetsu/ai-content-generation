@@ -5,6 +5,7 @@
 import { compilePreproductionRenderJob } from "./preproduction-render-bridge.mjs";
 import { buildSampleTimeline } from "./timeline.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
+import { analyzeRenderedSceneQuality } from "./visual-quality.mjs";
 import { createHash } from "node:crypto";
 
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -28,6 +29,7 @@ export function compileLiveVisualPreview(dossier,bundle,{spokenWpm=145}={}){
   })),{fps:job.destination.fps,events:job.events});
   const visualPlan=compileGeneralVisuals(job,timeline);
   if(visualPlan.chapters.length!==source.shotMap.length)throw Error("Visual preview scene count mismatch.");
+  const quality=analyzeRenderedSceneQuality({plan:visualPlan,shotMap:source.shotMap,beats:job.beats});
   return {
     schemaVersion:1,kind:"live-renderer-preview/v1",
     plan:visualPlan,
@@ -38,6 +40,7 @@ export function compileLiveVisualPreview(dossier,bundle,{spokenWpm=145}={}){
     timing:{basis:"estimated-text-only",spokenWpm,measuredNarration:false,
       note:"Scenes use the actual export React renderer. Durations are estimated until narration is generated; final audio can change shot boundaries."},
     visualLimits:source.warnings,
+    quality,
     privacy:"No narration generation, paid API request, or file export performed."
   };
 }
