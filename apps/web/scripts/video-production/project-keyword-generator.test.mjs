@@ -124,6 +124,101 @@ const reply=suggestions=>({ok:true,headers:{get:()=>null},text:async()=>JSON.str
   finish_reason:"stop",message:{content:JSON.stringify({suggestions})}
 }]})});
 
+test("broad projects do not fill keyword suggestions with one repeated core subject",()=>{
+  const proposed=[
+    "mortgage interest deduction", "property tax assessment", "home equity loan rates",
+    "property tax exemption rules", "closing cost estimates", "property tax increases",
+    "property tax refund claims",
+  ];
+  const result=qualityKeywordSuggestions(proposed.map(text=>item(text)),{
+    name:"Homeownership",description:"Mortgage costs, property taxes, insurance and maintaining a home",
+  });
+  assert.deepEqual(result.suggestions.map(row=>row.text),proposed.slice(0,5));
+  assert.equal(result.rejected,2);
+
+  const other=qualityKeywordSuggestions([
+    item("neural network training"),item("neural network architecture"),
+    item("neural network pruning"),item("transformer attention heads"),
+  ],{name:"Artificial intelligence",description:"Different areas of AI systems"});
+  assert.deepEqual(other.suggestions.map(row=>row.text),[
+    "neural network training","neural network architecture","transformer attention heads",
+  ]);
+});
+
+test("focused projects can explore more than two distinct searches about their main subject",()=>{
+  const subjects=[
+    "property tax assessment", "property tax exemption rules", "property tax increases",
+    "property tax refund claims",
+  ];
+  for(const context of [
+    {name:"Property Tax Guide",description:"Practical homeowner guidance"},
+    {name:"Municipal Ledger",description:"A guide focused solely on property taxes, assessments, exemptions and appeals"},
+    {name:"Municipal Ledger",description:"All about property taxes, exemptions and appeals"},
+    {name:"Municipal Ledger",description:"Devoted to property taxes, exemptions and appeals"},
+    {name:"Municipal Ledger",description:"Solely covers property taxes, exemptions and appeals"},
+    {name:"Municipal Ledger",description:"Only discusses property taxes, exemptions and appeals"},
+  ]){
+    const result=qualityKeywordSuggestions(subjects.map(text=>item(text)),context);
+    assert.deepEqual(result.suggestions.map(row=>row.text),subjects);
+  }
+});
+
+test("a broad project name or negated focus does not exempt a repeated topic",()=>{
+  const subjects=[
+    "property tax assessment", "property tax exemption rules", "property tax increases",
+  ];
+  for(const context of [
+    {name:"Mortgage Rates, Property Tax and Home Insurance",description:"Budgeting across all home costs"},
+    {name:"Homeowner expenses",description:"We are not focused on property taxes; we focus on insurance and mortgage costs"},
+  ]){
+    const result=qualityKeywordSuggestions(subjects.map(text=>item(text)),context);
+    assert.deepEqual(result.suggestions.map(row=>row.text),subjects.slice(0,2));
+    assert.equal(result.rejected,1);
+  }
+});
+
+test("capitalized product prefixes remain part of the subject anchor, not comparison operators",()=>{
+  const subjects=[
+    "VS Code extensions", "VS Code themes", "VS Code debugger", "VS Code profiles",
+  ];
+  const result=qualityKeywordSuggestions(subjects.map(text=>item(text)),{
+    name:"Developer tools",description:"Reviews of various editors and development software",
+  });
+  assert.deepEqual(result.suggestions.map(row=>row.text),subjects.slice(0,2));
+  assert.equal(result.rejected,2);
+});
+
+test("manual topic coverage counts, but exclusions and rejected history do not fill concept slots",()=>{
+  const result=qualityKeywordSuggestions([
+    item("property tax refund claims"),item("property tax exemption rules"),
+    item("property tax increases"),item("mortgage interest deduction"),
+  ],{
+    name:"Homeowner expenses",description:"Taxes, repairs and financing",
+    existing:["property tax assessment"],
+    excluded:["property tax refund claims"],
+    accepted:[item("property tax notifications","exclusion")],
+  });
+  assert.deepEqual(result.suggestions.map(row=>row.text),[
+    "property tax exemption rules", "mortgage interest deduction",
+  ]);
+  assert.equal(result.rejected,2);
+});
+
+test("preexisting typed exclusions do not spend coverage slots during generation",async()=>{
+  let calls=0;
+  const result=await generateProjectKeywords({
+    name:"Homeowner expenses",description:"Mortgage, property tax and home insurance costs",
+    keywords:[],excludedKeywords:["property tax scams","property tax myths"],
+  },{modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+    transport:async()=>{calls++;return reply([
+      item("property tax assessment"),item("property tax exemption rules"),
+    ]);},sleep:async()=>{},targetCount:2});
+  assert.deepEqual(result.suggestions.map(row=>row.text),[
+    "property tax assessment","property tax exemption rules",
+  ]);
+  assert.equal(calls,1);
+});
+
 test("quality screening rejects reported long or contrived search terms without relying on a model verdict",()=>{
   const reported=[
     "mortgage interest vs property tax",
@@ -528,6 +623,60 @@ test("rejected batches are refilled after six topic lenses while useful early re
   assert.equal(updates[0].suggestions[0].text,"roof replacement costs");
   assert.equal(updates.at(-1).step,8);
   assert.equal(result.quality.partial,false);
+});
+
+test("repeated-subject batches refill with other subjects without exceeding the request budget",async()=>{
+  const batches=[
+    ["property tax assessment","property tax exemption rules"],
+    ["property tax increases","property tax refund claims"],
+    ["mortgage interest deduction","home insurance premiums"],
+  ];
+  let calls=0;
+  const updates=[];
+  const transport=async()=>reply((batches[calls++]??[]).map(text=>item(text)));
+  const result=await generateProjectKeywords({
+    name:"Homeowner budget",description:"Financing, insurance, taxes and repair expenses",keywords:[],
+  },{modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+    transport,sleep:async()=>{},targetCount:4,onBatch:batch=>updates.push(batch)});
+  assert.deepEqual(result.suggestions.map(row=>row.text),[
+    "property tax assessment","property tax exemption rules",
+    "mortgage interest deduction","home insurance premiums",
+  ]);
+  assert.deepEqual(updates.map(batch=>batch.suggestions.length),[2,0,2]);
+  assert.equal(result.quality.rejected,2);
+  assert.equal(result.quality.modelRequests,3);
+  assert.ok(calls<=12);
+  assert.equal(result.quality.partial,false);
+});
+
+test("semantically rejected keywords never occupy concept slots before diversity screening",async()=>{
+  let generations=0,semanticCalls=0;
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    if(request.messages[0].content.includes("comparison suitability")){
+      semanticCalls++;
+      const candidates=JSON.parse(request.messages[1].content).candidates;
+      return replyVerdict(candidates.map(row=>({text:row.text,suitable:false})));
+    }
+    generations++;
+    if(generations===1)return reply([
+      item("property tax impact"),item("property tax planning"),
+      item("property tax exemption rules"),
+    ]);
+    if(generations===2)return reply([
+      item("mortgage interest deduction"),item("home insurance premiums"),
+    ]);
+    return reply([item("mortgage interest deduction")]);
+  };
+  const result=await generateProjectKeywords({
+    name:"Homeowner expenses",description:"Broad household tax, mortgage and insurance costs",keywords:[],
+  },{modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+    transport,sleep:async()=>{},targetCount:3});
+  assert.deepEqual(result.suggestions.map(row=>row.text),[
+    "property tax exemption rules","mortgage interest deduction","home insurance premiums",
+  ]);
+  assert.equal(semanticCalls,1);
+  assert.equal(result.quality.modelRequests,3);
 });
 
 test("refill with no useful keywords stops after bounded attempts and preserves partial success",async()=>{

@@ -53,7 +53,9 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
     setKeywordBusy(true);setError(null);setNotice("");setSuggestions([]);
     setSuggestionQuality(null);setKeywordProgress(null);
     try{
-      const quality=await streamProjectKeywords(project,keywords.filter(item=>item.active).map(item=>item.text),{
+      const quality=await streamProjectKeywords(project,
+        keywords.filter(item=>item.active&&item.kind!=="exclusion").map(item=>item.text),{
+        excludedKeywords:keywords.filter(item=>item.active&&item.kind==="exclusion").map(item=>item.text),
         signal:controller.signal,onBatch:batch=>{
           if(controller.signal.aborted)return;
           setSuggestions(prior=>{

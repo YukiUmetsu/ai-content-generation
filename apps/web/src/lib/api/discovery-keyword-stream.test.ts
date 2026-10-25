@@ -7,6 +7,21 @@ afterEach(()=>vi.restoreAllMocks());
 const project={id:"house",name:"House Math",notes:"Economics of homeownership"} as LocalProject;
 const quality={modelRequests:1,batches:1,proposed:2,rejected:0,partial:true,evidence:"unverified"};
 
+it("keeps active exclusions separate from topical keyword coverage in the request",async()=>{
+  const fetchMock=vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(
+    JSON.stringify({type:"done",quality})+"\n",{
+      status:200,headers:{"Content-Type":"application/x-ndjson"},
+    }));
+  await streamProjectKeywords(project,["property tax assessment"],{
+    excludedKeywords:["property tax myths"],onBatch:()=>{},
+  });
+  const init=fetchMock.mock.calls[0][1];
+  expect(JSON.parse(String(init?.body))).toEqual({
+    name:"House Math",description:"Economics of homeownership",
+    keywords:["property tax assessment"],excludedKeywords:["property tax myths"],
+  });
+});
+
 it("delivers each small keyword batch even when NDJSON crosses UTF-8 chunk boundaries",async()=>{
   const first={type:"batch",suggestions:[{text:"住宅保険の更新費用",kind:"topic",rationale:"Insurance renewal"}],
     quality,step:1,totalSteps:6};
