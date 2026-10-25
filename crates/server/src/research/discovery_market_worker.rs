@@ -197,7 +197,7 @@ where
     let mut youtube_unknown = 0;
     let mut trends_unknown = 0;
     let mut blocked_trends: Option<&'static str> = None;
-    let mut blocked_youtube = false;
+    let mut blocked_youtube: Option<&'static str> = None;
 
     for idea in &run.candidates {
         if !still_collecting(&state, run_id) {
@@ -231,13 +231,13 @@ where
                 youtube_unknown += 1;
             }
         } else if client.is_none()
-            || blocked_youtube
+            || blocked_youtube.is_some()
             || youtube_attempts >= MAX_VIDEO_ATTEMPTS_PER_DISCOVERY
         {
             let reason = if client.is_none() {
                 missing_key_reason
-            } else if blocked_youtube {
-                "provider_unavailable"
+            } else if let Some(reason) = blocked_youtube {
+                reason
             } else {
                 "collection_limit"
             };
@@ -291,12 +291,18 @@ where
                             .ok()
                             .flatten()
                     });
-                    if saved
+                    if let Some(code) = saved
                         .as_ref()
                         .and_then(|observation| observation.error_code.as_deref())
-                        .is_some_and(should_circuit_youtube)
+                        .filter(|code| should_circuit_youtube(code))
                     {
-                        blocked_youtube = true;
+                        // A shared quota denial must cool down the remaining
+                        // ideas for a full day, not trigger retries every 6h.
+                        blocked_youtube = Some(if matches!(code, "quota_exceeded" | "rate_limited") {
+                            "budget_exhausted"
+                        } else {
+                            "provider_unavailable"
+                        });
                     }
                     let succeeded =
                         saved.is_some_and(|observation| observation.state == "succeeded");
