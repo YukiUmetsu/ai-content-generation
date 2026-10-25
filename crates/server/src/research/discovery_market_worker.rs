@@ -224,6 +224,23 @@ where
                 .ok()
                 .flatten()
         });
+        // A previously successful but sparse result is not a usable Viral
+        // Score. Broaden its query exactly once; a repeated identical paid
+        // search would not repair the missing score.
+        let retry_query = if retry_youtube &&
+            previous_youtube.as_ref().is_some_and(|value| value.state == "succeeded")
+        {
+            match state.connect() {
+                Ok(db) => match discovery_store::low_sample_retry_query(
+                    &db, &idea.id, epoch_now(),
+                ) {
+                    Ok(value) => value,
+                    Err(_) => return,
+                },
+                Err(_) => return,
+            }
+        } else { None };
+        let youtube_query = retry_query.as_deref().unwrap_or(&query);
         if let Some(observation) = previous_youtube.as_ref().filter(|_| !retry_youtube) {
             if observation.state == "succeeded" {
                 youtube_ok += 1;
@@ -260,7 +277,7 @@ where
                 &project_id,
                 &session_id,
                 &idea.id,
-                &query,
+                youtube_query,
                 format,
                 epoch_now(),
             ) {
