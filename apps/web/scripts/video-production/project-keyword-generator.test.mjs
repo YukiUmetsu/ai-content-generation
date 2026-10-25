@@ -56,14 +56,14 @@ test("keyword output truncation increases the retry budget and still yields a fi
     return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
       finish_reason:enough?"stop":"length",
       message:{content:enough?JSON.stringify({suggestions:[{
-        text:"How property tax reassessments affect homeowners",kind:"query",rationale:"Understand annual tax bills"
+        text:"property tax reassessment",kind:"query",rationale:"Understand annual tax bills"
       }]}):'{"suggestions":[{"text":"unfinished'}
     }]})};
   };
   const result=await generateProjectKeywords({name:"House Math",description:"Homeownership expenses",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,
       sleep:async()=>{},targetCount:1,onBatch:batch=>progress.push(batch)});
-  assert.deepEqual(result.suggestions.map(row=>row.text),["How property tax reassessments affect homeowners"]);
+  assert.deepEqual(result.suggestions.map(row=>row.text),["property tax reassessment"]);
   assert.equal(budgets.length,2,"One bounded retry should recover from output truncation");
   assert.ok(budgets[1]>budgets[0],"The retry must allow more complete JSON output");
   assert.equal(progress[0].suggestions.length,1,"A recovered keyword is shown as soon as it is validated");
@@ -76,14 +76,14 @@ test("Qwen3 structured keyword requests suppress expendable thinking tokens",asy
     return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
       finish_reason:supported?"stop":"length",
       message:{content:supported?JSON.stringify({suggestions:[{
-        text:"What drives homeowners insurance premium renewals",kind:"topic",rationale:"Explain premium changes"
+        text:"insurance premium renewals",kind:"topic",rationale:"Explain premium changes"
       }]}):""}
     }]})};
   };
   const result=await generateProjectKeywords({name:"House Math",description:"The cost of insuring a home",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"Qwen3.5-35B-A3B"},transport,
       sleep:async()=>{},targetCount:1});
-  assert.equal(result.suggestions[0].text,"What drives homeowners insurance premium renewals");
+  assert.equal(result.suggestions[0].text,"insurance premium renewals");
 });
 
 test("truncated local replies retry with a smaller keyword request",async()=>{
@@ -97,7 +97,7 @@ test("truncated local replies retry with a smaller keyword request",async()=>{
       finish_reason:requested.at(-1)>2?"length":"stop",
       message:{content:requested.at(-1)>2?' {"suggestions":[{"text":"Home cost':
         JSON.stringify({suggestions:[{text:"Homeowners insurance renewal costs",kind:"topic",rationale:"Answers a focused cost question"},
-          {text:"Roof repair or replacement cost",kind:"query",rationale:"Addresses maintenance decisions"}]})}
+          {text:"roof replacement costs",kind:"query",rationale:"Addresses maintenance decisions"}]})}
     }]})};
   };
   const result=await generateProjectKeywords({name:"House Math",description:"The economics of owning and maintaining a home",keywords:[]},
@@ -124,6 +124,99 @@ const reply=suggestions=>({ok:true,headers:{get:()=>null},text:async()=>JSON.str
   finish_reason:"stop",message:{content:JSON.stringify({suggestions})}
 }]})});
 
+test("quality screening rejects reported long or contrived search terms without relying on a model verdict",()=>{
+  const reported=[
+    "mortgage interest vs property tax",
+    "rent versus buy decision",
+    "fixed vs adjustable mortgage rates",
+    "hidden maintenance reserve funds",
+    "lifecycle maintenance timing",
+    "closing costs impact on monthly budget",
+    "property tax rate changes over time",
+    "property insurance deductible impact on premiums",
+    "timing to refinance",
+  ];
+  const natural=[
+    "mortgage interest", "rent vs buy", "fixed vs ARM", "home repair budget",
+    "maintenance costs", "refinance timing", "property tax increases", "insurance deductibles",
+    "heat pump installation cost",
+  ];
+  const result=qualityKeywordSuggestions([...reported,...natural].map(text=>item(text)),
+    {name:"Homeownership",existing:[]});
+  assert.deepEqual(result.suggestions.map(row=>row.text),natural);
+  assert.equal(result.rejected,reported.length);
+});
+
+test("VS Code is a product name, not a three-word comparison",async()=>{
+  const quality=qualityKeywordSuggestions([item("VS Code"),item("VS Code extensions")],
+    {name:"Programming tools"});
+  assert.deepEqual(quality.suggestions.map(row=>row.text),["VS Code","VS Code extensions"]);
+  let calls=0;
+  const transport=async()=>{calls++;return reply([item("VS Code extensions")]);};
+  const result=await generateProjectKeywords({name:"Developer Tools",description:"Visual Studio Code plugins",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+      transport,sleep:async()=>{},targetCount:1});
+  assert.equal(result.suggestions[0].text,"VS Code extensions");
+  assert.equal(calls,1,"Do not spend a semantic comparison request on a product name");
+});
+
+test("technical product names and established four-word terms remain searchable",()=>{
+  const terms=[
+    "Node.js vs Bun", "Next.js vs Nuxt", "ASP.NET vs Django", "Vue.js vs React.js",
+    "cost of living adjustment", "return on invested capital", "heating and cooling costs",
+  ];
+  const result=qualityKeywordSuggestions(terms.map(text=>item(text)),{name:"Technical explainers"});
+  assert.deepEqual(result.suggestions.map(row=>row.text),terms);
+  assert.equal(result.rejected,0);
+});
+
+test("keyword quality requires searchable words instead of punctuation or broad one-word topics",()=>{
+  const result=qualityKeywordSuggestions([
+    item("---"),item("???"),item("mortgage"),item("home"),item("property tax"),item("home insurance"),
+  ],{name:"Homeownership"});
+  assert.deepEqual(result.suggestions.map(row=>row.text),["property tax","home insurance"]);
+  assert.equal(result.rejected,4);
+});
+
+test("previously accepted verbose keywords are preserved for dedup but excluded from generation prompts",async()=>{
+  const prompts=[];
+  const oldAccepted="mortgage interest vs property tax";
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    prompts.push(JSON.parse(request.messages.at(-1).content).existingKeywords);
+    return reply([item("mortgage interest"),item("home insurance")]);
+  };
+  const result=await generateProjectKeywords({
+    name:"Homeownership",description:"Budgeting and financing home ownership",
+    keywords:[oldAccepted,"property tax increases"],
+  },{modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+    transport,sleep:async()=>{},targetCount:2});
+  assert.deepEqual(prompts[0],["property tax increases"]);
+  assert.ok(prompts.every(words=>!words.includes(oldAccepted)));
+  assert.deepEqual(result.suggestions.map(row=>row.text),["mortgage interest","home insurance"]);
+});
+
+test("later keyword prompts never repeat bad or rejected literal suggestions",async()=>{
+  const prompts=[];let batches=0;
+  const rejected="maintenance reserve planning matters enormously to every homeowner budget";
+  const transport=async(_url,options)=>{
+    const request=JSON.parse(options.body);
+    prompts.push(request.messages.map(message=>message.content).join("\n"));
+    batches++;
+    return reply(batches===1?[item(rejected),item("roof replacement costs")]:
+      [item("property tax reassessment")]);
+  };
+  const result=await generateProjectKeywords({name:"Homeownership",description:"House purchase and maintenance costs",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+      transport,sleep:async()=>{},targetCount:2});
+  assert.deepEqual(result.suggestions.map(row=>row.text),["roof replacement costs","property tax reassessment"]);
+  assert.equal(prompts.length,2);
+  for(const prompt of prompts){
+    assert.doesNotMatch(prompt,/mortgage interest vs property tax|hidden maintenance reserve funds/iu);
+    assert.doesNotMatch(prompt,new RegExp(rejected,"iu"));
+  }
+});
+
 test("quality gate rejects vague topics, prompt-echo reasons, unsupported trends and duplicate intent",()=>{
   const result=qualityKeywordSuggestions([
     item("homeownership economics"),
@@ -133,11 +226,11 @@ test("quality gate rejects vague topics, prompt-echo reasons, unsupported trends
     item("Rising home prices","topic","Popular search trend with high search volume"),
     item("Roof replacement costs"),
     item("Cost of replacing a roof"),
-    item("Why home insurance premiums rise","query","Shows factors affecting renewal bills"),
-    item("property taxes after home purchase","query","Explains reassessment after a purchase"),
+    item("home insurance premiums","query","Shows factors affecting renewal bills"),
+    item("property tax reassessment","query","Explains reassessment after a purchase"),
   ],{name:"House Math",existing:["Roof replacement cost"]});
   assert.deepEqual(result.suggestions.map(row=>row.text),[
-    "Why home insurance premiums rise","property taxes after home purchase"
+    "home insurance premiums","property tax reassessment"
   ]);
   assert.equal(result.rejected,7);
 });
@@ -145,10 +238,10 @@ test("quality gate rejects vague topics, prompt-echo reasons, unsupported trends
 test("quality gate does not let exclusion suggestions crowd out useful topics",()=>{
   const result=qualityKeywordSuggestions([
     item("house tour videos","exclusion"),item("real estate agent listings","exclusion"),
-    item("luxury mansion walkthroughs","exclusion"),item("Property tax reassessment rules after closing"),
+    item("luxury mansion walkthroughs","exclusion"),item("property tax reassessment"),
   ],{name:"House Math",existing:[]});
   assert.deepEqual(result.suggestions.map(row=>row.text),[
-    "house tour videos","real estate agent listings","Property tax reassessment rules after closing"
+    "house tour videos","real estate agent listings","property tax reassessment"
   ]);
   assert.equal(result.rejected,1);
 });
@@ -156,17 +249,17 @@ test("quality gate does not let exclusion suggestions crowd out useful topics",(
 test("quality gate keeps compact searchable phrases but rejects verbose video-topic sentences",()=>{
   const result=qualityKeywordSuggestions([
     item("comparing fixed-rate vs adjustable-rate mortgage economics","query"),
-    item("fixed-rate vs adjustable-rate mortgage costs","query"),
+    item("fixed vs ARM","query"),
     item("effects of inflation on the real cost of fixed mortgage payments","topic"),
-    item("inflation and fixed mortgages","topic"),
+    item("inflation mortgage costs","topic"),
     item("home inspection costs","topic"),
-    item("roof material choices and installation labor costs","topic"),
+    item("roof installation labor","topic"),
   ],{name:"Homeownership",existing:[]});
   assert.deepEqual(result.suggestions.map(row=>row.text),[
-    "fixed-rate vs adjustable-rate mortgage costs",
-    "inflation and fixed mortgages",
+    "fixed vs ARM",
+    "inflation mortgage costs",
     "home inspection costs",
-    "roof material choices and installation labor costs",
+    "roof installation labor",
   ]);
   assert.equal(result.rejected,2);
 });
@@ -192,16 +285,16 @@ test("keyword generator requests short replacements after a verbose batch while 
     return reply(requests.length===1?[
       item("comparing fixed-rate vs adjustable-rate mortgage economics","query"),
       item("roof replacement costs"),
-    ]:[item("adjustable mortgage interest risks","query")]);
+    ]:[item("adjustable mortgage risks","query")]);
   };
   const result=await generateProjectKeywords({name:"Homeownership",description:"Practical economics and maintenance of owning a home",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
       transport,sleep:async()=>{},targetCount:2,onBatch:batch=>updates.push(batch)});
-  assert.deepEqual(result.suggestions.map(row=>row.text),["roof replacement costs","adjustable mortgage interest risks"]);
+  assert.deepEqual(result.suggestions.map(row=>row.text),["roof replacement costs","adjustable mortgage risks"]);
   assert.deepEqual(updates.map(batch=>batch.suggestions.length),[1,1],"The initial useful keyword appears before any replacement request");
-  assert.match(requests[0],/2.{0,3}5 words/u);
-  assert.match(requests[0],/7 words/u);
-  assert.match(requests[1],/previous.*(?:verbose|long|7 words)/iu);
+  assert.match(requests[0],/2.{0,3}3 meaningful words/u);
+  assert.match(requests[0],/FOUR words/u);
+  assert.match(requests[1],/previous.*verbose/iu);
 });
 
 test("short X vs Y keywords require a small judgment of whether they are actual alternatives",async()=>{
@@ -210,12 +303,12 @@ test("short X vs Y keywords require a small judgment of whether they are actual 
     const req=JSON.parse(options.body);
     requests.push(req);
     if(requests.length===1)return reply([
-      item("fixed vs adjustable mortgage rates","topic","Choose a rate structure"),
-      item("mortgage interest vs property tax","topic","Compare two payments"),
+      item("fixed vs ARM","topic","Choose a rate structure"),
+      item("tax vs roof","topic","Unrelated topics"),
     ]);
     if(req.messages[0].content.includes("comparison suitability"))return replyVerdict([
-      {text:"fixed vs adjustable mortgage rates",suitable:true},
-      {text:"mortgage interest vs property tax",suitable:false},
+      {text:"fixed vs ARM",suitable:true},
+      {text:"tax vs roof",suitable:false},
     ]);
     return reply([item("property tax reassessment","topic","Predict annual bill changes")]);
   };
@@ -223,12 +316,29 @@ test("short X vs Y keywords require a small judgment of whether they are actual 
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,sleep:async()=>{},
       targetCount:2,onBatch:batch=>updates.push(batch)});
   assert.deepEqual(result.suggestions.map(row=>row.text),[
-    "fixed vs adjustable mortgage rates","property tax reassessment",
+    "fixed vs ARM","property tax reassessment",
   ]);
   assert.deepEqual(updates.map(b=>b.suggestions.length),[1,1]);
   assert.equal(requests.length,3);
   assert.ok(requests[1].max_tokens<=350,"Semantic check must remain a small local inference request");
   assert.equal(result.quality.modelRequests,3,"All generation and judgment requests count toward the shared budget");
+});
+
+test("punctuated vs. comparisons also receive the meaning check",async()=>{
+  let calls=0;
+  const transport=async(_url,options)=>{
+    calls++;
+    const request=JSON.parse(options.body);
+    if(request.messages[0].content.includes("comparison suitability")){
+      return replyVerdict([{text:"rent vs. buy",suitable:true}]);
+    }
+    return reply([item("rent vs. buy","query","Compare the two housing choices")]);
+  };
+  const result=await generateProjectKeywords({name:"Homeownership",description:"Renting versus purchasing a home",keywords:[]},
+    {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},
+      transport,sleep:async()=>{},targetCount:1});
+  assert.deepEqual(result.suggestions.map(row=>row.text),["rent vs. buy"]);
+  assert.equal(calls,2);
 });
 
 const replyVerdict=assessments=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
@@ -258,10 +368,10 @@ test("ambiguous financial jargon gets semantic review instead of passing on keyw
     calls++;
     const req=JSON.parse(options.body);
     if(req.messages[0].content.includes("comparison suitability"))return replyVerdict([
-      {text:"hidden maintenance reserve funds",suitable:false},
+      {text:"equity yield strategy",suitable:false},
     ]);
     if(calls===1)return reply([
-      item("hidden maintenance reserve funds","topic","A supposedly hidden fund"),
+      item("equity yield strategy","topic","Unclear financial jargon"),
       item("property tax reassessment","topic","Understand changing bills"),
     ]);
     return reply([item("home maintenance budget","topic","Budget for future repairs")]);
@@ -287,9 +397,9 @@ test("cancelling during semantic review prevents later keyword calls and progres
   const controller=new AbortController();let calls=0;const updates=[];
   const transport=async(_url,options)=>{
     calls++;
-    if(calls===1)return reply([item("rent vs buy costs","query","Choose between homes and leases")]);
+    if(calls===1)return reply([item("rent vs buy","query","Choose between homes and leases")]);
     controller.abort(Error("Stopped while reviewing"));
-    return replyVerdict([{text:"rent vs buy costs",suitable:true}]);
+    return replyVerdict([{text:"rent vs buy",suitable:true}]);
   };
   await assert.rejects(generateProjectKeywords({name:"Homeownership",description:"Lifetime homeowner costs",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,
@@ -335,12 +445,12 @@ test("refill with no useful keywords stops after bounded attempts and preserves 
 
 test("local keyword expansion accumulates 12 distinct specific ideas across topic lenses",async()=>{
   const batches=[
-    ["Why homeowner insurance premiums increase","What changes a property tax assessment"],
-    ["What determines an HVAC replacement quote","home emergency fund size"],
-    ["What causes roof replacement estimates to differ","Why foundation repair prices vary"],
-    ["rent or buy closing costs","gas furnace lifetime expenses"],
-    ["attic insulation payback period","Unexpected fees when refinancing a mortgage"],
-    ["older home hidden costs","What a home inspection cannot reveal"],
+    ["home insurance premiums","property tax reassessment"],
+    ["HVAC replacement costs","home emergency fund"],
+    ["roof replacement estimates","foundation repair costs"],
+    ["home closing costs","gas furnace expenses"],
+    ["insulation payback period","mortgage refinancing fees"],
+    ["older home repairs","home inspection limits"],
   ];
   const facets=[];
   const transport=async(_url,options)=>{
@@ -350,7 +460,7 @@ test("local keyword expansion accumulates 12 distinct specific ideas across topi
     assert.match(instructions,/Propose 2 distinct suggestions/i);
     assert.match(request.messages[1].content,/owning and maintaining a home/i);
     const suggestions=batches[facets.length-1]??[];
-    return reply(suggestions.map(text=>item(text,text.startsWith("What")||text.startsWith("Why")?"query":"topic")));
+    return reply(suggestions.map(text=>item(text)));
   };
   const result=await generateProjectKeywords({name:"House Math",description:"The economics of owning and maintaining a home",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,sleep:async()=>{}});
@@ -365,18 +475,18 @@ test("invalid local keyword batch retries without discarding earlier accepted su
   let calls=0;
   const transport=async()=>{
     calls++;
-    if(calls===1)return reply([item("Property tax increases after a home purchase"),
-      item("Real cost of maintaining a roof"),item("Home insurance renewal cost drivers")]);
+    if(calls===1)return reply([item("property tax increases"),
+      item("roof maintenance costs"),item("insurance renewal costs")]);
     if(calls===2)return {ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{
       finish_reason:"length",message:{content:'{"suggestions":[{"text":"unfinished'}
     }]})};
-    return reply([item("heat pump operating costs"),item("How mortgage closing fees add up")]);
+    return reply([item("heat pump operating costs"),item("mortgage closing fees")]);
   };
   const result=await generateProjectKeywords({name:"House Math",description:"Household ownership costs",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,sleep:async()=>{},targetCount:5});
   assert.equal(calls,3);
   assert.equal(result.suggestions.length,5);
-  assert.equal(result.suggestions[0].text,"Property tax increases after a home purchase");
+  assert.equal(result.suggestions[0].text,"property tax increases");
   assert.equal(result.quality.modelRequests,3);
 });
 
@@ -390,8 +500,8 @@ test("local keyword generator publishes two useful entries before the next infer
     assert.match(request.messages[0].content,/Propose 2 distinct suggestions/i);
     if(calls===2)await gate;
     return reply(calls===1?[
-      item("Why homeowner insurance premiums rise"),item("How property tax reassessment changes annual bills")
-    ]:[item("heat pump lifetime costs"),item("How roof material choices affect installation quotes")]);
+      item("home insurance premiums"),item("property tax reassessment")
+    ]:[item("heat pump lifetime costs"),item("roof material prices")]);
   };
   const pending=generateProjectKeywords({name:"House Math",description:"Costs of maintaining and insuring a home",keywords:[]},
     {modelSettings:{endpoint:"http://127.0.0.1:1234/v1/chat/completions",model:"mock"},transport,
@@ -401,7 +511,7 @@ test("local keyword generator publishes two useful entries before the next infer
     assert.equal(calls,2,"The second model call should be pending");
     assert.equal(updates.length,1,"The first verified batch must be delivered before the second response");
     assert.deepEqual(updates[0].suggestions.map(row=>row.text),[
-      "Why homeowner insurance premiums rise","How property tax reassessment changes annual bills"]);
+      "home insurance premiums","property tax reassessment"]);
     assert.equal(updates[0].quality.modelRequests,1);
   }finally{releaseSecond();}
   const result=await pending;
@@ -429,7 +539,7 @@ test("local keyword expansion never exceeds its global inference budget after a 
   let calls=0;
   const transport=async()=>{
     calls++;
-    return calls===1?reply([item("property taxes after home purchase")]):
+    return calls===1?reply([item("property tax reassessment")]):
       {ok:false,status:503,headers:{get:()=>null}};
   };
   const result=await generateProjectKeywords({name:"House Math",description:"Household ownership expenses",keywords:[]},
