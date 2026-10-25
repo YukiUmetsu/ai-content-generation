@@ -110,8 +110,8 @@ export function ProjectDiscoveryPanel({project,content,locale,syncStatus,onSaveI
         </div>
       </div>
       {keywordBusy&&<p role="status" className="mt-2 text-xs text-muted-foreground">{msg(locale,
-        `Local AI is working in small batches. ${keywordProgress?`Batch ${keywordProgress.step} of ${keywordProgress.totalSteps} complete.`:"Waiting for the first batch…"} You can review or accept suggestions as they arrive.`,
-        `ローカル AI で少量ずつ生成中。${keywordProgress?`${keywordProgress.totalSteps} 回中 ${keywordProgress.step} 回完了。`:"最初の結果を待機中…"}受け取った提案はすぐに確認・採用できます。`)}</p>}
+        `Local AI is working in small batches. ${keywordProgress?`Batch ${keywordProgress.step} complete (up to ${keywordProgress.totalSteps} batches).`:"Waiting for the first batch…"} You can review or accept suggestions as they arrive.`,
+        `ローカル AI で少量ずつ生成中。${keywordProgress?`${keywordProgress.step} 回完了（最大 ${keywordProgress.totalSteps} バッチ）。`:"最初の結果を待機中…"}受け取った提案はすぐに確認・採用できます。`)}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
         {keywords.length===0?<p className="text-sm text-muted-foreground">{msg(locale,"No keywords yet. Add one or request AI suggestions.","キーワードはまだありません。")}</p>:
           keywords.map(item=><div key={item.id} className={`flex max-w-full items-center gap-2 rounded-control border px-3 py-2 text-sm ${item.active?"border-border":"border-border opacity-55"}`}>
