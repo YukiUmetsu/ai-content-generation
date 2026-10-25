@@ -172,8 +172,8 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
                   <ChevronDown className="size-3.5 text-muted-foreground transition-transform group-open/method:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
                 </summary>
                 <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{tr(locale,
-                  "When both signals exist: 75% YouTube within-session, same-format percentile + 25% Google Trends change (−100% to +100% mapped to 0–100). With Trends missing, show only the YouTube percentile and mark the result partial. Trends indices are normalized per query, not search volume. This is a heuristic, not a prediction of virality or revenue.",
-                  "両方ある場合は、同一セッション・同形式の YouTube 百分位75%と、Google Trends の変化率25%（−100%〜+100%を0〜100に変換）を合成します。トレンドがない場合は YouTube のみを表示し、部分的な評価と明記します。Trends は検索語ごとに正規化され、検索量ではありません。再生数や収益の予測ではありません。")}</p>
+                  "When both signals exist: 75% YouTube within-session, same-format percentile + 25% Google Trends change (−100% to +100% mapped to 0–100). With Trends missing, show only the YouTube percentile and mark the result partial. Trends indices are normalized per query, not search volume. Hook quality, click-through rate and retention are not measured. This is a heuristic, not a prediction of virality or revenue.",
+                  "両方ある場合は、同一セッション・同形式の YouTube 百分位75%と、Google Trends の変化率25%（−100%〜+100%を0〜100に変換）を合成します。トレンドがない場合は YouTube のみを表示し、部分的な評価と明記します。Trends は検索語ごとに正規化され、検索量ではありません。フックの品質、クリック率、視聴維持率は未測定です。再生数や収益の予測ではありません。")}</p>
                 {sample?.query && <p className="mt-2 break-words text-[11px] leading-relaxed text-muted-foreground">
                   {tr(locale, "YouTube query", "YouTube 検索語")}: {sample.query}</p>}
                 {googleTrends?.query && <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
