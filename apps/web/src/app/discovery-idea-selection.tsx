@@ -326,8 +326,9 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       {backfillState === "queued" ? tr(locale, "Missing market data queued for background collection.", "未測定の市場データをバックグラウンド収集に登録しました。")
         : backfillState === "running" ? tr(locale, "Collecting missing YouTube and Google Trends observations…", "未測定の YouTube と Google Trends データを収集中…")
         : backfillState === "error" ? tr(locale, "Could not start market backfill. Check the local server.", "市場データの補完を開始できません。ローカルサーバーを確認してください。")
-        : hasMissingMarket ? tr(locale, "No new market job is eligible; inspect saved provider failures or refresh.", "新たに実行できる市場データ収集はありません。保存済みのエラーを確認してください。")
-          : tr(locale, "Missing market observations have been processed.", "未測定の市場データの処理が完了しました。")}
+        : discoveryRunning ? tr(locale, "Discovery is still running; market collection follows idea generation.", "調査を実行中です。アイデア生成後に市場データを収集します。")
+          : hasMissingMarket ? tr(locale, "No new market job is eligible; inspect saved provider failures or refresh.", "新たに実行できる市場データ収集はありません。保存済みのエラーを確認してください。")
+            : tr(locale, "Missing market observations have been processed.", "未測定の市場データの処理が完了しました。")}
     </p>}
     {runMarketHealth !== null && <p role="status" className="text-xs text-muted-foreground">
       {tr(locale, "Discovery market collection", "調査時の市場データ収集")}: {formatDiscoveryProviderHealth(runMarketHealth, locale)}
