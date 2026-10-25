@@ -76,13 +76,17 @@ async fn session_and_production_api_preserve_scope_and_return_expected_shapes() 
     let (found,ideas)=call(&router,Method::GET,&format!("{own}/ideas"),json!({}),false).await;
     assert_eq!(found,StatusCode::OK);
     let idea=&ideas["ideas"][0];
-    assert!(idea["opportunityScore"].is_null());
+    assert_eq!(idea["opportunityScore"].as_f64(),Some(60.0));
+    assert_eq!(idea["scoreVersion"],"evidence-readiness-v1");
+    assert_eq!(idea["scoreInputs"]["audienceDemand"],"unknown");
     assert_eq!(idea["sources"][0]["title"],"House cost source");
     assert_eq!(idea["evidence"][0]["quote"],"Verified illustrative housing expenses");
     assert_eq!(idea["evidence"][0]["reviewStatus"],"unverified");
     let idea_id=idea["id"].as_str().unwrap();
     let make=json!({"projectId":"brand-one","sessionId":id,"ideaId":idea_id,
-        "brief":{"title":"A better title","description":"Costs of ownership"},
+        "brief":{"topic":"Homeownership expenses","title":"A better title",
+            "angle":"The hidden costs","description":"Costs of ownership",
+            "keywords":[],"platforms":["youtube","tiktok"]},
         "platforms":["youtube","tiktok"]});
     assert_eq!(call(&router,Method::POST,"/api/productions",make.clone(),false).await.0,StatusCode::FORBIDDEN);
     let (made,production)=call(&router,Method::POST,"/api/productions",make,true).await;
@@ -98,3 +102,4 @@ async fn session_and_production_api_preserve_scope_and_return_expected_shapes() 
     assert_eq!(call(&router,Method::GET,&format!("/api/productions/{production_id}"),json!({}),false).await.0,StatusCode::OK);
     assert_eq!(conn.query_row("SELECT COUNT(*) FROM discovery_projects",[],|r|r.get::<_,i64>(0)).unwrap(),2);
 }
+

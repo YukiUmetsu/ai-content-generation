@@ -25,6 +25,23 @@ function opportunityText(idea: DiscoverySessionIdea, locale: Locale): string {
   return idea.opportunityScore === null ? tr(locale, "Not measured", "未測定") : `${Math.round(idea.opportunityScore)}/100`;
 }
 
+function inputLabel(key: string, locale: Locale): string {
+  const labels: Record<string, [string, string]> = {
+    capturedPassages: ["Captured passages", "取得済みの引用"],
+    publicVideoLeads: ["Public video leads", "公開動画の手掛かり"],
+    sourcePoints: ["Source points", "出典の点数"],
+    candidateConfidence: ["Draft confidence", "下書きの確度"],
+    confidencePoints: ["Confidence points", "確度の点数"],
+    editorialReadinessPoints: ["Story completeness points", "構成の完成度"],
+    audienceDemand: ["Audience demand", "視聴者の需要"],
+    searchVolume: ["Search volume", "検索ボリューム"],
+    scoreMeaning: ["Score interpretation", "点数の意味"],
+  };
+  const known = labels[key];
+  return known ? known[locale === "ja" ? 1 : 0]
+    : key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, value => value.toUpperCase());
+}
+
 export interface DiscoveryIdeaSelectionProps {
   projectId: string;
   sessionId: string;
@@ -86,6 +103,13 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     });
   }, [ideas, search, filter, sort]);
 
+  // The shortlist is based on the full saved session, not the current search
+  // or sort filter; otherwise a filtered-out idea would change the top picks.
+  const topPicks = useMemo(() => new Set(ideas.filter(idea => idea.opportunityScore !== null &&
+    (idea.decision === null || idea.decision === "saved"))
+    .sort((a, b) => (b.opportunityScore ?? 0) - (a.opportunityScore ?? 0) || a.rank - b.rank)
+    .slice(0, 3).map(idea => idea.id)), [ideas]);
+
   const decide = async (idea: DiscoverySessionIdea, decision: "saved" | "dismissed") => {
     setBusy(true); setError(null); setNotice("");
     try {
@@ -130,8 +154,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       </div>
       <h2 className="font-serif text-2xl font-semibold">{tr(locale, "Choose the story worth telling", "伝える価値のあるテーマを選ぶ")}</h2>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{tr(locale,
-        "Compare ideas from this saved discovery session. Opportunity values are estimates only where evidence supports them; public views are not private CTR or revenue.",
-        "保存した調査結果から比較します。根拠のない推定値は表示しません。公開再生回数から CTR や収益は推測できません。")}</p>
+        "Compare all saved ideas. Up to three highlighted picks use a research-readiness heuristic: source excerpts, public-video leads, draft confidence, and story completeness. It does not measure search demand or predict views, CTR, or revenue.",
+        "保存した全アイデアを比較できます。最大3件のおすすめは、出典の引用・公開動画の手掛かり・下書きの確度・構成の完成度による調査準備度の推定です。検索需要、再生回数、CTR、収益は予測しません。")}</p>
     </div>
 
     <div className="flex flex-wrap items-end gap-3 rounded-control border border-border bg-surface p-4">
@@ -151,8 +175,8 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
       <label className="min-w-44 flex-1 text-xs font-medium text-muted-foreground">{tr(locale, "Sort ideas", "並べ替え")}
         <span className="relative block"><ArrowUpDown className="pointer-events-none absolute bottom-3 left-3 size-4" aria-hidden="true" />
           <select className={`${fieldClass} pl-10`} value={sort} onChange={event => setSort(event.target.value as Sort)}>
-            <option value="opportunity">{tr(locale, "Opportunity / rank", "機会・順位")}</option>
-            <option value="sources">{tr(locale, "Most supporting sources", "根拠の出典数")}</option>
+            <option value="opportunity">{tr(locale, "Research readiness / rank", "調査準備度・順位")}</option>
+            <option value="sources">{tr(locale, "Most source references", "参照元の数")}</option>
             <option value="title">{tr(locale, "Title A–Z", "タイトル順")}</option>
           </select>
         </span>
@@ -170,11 +194,13 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
     </div>}
     {!loading && ideas.length > 0 && <p className="text-xs text-muted-foreground" role="status">{tr(locale,
       `${visible.length} of ${ideas.length} saved ideas`, `${ideas.length} 件中 ${visible.length} 件表示`)}</p>}
-    <div className="space-y-3">{visible.map(idea => <article key={idea.id} className="rounded-control border border-border bg-surface p-5 shadow-sm">
+    <div className="space-y-3">{visible.map(idea => <article key={idea.id} className={`rounded-control border bg-surface p-5 shadow-sm ${topPicks.has(idea.id) ? "border-primary/50" : "border-border"}`}>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-[2]">
           <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {tr(locale, "Idea", "アイデア")} {idea.rank > 0 ? `#${idea.rank}` : ""}
+            {topPicks.has(idea.id) && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-primary normal-case tracking-normal">
+              {tr(locale, "Top 3 recommendation", "おすすめ上位3件")}</span>}
             {idea.decision && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 normal-case tracking-normal">{idea.decision}</span>}
           </p>
           <h3 className="font-serif text-xl font-semibold leading-snug">{idea.title}</h3>
@@ -182,25 +208,29 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           {idea.premise && <p className="mt-2 text-sm leading-6 text-muted-foreground">{idea.premise}</p>}
         </div>
         <div className="min-w-[140px] rounded-control bg-muted/50 p-3 text-right">
-          <p className="text-xs text-muted-foreground">{tr(locale, "Opportunity", "機会の評価")}</p>
+          <p className="text-xs text-muted-foreground">{tr(locale, "Research readiness", "調査準備度")}</p>
           <p className="mt-1 text-base font-semibold">{opportunityText(idea, locale)}</p>
           {idea.opportunityScore !== null && <p className="mt-1 text-[11px] text-muted-foreground">{tr(locale,
-            "Internal heuristic · not viral odds", "内部推定・バズの確率ではありません")}</p>}
+            "Internal heuristic · not audience demand", "内部推定・視聴需要の測定ではありません")}</p>}
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-        <span>{tr(locale, "Evidence confidence", "根拠の確度")}: {idea.confidence}</span>
+        <span>{tr(locale, "Draft confidence (AI-assigned)", "下書きの確度（AI による判断）")}: {idea.confidence}</span>
         {idea.whyNow && <span>{tr(locale, "Why consider", "選定理由")}: {idea.whyNow}</span>}
       </div>
       {(idea.scoreVersion || Object.keys(idea.scoreInputs).length > 0) && <div className="mt-3">
         <button className="text-xs font-medium text-primary underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-ring"
+          aria-expanded={expandedScoreId === idea.id}
+          aria-controls={expandedScoreId === idea.id ? `score-details-${idea.id}` : undefined}
           onClick={() => setExpandedScoreId(value => value === idea.id ? null : idea.id)}>
           {expandedScoreId === idea.id ? tr(locale, "Hide score details", "評価の詳細を閉じる") : tr(locale, "Explain this score", "評価の根拠を確認")}
         </button>
-        {expandedScoreId === idea.id && <div className="mt-2 rounded-control bg-muted/30 p-3 text-xs text-muted-foreground">
+        {expandedScoreId === idea.id && <div id={`score-details-${idea.id}`} className="mt-2 rounded-control bg-muted/30 p-3 text-xs text-muted-foreground">
           <p>{tr(locale, "Formula revision", "計算式の版")}: {idea.scoreVersion ?? tr(locale, "not recorded", "記録なし")}</p>
           {Object.entries(idea.scoreInputs).slice(0, 12).map(([key, value]) => <p key={key} className="mt-1 break-words">
-            {key}: {value === null ? tr(locale, "unknown", "不明") : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>)}
+            {inputLabel(key, locale)}: {key === "scoreMeaning" && locale === "ja" ? "調査準備度のみ。動画の成果予測ではありません"
+              : value === "unknown" ? tr(locale, "unknown", "不明")
+                : value === null ? tr(locale, "unknown", "不明") : typeof value === "object" ? JSON.stringify(value) : String(value)}</p>)}
         </div>}
       </div>}
       <div className="mt-4 rounded-control border border-border-subtle bg-surface-subtle p-3">

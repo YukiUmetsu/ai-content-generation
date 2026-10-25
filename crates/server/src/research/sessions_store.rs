@@ -5,6 +5,10 @@ use serde::Serialize;
 use super::discovery_projects::DiscoveryError;
 use super::discovery_store::{self, Candidate, CandidateDraft, DiscoveryRun};
 
+/// Keep v1 semantics unchanged for saved runs; newer formulas must use a new
+/// version and a separate evaluator rather than reinterpreting old scores.
+pub(crate) const IDEA_SCORE_VERSION_V1: &str = "evidence-readiness-v1";
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiscoverySession {
@@ -278,12 +282,60 @@ pub fn finish_session_run(
     discovery_store::finish_run(db, run_id, candidates, status, now)
 }
 
+/// This is an editorial *research-readiness* heuristic, not a forecast of
+/// search demand, clicks, retention, revenue or the odds of a video succeeding.
+/// Use only the immutable source excerpts saved with the candidate so older
+/// sessions remain comparable if the live research graph changes later.
+fn score_idea_v1(candidate: &Candidate, sources: &[IdeaSource]) -> (Option<f64>, serde_json::Value) {
+    let mut unique = std::collections::HashSet::new();
+    let mut captured_passages = 0u32;
+    let mut public_video_leads = 0u32;
+    for source in sources {
+        if !unique.insert(source.id.as_str()) { continue; }
+        if source.evidence_state == "captured"
+            && source.passage.as_deref().is_some_and(|text| !text.trim().is_empty()) {
+            captured_passages += 1;
+        } else if source.provider == "youtube-data-api" && source.evidence_state == "lead_only" {
+            // This is a recorded *lead*, not verified evidence of viewer demand.
+            public_video_leads += 1;
+        }
+    }
+    let source_points = (captured_passages.min(3) * 20 + public_video_leads.min(3) * 10).min(60);
+    let confidence_points = match candidate.confidence.as_str() {
+        "high" => 20, "medium" => 10, "low" => 5, _ => 0,
+    };
+    let editorial_points = u32::from(!candidate.hook.trim().is_empty()) * 8
+        + u32::from(!candidate.premise.trim().is_empty()) * 8
+        + u32::from(!candidate.why_now.trim().is_empty()) * 4;
+    let score = if source_points > 0 {
+        Some(f64::from(source_points + confidence_points + editorial_points))
+    } else { None };
+    (score, serde_json::json!({
+        "capturedPassages": captured_passages,
+        "publicVideoLeads": public_video_leads,
+        "sourcePoints": source_points,
+        "candidateConfidence": candidate.confidence,
+        "confidencePoints": confidence_points,
+        "editorialReadinessPoints": editorial_points,
+        "audienceDemand": "unknown",
+        "searchVolume": "unknown",
+        "scoreMeaning": "Research readiness only; not predicted video performance",
+    }))
+}
+
 pub fn list_ideas(
     db: &Connection, project_id: &str, session_id: &str,
 ) -> Result<Vec<SessionIdea>, DiscoveryError> {
     let runs = list_session_runs(db, project_id, session_id)?;
     let mut ideas = Vec::new();
     for run in runs {
+        // Runs created before score versioning are grandfathered into v1.
+        // A future v2 must dispatch to another evaluator, not rewrite v1.
+        let score_version = run.input_snapshot.get("ideaScoreVersion")
+            .and_then(serde_json::Value::as_str).unwrap_or(IDEA_SCORE_VERSION_V1);
+        if score_version != IDEA_SCORE_VERSION_V1 {
+            return Err(DiscoveryError::Invalid("Unsupported frozen idea scoring version".into()));
+        }
         for candidate in run.candidates {
             let sources = {
                 let mut stmt = db.prepare("SELECT source_id,provider,url,title,observed_at,published_at,evidence_state,passage
@@ -304,10 +356,11 @@ pub fn list_ideas(
                     quote:passage.to_owned(),review_status:"unverified".into(),
                 })
             }).collect();
+            let (opportunity_score, score_inputs) = score_idea_v1(&candidate, &sources);
             ideas.push(SessionIdea {
                 candidate,session_id:session_id.to_owned(),run_id:run.id.clone(),
-                opportunity_score:None,score_version:None,
-                score_inputs:serde_json::json!({}),platform_fit:serde_json::json!({}),sources,evidence,
+                opportunity_score,score_version:Some(score_version.into()),
+                score_inputs,platform_fit:serde_json::json!({}),sources,evidence,
             });
         }
     }
@@ -325,3 +378,4 @@ pub fn decide_idea(
     if belongs == 0 { return Err(DiscoveryError::NotFound); }
     discovery_store::decide(db, project_id, idea_id, decision, reason, now)
 }
+
