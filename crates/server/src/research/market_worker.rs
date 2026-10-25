@@ -25,7 +25,11 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
         // Queue only missing observations, once per run; never re-spend quota on
         // saved failed/unavailable attempts or on repeated polling.
         if let Ok(mut db) = state.connect() {
-            if let Err(error) = super::discovery_store::queue_missing_market_runs(&mut db, None, epoch_now()) {
+            if let Err(error) = super::discovery_store::queue_missing_market_runs(
+                &mut db, None, epoch_now(),
+                state.credentials().youtube_key().ok()
+                    .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+            ) {
                 eprintln!("contentgen-server: market_backfill_queue_failed reason={error}");
             }
         }
@@ -37,7 +41,11 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             // Enqueue historical gaps on every tick as well as at startup.
             // The persisted marker makes this idempotent across restarts.
             if let Ok(mut db) = state.connect() {
-                if let Err(error) = super::discovery_store::queue_missing_market_runs(&mut db, None, epoch_now()) {
+                if let Err(error) = super::discovery_store::queue_missing_market_runs(
+                &mut db, None, epoch_now(),
+                state.credentials().youtube_key().ok()
+                    .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+            ) {
                     eprintln!("contentgen-server: market_backfill_queue_failed reason={error}");
                 }
             }
