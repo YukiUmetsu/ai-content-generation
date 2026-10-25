@@ -16,11 +16,39 @@ import { Surface } from "@/components/ui/surface-card";
 import { EmptyState } from "@/app/empty-state";
 import { translate, formatDateTime } from "@/i18n/messages";
 import { listJobs, getJob, cancelJob, ApiError } from "@/lib/api/client";
+import { listDiscoverySessions, type DiscoverySession } from "@/lib/api/discovery-sessions";
 import type { Job, JobNode, JobAttempt, JobView, JobState, JobEdge, EdgeKind } from "@/lib/api/types";
 import type { Locale } from "@/features/registry";
 
 interface JobsWorkspaceProps {
   locale: Locale;
+  projects?: { id: string; name: string }[];
+}
+const EMPTY_PROJECTS: { id: string; name: string }[] = [];
+
+interface DiscoveryJob {
+  projectName: string;
+  session: DiscoverySession;
+}
+
+function discoveryStatus(status: string, locale: Locale): string {
+  const labels: Record<string, [string, string]> = {
+    queued: ["Queued", "待機中"], running: ["Running", "実行中"],
+    paused: ["Paused", "一時停止"], completed: ["Completed", "完了"],
+    insufficient_evidence: ["Needs review", "確認が必要"],
+    failed: ["Failed", "失敗"], cancelled: ["Cancelled", "中止"],
+  };
+  const pair = labels[status];
+  return pair ? pair[locale === "ja" ? 1 : 0] : status.replaceAll("_", " ");
+}
+
+function latestDiscoveryJobs(items: DiscoveryJob[]): DiscoveryJob[] {
+  const active = (item: DiscoveryJob) =>
+    item.session.lastRun?.status === "running" || item.session.lastRun?.status === "queued";
+  const sorted = [...items].sort((a, b) =>
+    Number(active(b)) - Number(active(a)) || b.session.updatedAt - a.session.updatedAt);
+  const running = sorted.filter(active);
+  return [...running, ...sorted.filter(item => !active(item)).slice(0, 10)];
 }
 
 const POLL_INTERVAL_MS = 5000;
@@ -230,8 +258,11 @@ function formatEdgeKind(kind: EdgeKind, locale: Locale): string {
   return kind === "dependency" ? translate(locale, "jobsEdgeDependency") : translate(locale, "jobsEdgeData");
 }
 
-export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
+export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspaceProps) {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [discoveryJobs, setDiscoveryJobs] = useState<DiscoveryJob[]>([]);
+  const [discoveryLoading, setDiscoveryLoading] = useState(true);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<ApiError | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
@@ -244,6 +275,32 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
   const [cancelError, setCancelError] = useState<ApiError | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const discoveryInFlight = useRef(false);
+
+  const loadDiscoveryJobs = useCallback(async (signal?: AbortSignal) => {
+    if (discoveryInFlight.current) return;
+    if (projects.length === 0) {
+      setDiscoveryJobs([]);setDiscoveryError(null);setDiscoveryLoading(false);return;
+    }
+    discoveryInFlight.current = true;
+    try {
+      const results = await Promise.allSettled(projects.map(project =>
+        listDiscoverySessions(project.id, signal)));
+      if (signal?.aborted) return;
+      const available = results.flatMap((result, index) => result.status === "fulfilled"
+        ? result.value.filter(session => session.lastRun).map(session =>
+            ({ projectName: projects[index].name, session })) : []);
+      const failures = results.filter(result => result.status === "rejected").length;
+      if (failures < results.length) setDiscoveryJobs(latestDiscoveryJobs(available));
+      setDiscoveryError(failures > 0
+        ? (locale === "ja" ? `${failures} 件のプロジェクトの検索ジョブを取得できませんでした。`
+          : `Could not load discovery jobs for ${failures} project(s).`)
+        : null);
+    } finally {
+      discoveryInFlight.current = false;
+      if (!signal?.aborted) setDiscoveryLoading(false);
+    }
+  }, [projects, locale]);
 
   const clearDetailRequest = useCallback(() => {
     if (abortRef.current) {
@@ -312,6 +369,18 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
   }, [loadList, stopPolling, clearDetailRequest]);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const initial = setTimeout(() => { void loadDiscoveryJobs(controller.signal); }, 0);
+    const interval = setInterval(() => { void loadDiscoveryJobs(controller.signal); }, POLL_INTERVAL_MS);
+    return () => { controller.abort();clearTimeout(initial);clearInterval(interval); };
+  }, [loadDiscoveryJobs]);
+
+  useEffect(() => {
+    const interval = setInterval(() => { void loadList(); }, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [loadList]);
+
+  useEffect(() => {
     stopPolling();
     if (!selectedJobId) {
       return;
@@ -346,7 +415,8 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
 
   function handleRefreshList() {
     setListLoading(true);
-    loadList();
+    void loadList();
+    void loadDiscoveryJobs();
   }
 
   function handleRetryDetail() {
@@ -381,7 +451,9 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
 
   const canCancel = jobView != null && ACTIVE_STATES.includes(jobView.job.state);
   const sortedJobs = sortJobs(jobs);
-  const emptyList = !listLoading && !listError && sortedJobs.length === 0;
+  const discoveryOnly = sortedJobs.length === 0 && discoveryJobs.length > 0;
+  const emptyList = !listLoading && !discoveryLoading && !listError && !discoveryError &&
+    sortedJobs.length === 0 && discoveryJobs.length === 0;
   const orderedNodes = jobView ? orderNodes(jobView.nodes, jobView.edges) : [];
   const failure = jobView ? jobFailureSummary(jobView, orderedNodes) : null;
 
@@ -393,7 +465,7 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
     >
       <div
         className={`flex min-h-0 flex-col border-b border-border bg-surface lg:border-b-0 ${
-          emptyList ? "flex-1 lg:w-full lg:border-r-0" : "lg:w-80 lg:border-r"
+          emptyList || discoveryOnly ? "flex-1 lg:w-full lg:border-r-0" : "lg:w-80 lg:border-r"
         }`}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -414,6 +486,45 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
         </div>
 
         <div className="flex-1 overflow-auto p-3">
+          {(discoveryJobs.length > 0 || discoveryLoading || discoveryError) && (
+            <section aria-label={locale === "ja" ? "検索ジョブ" : "Discovery searches"} className="mb-4 space-y-2">
+              <h3 className="px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {locale === "ja" ? "検索ジョブ" : "Discovery searches"}
+              </h3>
+              {discoveryLoading && discoveryJobs.length === 0 && (
+                <p role="status" className="px-2 text-xs text-muted-foreground">
+                  {locale === "ja" ? "検索ジョブを確認中…" : "Checking discovery jobs…"}
+                </p>
+              )}
+              {discoveryError && <p role="alert" className="px-2 text-xs text-status-warning">{discoveryError}</p>}
+              <ul className="grid gap-2">
+                {discoveryJobs.map(({ projectName, session }) => {
+                  const run = session.lastRun;
+                  if (!run) return null;
+                  const active = run.status === "running" || run.status === "queued";
+                  return <li key={`${session.projectId}:${session.id}`} className="rounded-control border border-border bg-surface px-3 py-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="min-w-0 font-medium text-sm text-foreground">{session.name}</p>
+                      <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${active
+                        ? "border-status-info/30 bg-status-info/10 text-status-info"
+                        : "border-border bg-surface-subtle text-muted-foreground"}`}>
+                        {discoveryStatus(run.status, locale)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{projectName}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {locale === "ja" ? "現在の処理" : "Current stage"}: {run.stage.replaceAll("_", " ")}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {locale === "ja" ? `セッションに保存されたアイデア: ${session.ideaCount ?? 0} 件`
+                        : `${session.ideaCount ?? 0} saved ideas in session`}
+                    </p>
+                    {run.errorCode && <p className="mt-1 break-words text-xs text-danger">{run.errorCode}</p>}
+                  </li>;
+                })}
+              </ul>
+            </section>
+          )}
           {listLoading && (
             <Surface variant="outline" className="items-center justify-center py-8 text-center">
               <Loader2 aria-hidden className="mx-auto size-6 animate-spin text-muted-foreground" />
@@ -430,7 +541,8 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
             />
           )}
 
-          {!listLoading && sortedJobs.length === 0 && !listError && (
+          {!listLoading && !discoveryLoading && sortedJobs.length === 0 && discoveryJobs.length === 0 &&
+            !listError && !discoveryError && (
             <EmptyState
               title={translate(locale, "jobsEmptyTitle")}
               description={translate(locale, "jobsEmptyBody")}
@@ -480,7 +592,7 @@ export function JobsWorkspace({ locale }: JobsWorkspaceProps) {
       </div>
 
       <div
-        className={`min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-canvas p-4 ${emptyList ? "hidden" : "flex"}`}
+        className={`min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-canvas p-4 ${emptyList || discoveryOnly ? "hidden" : "flex"}`}
       >
         {!selectedJobId && !detailLoading && (
           <EmptyState

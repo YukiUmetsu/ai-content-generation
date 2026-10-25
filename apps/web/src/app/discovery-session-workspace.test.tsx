@@ -37,6 +37,8 @@ describe("Content discovery sessions", () => {
     const user = userEvent.setup();
     render(<DiscoverySessionWorkspace project={project} platforms={["youtube", "tiktok"]} locale="en"
       selectedSessionId={null} onSelectSession={selected} />);
+    expect(screen.queryByText("Find your next original story")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Create a saved session for this brand/)).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "New discovery session" }));
     await user.type(screen.getByRole("textbox", { name: "Session name" }), "Insurance costs");
     await user.click(screen.getByRole("button", { name: "Create session" }));

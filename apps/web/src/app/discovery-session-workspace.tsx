@@ -274,16 +274,7 @@ function ProjectDiscoverySessions({ project, platforms, content = [], locale, se
   };
 
   return <section aria-label={tr(locale, "Content discovery sessions", "コンテンツ発見セッション")} className="space-y-5">
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-muted-foreground">
-          <Sparkles className="size-4" aria-hidden="true" /> {tr(locale, "Discovery", "発見")}
-        </div>
-        <h2 className="font-serif text-2xl font-semibold text-foreground">{tr(locale, "Find your next original story", "次のアイデアを見つける")}</h2>
-        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{tr(locale,
-          "Create a saved session for this brand. Search, market observations and source evidence stay with the session for future productions.",
-          "ブランドごとに調査セッションを保存します。市場データと出典を再利用できます。")}</p>
-      </div>
+    <div className="flex justify-end">
       <Button onClick={() => { setShowCreate(value => !value); setError(null); }}>
         {tr(locale, "New discovery session", "新規調査セッション")}
       </Button>

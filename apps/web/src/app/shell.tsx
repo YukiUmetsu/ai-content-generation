@@ -243,7 +243,7 @@ export function Shell() {
                 (catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name === "My project" ? "" :
                   catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "")}/>
           ) : activeSection === "jobs-qa" ? (
-            <JobsWorkspace locale={locale} />
+            <JobsWorkspace locale={locale} projects={catalog.projects} />
           ) : (
             <CatalogWorkspace
               key={activeSection + ":" + catalog.activeProjectId}
