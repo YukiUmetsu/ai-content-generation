@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { RigCalibrationEditor } from "./RigCalibrationEditor";
 import type { CharacterPackDefinition } from "./character-pack";
 
@@ -24,10 +24,11 @@ afterEach(() => vi.unstubAllGlobals());
 describe("RigCalibrationEditor", () => {
   it("lets an author revise a non-human joint without changing the imported definition", async () => {
     render(<RigCalibrationEditor definition={animal} locale="en" />);
-    expect(screen.getByText("Anatomy & joint placement")).toBeInTheDocument();
-    expect(screen.getByText(/no live animation preview/i)).toBeInTheDocument();
+    expect(screen.getByText("Rig & motion editor")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Character rig and animation canvas" })).toBeInTheDocument();
+    expect(screen.getByText(/not yet connected to final video rendering/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Download revised character.json/ })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: /muzzle/ }));
+    fireEvent.click(within(screen.getByLabelText("Rig part list")).getByRole("button", { name: /muzzle/ }));
     expect(screen.getByText(/Parent: body/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Y offset"), { target: { value: "-95" } });
     fireEvent.change(screen.getByLabelText("New revision"), { target: { value: "r2" } });
@@ -49,7 +50,7 @@ describe("RigCalibrationEditor", () => {
 
   it("shows an actionable validation message for collapsed body parts", () => {
     render(<RigCalibrationEditor definition={animal} locale="en" />);
-    fireEvent.click(screen.getByRole("button", { name: /fluffy-tail/ }));
+    fireEvent.click(within(screen.getByLabelText("Rig part list")).getByRole("button", { name: /fluffy-tail/ }));
     fireEvent.change(screen.getByLabelText("Y scale"), { target: { value: "0" } });
     fireEvent.change(screen.getByLabelText("New revision"), { target: { value: "r2" } });
     expect(screen.getByText(/fluffy-tail.*scaleY/i)).toBeInTheDocument();
@@ -62,17 +63,17 @@ describe("RigCalibrationEditor", () => {
     const spriteUrls = new Map([["layers/body.png", "blob:pip-body"]]);
     render(<RigCalibrationEditor definition={animal} locale="en" spriteUrls={spriteUrls} />);
     expect(screen.getByAltText("body artwork (not composited)")).toHaveAttribute("src", "blob:pip-body");
-    expect(screen.getByRole("button", { name: /muzzle/ })).toBeInTheDocument();
-    expect(screen.getByText("0 parts adjusted")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Rig part list")).getByRole("button", { name: /muzzle/ })).toBeInTheDocument();
+    expect(screen.getByText("0 placed · 0 corrected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reset placement edits" })).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("button", { name: /muzzle/ }));
+    fireEvent.click(within(screen.getByLabelText("Rig part list")).getByRole("button", { name: /muzzle/ }));
     expect(screen.getByAltText("muzzle artwork (not composited)")).toHaveAttribute("src", "blob:pip-body");
     fireEvent.change(screen.getByLabelText("Y offset"), { target: { value: "-95" } });
-    expect(screen.getByText("1 part adjusted")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /muzzle.*adjusted/i })).toBeInTheDocument();
+    expect(screen.getByText("1 placed · 0 corrected")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Rig part list")).getByRole("button", { name: /muzzle.*adjusted/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reset placement edits" }));
-    expect(screen.getByText("0 parts adjusted")).toBeInTheDocument();
+    expect(screen.getByText("0 placed · 0 corrected")).toBeInTheDocument();
     expect(screen.getByLabelText("Y offset")).toHaveValue(-130);
   });
 });

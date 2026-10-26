@@ -51,7 +51,8 @@ describe("CharacterPackInspector", () => {
     expect(await screen.findByText("Structure checked")).toBeInTheDocument();
     expect(screen.getByText(/cannot be used for publishing yet/)).toBeInTheDocument();
     expect(screen.getByText("Rig metadata, not playback-tested")).toBeInTheDocument();
-    expect(screen.getByText("Anatomy & joint placement")).toBeInTheDocument();
+    expect(screen.getByText("Rig & motion editor")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Character rig and animation canvas" })).toBeInTheDocument();
     expect(screen.getByText("No gesture actions declared")).toBeInTheDocument();
     expect(screen.getByAltText("body sprite layer")).toHaveAttribute("src", "blob:local-character");
     expect(inspectCharacterZip).toHaveBeenCalledTimes(1);

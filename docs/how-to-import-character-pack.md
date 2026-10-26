@@ -13,9 +13,14 @@ animation actions, expression presets, image variants, speech mapping, anchors
 and rest transforms. This is a checklist of authored fields, **not** evidence
 that the actions play correctly or the rig is ready to publish.
 
-The **Anatomy & joint placement** panel is a manifest-only calibration tool.
-Choose any named part and adjust its parent-relative X/Y position, clockwise
-rotation, horizontal/vertical scale, or part-local pivot. It does not assume
+The **Rig & motion editor** composes the layered puppet using the pinned
+Kumiki `CharacterPresenter`. Choose a named part, then drag the gray handle to
+move the whole part or the cyan joint handle to move its shoulder/hip/tail
+attachment point independently. Joint relocation compensates the part's rest
+transform to prevent the source artwork jumping in the setup pose. Numeric
+inputs remain available for precise coordinates and keyboard work.
+Adjust parent-relative X/Y position, clockwise rotation, horizontal/vertical
+scale, or part-local pivot. It does not assume
 human proportions or special limb names: squirrel muzzles, short hind legs,
 body-hugging paws, wings, tentacles and long tails all use the same fields.
 For example, increase a head's Y offset to lower it; reduce a short-legged
@@ -23,14 +28,30 @@ creature's leg `scaleY` (without collapsing it to zero); adjust each paw's X
 offset to tuck it closer to its torso; set a tail's pivot at its actual base.
 These numbers must be measured against the character art, not copied from a
 generic human template. A trimmed sprite and its replacement expressions
-still require aligned landmarks to avoid jumps.
+still require aligned landmarks to avoid jumps. **Rig** mode always shows
+the bare rest pose, even if you previously scrubbed an animation.
+
+Choose **Animate** to preview a validated imported action when one is
+available. Pause or scrub to the desired frame, then drag the purple handle
+to add a local part-offset correction, or click ±5° to adjust rotation. The
+selected influence window (6, 12, or 24 frames) is automatically smoothed by
+Kumiki's deterministic frame evaluator. Undo and Reset are available. If
+optional action metadata cannot pass Kumiki validation, the inspector safely
+previews corrections over a neutral pose and says so explicitly. The image is
+a preview: original, manually authored layers still determine silhouette,
+occlusion and mouth-shape quality.
 
 To keep saved drafts immutable, calibration **does not overwrite or repack**
 the imported ZIP. Enter a **new revision**, select **Download revised
 character.json**, replace the old `character.json` alongside the unchanged
-`layers/` files, and create a new ZIP before importing again. The panel does
-not provide a composited pose preview, confirm joint alignment, or validate
-movement quality yet; those require the pinned Kumiki character presenter.
+`layers/` files, and create a new ZIP before importing again. Pose corrections
+are separately downloadable as `character.pose-corrections.json`, referencing
+the original revision (and any newly calibrated revision). **These correction
+tracks are currently editor preview data**: the video renderer does not yet
+consume this sidecar, and saving the ZIP draft does not save edits. Retain both
+downloads if you need the work later; a future project animation API can adopt
+the tracks without changing the original character pack. Natural-speed visual
+review and exported video parity are not yet certified.
 
 Drafts are **unverified and immutable**. They are not publishing approvals,
 character registrations for rendering, lip-sync previews, voice grants or
@@ -43,11 +64,10 @@ saving. With the Vite dev server on 127.0.0.1:5173, requests are proxied to the
 local server (default 127.0.0.1:8787). If the server is unavailable, the
 browser preview still works and the UI reports that saving failed.
 
-This format deliberately follows the proposed Kumiki CharacterDefinition v1
-shape, so a later pinned renderer adapter can consume approved definitions
-without guessing missing body parts. Kumiki's current Character2D work is
-tracked separately; this inspector does **structural checks**, not a substitute
-for the eventual runtime validator.
+This format follows Kumiki CharacterDefinition v1 and uses its pinned
+presenter for preview. The ZIP importer performs structural checks; optional
+animation playback has an additional Kumiki validation gate. Neither is an
+artwork-rights approval or final-render certification.
 
 ## Folder layout
 

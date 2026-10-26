@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { Download, Layers3, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Download, Layers3, RotateCcw, SlidersHorizontal, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
+import type { CharacterPoseCorrectionTracks } from "@/components/character/definition";
 import type { CharacterPackDefinition } from "./character-pack";
 import { calibrateRigDefinition, initialRigPlacements } from "./rig-calibration";
-import type { RigPlacementInput } from "./rig-calibration";
+import type { RigPlacementInput, RigPlacementInputs } from "./rig-calibration";
 import type { Locale } from "@/features/registry";
+import { CharacterRigCanvas } from "./CharacterRigCanvas";
 
 const fields = [
   { field: "x", en: "X offset", ja: "X 位置", step: "1" },
@@ -28,7 +30,7 @@ const checkerStyle = {
   backgroundSize: "18px 18px", backgroundPosition: "0 0,9px 9px",
 };
 
-/** Static manifest calibration only. Playback stays with the pinned Kumiki renderer. */
+/** Consumer authoring controls; the vendored Kumiki presenter/evaluator owns posing and rendering. */
 export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
   definition: CharacterPackDefinition; locale: Locale; spriteUrls?: ReadonlyMap<string, string>;
 }) {
@@ -37,6 +39,8 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
   const [placements, setPlacements] = useState(() => initialRigPlacements(definition));
   const [revision, setRevision] = useState("");
   const [downloadError, setDownloadError] = useState("");
+  const [corrections, setCorrections] = useState<CharacterPoseCorrectionTracks>({});
+  const [undo, setUndo] = useState<Array<{ placements: RigPlacementInputs; corrections: CharacterPoseCorrectionTracks; revision: string }>>([]);
   const selectedPart = definition.parts.find(part => part.id === selectedId);
   const selectedAsset = selectedPart && definition.assets[selectedPart.asset];
   const selectedImage = selectedAsset ? spriteUrls?.get(selectedAsset.uri) : undefined;
@@ -47,28 +51,47 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
     const original = initial[part.id]?.[field] ?? "";
     return next !== original && (!next.trim() || !Number.isFinite(Number(next)) || Number(next) !== Number(original));
   })).map(part => part.id));
+  const correctedCount = Object.values(corrections).filter(keys => keys.length).length;
 
   let candidate: CharacterPackDefinition | null = null;
   let reason = "";
   try { candidate = calibrateRigDefinition(definition, placements, revision); }
   catch (error) { reason = error instanceof Error ? error.message : "Invalid placement settings."; }
 
+  const remember = () => setUndo(current => [...current.slice(-19), {
+    placements: structuredClone(placements), corrections: structuredClone(corrections), revision,
+  }]);
+  const updateParts = (id: string, changes: Partial<RigPlacementInput>) => {
+    setDownloadError("");
+    setPlacements(current => ({ ...current, [id]: { ...current[id], ...changes } }));
+  };
   const edit = (field: keyof RigPlacementInput, value: string) => {
+    remember();
     setDownloadError("");
     setPlacements(current => ({ ...current, [selectedId]: { ...current[selectedId], [field]: value } }));
   };
   const reset = () => {
+    remember();
     setPlacements(initialRigPlacements(definition));
+    setCorrections({});
     setRevision("");
     setDownloadError("");
   };
-  const downloadManifest = () => {
-    if (!candidate) return;
+  const undoLast = () => {
+    const previous = undo.at(-1);
+    if (!previous) return;
+    setPlacements(previous.placements);
+    setCorrections(previous.corrections);
+    setRevision(previous.revision);
+    setUndo(current => current.slice(0, -1));
+    setDownloadError("");
+  };
+  const downloadJson = (name: string, payload: unknown) => {
     let url = "";
     try {
-      url = URL.createObjectURL(new Blob([JSON.stringify(candidate, null, 2) + "\n"], { type: "application/json" }));
+      url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2) + "\n"], { type: "application/json" }));
       const link = document.createElement("a");
-      link.download = "character.json";
+      link.download = name;
       link.href = url;
       document.body.append(link);
       link.click();
@@ -77,8 +100,12 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
       setDownloadError("");
     } catch (error) {
       if (url) URL.revokeObjectURL(url);
-      setDownloadError(error instanceof Error ? error.message : "Manifest download failed.");
+      setDownloadError(error instanceof Error ? error.message : "JSON download failed.");
     }
+  };
+  const downloadManifest = () => {
+    if (!candidate) return;
+    downloadJson("character.json", candidate);
   };
 
   return <Surface variant="outline" aria-label="Rig placement calibration">
@@ -86,14 +113,17 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <p className="mb-1 text-[11px] font-semibold uppercase tracking-[.15em] text-primary">{ja ? "ステップ 2 · 配置を調整" : "STEP 2 · CALIBRATE"}</p>
-        <h3 className="flex items-center gap-2 font-serif text-xl font-semibold text-foreground"><SlidersHorizontal aria-hidden className="size-5 text-primary" />{ja ? "体格と関節の配置" : "Anatomy & joint placement"}</h3>
+        <h3 className="flex items-center gap-2 font-serif text-xl font-semibold text-foreground"><SlidersHorizontal aria-hidden className="size-5 text-primary" />{ja ? "リグと動きの調整" : "Rig & motion editor"}</h3>
         <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground">{ja
           ? "パーツを選び、動物の体格に合わせて位置や関節を調整します。人型の骨格は前提としません。"
-          : "Choose a part, then fit its proportions to your character—not a human skeleton."}</p>
+          : "Drag any body part or joint—even an animal shoulder or tail root. Pause and correct an animation frame with smoothed transitions."}</p>
       </div>
-      <span className="rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium tabular-nums text-muted-foreground" role="status">
-        {ja ? `${adjustedIds.size} パーツを変更` : `${adjustedIds.size} ${adjustedIds.size === 1 ? "part" : "parts"} adjusted`}
-      </span>
+      <div className="flex items-center gap-2">
+        <span className="rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium tabular-nums text-muted-foreground" role="status">
+          {ja ? `${adjustedIds.size} 配置変更 · ${correctedCount} 動作補正` : `${adjustedIds.size} placed · ${correctedCount} corrected`}
+        </span>
+        <Button size="sm" variant="outline" icon={<Undo2 className="size-4" />} onClick={undoLast} disabled={!undo.length}>{ja ? "元に戻す" : "Undo"}</Button>
+      </div>
     </div>
     <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(12rem,14.5rem)_minmax(0,1fr)]">
       <div className="min-w-0 rounded-xl border border-border bg-surface-subtle/60 p-2">
@@ -119,6 +149,9 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
         </div>
       </div>
       <div className="min-w-0 space-y-4">
+        <CharacterRigCanvas definition={definition} locale={locale} selectedId={selectedId} onSelectPart={setSelectedId}
+          placements={placements} spriteUrls={spriteUrls} corrections={corrections} onCorrections={setCorrections}
+          onPlace={updateParts} onGestureStart={remember} />
         <div className="flex min-w-0 flex-wrap items-center gap-4 rounded-xl border border-border bg-surface-subtle/50 p-3">
           <div className="grid size-28 shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60 bg-surface sm:size-32" style={checkerStyle}>
             {selectedImage && selectedPart ? <img src={selectedImage} alt={`${selectedPart.id} artwork (not composited)`} className="max-h-full max-w-full object-contain" /> : <Layers3 aria-hidden className="size-8 text-muted-foreground" />}
@@ -148,8 +181,8 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
       </div>
     </div>
     <p className="text-xs leading-relaxed text-muted-foreground">{ja
-      ? "X は右、Y は下に移動します。編集内容は自動保存されず、アニメーションのプレビューはまだありません。"
-      : "X moves right; Y moves down. Edits are not autosaved, and there is no live animation preview yet."}</p>
+      ? "X は右、Y は下へ移動。オリジナルZIPは変更されません。アニメーションの補正はプレビュー用で、動画書き出しにはまだ反映されません。"
+      : "X moves right; Y moves down. Original ZIP stays intact. Pose corrections preview here but are not yet connected to final video rendering."}</p>
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-surface-subtle/40 p-4">
       <div className="w-full sm:flex-1">
         <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-primary">{ja ? "ステップ 3 · 書き出し" : "STEP 3 · EXPORT"}</p>
@@ -165,7 +198,12 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
       <Button size="sm" icon={<Download className="size-4" />} onClick={downloadManifest} disabled={!candidate}>
         {ja ? "更新した character.json を保存" : "Download revised character.json"}
       </Button>
-      <Button size="sm" variant="outline" icon={<RotateCcw className="size-4" />} onClick={reset} disabled={adjustedIds.size === 0 && !revision}>
+      <Button size="sm" variant="outline" icon={<Download className="size-4" />} disabled={!correctedCount}
+        onClick={() => downloadJson("character.pose-corrections.json", {
+          schemaVersion: 1, kind: "character-pose-corrections", characterId: definition.characterId,
+          sourceRevision: definition.revision, calibratedRevision: candidate?.revision ?? null, frameRate: 30, tracks: corrections,
+        })}>{ja ? "ポーズ補正を保存" : "Download pose corrections"}</Button>
+      <Button size="sm" variant="outline" icon={<RotateCcw className="size-4" />} onClick={reset} disabled={adjustedIds.size === 0 && !revision && !correctedCount}>
         {ja ? "配置をリセット" : "Reset placement edits"}
       </Button>
     </div>
