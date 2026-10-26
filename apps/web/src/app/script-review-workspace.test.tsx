@@ -106,7 +106,7 @@ describe("AI-first script review UI", () => {
     render(<ScriptReviewWorkspace {...base} />);
     fireEvent.click(screen.getByRole("button", {name: "Regenerate full script"}));
     expect(calls).toBe(0);
-    fireEvent.click(screen.getByRole("button", {name: "Generate five suggestions"}));
+    fireEvent.click(screen.getByRole("button", {name: "Generate 5 suggestions"}));
     await waitFor(() => expect(loadScriptDraft(base.productionId, "youtube").draft?.pending?.closing).toBeTruthy());
     const after = loadScriptDraft(base.productionId, "youtube").draft!;
     expect(calls).toBe(5);
@@ -185,7 +185,7 @@ describe("AI-first script review UI", () => {
     }));
     render(<ScriptReviewWorkspace {...base}/>);
     fireEvent.click(screen.getByRole("button",{name:"Regenerate full script"}));
-    fireEvent.click(screen.getByRole("button",{name:"Generate five suggestions"}));
+    fireEvent.click(screen.getByRole("button",{name:"Generate 5 suggestions"}));
     await waitFor(()=>expect(loadScriptDraft(base.productionId,"youtube").draft?.pending.closing).toBeTruthy());
     expect(requests).toHaveLength(5);
     const last=requests[4].scriptSections as {sectionId:string;text:string}[];
@@ -196,7 +196,7 @@ describe("AI-first script review UI", () => {
     expect(last[4].text).toBe(before.sections[4].text);
     expect(loadScriptDraft(base.productionId,"youtube").draft?.sections).toEqual(before.sections);
     fireEvent.click(screen.getByRole("button",{name:"Regenerate full script"}));
-    fireEvent.click(screen.getByRole("button",{name:"Generate five suggestions"}));
+    fireEvent.click(screen.getByRole("button",{name:"Generate 5 suggestions"}));
     await waitFor(()=>expect(requests).toHaveLength(10));
     expect(requests[5].rejectedTexts).toContain("The proposed hook uses a distinct explanation of the same captured evidence.");
   });
@@ -222,7 +222,8 @@ describe("AI-first script review UI", () => {
     saved();
     let release:(value:Response)=>void=()=>{};
     const pending=new Promise<Response>(resolve=>{release=resolve;});
-    const fetcher=vi.fn(()=>pending);vi.stubGlobal("fetch",fetcher);
+    let requestSignal:AbortSignal|undefined;
+    const fetcher=vi.fn((_url:string,init:RequestInit)=>{requestSignal=init.signal??undefined;return pending;});vi.stubGlobal("fetch",fetcher);
     render(<ScriptReviewWorkspace {...base}/>);
     fireEvent.click(screen.getAllByRole("button",{name:/Regenerate section/i})[4]);
     fireEvent.click(screen.getByRole("button",{name:"Generate section candidate"}));
@@ -232,7 +233,8 @@ describe("AI-first script review UI", () => {
     fireEvent.click(screen.getByRole("button",{name:"Save section edit"}));
     release(Response.json({narration:"This closing belongs to an outdated version of the script and must be discarded.",
       claimRefs:["cost"],sourceRefs:["insurance-study"]}));
-    await waitFor(()=>expect(screen.getByRole("alert")).toHaveTextContent("Another script section changed"));
+    expect(requestSignal?.aborted).toBe(true);
+    await waitFor(()=>expect(screen.queryByText("Writing one section at a time with your configured local script model…")).toBeNull());
     const current=loadScriptDraft(base.productionId,"youtube").draft!;
     expect(current.pending.closing).toBeUndefined();
     expect(current.sections[0].text).toContain("author changed");
@@ -243,7 +245,7 @@ describe("AI-first script review UI", () => {
     const fetcher=vi.fn(async()=>new Response(JSON.stringify({error:"Continuity repair failed."}),{status:422}));
     vi.stubGlobal("fetch",fetcher);render(<ScriptReviewWorkspace {...base}/>);
     fireEvent.click(screen.getByRole("button",{name:"Regenerate full script"}));
-    fireEvent.click(screen.getByRole("button",{name:"Generate five suggestions"}));
+    fireEvent.click(screen.getByRole("button",{name:"Generate 5 suggestions"}));
     await waitFor(()=>expect(screen.getByRole("alert")).toHaveTextContent("Continuity repair failed"));
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(loadScriptDraft(base.productionId,"youtube").draft?.sections).toEqual(before.sections);
@@ -251,3 +253,64 @@ describe("AI-first script review UI", () => {
 
 });
 
+
+describe("flexible script editing",()=>{
+  afterEach(()=>{localStorage.clear();vi.unstubAllGlobals();});
+  it("inserts a FileQuell promotion after the closing and a blank section before the hook without altering accepted text",async()=>{
+    const before=saved(),onDraftChange=vi.fn();
+    const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);
+    render(<ScriptReviewWorkspace {...base} onDraftChange={onDraftChange} />);
+    fireEvent.click(screen.getByRole("button",{name:"Add section after Answer and takeaway"}));
+    fireEvent.change(screen.getByLabelText("Section heading"),{target:{value:"FileQuell for accountants"}});
+    fireEvent.change(screen.getByLabelText("Section role"),{target:{value:"promotion"}});
+    fireEvent.change(screen.getByLabelText("Narration (optional)"),{target:{value:"Consider where FileQuell could fit into your accounting workflow, and review its capabilities with your team."}});
+    fireEvent.click(screen.getByRole("button",{name:"Add section"}));
+    await waitFor(()=>expect(screen.getByText("6/6 sections")).toBeTruthy());
+    const after=loadScriptDraft(base.productionId,"youtube").draft!;
+    expect(after.sections.slice(0,5)).toEqual(before.sections);
+    expect(after.sections[5]).toMatchObject({heading:"FileQuell for accountants",role:"promotion",sourceRefs:[],revision:1});
+    expect(onDraftChange).toHaveBeenCalledWith(expect.objectContaining({status:"draft"}));
+    fireEvent.click(screen.getByRole("button",{name:"Add section before Opening hook"}));
+    fireEvent.change(screen.getByLabelText("Section heading"),{target:{value:"A brief introduction"}});
+    fireEvent.click(screen.getByRole("button",{name:"Add section"}));
+    await waitFor(()=>expect(screen.getByText("6/7 sections")).toBeTruthy());
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.sections[1]).toEqual(before.sections[0]);
+    fireEvent.click(screen.getByRole("button",{name:"Edit section A brief introduction"}));
+    fireEvent.change(screen.getByLabelText("Edit A brief introduction"),{target:{value:"Here is the introduction I wrote myself."}});
+    fireEvent.click(screen.getByRole("button",{name:"Save section edit"}));
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.sections[0].text).toContain("wrote myself");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+  it("previews and imports six numbered sections with recovery and platform isolation",async()=>{
+    const before=saved(),other=saved("tiktok");
+    render(<ScriptReviewWorkspace {...base} />);
+    fireEvent.click(screen.getByRole("button",{name:"Import full script"}));
+    fireEvent.change(screen.getByLabelText("Script to import"),{target:{value:Array.from({length:6},(_,i)=>`[${i+1}] Narration for section ${i+1}.\nAnother paragraph with my own wording.`).join("\n\n")}});
+    fireEvent.click(screen.getByRole("button",{name:"Preview import"}));
+    expect(screen.getByText("6 sections ready to import")).toBeTruthy();
+    expect(loadScriptDraft(base.productionId,"youtube").draft).toEqual(before);
+    fireEvent.click(screen.getByRole("button",{name:"Replace current script"}));
+    await waitFor(()=>expect(screen.getByText("6/6 sections")).toBeTruthy());
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.sections).toHaveLength(6);
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.sections[0]).toMatchObject({text:"Narration for section 1.\nAnother paragraph with my own wording.",sourceRefs:[],history:[expect.objectContaining({origin:"manual"})]});
+    expect(loadScriptDraft(base.productionId,"tiktok").draft).toEqual(other);
+    fireEvent.click(screen.getByRole("button",{name:"Restore previous script"}));
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.sections).toEqual(before.sections);
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.status).toBe("draft");
+  });
+  it("keeps the active script when import is invalid or cancelled, and links captured evidence on manual edits",async()=>{
+    const before=saved();render(<ScriptReviewWorkspace {...base} />);
+    fireEvent.click(screen.getByRole("button",{name:"Import full script"}));
+    fireEvent.change(screen.getByLabelText("Script to import"),{target:{value:"[1] Opening\n[3] Skipped a section"}});
+    fireEvent.click(screen.getByRole("button",{name:"Preview import"}));
+    expect(screen.getByRole("alert").textContent).toContain("consecutive");
+    expect(screen.queryByRole("button",{name:"Replace current script"})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Cancel import"}));
+    await waitFor(()=>expect(screen.queryByRole("dialog")).toBeNull());
+    expect(loadScriptDraft(base.productionId,"youtube").draft).toEqual(before);
+    fireEvent.click(screen.getByRole("button",{name:"Edit section Opening hook"}));
+    fireEvent.click(screen.getByRole("checkbox",{name:/Repairs can affect insurance/}));
+    fireEvent.click(screen.getByRole("button",{name:"Save section edit"}));
+    expect(loadScriptDraft(base.productionId,"youtube").draft!.sections[0]).toMatchObject({claimRefs:[],sourceRefs:[],revision:2,text:before.sections[0].text});
+  });
+});

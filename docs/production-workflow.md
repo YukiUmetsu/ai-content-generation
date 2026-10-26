@@ -21,13 +21,45 @@ The Script editor generates missing YouTube sections sequentially through the ex
 
 Script response parsing projects only `narration`, `claimRefs` and `sourceRefs`: harmless echoed metadata is discarded, and a JSON code fence surrounding the entire answer is accepted. Format failures receive one corrective retry with a field-specific contract hint instead of replaying the same prompt. Missing assistant answers and token-truncated output are distinguished from invalid fields; reasoning content is never used as narration. The server logs `[contentgen-script-format]` with the section, attempt, fixed failure codes and structural field types/counts only, without prompts, citations, unknown field names or generated prose. HTTP, cancellation and grounding failures do not trigger format repair.
 
-Each section request now carries the complete ordered five-section outline and existing section text (up to 6,500 characters per section), with explicit non-overlapping narrative roles and transition instructions. Full regeneration feeds earlier proposed rewrites into later requests, preserving accepted text until review, and stops if a section fails. A response based on text edited while inference was running is discarded. Regeneration also avoids a bounded list of the last two discarded or currently pending candidates, including the suggestion being replaced during repeated full regeneration. Discard history resets when the editor is closed.
+Each section request now carries the complete ordered script outline (1–20 sections) and existing section text (up to 6,500 characters per section), with explicit non-overlapping narrative roles and transition instructions. Full regeneration feeds earlier proposed rewrites into later requests, preserving accepted text until review, and stops if a section fails. A response based on text edited while inference was running is discarded. Regeneration also avoids a bounded list of the last two discarded or currently pending candidates, including the suggestion being replaced during repeated full regeneration. Discard history resets when the editor is closed.
 
 Normalized identical text and conservative whole-passage near-copies trigger one continuity-specific repair instead of becoming an accepted section or suggestion. The guard supports text without spaces, including Japanese. This detects obvious copying, not semantic equivalence or overall writing quality; distinct prose and brief callbacks still require editorial review. Thinking settings are unchanged by this continuity fix.
 
 Scripts must contain known linked claim/source references before accepting model output. Long project notes and production directions use compatible frontend/backend limits. A script approval creates an editable outline; it does not approve publication. The same captured quotations are available for explicit, reversible Storyboard claim-review receipts, even when no legacy research plan exists.
 
-Blog output uses the same five source-linked sections with a longer editorial-writing target (about 2,500–3,000 useful English words in total when the evidence supports it). The model is instructed to write less if sources are insufficient, rather than adding filler or invented facts. The editor shows word count and approximate reading time.
+## Add sections and import a complete script
+
+Each script section has **Add before** and **Add after** controls. Supply a heading, role and purpose, then paste narration or leave it blank to write/generate later. Choose **Promotion / call to action** to append a FileQuell message after the main answer. Product features still need captured evidence; adding a product name does not supply facts. Existing section IDs and accepted revision histories stay intact. Structural edits reset approval and clear pending AI suggestions. Opening manual editing, insertion or import pauses and cancels active AI writing; use the missing-section writing controls to resume.
+
+**Import full script** accepts pasted text or a `.txt`/`.json` file. Preview the ordered narration, then choose **Replace current script**. Preview and cancel do not modify saved text. Replacement affects only the selected platform and saves one recovery copy, including its accepted history. **Restore previous script** swaps back the previous copy as a draft requiring renewed review. A failed save keeps the active script and restores the prior recovery copy. These copies remain in this browser's local storage.
+
+Numbered text uses consecutive markers starting at `[1]`, each at the start of a line. Narration can begin beside the marker or on the following line; paragraph breaks remain intact:
+
+```text
+[1] Opening narration goes here.
+More narration for the same section.
+
+[2]
+The next section goes here.
+```
+
+JSON accepts a top-level array or `{"sections":[...]}`. Each section requires `text` (or `narration`); optional fields are `heading`, `purpose`, `role`, `claimRefs` and `sourceRefs`. Omitted headings become “Section N”; omitted roles become `custom`. Available roles: `hook`, `context`, `mechanism`, `practical`, `closing`, `custom`, `promotion`. Example:
+
+```json
+{
+  "sections": [
+    {"heading": "Opening", "role": "hook", "text": "Your opening narration."},
+    {"heading": "The workflow", "text": "Your explanation."},
+    {"heading": "FileQuell", "role": "promotion", "text": "Your reviewed product message and call to action."}
+  ]
+}
+```
+
+Imports support 1–20 nonempty sections, at most 6,500 characters per section and 512 KB per input. Duplicate/skipped numbers, unsupported fields, empty narration and unknown or mismatched citation IDs are rejected. Ownership, approval and other production metadata cannot be imported. Edit a section to select supporting captured evidence. Imported narration is manual text: it is not rewritten by AI, and uncited passages remain unverified in Storyboard and Director.
+
+Director still requires real captured research context and 3–40 renderable shots. One- or two-section outlines are divided at speech boundaries into at least three shots before the main answer, preserving the narration. Insufficient narration receives an actionable error; no filler is generated. Explicit summary postscripts may follow the actual answer and its teaching payoff. Research context alone never becomes a citation for uncited narration, and draft authoring does not clear publication review.
+
+Blog output defaults to five source-linked sections with a longer editorial-writing target (about 2,500–3,000 useful English words in total when the evidence supports it). The model is instructed to write less if sources are insufficient, rather than adding filler or invented facts. The editor shows word count and approximate reading time.
 
 ## Render identity and supported outputs
 

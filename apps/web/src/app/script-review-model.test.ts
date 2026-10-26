@@ -111,3 +111,25 @@ describe("AI-first script revision model", () => {
   });
 });
 
+
+describe("flexible script sections",()=>{
+  it("inserts a promotion after the closing without changing existing IDs, words or history",async()=>{
+    const {insertScriptSection}=await import("./script-review-model");
+    const original=approveScriptDraft(filled(),timestamp);
+    const next=insertScriptSection(original,"closing","after",{heading:"FileQuell for accountants",role:"promotion",
+      purpose:"Connect reviewed FileQuell features to an accountant's file preparation workflow.",text:"Review FileQuell to see whether its local file tools fit your accounting workflow."},timestamp);
+    expect(next.sections).toHaveLength(6);
+    expect(next.sections.slice(0,5)).toEqual(original.sections);
+    expect(next.sections[5]).toMatchObject({heading:"FileQuell for accountants",role:"promotion",revision:1,claimRefs:[],sourceRefs:[]});
+    expect(next.status).toBe("draft");expect(next.approvedAt).toBeNull();
+    expect(validateScriptDraft(next)).toEqual(next);
+    const first=insertScriptSection(next,"hook","before",{heading:"Preface",purpose:"Introduce the context before the opening question.",text:"",role:"custom"},timestamp);
+    expect(first.sections[0].heading).toBe("Preface");
+    expect(first.sections[1].id).toBe("hook");
+  });
+  it("rejects duplicate or prototype-key section IDs in saved drafts",()=>{
+    const original=filled();
+    expect(()=>validateScriptDraft({...original,sections:[...original.sections,original.sections[0]]})).toThrow(/duplicate/i);
+    expect(()=>validateScriptDraft({...original,sections:[{...original.sections[0],id:"constructor"},...original.sections.slice(1)]})).toThrow(/identity|identifier/i);
+  });
+});

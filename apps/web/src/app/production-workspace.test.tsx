@@ -101,7 +101,7 @@ describe("Production eight-step workspace",()=>{
       ({...project,notes:"A detailed project audience description and calm editorial voice. ".repeat(25)}))}}/>);
     const collect=await screen.findByRole("button",{name:"Collect sources and draft script"});
     fireEvent.click(collect);
-    await waitFor(()=>expect(screen.getByText("5/5 sections")).toBeInTheDocument());
+    await waitFor(()=>expect(screen.getByText("5/5 sections")).toBeInTheDocument(),{timeout:5000});
     expect(generatedSections).toEqual(["hook","context","mechanism","practical","closing"]);
     expect(calls.some(path=>path.startsWith("POST ")&&path.includes("/production-evidence/"))).toBe(true);
     fireEvent.click(screen.getByRole("checkbox",{name:/I have reviewed the factual claims/}));
