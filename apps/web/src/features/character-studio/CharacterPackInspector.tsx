@@ -49,8 +49,11 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
     return () => { active = false; };
   }, [projectId]);
 
-  async function presentBytes(bytes: ArrayBuffer, name: string, requestId: number) {
+  async function presentBytes(bytes: ArrayBuffer, name: string, requestId: number, savedDraft?: CharacterDraft) {
     const result = await inspectCharacterZip(bytes);
+    if (savedDraft && (result.definition.characterId !== savedDraft.characterId || result.definition.revision !== savedDraft.revision)) {
+      throw Error("The saved ZIP manifest does not match its recorded character ID or revision.");
+    }
     if (generation.current !== requestId) return;
     const nextUrls = new Map<string, string>();
     try {
@@ -100,7 +103,7 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
     const requestId = startRead(`${draft.characterId} · rev ${draft.revision}`);
     try {
       const bytes = await loadCharacterDraft(projectId, draft);
-      await presentBytes(bytes, `${draft.characterId} · rev ${draft.revision}`, requestId);
+      await presentBytes(bytes, `${draft.characterId} · rev ${draft.revision}`, requestId, draft);
       if (generation.current === requestId) setLastSaved(draft.id);
     } catch (caught) {
       if (generation.current !== requestId) return;

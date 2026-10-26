@@ -111,4 +111,19 @@ describe("CharacterPackInspector", () => {
     expect(screen.getByText("Structure checked")).toBeInTheDocument();
     expect(screen.queryByText("Draft saved")).not.toBeInTheDocument();
   });
+
+  it("rejects a saved ZIP when its manifest identity differs from the recorded draft", async () => {
+    const draft = {
+      id: "character-draft-0123456789abcdef0123456789abcdef", projectId: "project-local",
+      characterId: "pip", revision: "1", archiveSha256: "b".repeat(64),
+      sizeBytes: 35, status: "unverified" as const, createdAt: "2026-10-26T12:00:00Z",
+    };
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    vi.mocked(loadCharacterDraft).mockResolvedValue(new ArrayBuffer(35));
+    vi.mocked(inspectCharacterZip).mockResolvedValue({ ...fixture, definition: { ...fixture.definition, characterId: "other-character" } });
+    render(<CharacterPackInspector locale="en" projectId="project-local" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Reopen ZIP" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("manifest does not match");
+    expect(screen.queryByText("Structure checked")).not.toBeInTheDocument();
+  });
 });
