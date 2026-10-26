@@ -267,7 +267,7 @@ function InventoryWorkspace({section,locale,catalog,save}:Props) {
         </form>
       </Surface>
     </div>
-    {key === "assets" && <CharacterPackInspector locale={locale} />}
+    {key === "assets" && <CharacterPackInspector locale={locale} projectId={catalog.activeProjectId} />}
   </>;
 }
 function InsightsWorkspace({catalog,locale}:Pick<Props,"catalog"|"locale">) {

@@ -1,57 +1,133 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { AlertCircle, CheckCircle2, FileArchive, Layers3, ShieldAlert, UploadCloud } from "lucide-react";
+import { AlertCircle, CheckCircle2, Download, FileArchive, Layers3, Save, ShieldAlert, UploadCloud } from "lucide-react";
 import { Surface } from "@/components/ui/surface-card";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CHARACTER_PACK_LIMITS, inspectCharacterZip } from "./character-pack";
 import type { InspectedCharacterPack } from "./character-pack";
+import { characterDraftArchiveUrl, listCharacterDrafts, loadCharacterDraft, saveCharacterDraft } from "./character-drafts-api";
+import type { CharacterDraft } from "./character-drafts-api";
 import type { Locale } from "@/features/registry";
 
-export function CharacterPackInspector({ locale }: { locale: Locale }) {
+export function CharacterPackInspector({ locale, projectId }: { locale: Locale; projectId: string }) {
   const ja = locale === "ja";
   const [status, setStatus] = useState<"idle" | "reading" | "ready" | "error">("idle");
   const [preview, setPreview] = useState<{ pack: InspectedCharacterPack; urls: Map<string, string> } | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [drafts, setDrafts] = useState<CharacterDraft[]>([]);
+  const [draftsError, setDraftsError] = useState("");
+  const [loadedProjectId, setLoadedProjectId] = useState("");
+  const [lastSaved, setLastSaved] = useState("");
+  const bytesRef = useRef<ArrayBuffer | null>(null);
   const urlsRef = useRef(new Map<string, string>());
   const generation = useRef(0);
+  const draftsRun = useRef(0);
+  const savingRef = useRef(false);
   const pack = preview?.pack;
   const urls = preview?.urls;
+  const draftsLoading = loadedProjectId !== projectId;
 
   useEffect(() => () => {
     generation.current++;
     for (const url of urlsRef.current.values()) URL.revokeObjectURL(url);
   }, []);
 
+  useEffect(() => {
+    const run = ++draftsRun.current;
+    let active = true;
+    void listCharacterDrafts(projectId).then(list => {
+      if (!active || draftsRun.current !== run) return;
+      setDrafts(list);
+      setDraftsError("");
+    }).catch(caught => {
+      if (!active || draftsRun.current !== run) return;
+      setDraftsError(caught instanceof Error ? caught.message : "Could not load drafts.");
+    }).finally(() => { if (active && draftsRun.current === run) setLoadedProjectId(projectId); });
+    return () => { active = false; };
+  }, [projectId]);
+
+  async function presentBytes(bytes: ArrayBuffer, name: string, requestId: number) {
+    const result = await inspectCharacterZip(bytes);
+    if (generation.current !== requestId) return;
+    const nextUrls = new Map<string, string>();
+    try {
+      for (const [path, blob] of result.images) nextUrls.set(path, URL.createObjectURL(blob));
+    } catch (failure) {
+      for (const url of nextUrls.values()) URL.revokeObjectURL(url);
+      throw failure;
+    }
+    urlsRef.current = nextUrls;
+    bytesRef.current = bytes;
+    setFileName(name);
+    setPreview({ pack: result, urls: nextUrls });
+    setStatus("ready");
+  }
+
+  function startRead(name: string): number {
+    const requestId = ++generation.current;
+    for (const url of urlsRef.current.values()) URL.revokeObjectURL(url);
+    urlsRef.current = new Map();
+    bytesRef.current = null;
+    setPreview(null);
+    setFileName(name);
+    setError("");
+    setSaveError("");
+    setLastSaved("");
+    setStatus("reading");
+    return requestId;
+  }
+
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.currentTarget.files?.[0];
     event.currentTarget.value = "";
     if (!file) return;
-    const requestId = ++generation.current;
-    for (const url of urlsRef.current.values()) URL.revokeObjectURL(url);
-    urlsRef.current = new Map();
-    setPreview(null);
-    setFileName(file.name);
-    setError("");
-    setStatus("reading");
+    const requestId = startRead(file.name);
     try {
       if (!file.name.toLowerCase().endsWith(".zip")) throw Error("Select a .zip character package.");
       if (file.size > CHARACTER_PACK_LIMITS.compressedBytes) throw Error("Character ZIP must be 16 MB or smaller.");
-      const result = await inspectCharacterZip(await file.arrayBuffer());
-      if (generation.current !== requestId) return;
-      const nextUrls = new Map<string, string>();
-      try {
-        for (const [path, blob] of result.images) nextUrls.set(path, URL.createObjectURL(blob));
-      } catch (failure) {
-        for (const url of nextUrls.values()) URL.revokeObjectURL(url);
-        throw failure;
-      }
-      urlsRef.current = nextUrls;
-      setPreview({ pack: result, urls: nextUrls });
-      setStatus("ready");
+      await presentBytes(await file.arrayBuffer(), file.name, requestId);
     } catch (caught) {
       if (generation.current !== requestId) return;
       setError(caught instanceof Error ? caught.message : "Could not inspect the ZIP file.");
       setStatus("error");
+    }
+  };
+
+  const reopen = async (draft: CharacterDraft) => {
+    const requestId = startRead(`${draft.characterId} · rev ${draft.revision}`);
+    try {
+      const bytes = await loadCharacterDraft(projectId, draft);
+      await presentBytes(bytes, `${draft.characterId} · rev ${draft.revision}`, requestId);
+      if (generation.current === requestId) setLastSaved(draft.id);
+    } catch (caught) {
+      if (generation.current !== requestId) return;
+      setError(caught instanceof Error ? caught.message : "Could not reopen the saved ZIP.");
+      setStatus("error");
+    }
+  };
+
+  const save = async () => {
+    if (savingRef.current || !pack || !bytesRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError("");
+    const requestId = generation.current;
+    try {
+      const draft = await saveCharacterDraft(projectId, pack.definition.characterId, pack.definition.revision, bytesRef.current);
+      if (generation.current !== requestId) return;
+      draftsRun.current++;
+      setLoadedProjectId(projectId);
+      setLastSaved(draft.id);
+      setDrafts(current => [draft, ...current.filter(entry => entry.id !== draft.id)]);
+      setDraftsError("");
+    } catch (caught) {
+      if (generation.current === requestId) setSaveError(caught instanceof Error ? caught.message : "Could not save the draft.");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -61,10 +137,10 @@ export function CharacterPackInspector({ locale }: { locale: Locale }) {
         <p className="text-xs font-semibold uppercase tracking-[.16em] text-muted-foreground">CHARACTER STUDIO · 01</p>
         <h2 className="mt-1 font-serif text-xl font-semibold text-foreground">{ja ? "キャラクターパックを確認" : "Inspect a character pack"}</h2>
         <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">{ja
-          ? "透過レイヤーを含むZIPの構造を確認します。ファイルはブラウザー内にとどまり、保存やアップロードは行いません。"
-          : "Check a layered sprite ZIP before you rig or register a character. Files stay in your browser; nothing is uploaded or saved."}</p>
+          ? "透過レイヤーZIPをブラウザーで検査し、任意でローカルContentGenサーバーに下書きとして保存できます。"
+          : "Inspect a layered sprite ZIP in your browser, then optionally save an unverified draft to your local ContentGen server."}</p>
       </div>
-      <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground"><ShieldAlert aria-hidden className="size-4" />{ja ? "プレビューのみ" : "Local preview only"}</span>
+      <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground"><ShieldAlert aria-hidden className="size-4" />{ja ? "未承認の下書き" : "Unverified drafts"}</span>
     </div>
     <Surface variant="outline" className="overflow-hidden p-5">
       <label className="group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-surface-subtle/50 px-5 py-10 text-center transition-colors hover:border-primary/50 hover:bg-surface-subtle focus-within:ring-2 focus-within:ring-ring">
@@ -92,6 +168,12 @@ export function CharacterPackInspector({ locale }: { locale: Locale }) {
           </div>
           <span className="rounded-full border border-success/30 bg-success/10 px-3 py-1 text-xs font-medium text-success">{ja ? "構造チェック完了" : "Structure checked"}</span>
         </div>
+        <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+          <Button size="sm" icon={<Save className="size-4" />} isLoading={saving} disabled={!!lastSaved}
+            onClick={() => void save()}>{lastSaved ? (ja ? "下書き保存済み" : "Draft saved") : (ja ? "下書きを保存" : "Save draft locally")}</Button>
+          <p className="text-xs text-muted-foreground">{ja ? "保存後も検証・権利承認は未完了です。" : "Saving preserves the ZIP; it does not approve the rig or rights."}</p>
+          {!!saveError && <p role="alert" className="w-full text-sm text-danger">{saveError}</p>}
+        </div>
         <div className="grid gap-3 text-sm sm:grid-cols-3">
           <div className="rounded-lg bg-surface-subtle p-3"><Layers3 aria-hidden className="mb-2 size-4 text-muted-foreground" /><p className="font-semibold tabular-nums">{pack.parts.length} parts</p><p className="text-xs text-muted-foreground">{Object.keys(pack.definition.assets).length} image assets</p></div>
           <div className="rounded-lg bg-surface-subtle p-3"><FileArchive aria-hidden className="mb-2 size-4 text-muted-foreground" /><p className="font-semibold tabular-nums">{pack.definition.design.width} × {pack.definition.design.height}</p><p className="text-xs text-muted-foreground">{ja ? "デザイン画面" : "Design canvas"}</p></div>
@@ -99,7 +181,7 @@ export function CharacterPackInspector({ locale }: { locale: Locale }) {
         </div>
         <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-foreground">
           {ja ? "構造・画像の確認のみです。アニメーション、音声、Kumikiレンダリングの検証やキャラクター登録は未実装です。" :
-            "Structural check only. This does not validate motion, voices, Kumiki rendering or rights, and it does not register a character yet."}
+            "Structural check only. Motion, voices, Kumiki rendering and rights are not approved. Saved drafts cannot be used for publishing yet."}
         </div>
       </Surface>
       <Surface variant="outline" className="p-5">
@@ -119,6 +201,31 @@ export function CharacterPackInspector({ locale }: { locale: Locale }) {
         </ul>
       </Surface>
     </div>}
+
+    <Surface variant="outline" className="p-5" aria-label={ja ? "保存したキャラクター" : "Saved character drafts"}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-semibold text-foreground">{ja ? "このプロジェクトの下書き" : "Saved drafts for this project"}</h3>
+        <span className="text-xs text-muted-foreground">{drafts.length} {ja ? "件" : "saved"}</span>
+      </div>
+      {draftsLoading && <p role="status" className="text-sm text-muted-foreground">{ja ? "下書きを読み込み中…" : "Loading local drafts…"}</p>}
+      {!draftsLoading && !!draftsError && <p role="alert" className="mb-3 text-sm text-danger">{draftsError}</p>}
+      {!draftsLoading && !draftsError && drafts.length === 0 && <p className="text-sm text-muted-foreground">{ja ? "まだ保存した下書きはありません。" : "No saved drafts yet. Import a ZIP and select Save draft locally."}</p>}
+      {!draftsLoading && drafts.length > 0 && <ul className="space-y-2">
+        {drafts.map(draft => <li key={draft.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-subtle/50 px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-foreground" title={draft.characterId}>{draft.characterId} <span className="text-xs font-normal text-muted-foreground">rev {draft.revision}</span></p>
+            <p className="mt-1 text-xs text-muted-foreground">{ja ? "未検証" : "Unverified"} · {(draft.sizeBytes / 1024).toFixed(0)} KiB · {new Date(draft.createdAt).toLocaleDateString(locale === "ja" ? "ja-JP" : "en-US")}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => void reopen(draft)}>{ja ? "再確認" : "Reopen ZIP"}</Button>
+            <a href={characterDraftArchiveUrl(projectId, draft)} download
+              className={buttonVariants({ variant: "subtle", size: "sm" })}>
+              <Download aria-hidden className="size-4" />{ja ? "ZIPを保存" : "Download ZIP"}
+            </a>
+          </div>
+        </li>)}
+      </ul>}
+    </Surface>
 
     <details className="rounded-xl border border-border bg-surface px-5 py-4 text-sm text-foreground">
       <summary className="cursor-pointer font-medium">{ja ? "ZIPの作り方と必要なファイル" : "ZIP format and rig instructions"}</summary>

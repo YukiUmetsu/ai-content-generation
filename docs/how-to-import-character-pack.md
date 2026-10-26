@@ -1,10 +1,24 @@
-# Import a 2D / 2.5D character ZIP (local inspection)
+# Import and save a 2D / 2.5D character ZIP draft
 
 **Current status:** ContentGen's Assets → Character Studio panel inspects portable
-layered character packages on the local machine. It **does not** save the ZIP,
-publish character revisions, create lip sync, approve source art, or render a
-character yet. The imported bytes and temporary sprite URLs are discarded
-when you replace the file or leave the panel.
+layered character packages in the browser. Once checked, **Save draft locally**
+stores the original ZIP in ContentGen's local Rust content-addressed artifact
+store, scoped to the current Studio project. Saved drafts appear below the
+inspector and can be reopened for another structural check or downloaded as
+the exact original ZIP after a restart.
+Saving is optional; nothing is sent to the local server until Save is selected.
+Temporary sprite URLs are discarded when the file changes or the panel closes.
+
+Drafts are **unverified and immutable**. They are not publishing approvals,
+character registrations for rendering, lip-sync previews, voice grants or
+evidence of artwork rights. Changing art or metadata requires a different
+`revision` in `character.json`. Saving the same bytes with the same project,
+character ID and revision is idempotent; conflicting bytes are rejected.
+
+Start the ContentGen Rust server (`cargo run -p contentgen-server`) before
+saving. With the Vite dev server on 127.0.0.1:5173, requests are proxied to the
+local server (default 127.0.0.1:8787). If the server is unavailable, the
+browser preview still works and the UI reports that saving failed.
 
 This format deliberately follows the proposed Kumiki CharacterDefinition v1
 shape, so a later pinned renderer adapter can consume approved definitions
@@ -95,11 +109,14 @@ the rig or art creates a new explicit `revision`.
 | ZIP encoding | Stored (method 0) or raw DEFLATE (method 8) |
 | Images | Signature-checked PNG and WebP only |
 
-The inspector rejects traversal/absolute paths, overlapping or duplicate
+The browser inspector rejects traversal/absolute paths, overlapping or duplicate
 entries, ZIP64/multipart archives, symlinks, encrypted entries, broken sizes,
 bad CRC-32 and mismatched image paths. If a `sha256` is present on an image
 asset, it verifies the hash against the unpacked bytes. It does not execute
-archive content, extract to the filesystem or upload images. Unknown rich
+archive content or extract to the filesystem. Saving uploads the original ZIP
+to the local Rust server, where it is stored inert without unpacking. The
+server validates the upload size and ZIP signature but **does not trust the
+browser's structural report** or mark the draft safe for rendering. Unknown rich
 shape/3D/vector schemas are not accepted in this first vertical slice.
 
 There is no implicit license clearance: `provenance` fields are artist claims
@@ -108,7 +125,11 @@ recordings before publishing or offering downloads.
 
 ## Next implementation stage
 
-- Content-addressed durable asset store and Rust character records/revisions.
+- Pinned Kumiki-compatible server-side package/rig validation and explicit
+  rights decisions. Only independently validated/approved revisions may render.
+- Reusable character registration and project cast links; explicit local
+  catalog cleanup/retention controls. Browser-only project IDs are preserved
+  as strings without depending on asynchronous Discovery project mirroring.
 - Rig/pose/viseme validation through an actual *pinned* Kumiki renderer API.
 - Character preview using real layer transforms, manual approval, versioned
   voice bindings and project cast linking.
