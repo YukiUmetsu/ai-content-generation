@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Download, Layers3, RotateCcw, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { CharacterPackDefinition } from "./character-pack";
@@ -17,8 +17,21 @@ const fields = [
   { field: "pivotY", en: "Pivot Y", ja: "支点 Y", step: "1" },
 ] as const satisfies ReadonlyArray<{ field: keyof RigPlacementInput; en: string; ja: string; step: string }>;
 
+const fieldGroups = [
+  { title: "Position", titleJa: "位置", hint: "Relative to parent · px", hintJa: "親パーツからの位置 · px", names: ["x", "y"] },
+  { title: "Rotation & size", titleJa: "回転とサイズ", hint: "Clockwise · relative scale", hintJa: "時計回り · 倍率", names: ["rotation", "scaleX", "scaleY"] },
+  { title: "Joint anchor", titleJa: "関節の支点", hint: "Source artwork · px", hintJa: "元画像内の座標 · px", names: ["pivotX", "pivotY"] },
+] as const;
+
+const checkerStyle = {
+  backgroundImage: "linear-gradient(45deg,#8882 25%,transparent 25%,transparent 75%,#8882 75%),linear-gradient(45deg,#8882 25%,transparent 25%,transparent 75%,#8882 75%)",
+  backgroundSize: "18px 18px", backgroundPosition: "0 0,9px 9px",
+};
+
 /** Static manifest calibration only. Playback stays with the pinned Kumiki renderer. */
-export function RigCalibrationEditor({ definition, locale }: { definition: CharacterPackDefinition; locale: Locale }) {
+export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
+  definition: CharacterPackDefinition; locale: Locale; spriteUrls?: ReadonlyMap<string, string>;
+}) {
   const ja = locale === "ja";
   const [selectedId, setSelectedId] = useState(definition.parts[0]?.id ?? "");
   const [placements, setPlacements] = useState(() => initialRigPlacements(definition));
@@ -26,7 +39,14 @@ export function RigCalibrationEditor({ definition, locale }: { definition: Chara
   const [downloadError, setDownloadError] = useState("");
   const selectedPart = definition.parts.find(part => part.id === selectedId);
   const selectedAsset = selectedPart && definition.assets[selectedPart.asset];
+  const selectedImage = selectedAsset ? spriteUrls?.get(selectedAsset.uri) : undefined;
   const placement = placements[selectedId];
+  const initial = initialRigPlacements(definition);
+  const adjustedIds = new Set(definition.parts.filter(part => fields.some(({ field }) => {
+    const next = placements[part.id]?.[field] ?? "";
+    const original = initial[part.id]?.[field] ?? "";
+    return next !== original && (!next.trim() || !Number.isFinite(Number(next)) || Number(next) !== Number(original));
+  })).map(part => part.id));
 
   let candidate: CharacterPackDefinition | null = null;
   let reason = "";
@@ -61,41 +81,81 @@ export function RigCalibrationEditor({ definition, locale }: { definition: Chara
     }
   };
 
-  return <Surface variant="outline" className="gap-4 p-5" aria-label="Rig placement calibration">
-    <div className="flex flex-wrap items-center justify-between gap-3">
+  return <Surface variant="outline" aria-label="Rig placement calibration">
+    <div className="space-y-5">
+    <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h3 className="flex items-center gap-2 font-semibold text-foreground"><SlidersHorizontal aria-hidden className="size-4 text-primary" />{ja ? "体格と関節の配置" : "Anatomy & joint placement"}</h3>
-        <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">{ja
-          ? "人型の骨格を前提としません。顔の位置、短い足、胴体に近い前足、尾の付け根などを各パーツで調整できます。"
-          : "No human skeleton assumptions. Adjust a low muzzle, shorter legs, paws close to the torso, or a tail joint—part by part."}</p>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[.15em] text-primary">{ja ? "ステップ 2 · 配置を調整" : "STEP 2 · CALIBRATE"}</p>
+        <h3 className="flex items-center gap-2 font-serif text-xl font-semibold text-foreground"><SlidersHorizontal aria-hidden className="size-5 text-primary" />{ja ? "体格と関節の配置" : "Anatomy & joint placement"}</h3>
+        <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground">{ja
+          ? "パーツを選び、動物の体格に合わせて位置や関節を調整します。人型の骨格は前提としません。"
+          : "Choose a part, then fit its proportions to your character—not a human skeleton."}</p>
       </div>
-      <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">{ja ? "配置データのみ" : "Placement data only"}</span>
+      <span className="rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium tabular-nums text-muted-foreground" role="status">
+        {ja ? `${adjustedIds.size} パーツを変更` : `${adjustedIds.size} ${adjustedIds.size === 1 ? "part" : "parts"} adjusted`}
+      </span>
     </div>
-    <div className="grid gap-4 md:grid-cols-[minmax(10rem,15rem)_minmax(0,1fr)]">
-      <div>
-        <label htmlFor="rig-part-select" className="mb-1.5 block text-xs font-medium text-foreground">{ja ? "パーツ" : "Part"}</label>
-        <select id="rig-part-select" aria-label={ja ? "パーツ" : "Part"} value={selectedId} onChange={event => setSelectedId(event.target.value)}
-          className="w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
-          {definition.parts.map(part => <option key={part.id} value={part.id}>{part.id}</option>)}
-        </select>
-        {selectedPart && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{selectedPart.parent
-          ? (ja ? `${selectedPart.parent} を基準に配置` : `Relative to ${selectedPart.parent}`)
-          : (ja ? "シーン原点を基準に配置" : "Relative to the character canvas")}</p>}
-        {selectedPart && <p className="mt-1 text-xs text-muted-foreground">{ja ? "画像" : "Asset"}: {selectedPart.asset}{selectedAsset ? ` · ${selectedAsset.width} × ${selectedAsset.height} px` : ""}</p>}
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(12rem,14.5rem)_minmax(0,1fr)]">
+      <div className="min-w-0 rounded-xl border border-border bg-surface-subtle/60 p-2">
+        <p className="px-2 pb-2 pt-1 text-xs font-semibold text-muted-foreground">{ja ? `パーツ一覧 · ${definition.parts.length}` : `PARTS · ${definition.parts.length}`}</p>
+        <div className="max-h-[22rem] space-y-1 overflow-y-auto" aria-label={ja ? "リグパーツ一覧" : "Rig part list"}>
+          {[...definition.parts].sort((a, b) => a.z - b.z).map(part => {
+            const asset = definition.assets[part.asset];
+            const image = asset ? spriteUrls?.get(asset.uri) : undefined;
+            const adjusted = adjustedIds.has(part.id);
+            return <button key={part.id} type="button" aria-pressed={part.id === selectedId}
+              onClick={() => setSelectedId(part.id)}
+              className={`flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${part.id === selectedId ? "border-primary/40 bg-surface shadow-sm" : "border-transparent hover:border-border hover:bg-surface/80"}`}>
+              <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-md border border-border/60 bg-surface" style={checkerStyle}>
+                {image ? <img src={image} alt="" className="max-h-full max-w-full object-contain" /> : <Layers3 aria-hidden className="size-4 text-muted-foreground" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-foreground" title={part.id}>{part.id}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">{part.parent ? `↳ ${part.parent}` : (ja ? "基点" : "Root")} · z {part.z}</span>
+              </span>
+              {adjusted && <span className="size-2 shrink-0 rounded-full bg-primary" aria-label={ja ? "変更あり" : "adjusted"} />}
+            </button>;
+          })}
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-        {fields.map(({ field, en, ja: jp, step }) => <label key={field} className="block min-w-0">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">{ja ? jp : en}</span>
-          <input type="number" aria-label={ja ? jp : en} step={step} value={placement?.[field] ?? ""}
-            onChange={event => edit(field, event.target.value)}
-            className="w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-sm tabular-nums text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
-        </label>)}
+      <div className="min-w-0 space-y-4">
+        <div className="flex min-w-0 flex-wrap items-center gap-4 rounded-xl border border-border bg-surface-subtle/50 p-3">
+          <div className="grid size-28 shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60 bg-surface sm:size-32" style={checkerStyle}>
+            {selectedImage && selectedPart ? <img src={selectedImage} alt={`${selectedPart.id} artwork (not composited)`} className="max-h-full max-w-full object-contain" /> : <Layers3 aria-hidden className="size-8 text-muted-foreground" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{ja ? "選択中のパーツ" : "SELECTED PART"}</p>
+            <p className="mt-1 break-words font-semibold text-foreground">{selectedPart?.id}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{selectedPart?.parent ? (ja ? `親: ${selectedPart.parent}` : `Parent: ${selectedPart.parent}`) : (ja ? "親: キャンバス" : "Parent: canvas")}</p>
+            <p className="mt-1 break-all text-xs text-muted-foreground">{selectedPart?.asset}{selectedAsset ? ` · ${selectedAsset.width} × ${selectedAsset.height} px` : ""}</p>
+            <p className="mt-2 text-xs font-medium text-muted-foreground">{ja ? "単一画像の確認 · 合成プレビューではありません" : "Source artwork only · not a composed rig preview"}</p>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {fieldGroups.map(group => <fieldset key={group.title} className="min-w-0 rounded-xl border border-border p-3">
+            <legend className="px-1 text-sm font-semibold text-foreground">{ja ? group.titleJa : group.title}</legend>
+            <p className="mb-3 text-[11px] text-muted-foreground">{ja ? group.hintJa : group.hint}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {fields.filter(({ field }) => (group.names as readonly string[]).includes(field)).map(({ field, en, ja: jp, step }) => <label key={field} className="block min-w-0">
+                <span className="mb-1.5 block text-xs font-medium text-foreground">{ja ? jp : en}</span>
+                <input type="number" aria-label={ja ? jp : en} step={step} value={placement?.[field] ?? ""}
+                  onChange={event => edit(field, event.target.value)}
+                  className="w-full min-w-0 rounded-lg border border-border bg-surface px-2.5 py-2 text-sm tabular-nums text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
+              </label>)}
+            </div>
+          </fieldset>)}
+        </div>
       </div>
     </div>
     <p className="text-xs leading-relaxed text-muted-foreground">{ja
-      ? "Xは右、Yは下、回転は時計回り。Pivotは画像内の座標です。編集内容は自動保存されず、動作検証もできません。"
-      : "X moves right, Y moves down, rotation is clockwise. Pivot uses source-image pixels. Edits are not autosaved and there is no live animation preview yet."}</p>
-    <div className="flex flex-wrap items-end gap-3 border-t border-border pt-4">
+      ? "X は右、Y は下に移動します。編集内容は自動保存されず、アニメーションのプレビューはまだありません。"
+      : "X moves right; Y moves down. Edits are not autosaved, and there is no live animation preview yet."}</p>
+    <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-surface-subtle/40 p-4">
+      <div className="w-full sm:flex-1">
+        <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-primary">{ja ? "ステップ 3 · 書き出し" : "STEP 3 · EXPORT"}</p>
+        <p className="mt-1 text-sm font-medium text-foreground">{ja ? "新しいリビジョンとして保存" : "Save as a new revision"}</p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{ja ? "元のZIPは変わりません。新しいJSONと同じ画像を再ZIP化してください。" : "Your ZIP stays unchanged. Repackage the downloaded JSON with the same layers/."}</p>
+      </div>
       <label className="min-w-36 flex-1 sm:max-w-52">
         <span className="mb-1.5 block text-xs font-medium text-foreground">{ja ? "新しいリビジョン" : "New revision"}</span>
         <input type="text" aria-label={ja ? "新しいリビジョン" : "New revision"} value={revision} maxLength={64}
@@ -105,13 +165,12 @@ export function RigCalibrationEditor({ definition, locale }: { definition: Chara
       <Button size="sm" icon={<Download className="size-4" />} onClick={downloadManifest} disabled={!candidate}>
         {ja ? "更新した character.json を保存" : "Download revised character.json"}
       </Button>
-      <Button size="sm" variant="outline" icon={<RotateCcw className="size-4" />} onClick={reset}>
+      <Button size="sm" variant="outline" icon={<RotateCcw className="size-4" />} onClick={reset} disabled={adjustedIds.size === 0 && !revision}>
         {ja ? "配置をリセット" : "Reset placement edits"}
       </Button>
     </div>
-    {(reason || downloadError) && <p className="text-xs text-muted-foreground" role="status">{downloadError || reason}</p>}
-    <p className="text-xs leading-relaxed text-muted-foreground">{ja
-      ? "保存するのは修正済みマニフェストのみです。元のZIPは変更されません。layers/画像と一緒に再ZIP化して新しいリビジョンを読み込んでください。"
-      : "This downloads only the edited manifest. The original ZIP stays immutable. Replace character.json alongside the same layers/, re-ZIP, and import the new revision."}</p>
+    {(downloadError || ((revision || adjustedIds.size > 0) && reason)) &&
+      <p className="text-xs text-muted-foreground" role="status">{downloadError || reason}</p>}
+    </div>
   </Surface>;
 }

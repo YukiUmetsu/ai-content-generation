@@ -216,12 +216,17 @@ function validateManifest(value: unknown): CharacterPackDefinition {
   if (channels.size !== (channelValues as unknown[]).length) reject("Animation channels must be unique.");
   const assets = object(doc.assets);
   if (!Object.keys(assets).length || Object.keys(assets).length > 128) reject("Declare 1–128 sprite assets.");
+  const assetPaths = new Set<string>();
   for (const [key, raw] of Object.entries(assets)) {
     safeKey(key, "asset key", 80);
     const asset = object(raw);
     if (asset.kind !== "image") reject(`Asset ${key} is not an image; this inspector currently supports raster layers only.`);
     const uri = str(asset.uri, `${key} file path`, 240);
     if (!isSafePath(uri) || !uri.startsWith("layers/")) reject(`Asset ${key} must use a safe layers/ path.`);
+    // Different asset records pointing at one file can declare conflicting
+    // checksums/dimensions. The second record would otherwise skip verification.
+    if (assetPaths.has(uri)) reject(`Duplicate asset file path: ${uri}. Reuse the same asset ID across parts.`);
+    assetPaths.add(uri);
     if ((asset.mediaType === "image/png" && !uri.endsWith(".png")) || (asset.mediaType === "image/webp" && !uri.endsWith(".webp")) ||
         (asset.mediaType !== "image/png" && asset.mediaType !== "image/webp")) reject(`Asset ${key} needs matching PNG or WebP media type and extension.`);
     finite(asset.width, `${key} width`, 1, 8192);

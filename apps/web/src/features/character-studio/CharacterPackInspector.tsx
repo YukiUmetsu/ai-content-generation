@@ -12,6 +12,12 @@ import { RigCalibrationEditor } from "./RigCalibrationEditor";
 import type { Locale } from "@/features/registry";
 
 export function CharacterPackInspector({ locale, projectId }: { locale: Locale; projectId: string }) {
+  // A project switch must invalidate in-flight ZIP inspections, saves, and
+  // archive reloads together. Remounting also releases the previous sprites.
+  return <ProjectCharacterPackInspector key={projectId} locale={locale} projectId={projectId} />;
+}
+
+function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; projectId: string }) {
   const ja = locale === "ja";
   const [status, setStatus] = useState<"idle" | "reading" | "ready" | "error">("idle");
   const [preview, setPreview] = useState<{ pack: InspectedCharacterPack; urls: Map<string, string>; inspectionId: number } | null>(null);
@@ -35,6 +41,7 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
 
   useEffect(() => () => {
     generation.current++;
+    draftsRun.current++;
     for (const url of urlsRef.current.values()) URL.revokeObjectURL(url);
   }, []);
 
@@ -124,11 +131,21 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
     try {
       const draft = await saveCharacterDraft(projectId, pack.definition.characterId, pack.definition.revision, bytesRef.current);
       if (generation.current !== requestId) return;
-      draftsRun.current++;
+      const run = ++draftsRun.current;
       setLoadedProjectId(projectId);
       setLastSaved(draft.id);
       setDrafts(current => [draft, ...current.filter(entry => entry.id !== draft.id)]);
       setDraftsError("");
+      // The initial list might still be loading. Fetch a fresh snapshot after
+      // persistence instead of discarding other drafts from that response.
+      void listCharacterDrafts(projectId).then(list => {
+        if (draftsRun.current !== run) return;
+        setDrafts([draft, ...list.filter(entry => entry.id !== draft.id)]);
+        setDraftsError("");
+      }).catch(caught => {
+        if (draftsRun.current !== run) return;
+        setDraftsError(caught instanceof Error ? caught.message : "Draft saved, but could not refresh the list.");
+      });
     } catch (caught) {
       if (generation.current === requestId) setSaveError(caught instanceof Error ? caught.message : "Could not save the draft.");
     } finally {
@@ -140,19 +157,21 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
   return <section aria-label={ja ? "キャラクターパック検査" : "Character package inspector"} className="mt-7 space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[.16em] text-muted-foreground">CHARACTER STUDIO · 01</p>
-        <h2 className="mt-1 font-serif text-xl font-semibold text-foreground">{ja ? "キャラクターパックを確認" : "Inspect a character pack"}</h2>
+        <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-primary">CHARACTER STUDIO</p>
+        <h2 className="mt-1 font-serif text-2xl font-semibold text-foreground">{ja ? "キャラクターパックを確認" : "Inspect a character pack"}</h2>
         <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">{ja
-          ? "透過レイヤーZIPをブラウザーで検査し、任意でローカルContentGenサーバーに下書きとして保存できます。"
-          : "Inspect a layered sprite ZIP in your browser, then optionally save an unverified draft to your local ContentGen server."}</p>
+          ? "レイヤーZIPを読み込み、動物のパーツを調整して新しいマニフェストを書き出します。"
+          : "Import a layered ZIP, adjust your character's proportions, and export a revised manifest."}</p>
       </div>
-      <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground"><ShieldAlert aria-hidden className="size-4" />{ja ? "未承認の下書き" : "Unverified drafts"}</span>
+      <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs text-muted-foreground"><ShieldAlert aria-hidden className="size-4" />{ja ? "未承認の下書き" : "Unverified drafts"}</span>
     </div>
-    <Surface variant="outline" className="overflow-hidden p-5">
-      <label className="group flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-surface-subtle/50 px-5 py-10 text-center transition-colors hover:border-primary/50 hover:bg-surface-subtle focus-within:ring-2 focus-within:ring-ring">
-        <span className="grid size-14 place-items-center rounded-2xl bg-surface text-primary shadow-sm"><UploadCloud aria-hidden className="size-7" /></span>
-        <span className="text-base font-semibold text-foreground">{ja ? "キャラクターZIPを選択" : "Choose character ZIP"}</span>
-        <span className="max-w-lg text-xs leading-relaxed text-muted-foreground">character.json + layers/*.png or *.webp · {ja ? "最大16 MB" : "16 MB max"}</span>
+    <Surface variant="outline">
+      <label className="group flex cursor-pointer flex-col flex-wrap items-center gap-3 rounded-xl border border-dashed border-primary/30 bg-surface-subtle/50 px-4 py-5 text-center transition-colors hover:border-primary/60 hover:bg-surface-subtle focus-within:ring-2 focus-within:ring-ring sm:flex-row sm:text-left">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-surface text-primary shadow-sm"><UploadCloud aria-hidden className="size-5" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-foreground">{ja ? "ステップ 1 · キャラクターZIPを選択" : "STEP 1 · Choose character ZIP"}</span>
+          <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">character.json + layers/*.png or *.webp · {ja ? "最大16 MB" : "16 MB max"}</span>
+        </span>
         <input type="file" accept=".zip,application/zip" aria-label={ja ? "キャラクターZIP" : "Character ZIP"}
           onChange={event => void handleFile(event)}
           className="max-w-full text-xs text-muted-foreground file:mr-3 file:rounded-lg file:border file:border-border file:bg-surface file:px-3 file:py-2 file:font-medium file:text-foreground" />
@@ -165,7 +184,8 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
     </Surface>
 
     {pack && <div className="space-y-4" aria-label="Character pack report">
-      <Surface variant="outline" className="gap-4 p-5">
+      <Surface variant="outline">
+        <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <span className="grid size-11 place-items-center rounded-xl bg-success/10 text-success"><CheckCircle2 aria-hidden className="size-6" /></span>
@@ -180,27 +200,23 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
           <p className="text-xs text-muted-foreground">{ja ? "保存後も検証・権利承認は未完了です。" : "Saving preserves the ZIP; it does not approve the rig or rights."}</p>
           {!!saveError && <p role="alert" className="w-full text-sm text-danger">{saveError}</p>}
         </div>
-        <div className="grid gap-3 text-sm sm:grid-cols-3">
-          <div className="rounded-lg bg-surface-subtle p-3"><Layers3 aria-hidden className="mb-2 size-4 text-muted-foreground" /><p className="font-semibold tabular-nums">{pack.parts.length} parts</p><p className="text-xs text-muted-foreground">{Object.keys(pack.definition.assets).length} image assets</p></div>
-          <div className="rounded-lg bg-surface-subtle p-3"><FileArchive aria-hidden className="mb-2 size-4 text-muted-foreground" /><p className="font-semibold tabular-nums">{pack.definition.design.width} × {pack.definition.design.height}</p><p className="text-xs text-muted-foreground">{ja ? "デザイン画面" : "Design canvas"}</p></div>
-          <div className="rounded-lg bg-surface-subtle p-3"><ShieldAlert aria-hidden className="mb-2 size-4 text-muted-foreground" /><p className="font-semibold">{ja ? "権利の承認待ち" : "Rights not approved"}</p><p className="text-xs text-muted-foreground">{ja ? "出力前に確認が必要" : "Review before export"}</p></div>
+        <div className="flex flex-wrap gap-x-5 gap-y-2 border-t border-border pt-3 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5"><Layers3 aria-hidden className="size-4" />{pack.parts.length} {ja ? "パーツ" : "parts"} · {Object.keys(pack.definition.assets).length} {ja ? "画像" : "assets"}</span>
+          <span className="inline-flex items-center gap-1.5"><FileArchive aria-hidden className="size-4" />{pack.definition.design.width} × {pack.definition.design.height} px</span>
+          <span className="inline-flex items-center gap-1.5"><ShieldAlert aria-hidden className="size-4" />{ja ? "権利・動作は未承認" : "Rights & playback unverified"}</span>
         </div>
-        <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-sm text-foreground">
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-3 py-2.5 text-xs leading-relaxed text-foreground">
           {ja ? "構造・画像の確認のみです。アニメーション、音声、Kumikiレンダリングの検証やキャラクター登録は未実装です。" :
             "Structural check only. Motion, voices, Kumiki rendering and rights are not approved. Saved drafts cannot be used for publishing yet."}
         </div>
-      </Surface>
-      {rig && <Surface variant="outline" className="gap-4 p-5" aria-label="Rig metadata inventory">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="font-semibold text-foreground">{ja ? "リグ設定の概要（動作未検証）" : "Rig metadata, not playback-tested"}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">{ja
-              ? "ZIPに記述された機能のみ表示します。Kumikiでの動作・画質の確認は未実施です。"
-              : "Declarations in the ZIP only. Animation quality and Kumiki compatibility have not been tested."}</p>
-          </div>
-          <span className="rounded-full border border-warning/40 px-3 py-1 text-xs text-muted-foreground">{ja ? "設定情報のみ" : "Metadata only"}</span>
         </div>
-        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      </Surface>
+      {rig && <details className="rounded-xl border border-border bg-surface px-4 py-3 text-sm" aria-label="Rig metadata inventory">
+        <summary className="cursor-pointer font-medium text-foreground">{ja ? "リグ設定とアクション宣言を表示 · 動作未検証" : "Rig metadata, not playback-tested"}</summary>
+        <p className="mt-3 text-xs text-muted-foreground">{ja
+          ? "ZIPに記述された機能のみ。Kumikiでの動作・画質は未確認です。"
+          : "Declarations from the ZIP only. Animation quality and Kumiki compatibility have not been tested."}</p>
+        <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg bg-surface-subtle p-3">
             <dt className="text-xs font-medium text-muted-foreground">{ja ? "アクション・移動" : "Actions & movement"}</dt>
             <dd className="mt-1 text-lg font-semibold tabular-nums">{rig.actions.length}</dd>
@@ -234,11 +250,11 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
             <dd className="mt-1 text-xs text-muted-foreground">{ja ? `${rig.restTransforms} パーツに初期配置あり` : `${rig.restTransforms} parts declare rest transforms`}</dd>
           </div>
         </dl>
-      </Surface>}
-      <RigCalibrationEditor key={preview.inspectionId} definition={pack.definition} locale={locale} />
-      <Surface variant="outline" className="p-5">
-        <h3 className="mb-3 font-semibold text-foreground">{ja ? "レイヤー一覧" : "Rig layers"}</h3>
-        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+      </details>}
+      <RigCalibrationEditor key={preview.inspectionId} definition={pack.definition} locale={locale} spriteUrls={urls} />
+      <details className="rounded-xl border border-border bg-surface px-4 py-3" aria-label={ja ? "レイヤー一覧" : "Rig layers"}>
+        <summary className="cursor-pointer text-sm font-semibold text-foreground">{ja ? "すべてのレイヤーと階層を確認" : "Browse all layers & hierarchy"}</summary>
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {[...pack.parts].sort((a, b) => a.z - b.z).map(part => {
             const asset = pack.definition.assets[part.asset];
             return <li key={part.id} className="flex min-w-0 items-center gap-3 rounded-xl border border-border bg-surface-subtle/50 p-3">
@@ -251,10 +267,10 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
             </li>;
           })}
         </ul>
-      </Surface>
+      </details>
     </div>}
 
-    <Surface variant="outline" className="p-5" aria-label={ja ? "保存したキャラクター" : "Saved character drafts"}>
+    <Surface variant="outline" aria-label={ja ? "保存したキャラクター" : "Saved character drafts"}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-semibold text-foreground">{ja ? "このプロジェクトの下書き" : "Saved drafts for this project"}</h3>
         <span className="text-xs text-muted-foreground">{drafts.length} {ja ? "件" : "saved"}</span>

@@ -27,8 +27,8 @@ describe("RigCalibrationEditor", () => {
     expect(screen.getByText("Anatomy & joint placement")).toBeInTheDocument();
     expect(screen.getByText(/no live animation preview/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Download revised character.json/ })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Part"), { target: { value: "muzzle" } });
-    expect(screen.getByText(/Relative to body/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /muzzle/ }));
+    expect(screen.getByText(/Parent: body/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Y offset"), { target: { value: "-95" } });
     fireEvent.change(screen.getByLabelText("New revision"), { target: { value: "r2" } });
     fireEvent.click(screen.getByRole("button", { name: /Download revised character.json/ }));
@@ -49,12 +49,30 @@ describe("RigCalibrationEditor", () => {
 
   it("shows an actionable validation message for collapsed body parts", () => {
     render(<RigCalibrationEditor definition={animal} locale="en" />);
-    fireEvent.change(screen.getByLabelText("Part"), { target: { value: "fluffy-tail" } });
+    fireEvent.click(screen.getByRole("button", { name: /fluffy-tail/ }));
     fireEvent.change(screen.getByLabelText("Y scale"), { target: { value: "0" } });
     fireEvent.change(screen.getByLabelText("New revision"), { target: { value: "r2" } });
     expect(screen.getByText(/fluffy-tail.*scaleY/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Download revised character.json/ })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Reset placement edits" }));
     expect(screen.getByLabelText("Y scale")).toHaveValue(1);
+  });
+
+  it("shows selected sprite artwork alongside non-human part controls and tracks adjusted parts", () => {
+    const spriteUrls = new Map([["layers/body.png", "blob:pip-body"]]);
+    render(<RigCalibrationEditor definition={animal} locale="en" spriteUrls={spriteUrls} />);
+    expect(screen.getByAltText("body artwork (not composited)")).toHaveAttribute("src", "blob:pip-body");
+    expect(screen.getByRole("button", { name: /muzzle/ })).toBeInTheDocument();
+    expect(screen.getByText("0 parts adjusted")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset placement edits" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /muzzle/ }));
+    expect(screen.getByAltText("muzzle artwork (not composited)")).toHaveAttribute("src", "blob:pip-body");
+    fireEvent.change(screen.getByLabelText("Y offset"), { target: { value: "-95" } });
+    expect(screen.getByText("1 part adjusted")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /muzzle.*adjusted/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reset placement edits" }));
+    expect(screen.getByText("0 parts adjusted")).toBeInTheDocument();
+    expect(screen.getByLabelText("Y offset")).toHaveValue(-130);
   });
 });

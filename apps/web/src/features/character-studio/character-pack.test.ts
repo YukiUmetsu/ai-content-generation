@@ -94,6 +94,15 @@ describe("character ZIP package inspector", () => {
     await expect(inspectCharacterZip(makeZip({ extra: [{ name: "run.js", bytes: utf8.encode("alert(1)") }] }))).rejects.toThrow(/Unexpected file/i);
   });
 
+  it("does not skip integrity checks when multiple asset IDs point to one ZIP image", async () => {
+    const base = definition();
+    const duplicate = { ...base, assets: {
+      ...base.assets,
+      duplicate: { ...base.assets.torso, sha256: "0".repeat(64) },
+    } };
+    await expect(inspectCharacterZip(makeZip({ def: duplicate }))).rejects.toThrow(/duplicate|same.*file|shared.*path/i);
+  });
+
   it("rejects a broken skeleton and a manifest with unsafe asset paths", async () => {
     const malformed = definition();
     malformed.parts[0] = { ...malformed.parts[0], id: "body", parent: "body" } as typeof malformed.parts[0];

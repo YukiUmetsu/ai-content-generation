@@ -117,6 +117,29 @@ describe("CharacterPackInspector", () => {
     expect(await screen.findByText("Structure checked")).toBeInTheDocument();
   });
 
+  it("refreshes all saved drafts when saving finishes before the initial draft list", async () => {
+    const older = {
+      id: "character-draft-11111111111111111111111111111111", projectId: "project-local",
+      characterId: "owl", revision: "1", archiveSha256: "a".repeat(64),
+      sizeBytes: 40, status: "unverified" as const, createdAt: "2026-10-25T12:00:00Z",
+    };
+    const saved = { ...older, id: "character-draft-22222222222222222222222222222222", characterId: "pip" };
+    let finishInitialList!: (drafts: typeof older[]) => void;
+    vi.mocked(listCharacterDrafts).mockImplementationOnce(() => new Promise(resolve => { finishInitialList = resolve; }))
+      .mockResolvedValueOnce([saved, older]);
+    vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
+    vi.mocked(saveCharacterDraft).mockResolvedValue(saved);
+
+    render(<CharacterPackInspector locale="en" projectId="project-local" />);
+    fireEvent.change(screen.getByLabelText("Character ZIP"), { target: { files: [new File(["zip"], "pip.zip")] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Save draft locally" }));
+    expect(await screen.findByText("Draft saved")).toBeInTheDocument();
+    finishInitialList([older]);
+    await waitFor(() => expect(listCharacterDrafts).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("owl")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Download ZIP" })).toHaveLength(2);
+  });
+
   it("keeps preview available and shows the server conflict when a revision differs", async () => {
     vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
     vi.mocked(saveCharacterDraft).mockRejectedValue(Error("This revision already has different artwork."));
@@ -141,5 +164,48 @@ describe("CharacterPackInspector", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Reopen ZIP" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("manifest does not match");
     expect(screen.queryByText("Structure checked")).not.toBeInTheDocument();
+  });
+
+  it("keeps pending saves and previews scoped to the project that started them", async () => {
+    const draftA = {
+      id: "character-draft-0123456789abcdef0123456789abcdef", projectId: "project-a",
+      characterId: "pip", revision: "1", archiveSha256: "a".repeat(64),
+      sizeBytes: 8, status: "unverified" as const, createdAt: "2026-10-26T12:00:00Z",
+    };
+    let finishSave!: (draft: typeof draftA) => void;
+    vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
+    vi.mocked(saveCharacterDraft).mockImplementation(() => new Promise(resolve => { finishSave = resolve; }));
+    const { rerender } = render(<CharacterPackInspector locale="en" projectId="project-a" />);
+    fireEvent.change(screen.getByLabelText("Character ZIP"), { target: { files: [new File(["zip"], "pip.zip")] } });
+    fireEvent.click(await screen.findByRole("button", { name: "Save draft locally" }));
+    expect(saveCharacterDraft).toHaveBeenCalledWith("project-a", "pip", "1", expect.any(ArrayBuffer));
+
+    rerender(<CharacterPackInspector locale="en" projectId="project-b" />);
+    await waitFor(() => expect(listCharacterDrafts).toHaveBeenCalledWith("project-b"));
+    finishSave(draftA);
+
+    await waitFor(() => expect(screen.getByText("No saved drafts yet. Import a ZIP and select Save draft locally.")).toBeInTheDocument());
+    expect(screen.queryByText("Draft saved")).not.toBeInTheDocument();
+    expect(screen.queryByText("Structure checked")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Download ZIP" })).not.toBeInTheDocument();
+  });
+
+  it("does not reopen a previous project's archive after switching projects", async () => {
+    const draftA = {
+      id: "character-draft-0123456789abcdef0123456789abcdef", projectId: "project-a",
+      characterId: "pip", revision: "1", archiveSha256: "b".repeat(64),
+      sizeBytes: 8, status: "unverified" as const, createdAt: "2026-10-26T12:00:00Z",
+    };
+    let finishLoad!: (bytes: ArrayBuffer) => void;
+    vi.mocked(listCharacterDrafts).mockImplementation(async id => id === "project-a" ? [draftA] : []);
+    vi.mocked(loadCharacterDraft).mockImplementation(() => new Promise(resolve => { finishLoad = resolve; }));
+    vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
+    const { rerender } = render(<CharacterPackInspector locale="en" projectId="project-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Reopen ZIP" }));
+    rerender(<CharacterPackInspector locale="en" projectId="project-b" />);
+    finishLoad(new ArrayBuffer(8));
+    await waitFor(() => expect(screen.getByText("No saved drafts yet. Import a ZIP and select Save draft locally.")).toBeInTheDocument());
+    expect(screen.queryByText("Structure checked")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Download ZIP" })).not.toBeInTheDocument();
   });
 });
