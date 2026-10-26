@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Clock3, FileText, PencilLine, RefreshCw, Sparkles } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Copy, FileText, PencilLine, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import {
-  acceptScriptCandidate, approveScriptDraft, createScriptDraft, discardScriptCandidate,
+  acceptScriptCandidate, approveScriptDraft, copyShortFormScript, createScriptDraft, discardScriptCandidate,
   editScriptSection, estimatedNarrationSeconds, fillScriptSection, isScriptContextCurrent, loadScriptDraft,
-  insertScriptSection, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, saveScriptDraft, scriptEvidenceFingerprint, type ScriptDraft, type ScriptEvidence,
+  insertScriptSection, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, restoreScriptRevision, saveScriptDraft,
+  scriptEvidenceFingerprint, SHORT_FORM_SCRIPT_PLATFORMS,
+  type ScriptDraft, type ScriptEvidence,
   type ScriptGeneratedText, type ScriptLocale, type ScriptPlatform, type NewScriptSection,
 } from "./script-review-model";
 import {scriptSectionRole,MAX_SCRIPT_SECTIONS} from "../../scripts/video-production/script-contract.mjs";
@@ -30,6 +32,7 @@ export interface ScriptReviewWorkspaceProps {
 }
 
 type ViewState = { draft: ScriptDraft | null; warning: string | null };
+type CopyDestination = { platform: ScriptPlatform; existing: boolean; warning: string | null; snapshot: string | null };
 const platforms: Record<ScriptPlatform, string> = { youtube: "YouTube", youtube_shorts: "YouTube Shorts", tiktok: "TikTok",
   instagram: "Instagram", facebook: "Facebook", blog: "Blog", website: "Website" };
 const secondsPerSection: Record<ScriptPlatform, number> = { youtube: 106, youtube_shorts: 18, tiktok: 27,
@@ -87,6 +90,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const [fullRewriteOpen, setFullRewriteOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
   const [editedText, setEditedText] = useState("");
   const [editedClaims,setEditedClaims]=useState<string[]>([]);
   const [inserting,setInserting]=useState<{id:string;heading:string;position:"before"|"after"}|null>(null);
@@ -94,6 +98,11 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const [hasBackup,setHasBackup]=useState(()=>{try{return !!loadScriptBackup(productionId,platform);}catch{return false;}});
   const pauseWriting=()=>{batchStopped.current=true;setAutoPaused(true);abortRef.current?.abort();};
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyDestinations, setCopyDestinations] = useState<CopyDestination[]>([]);
+  const [copySelection, setCopySelection] = useState<ScriptPlatform[]>([]);
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+  const [copyMessage, setCopyMessage] = useState("");
   // A pristine first draft can adopt evidence arriving after mount. Authored drafts
   // retain their original context until the editor explicitly reviews and adopts it.
   const draft = useMemo(() => view.draft ? rebindEmptyScriptEvidence(view.draft, snapshotId) : null,
@@ -224,6 +233,59 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     evidence.some(item => item.claimId === id && item.reviewStatus !== "verified" && item.reviewStatus !== "illustrative"))) ?? false;
   const staleContext = Boolean(draft && !isScriptContextCurrent(draft, context));
   const done = Boolean(draft?.sections.every(section => !!section.text.trim()));
+  const shortDestinations = allowed.filter(candidate => candidate !== platform && SHORT_FORM_SCRIPT_PLATFORMS.includes(candidate));
+  const replacing = copyDestinations.some(destination => destination.existing && copySelection.includes(destination.platform));
+
+  const openCopy = () => {
+    const choices = shortDestinations.map(target => {
+      const saved = loadScriptDraft(productionId, target);
+      const existing = Boolean(saved.draft && (saved.draft.status === "approved" ||
+        Object.keys(saved.draft.pending).length || saved.draft.sections.some(section => section.revision || section.text)));
+      return { platform: target, existing, warning: saved.warning, snapshot: saved.draft ? JSON.stringify(saved.draft) : null };
+    });
+    setCopyDestinations(choices);
+    setCopySelection(choices.filter(target => !target.existing && !target.warning).map(target => target.platform));
+    setReplaceConfirmed(false);
+    setCopyMessage("");
+    setCopyOpen(true);
+  };
+  const copyToSelected = () => {
+    const source = viewRef.current.draft;
+    if (!source || !copySelection.length || busyRef.current || batchBusy) return;
+    setCopyMessage("");
+    try {
+      // Preflight every destination before the first write. A blocked, corrupt or
+      // changed target cannot turn a multi-platform copy into a surprise overwrite.
+      const prepared = copySelection.map(target => {
+        const saved = loadScriptDraft(productionId, target);
+        if (saved.warning) throw Error(`${platforms[target]}: ${saved.warning}`);
+        const selected = copyDestinations.find(item => item.platform === target);
+        if (!selected || (saved.draft ? JSON.stringify(saved.draft) : null) !== selected.snapshot)
+          throw Error(`${platforms[target]} changed after you opened copy options. Reopen the picker and review the destination again.`);
+        const next = copyShortFormScript(source, { ...context, platform: target }, saved.draft,
+          { replaceExisting: replaceConfirmed && selected.existing });
+        return { platform: target, draft: next };
+      });
+      let completed = 0;
+      for (const output of prepared) {
+        try {
+          const current = loadScriptDraft(productionId, output.platform);
+          if (current.warning || (current.draft ? JSON.stringify(current.draft) : null) !==
+            copyDestinations.find(item => item.platform === output.platform)?.snapshot)
+            throw Error("Destination changed during copying. Reopen the picker to retry.");
+          saveScriptDraft(output.draft);
+        } catch (problem) {
+          throw Error(`${platforms[output.platform]} could not be saved after ${completed} successful copies. ${problem instanceof Error ? problem.message : "Storage unavailable."}`);
+        }
+        completed++;
+        onDraftChange?.(output.draft);
+      }
+      setCopyOpen(false);
+      setCopyMessage(`Copied accepted sections to ${prepared.map(output => platforms[output.platform]).join(", ")}. Review each destination before approval.`);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Unable to copy script.");
+    }
+  };
 
   const revise = (sectionId: string, text: string) => {
     const current = viewRef.current.draft;
@@ -235,6 +297,16 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
       setReviewConfirmed(false);
     }
     } catch(problem){setError(problem instanceof Error?problem.message:"Unable to save section edit.");}
+  };
+  const restore = (sectionId: string, revision: number) => {
+    const current = viewRef.current.draft;
+    if (!current) return;
+    try {
+      if (persist(restoreScriptRevision(current, sectionId, revision))) {
+        setHistoryId(null);
+        setReviewConfirmed(false);
+      }
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to restore script version."); }
   };
   const choose = (sectionId: string, action: "accept" | "discard") => {
     const current = viewRef.current.draft;
@@ -351,6 +423,43 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
             <button type="button" className={secondary} onClick={() => setFullRewriteOpen(false)}>Keep current script</button></div>
         </div>}
       </div>}
+      {SHORT_FORM_SCRIPT_PLATFORMS.includes(platform) && shortDestinations.length > 0 && <div className="mt-4 rounded-control border border-border bg-surface-subtle p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            <p className="flex items-center gap-2 text-sm font-semibold"><Copy className="size-4 text-primary" />Use this script on other short-form platforms</p>
+            <p className="text-xs text-muted-foreground">Copy all accepted sections and source links, then customize and approve each version separately. No AI request needed.</p>
+          </div>
+          <button type="button" className={secondary} disabled={!done || staleContext || !!busy || batchBusy || !!view.warning}
+            onClick={() => copyOpen ? setCopyOpen(false) : openCopy()}>{copyOpen ? "Close copy options" : "Copy to other platforms"}</button>
+        </div>
+        {copyOpen && <div className="mt-4 space-y-3 border-t border-border pt-4" aria-label="Copy script destinations">
+          <p className="text-sm font-semibold">Choose destinations</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {copyDestinations.map(destination => <label key={destination.platform}
+              className="flex cursor-pointer items-start gap-3 rounded-control border border-border bg-surface p-3 text-sm">
+              <input type="checkbox" className="mt-1 accent-primary" disabled={!!destination.warning}
+                checked={copySelection.includes(destination.platform)} onChange={event => {
+                  setCopySelection(previous => event.target.checked ? [...previous, destination.platform] : previous.filter(item => item !== destination.platform));
+                  setReplaceConfirmed(false);
+                }} aria-label={`Copy to ${platforms[destination.platform]}`} />
+              <span className="min-w-0"><span className="block font-medium">{platforms[destination.platform]}</span>
+                <span className="block text-xs text-muted-foreground">{destination.warning ? "Saved draft needs attention — open this tab first" :
+                  destination.existing ? "Existing script — replacing requires confirmation" : "No accepted script yet"}</span></span>
+            </label>)}
+          </div>
+          {replacing && <label className="flex items-start gap-2 rounded-control border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            <input type="checkbox" className="mt-1 accent-primary" checked={replaceConfirmed}
+              onChange={event => setReplaceConfirmed(event.target.checked)} />
+            <span>Replace the selected existing scripts. Their earlier revisions will be preserved, but approvals and pending AI suggestions will be cleared.</span>
+          </label>}
+          <div className="flex flex-wrap items-center gap-3">
+            <Button disabled={!copySelection.length || (replacing && !replaceConfirmed) || !!busy || batchBusy}
+              onClick={copyToSelected}>Copy to {copySelection.length} {copySelection.length === 1 ? "platform" : "platforms"}</Button>
+            <button type="button" className={secondary} onClick={() => setCopyOpen(false)}>Cancel</button>
+          </div>
+        </div>}
+        {copyMessage && <p role="status" className="mt-3 text-sm text-emerald-700 dark:text-emerald-400">{copyMessage}</p>}
+      </div>}
     </Surface>
 
     {(busy || batchBusy) && <div role="status" className="flex items-center gap-3 text-sm">
@@ -386,6 +495,9 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
             <p className="text-xs text-muted-foreground">{section.purpose}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {section.history.length > 1 && <button type="button" className={secondary}
+              aria-expanded={historyId === section.id} onClick={() => setHistoryId(current => current === section.id ? null : section.id)}>
+              Revision history ({section.history.length})</button>}
             <button type="button" className={secondary} onClick={() => {pauseWriting();setEditingId(section.id);setEditedText(section.text);setEditedClaims(section.claimRefs);}}
               aria-label={`Edit section ${section.heading}`}><PencilLine className="mr-1 inline size-4" />Edit section</button>
             <button type="button" className={secondary} onClick={() => {setRegenerateId(section.id);setInstructions("");}}
@@ -400,6 +512,18 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
             onClick={()=>{pauseWriting();setError("");setInserting({id:section.id,heading:section.heading,position});}}>+ Add {position}</button>)}
           {draft.sections.length>=MAX_SCRIPT_SECTIONS&&<span className="text-xs text-muted-foreground">20-section limit reached</span>}
         </div>
+        {historyId === section.id && <div className="mt-4 space-y-3 rounded-control border border-border bg-surface-subtle p-4" aria-label={`Revision history for ${section.heading}`}>
+          <p className="text-sm font-semibold">Previous accepted versions</p>
+          {section.history.slice(0, -1).map(entry => <div key={entry.revision} className="rounded-control border border-border bg-surface p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium text-muted-foreground">Revision {entry.revision} · {entry.origin}</span>
+              <button type="button" className={secondary} disabled={!!busy || batchBusy}
+                onClick={() => restore(section.id, entry.revision)}>Restore revision {entry.revision}</button>
+            </div>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{entry.text}</p>
+          </div>)}
+          <p className="text-xs text-muted-foreground">Restoring creates a new accepted revision and requires fresh script approval. Current and earlier versions remain in history.</p>
+        </div>}
         <div className="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-7 text-foreground">
           {section.text ? <p className="whitespace-pre-wrap">{section.text}</p> :
             <div className="space-y-2 text-muted-foreground"><p>{sectionBusy ? "AI is writing this section using the captured evidence…" : "This section is waiting for AI generation."}</p>

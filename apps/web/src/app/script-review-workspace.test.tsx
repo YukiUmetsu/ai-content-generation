@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScriptReviewWorkspace } from "./script-review-workspace";
-import { approveScriptDraft, createScriptDraft, fillScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
+import { approveScriptDraft, createScriptDraft, editScriptSection, fillScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
   type ScriptDraft, type ScriptEvidence } from "./script-review-model";
 
 const evidence: ScriptEvidence[] = [{ claimId: "cost", claimText: "Repairs can affect insurance risk estimates.",
@@ -11,7 +11,7 @@ const base = { productionId: "production-first", projectId: "brand-house", platf
   locale: "en" as const, title: "What makes insurance more expensive?", viewerQuestion: "Why does my bill rise?",
   audience: "Homeowners", angle: "Explain repair prices and changing risk", brandVoice: "Calm, direct", evidence, onApprove: vi.fn() };
 const timestamp = "2026-10-25T00:00:00.000Z";
-function saved(platform: "youtube" | "tiktok" = "youtube"): ScriptDraft {
+function saved(platform: "youtube" | "youtube_shorts" | "tiktok" | "instagram" | "facebook" = "youtube"): ScriptDraft {
   const { productionId, projectId, locale, title, viewerQuestion, audience, angle, brandVoice } = base;
   let draft = createScriptDraft({ productionId, projectId, platform, locale, title, viewerQuestion,
     audience, angle, brandVoice, evidenceSnapshotId: scriptEvidenceFingerprint(evidence) }, timestamp);
@@ -23,6 +23,101 @@ function saved(platform: "youtube" | "tiktok" = "youtube"): ScriptDraft {
 }
 describe("AI-first script review UI", () => {
   afterEach(() => {localStorage.clear();vi.unstubAllGlobals();});
+
+  it("copies a complete Shorts script to other empty short-form tabs without calling AI", () => {
+    const shorts = approveScriptDraft(saved("youtube_shorts"));
+    saveScriptDraft(shorts);
+    const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+    const onDraftChange = vi.fn();
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok", "instagram", "facebook"]}
+      onDraftChange={onDraftChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy to other platforms" }));
+    expect(screen.getByRole("checkbox", { name: "Copy to TikTok" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Copy to Instagram" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Copy to Facebook" })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Copy to 3 platforms" }));
+    for (const platform of ["tiktok", "instagram", "facebook"] as const) {
+      const target = loadScriptDraft(base.productionId, platform).draft!;
+      expect(target.status).toBe("draft");
+      expect(target.sections.map(section => section.text)).toEqual(shorts.sections.map(section => section.text));
+      expect(target.sections[0].history[0]).toMatchObject({origin:"copied",copiedFrom:{platform:"youtube_shorts",revision:1}});
+    }
+    expect(loadScriptDraft(base.productionId, "youtube_shorts").draft).toEqual(shorts);
+    expect(onDraftChange).toHaveBeenCalledTimes(3);
+    expect(fetcher).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", {name:"TikTok"}));
+    expect(screen.getByText(/The opening hook explains/i)).toBeInTheDocument();
+  });
+
+  it("requires deliberate confirmation before replacing existing destination scripts", () => {
+    saved("youtube_shorts");
+    const before = approveScriptDraft(saved("tiktok"));
+    saveScriptDraft(before);
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok"]} />);
+    fireEvent.click(screen.getByRole("button", {name:"Copy to other platforms"}));
+    expect(screen.getByRole("checkbox", {name:"Copy to TikTok"})).not.toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", {name:"Copy to TikTok"}));
+    expect(screen.getByRole("button", {name:"Copy to 1 platform"})).toBeDisabled();
+    expect(loadScriptDraft(base.productionId,"tiktok").draft).toEqual(before);
+    fireEvent.click(screen.getByRole("checkbox", {name:/Replace the selected existing scripts/i}));
+    fireEvent.click(screen.getByRole("button", {name:"Copy to 1 platform"}));
+    const updated = loadScriptDraft(base.productionId,"tiktok").draft!;
+    expect(updated.status).toBe("draft");
+    expect(updated.approvedAt).toBeNull();
+    expect(updated.sections[0].history).toHaveLength(2);
+    expect(updated.sections[0].history[0]).toEqual(before.sections[0].history[0]);
+    expect(updated.sections[0].history[1].origin).toBe("copied");
+  });
+
+  it("refuses to overwrite a destination edited in another tab after the picker opened", () => {
+    saved("youtube_shorts");
+    const existing = saved("tiktok");
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok"]} />);
+    fireEvent.click(screen.getByRole("button", {name:"Copy to other platforms"}));
+    fireEvent.click(screen.getByRole("checkbox", {name:"Copy to TikTok"}));
+    fireEvent.click(screen.getByRole("checkbox", {name:/Replace the selected existing scripts/i}));
+    const concurrent = approveScriptDraft(existing);
+    saveScriptDraft(concurrent);
+    fireEvent.click(screen.getByRole("button", {name:"Copy to 1 platform"}));
+    expect(screen.getByRole("alert")).toHaveTextContent(/changed after you opened copy options/i);
+    expect(loadScriptDraft(base.productionId,"tiktok").draft).toEqual(concurrent);
+  });
+
+  it("lets the author see and restore accepted target text after copying over it", () => {
+    saved("youtube_shorts");
+    const authored = editScriptSection(saved("tiktok"), "hook", "My unique TikTok explanation before the copy.", timestamp);
+    saveScriptDraft(authored);
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok"]} />);
+    fireEvent.click(screen.getByRole("button", {name:"Copy to other platforms"}));
+    fireEvent.click(screen.getByRole("checkbox", {name:"Copy to TikTok"}));
+    fireEvent.click(screen.getByRole("checkbox", {name:/Replace the selected existing scripts/i}));
+    fireEvent.click(screen.getByRole("button", {name:"Copy to 1 platform"}));
+    fireEvent.click(screen.getByRole("button", {name:"TikTok"}));
+    fireEvent.click(screen.getByRole("button", {name:"Revision history (3)"}));
+    expect(screen.getByText("My unique TikTok explanation before the copy.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {name:"Restore revision 2"}));
+    const restored = loadScriptDraft(base.productionId,"tiktok").draft!;
+    expect(restored.sections[0].text).toBe("My unique TikTok explanation before the copy.");
+    expect(restored.sections[0].history.at(-1)).toMatchObject({origin:"restored",restoredFromRevision:2});
+  });
+
+  it("skips destinations whose saved drafts cannot be read", () => {
+    const source = saved("youtube_shorts");
+    // A non-blank source shows the destination picker, but corrupt target data is not replaced.
+    localStorage.setItem(`contentgen:script-draft:v1:${base.productionId}:tiktok`, "not json");
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok", "instagram"]} />);
+    fireEvent.click(screen.getByRole("button", {name:"Copy to other platforms"}));
+    expect(screen.getByRole("checkbox", {name:"Copy to TikTok"})).toBeDisabled();
+    expect(screen.getByRole("checkbox", {name:"Copy to Instagram"})).toBeChecked();
+    fireEvent.click(screen.getByRole("button", {name:"Copy to 1 platform"}));
+    expect(loadScriptDraft(base.productionId,"instagram").draft?.sections[0].text).toBe(source.sections[0].text);
+    expect(localStorage.getItem(`contentgen:script-draft:v1:${base.productionId}:tiktok`)).toBe("not json");
+  });
+
+  it("disables cross-platform copying until all source sections are complete", () => {
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok"]} />);
+    expect(screen.getByRole("button", {name:"Copy to other platforms"})).toBeDisabled();
+  });
 
   it("shows automatically drafted narration and linked source review for each section", () => {
     saved();render(<ScriptReviewWorkspace {...base} />);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptScriptCandidate, approveScriptDraft, createScriptDraft, discardScriptCandidate,
-  editScriptSection, fillScriptSection, isScriptContextCurrent, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence,
+  copyShortFormScript, editScriptSection, fillScriptSection, insertScriptSection, isScriptContextCurrent, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, restoreScriptRevision,
   scriptDraftKey, scriptEvidenceFingerprint, validateScriptDraft, type ScriptDraft,
 } from "./script-review-model";
 
@@ -26,6 +26,78 @@ const filled = (): ScriptDraft => {
 };
 
 describe("AI-first script revision model", () => {
+  it("copies an accepted Shorts script into an empty TikTok draft with references and traceable revisions", () => {
+    const source = approveScriptDraft({ ...filled(), input: { ...context, platform: "youtube_shorts" } }, timestamp);
+    const targetContext = { ...context, platform: "tiktok" as const };
+    const copied = copyShortFormScript(source, targetContext, null, { now: timestamp });
+    expect(copied.input.platform).toBe("tiktok");
+    expect(copied.status).toBe("draft");
+    expect(copied.approvedAt).toBeNull();
+    expect(copied.sections.map((item) => item.text)).toEqual(source.sections.map((item) => item.text));
+    expect(copied.sections[0].claimRefs).toEqual(source.sections[0].claimRefs);
+    expect(copied.sections[0].sourceRefs).toEqual(source.sections[0].sourceRefs);
+    expect(copied.sections[0].history[0]).toMatchObject({ origin: "copied", copiedFrom: { platform: "youtube_shorts", revision: 1 } });
+    expect(validateScriptDraft(JSON.parse(JSON.stringify(copied)))).toEqual(copied);
+  });
+
+  it("requires explicit overwrite, preserves prior target revisions, clears stale suggestions and revokes approval", () => {
+    const source = { ...filled(), input: { ...context, platform: "youtube_shorts" as const } };
+    let target: ScriptDraft = { ...filled(), input: { ...context, platform: "instagram" as const } };
+    target = editScriptSection(target, "hook", "Existing human-authored Instagram introduction.", timestamp);
+    target = proposeScriptCandidate(target, "hook", result, target.sections[0].revision, timestamp);
+    const destContext = { ...context, platform: "instagram" as const };
+    expect(() => copyShortFormScript(source, destContext, target, { now: timestamp })).toThrow(/replace|overwrite/i);
+    const copied = copyShortFormScript(source, destContext, target, { replaceExisting: true, now: timestamp });
+    expect(copied.sections[0].history.at(-2)?.text).toBe("Existing human-authored Instagram introduction.");
+    expect(copied.sections[0].history.at(-1)?.origin).toBe("copied");
+    expect(copied.pending).toEqual({});
+    expect(copied.status).toBe("draft");
+    expect(target.sections[0].text).toContain("human-authored");
+  });
+
+  it("restores overwritten accepted text as a new traceable revision without deleting the copy", () => {
+    const source = { ...filled(), input: { ...context, platform: "youtube_shorts" as const } };
+    const targetInput = { ...context, platform: "instagram" as const };
+    const authored = editScriptSection(createScriptDraft(targetInput), "hook", "Previously approved Instagram opener.", timestamp);
+    const copied = copyShortFormScript(source, targetInput, authored, { replaceExisting: true, now: timestamp });
+    const restored = restoreScriptRevision(copied, "hook", 1, timestamp);
+    expect(restored.sections[0].text).toBe("Previously approved Instagram opener.");
+    expect(restored.sections[0].history).toHaveLength(3);
+    expect(restored.sections[0].history[1].origin).toBe("copied");
+    expect(restored.sections[0].history[2]).toMatchObject({ origin: "restored", restoredFromRevision: 1 });
+    expect(restored.status).toBe("draft");
+    expect(validateScriptDraft(JSON.parse(JSON.stringify(restored)))).toEqual(restored);
+  });
+  it("carries inserted sections into an empty destination without losing structure or prior edited work", () => {
+    const shortContext = { ...context, platform: "youtube_shorts" as const };
+    let source = insertScriptSection(createScriptDraft(shortContext), "hook", "after", {
+      heading: "Special announcement", purpose: "Describe a relevant workflow product with a direct example.",
+      text: "This extra narrated announcement belongs between the opening and the explanation.",
+    }, timestamp);
+    for (const section of source.sections.filter(section => section.revision === 0)) {
+      source = fillScriptSection(source, section.id, result, 0, timestamp);
+    }
+    const targetContext = { ...context, platform: "tiktok" as const };
+    const copied = copyShortFormScript(source, targetContext, null, {now: timestamp});
+    expect(copied.sections).toHaveLength(6);
+    expect(copied.sections.map(item => item.id)).toEqual(source.sections.map(item => item.id));
+    expect(copied.sections[1].heading).toBe("Special announcement");
+    expect(copied.sections[1].text).toBe(source.sections[1].text);
+    expect(copied.sections[1].history[0].origin).toBe("copied");
+    expect(() => copyShortFormScript(source, targetContext, filled(), {replaceExisting: true})).toThrow(/identity|platform/i);
+    const occupied = { ...filled(), input: targetContext };
+    expect(() => copyShortFormScript(source, targetContext, occupied, {replaceExisting: true})).toThrow(/section structures differ/i);
+  });
+
+  it("refuses incomplete, stale, long-form and cross-project copies before touching targets", () => {
+    const short = { ...filled(), input: { ...context, platform: "youtube_shorts" as const } };
+    const destination = { ...context, platform: "facebook" as const };
+    expect(() => copyShortFormScript(createScriptDraft(short.input), destination, null)).toThrow(/complete/i);
+    expect(() => copyShortFormScript(filled(), destination, null)).toThrow(/short-form/i);
+    expect(() => copyShortFormScript(short, { ...destination, projectId: "other-project" }, null)).toThrow(/context|project/i);
+    expect(() => copyShortFormScript(short, { ...destination, evidenceSnapshotId: "changed-evidence" }, null)).toThrow(/context|evidence/i);
+    expect(() => copyShortFormScript(short, { ...destination, platform: "youtube_shorts" }, null)).toThrow(/different/i);
+  });
   it("invalidates a script when a source URL or claim text changes without changing the quote", () => {
     const captured = [{claimId:"claim-1",claimText:"Original interpretation",sourceId:"source-1",
       sourceUrl:"https://example.org/a",quote:"The captured passage",reviewStatus:"unverified" as const}];
