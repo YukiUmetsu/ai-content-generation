@@ -1,7 +1,9 @@
 /** Versioned, per-output AI-written script drafts. Every accepted edit is retained; suggestions never replace text automatically. */
+import {MAX_SCRIPT_SECTIONS,SCRIPT_ROLES,isScriptSectionId} from "../../scripts/video-production/script-contract.mjs";
+
 export type ScriptPlatform = "youtube" | "youtube_shorts" | "tiktok" | "instagram" | "facebook" | "blog" | "website";
 export type ScriptLocale = "en" | "ja";
-export type ScriptRole = "hook" | "context" | "mechanism" | "practical" | "closing";
+export type ScriptRole = typeof SCRIPT_ROLES[number];
 export interface ScriptEvidence {
   claimId: string;
   claimText: string;
@@ -45,7 +47,8 @@ export interface ScriptSectionHistory {
   createdAt: string;
 }
 export interface ScriptSection {
-  id: ScriptRole;
+  id: string;
+  role?: ScriptRole;
   heading: string;
   purpose: string;
   text: string;
@@ -69,7 +72,7 @@ export interface ScriptDraft {
   approvedAt: string | null;
   updatedAt: string;
   sections: ScriptSection[];
-  pending: Partial<Record<ScriptRole, ScriptCandidate>>;
+  pending: Partial<Record<string, ScriptCandidate>>;
 }
 
 const ID = /^[a-z0-9][a-z0-9_-]{1,79}$/i;
@@ -167,7 +170,7 @@ function normalizedGenerated(candidate: ScriptGeneratedText): ScriptGeneratedTex
   return { narration: text(value.narration, "narration", 6500, 30),
     claimRefs: refs(value.claimRefs, "claim references"), sourceRefs: refs(value.sourceRefs, "source references") };
 }
-function update(draft: ScriptDraft, id: ScriptRole, updater: (section: ScriptSection) => ScriptSection,
+function update(draft: ScriptDraft, id: string, updater: (section: ScriptSection) => ScriptSection,
   now: string): ScriptDraft {
   const position = draft.sections.findIndex(s => s.id === id);
   if (position < 0) throw Error("Unknown script section.");
@@ -182,7 +185,7 @@ function version(section: ScriptSection, generated: ScriptGeneratedText, origin:
     sourceRefs: generated.sourceRefs, revision, history: [...section.history, record] };
 }
 /** An AI response from the initial draft may populate only a still-blank section at its original revision. */
-export function fillScriptSection(draft: ScriptDraft, id: ScriptRole, candidate: ScriptGeneratedText,
+export function fillScriptSection(draft: ScriptDraft, id: string, candidate: ScriptGeneratedText,
   expectedRevision: number, now = new Date().toISOString()): ScriptDraft {
   const generated = normalizedGenerated(candidate);
   return update(draft, id, section => {
@@ -190,15 +193,15 @@ export function fillScriptSection(draft: ScriptDraft, id: ScriptRole, candidate:
     return version(section, generated, "ai", now);
   }, now);
 }
-export function editScriptSection(draft: ScriptDraft, id: ScriptRole, narration: string,
-  now = new Date().toISOString()): ScriptDraft {
+export function editScriptSection(draft: ScriptDraft, id: string, narration: string,
+  now = new Date().toISOString(), citations?: Pick<ScriptGeneratedText,"claimRefs"|"sourceRefs">): ScriptDraft {
   const value = text(narration, "manual narration", 6500);
   const changed = update(draft, id, section =>
-    section.text === value ? section : version(section, { narration: value, claimRefs: section.claimRefs, sourceRefs: section.sourceRefs }, "manual", now), now);
+    section.text === value && (!citations || JSON.stringify(citations)===JSON.stringify({claimRefs:section.claimRefs,sourceRefs:section.sourceRefs})) ? section : version(section, { narration: value, claimRefs: citations?.claimRefs??section.claimRefs, sourceRefs: citations?.sourceRefs??section.sourceRefs }, "manual", now), now);
   const pending = { ...changed.pending }; delete pending[id];
   return { ...changed, pending };
 }
-export function proposeScriptCandidate(draft: ScriptDraft, id: ScriptRole, candidate: ScriptGeneratedText,
+export function proposeScriptCandidate(draft: ScriptDraft, id: string, candidate: ScriptGeneratedText,
   expectedRevision: number, now = new Date().toISOString(), instructions = ""): ScriptDraft {
   const section = draft.sections.find(s => s.id === id);
   if (!section || !section.text || section.revision !== expectedRevision) throw Error("Stale script regeneration response; accepted text has changed.");
@@ -207,7 +210,7 @@ export function proposeScriptCandidate(draft: ScriptDraft, id: ScriptRole, candi
     text: generated.narration, claimRefs: generated.claimRefs, sourceRefs: generated.sourceRefs,
     instructions: text(instructions, "extra instructions", 2000), createdAt: time(now) } } };
 }
-export function acceptScriptCandidate(draft: ScriptDraft, id: ScriptRole, now = new Date().toISOString()): ScriptDraft {
+export function acceptScriptCandidate(draft: ScriptDraft, id: string, now = new Date().toISOString()): ScriptDraft {
   const candidate = draft.pending[id];
   if (!candidate) throw Error("No script candidate to accept.");
   const updated = update(draft, id, section => {
@@ -217,7 +220,7 @@ export function acceptScriptCandidate(draft: ScriptDraft, id: ScriptRole, now = 
   const pending = { ...updated.pending }; delete pending[id];
   return { ...updated, pending };
 }
-export function discardScriptCandidate(draft: ScriptDraft, id: ScriptRole): ScriptDraft {
+export function discardScriptCandidate(draft: ScriptDraft, id: string): ScriptDraft {
   const pending = { ...draft.pending }; delete pending[id];
   return { ...draft, pending };
 }
@@ -230,12 +233,16 @@ export function approveScriptDraft(draft: ScriptDraft, now = new Date().toISOStr
 export function validateScriptDraft(candidate: unknown): ScriptDraft {
   const root = exact(candidate, ["version", "input", "status", "approvedAt", "updatedAt", "sections", "pending"], "script draft");
   if (root.version !== 1 || (root.status !== "draft" && root.status !== "approved") ||
-      !Array.isArray(root.sections) || root.sections.length !== SECTION_PLAN.length) throw Error("Invalid script draft schema.");
+      !Array.isArray(root.sections) || root.sections.length<1 || root.sections.length>MAX_SCRIPT_SECTIONS) throw Error("Invalid script draft schema.");
   const input = inputDocument(root.input as ScriptReviewInput);
-  const sections = root.sections.map((raw, index) => {
-    const r = exact(raw, ["id", "heading", "purpose", "text", "claimRefs", "sourceRefs", "revision", "history"], "script section");
-    if (r.id !== SECTION_PLAN[index].id || r.heading !== SECTION_PLAN[index].heading || r.purpose !== SECTION_PLAN[index].purpose ||
-        !Number.isInteger(r.revision) || (r.revision as number) < 0 || !Array.isArray(r.history) ||
+  const seen=new Set<string>();
+  const sections = root.sections.map((raw) => {
+    const r = exact(raw, ["id", "role", "heading", "purpose", "text", "claimRefs", "sourceRefs", "revision", "history"], "script section");
+    if(!isScriptSectionId(r.id))throw Error("Invalid script section identity.");
+    if(seen.has(r.id))throw Error("Duplicate script section identity.");
+    seen.add(r.id);
+    if(r.role!==undefined&&!SCRIPT_ROLES.includes(r.role as ScriptRole))throw Error("Invalid script section role.");
+    if (!Number.isInteger(r.revision) || (r.revision as number) < 0 || !Array.isArray(r.history) ||
         r.history.length !== r.revision) throw Error("Script section history mismatch.");
     const history = r.history.map((rawEntry, i) => {
       const h = exact(rawEntry, ["revision", "text", "claimRefs", "sourceRefs", "origin", "createdAt"], "script revision");
@@ -244,7 +251,8 @@ export function validateScriptDraft(candidate: unknown): ScriptDraft {
         claimRefs: refs(h.claimRefs, "revision claim references"), sourceRefs: refs(h.sourceRefs, "revision source references"),
         origin: h.origin as ScriptSectionHistory["origin"], createdAt: time(h.createdAt) };
     });
-    const section = { id: r.id as ScriptRole, heading: r.heading as string, purpose: r.purpose as string,
+    const section = { id: r.id as string,...(r.role!==undefined?{role:r.role as ScriptRole}:{}),
+      heading: text(r.heading,"section heading",140,1), purpose: text(r.purpose,"section purpose",400,10),
       text: text(r.text, "section narration", 6500), claimRefs: refs(r.claimRefs, "section claim references"),
       sourceRefs: refs(r.sourceRefs, "section source references"), revision: r.revision as number, history };
     if (history.length && (section.text !== history.at(-1)?.text ||
@@ -253,20 +261,43 @@ export function validateScriptDraft(candidate: unknown): ScriptDraft {
       throw Error("Script text and last accepted version disagree.");
     return section;
   });
-  const pendingRoot = exact(root.pending, SECTION_PLAN.map(s => s.id), "script candidate list");
+  const pendingRoot = exact(root.pending, sections.map(s => s.id), "script candidate list");
   const pending: ScriptDraft["pending"] = {};
   for (const [id, raw] of Object.entries(pendingRoot)) {
     const c = exact(raw, ["sourceRevision", "text", "claimRefs", "sourceRefs", "instructions", "createdAt"], "script candidate");
     const parent = sections.find(s => s.id === id)!;
     if (!Number.isInteger(c.sourceRevision) || c.sourceRevision !== parent.revision) throw Error("Stale stored script candidate.");
-    pending[id as ScriptRole] = { sourceRevision: c.sourceRevision as number, text: text(c.text, "candidate narration", 6500, 30),
+    pending[id] = { sourceRevision: c.sourceRevision as number, text: text(c.text, "candidate narration", 6500, 30),
       claimRefs: refs(c.claimRefs, "candidate claim references"), sourceRefs: refs(c.sourceRefs, "candidate source references"),
       instructions: text(c.instructions, "candidate instructions", 2000), createdAt: time(c.createdAt) };
   }
   const approvedAt = root.approvedAt === null ? null : time(root.approvedAt);
+  if(root.status==="approved"&&(sections.some(section=>!section.text.trim())||Object.keys(pending).length))throw Error("Approved script is incomplete or has pending suggestions.");
   if ((root.status === "approved") !== !!approvedAt) throw Error("Script approval status mismatch.");
   return { version: 1, input, status: root.status as ScriptDraft["status"],
     approvedAt, updatedAt: time(root.updatedAt), sections, pending };
+}
+
+export interface NewScriptSection {
+  heading:string;purpose:string;text:string;role?:ScriptRole;claimRefs?:string[];sourceRefs?:string[];
+}
+export function manualScriptSection(input:NewScriptSection,id="section-"+crypto.randomUUID(),now=new Date().toISOString()):ScriptSection {
+  if(!isScriptSectionId(id))throw Error("Invalid section identity.");
+  const role=input.role??"custom";
+  if(!SCRIPT_ROLES.includes(role))throw Error("Invalid section role.");
+  const section:ScriptSection={id,role,heading:text(input.heading,"section heading",140,1),
+    purpose:text(input.purpose,"section purpose",400,10),text:"",claimRefs:[],sourceRefs:[],revision:0,history:[]};
+  const narration=text(input.text,"section narration",6500);
+  const claimRefs=refs(input.claimRefs??[],"claim references"),sourceRefs=refs(input.sourceRefs??[],"source references");
+  return narration?version(section,{narration,claimRefs,sourceRefs},"manual",now):section;
+}
+export function insertScriptSection(draft:ScriptDraft,anchorId:string,position:"before"|"after",input:NewScriptSection,
+  now=new Date().toISOString()):ScriptDraft {
+  if(draft.sections.length>=MAX_SCRIPT_SECTIONS)throw Error(`A script supports at most ${MAX_SCRIPT_SECTIONS} sections.`);
+  const index=draft.sections.findIndex(section=>section.id===anchorId);
+  if(index<0||!["before","after"].includes(position))throw Error("Select an existing section and insertion position.");
+  const sections=[...draft.sections];sections.splice(index+(position==="after"?1:0),0,manualScriptSection(input,undefined,now));
+  return validateScriptDraft({...draft,sections,pending:{},status:"draft",approvedAt:null,updatedAt:time(now)});
 }
 
 /** Treat localStorage as a guarded authoring cache, not an approved media release. */

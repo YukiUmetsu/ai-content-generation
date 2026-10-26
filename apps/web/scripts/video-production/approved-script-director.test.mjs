@@ -108,3 +108,75 @@ test("edited storyboard visual instructions reach the Director but inconsistent 
    const result=compileApprovedScriptDirector({productionId,script:updated,evidence,sources});
    assert.ok(compilePreproductionRenderJob(result.dossier,result.bundle).job.beats.every(beat=>beat.narration.length<=1600));
  });
+
+
+test("a sixth promotional section survives Director and renderer handoff without invented citations",()=>{
+  const promotion={id:"section-product",role:"promotion",heading:"FileQuell for accountants",purpose:"Show the product in the accounting workflow.",
+    text:"Review FileQuell to see whether its local file tools fit your accounting preparation workflow.",claimRefs:[],sourceRefs:[]};
+  const next={...script,sections:[...script.sections,promotion]};
+  const result=compileApprovedScriptDirector({productionId,script:next,evidence,sources});
+  assert.equal(result.bundle.plan.sound.length,6);
+  assert.equal(result.bundle.plan.sound.at(-1).narration,promotion.text);
+  assert.equal(result.bundle.plan.story.answerExplanationId,"explain_5");
+  const manual=result.dossier.claims.find(claim=>claim.sourceRefs.length===0);
+  assert.equal(manual.status,"unverified");
+  assert.ok(result.dossier.gaps.some(gap=>/uncited|manual/i.test(gap)));
+  assert.equal(compilePreproductionRenderJob(result.dossier,result.bundle).job.beats.length,6);
+});
+
+test("all-manual imports retain uncited gaps and accept the matching storyboard outline",()=>{
+  const imported=structuredClone(script);
+  imported.sections=imported.sections.slice(0,3).map((section,index)=>({...section,id:`section-${index}`,role:"custom",claimRefs:[],sourceRefs:[]}));
+  const storyboard={assumptions:[`Approved script revision: ${script.updatedAt}.`],beats:imported.sections.map(section=>({
+    id:`script-beat-${section.id}`,narration:section.text,visualObjective:section.purpose,onScreenText:section.heading,claimRefs:[`manual_${section.id}`]}))};
+  const {dossier,bundle}=compileApprovedScriptDirector({productionId,script:imported,evidence,sources,storyboard});
+  assert.equal(dossier.claims.length,3);
+  assert.ok(dossier.claims.every(claim=>claim.status==="unverified"&&claim.sourceRefs.length===0));
+  assert.match(dossier.evidence[0].passageLocator,/not a citation/u);
+  assert.equal(bundle.plan.sound.length,3);
+  assert.equal(compilePreproductionRenderJob(dossier,bundle).job.beats.length,3);
+});
+
+for(const count of [1,2])test(`${count}-section imported script becomes three non-repeated shots without losing narration`,()=>{
+  const imported=structuredClone(script);
+  imported.sections=imported.sections.slice(0,count).map((section,index)=>({...section,id:`section-${index}`,role:"custom",claimRefs:[],sourceRefs:[]}));
+  const {dossier,bundle}=compileApprovedScriptDirector({productionId,script:imported,evidence,sources});
+  assert.ok(bundle.plan.shots.length>=3);
+  assert.equal(bundle.plan.sound.map(sound=>sound.narration).join(" "),imported.sections.map(section=>section.text).join(" "));
+  assert.ok(dossier.claims.every(claim=>claim.sourceRefs.length===0));
+  assert.equal(compilePreproductionRenderJob(dossier,bundle).job.beats.length,3);
+});
+
+test("keeps the actual answer before a promotion even with a two-section main story",()=>{
+  const updated=structuredClone(script);updated.sections=updated.sections.slice(0,2);
+  updated.sections[1].role="closing";
+  updated.sections.push({id:"section-product",role:"promotion",heading:"FileQuell",purpose:"Invite the audience to review the product workflow.",
+    text:"Review FileQuell with your accounting team and decide whether it fits your own document preparation workflow.",claimRefs:[],sourceRefs:[]});
+  const {dossier,bundle}=compileApprovedScriptDirector({productionId,script:updated,evidence,sources});
+  const payoff=bundle.plan.teachingSequences[0].phases.at(-1);
+  const answer=bundle.plan.shots.find(shot=>shot.id===payoff.shotId);
+  assert.equal(answer.explanationId,bundle.plan.story.answerExplanationId);
+  assert.equal(answer.purpose,"answer");
+  assert.equal(bundle.plan.shots.at(-1).purpose,"postscript");
+  assert.equal(compilePreproductionRenderJob(dossier,bundle).job.beats.length,4);
+});
+
+test("short-outline splits never break decimal values or dotted tokens",()=>{
+  const updated=structuredClone(script);
+  updated.sections=[{...updated.sections[0],id:"section-only",role:"custom",
+    text:"Before filing, the accountant reviews 125.50 and reconciles the entire client ledger."}];
+  const {bundle}=compileApprovedScriptDirector({productionId,script:updated,evidence,sources});
+  assert.equal(bundle.plan.sound.map(sound=>sound.narration).join(" "),updated.sections[0].text);
+});
+
+test("a sole main section keeps its answer before an appended promotion",()=>{
+  const updated=structuredClone(script);
+  updated.sections=[{...updated.sections[0],id:"section-main",role:"custom"},
+    {...updated.sections[1],id:"section-product",heading:"FileQuell promotion",role:"promotion"}];
+  const {dossier,bundle}=compileApprovedScriptDirector({productionId,script:updated,evidence,sources});
+  const answer=bundle.plan.shots.find(shot=>shot.purpose==="answer");
+  assert.equal(answer.onScreenText,updated.sections[0].heading);
+  assert.equal(bundle.plan.shots.at(-1).purpose,"postscript");
+  assert.equal(bundle.plan.sound.map(sound=>sound.narration).join(" "),updated.sections.map(section=>section.text).join(" "));
+  assert.equal(compilePreproductionRenderJob(dossier,bundle).job.beats.length,4);
+});

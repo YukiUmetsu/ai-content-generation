@@ -6,13 +6,14 @@ import { DEFAULT_FPS, STORYBOARD_KIND, STORYBOARD_SCHEMA_VERSION,
   type SemanticStoryboard, type StoryboardBeat, type NarrativeRole, type VisualIntent } from
   "@/features/storyboard-planner/model/types";
 import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
+import {scriptSectionRole,scriptAnswerIndex,scriptStoryboardClaimRefs} from "../../scripts/video-production/script-contract.mjs";
 import { estimatedNarrationSeconds, type ScriptDraft, type ScriptEvidence, type ScriptRole } from "./script-review-model";
 
 const ROLES:Record<ScriptRole,NarrativeRole>={
-  hook:"hook",context:"setup",mechanism:"explanation",practical:"evidence",closing:"takeaway",
+  hook:"hook",context:"setup",mechanism:"explanation",practical:"evidence",closing:"takeaway",custom:"explanation",promotion:"takeaway",
 };
 const INTENTS:Record<ScriptRole,VisualIntent>={
-  hook:"question",context:"explanation",mechanism:"explanation",practical:"comparison",closing:"takeaway",
+  hook:"question",context:"explanation",mechanism:"explanation",practical:"comparison",closing:"takeaway",custom:"explanation",promotion:"takeaway",
 };
 
 export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEvidence[]):SemanticStoryboard {
@@ -20,28 +21,31 @@ export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEv
     throw Error("Approve a complete script before creating its storyboard outline.");
   }
   const evidenceByClaim=new Map(evidence.map(item=>[item.claimId,item]));
-  const allClaimIds=[...new Set(script.sections.flatMap(section=>section.claimRefs))];
+  const refsForSection=(section:ScriptDraft["sections"][number])=>scriptStoryboardClaimRefs(section,evidence);
+  const allClaimIds=[...new Set(script.sections.flatMap(refsForSection))];
   const claims=allClaimIds.map(id=>{
     const source=evidenceByClaim.get(id);
     return {id,status:"unverified" as const,
-      note:source?.claimText??"Narration assertion needs a matching source and editorial review.",
+      note:source?.claimText??`Manual or imported narration needs factual review: ${script.sections.find(section=>refsForSection(section).includes(id))?.heading??id}`,
+
       sourceRefs:source?[source.sourceId]:[],
     };
   });
+  const answerIndex=scriptAnswerIndex(script.sections);
   const beats:StoryboardBeat[]=script.sections.map((section,index)=>{
     const subjectId=`script-concept-${section.id}`;
     const questionId="script-central-question";
-    const isFirst=index===0,isLast=index===script.sections.length-1;
+    const isFirst=index===0,isLast=index===answerIndex;
     const readingSeconds=estimatedNarrationSeconds(section.text,script.input.locale);
     return {
-      id:`script-beat-${section.id}`,role:ROLES[section.id],
+      id:`script-beat-${section.id}`,role:index===0?"hook":ROLES[scriptSectionRole(section)],
       objective:section.purpose,narration:section.text,onScreenText:section.heading,
-      visualIntent:INTENTS[section.id],
+      visualIntent:INTENTS[scriptSectionRole(section)],
       visualObjective:`Design a meaningful visual change that teaches: ${section.purpose}`,
       semanticObjects:[subjectId],focusTarget:subjectId,
       durationFrames:Math.max(90,Math.ceil(readingSeconds*DEFAULT_FPS.num/DEFAULT_FPS.den)),
-      claimRefs:[...section.claimRefs],
-      namedEvents:isFirst?["script-question-opens"]:isLast?["script-answer-reveals"]:[],
+      claimRefs:refsForSection(section),
+      namedEvents:[...(isFirst?["script-question-opens"]:[]),...(isLast?["script-answer-reveals"]:[])],
       staticFallback:`${section.heading}: ${section.purpose}`,
       ...(isFirst?{opensQuestion:questionId}:{}),
       ...(isLast?{answersQuestion:questionId}:{}),
@@ -54,8 +58,8 @@ export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEv
     questions:[{id:"script-central-question",text:script.input.viewerQuestion}],
     claims,semanticObjects:script.sections.map(section=>({id:`script-concept-${section.id}`,label:section.heading})),
     semanticEvents:[
-      {id:"script-question-opens",label:"Open the motivating question",objectId:"script-concept-hook"},
-      {id:"script-answer-reveals",label:"Reveal the final answer",objectId:"script-concept-closing"},
+      {id:"script-question-opens",label:"Open the motivating question",objectId:`script-concept-${script.sections[0].id}`},
+      {id:"script-answer-reveals",label:"Reveal the final answer",objectId:`script-concept-${script.sections[answerIndex].id}`},
     ],
     assumptions:[
       `Approved script revision: ${script.updatedAt}.`,

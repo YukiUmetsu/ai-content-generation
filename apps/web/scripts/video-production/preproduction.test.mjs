@@ -198,3 +198,15 @@ test("quality warnings flag copy and delivery monotony without pretending to mea
   assert.ok(codes(result.findings).includes("monotone-performance"));
   assert.ok(codes(result.findings).includes("repeated-copy"));
 });
+
+test("allows only explicit summary postscripts after a visible central answer",()=>{
+  const p=plan();
+  p.shots.push({...p.shots[2],id:"shot_cta",explanationId:"explain_parts",family:"summary",purpose:"postscript",claimIds:["claim_parts"]});
+  p.sound.push({...p.sound[2],shotId:"shot_cta"});
+  p.continuity.push({fromShotId:"shot_answer",toShotId:"shot_cta",technique:"cut",subjectIds:["house"],reason:"Continue to a closing message."});
+  // Use the first explanation's actual declared claims.
+  p.shots[3].claimIds=p.explanation[0].claimIds;
+  assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+  p.shots[3].purpose="explain";
+  assert.ok(codes(parsePreproductionPlan(p,dossier()).findings).includes("payoff-not-visible"));
+});

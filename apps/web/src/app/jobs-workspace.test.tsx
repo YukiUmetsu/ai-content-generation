@@ -254,7 +254,7 @@ describe("Jobs & QA discovery visibility", () => {
     });
     render(<JobsWorkspace locale="en" projects={[project]} />);
     const jobsList = await screen.findByRole("list", { name: "Jobs" });
-    const row = within(jobsList).getByRole("button", { name: /Household energy costs/i });
+    const row = await within(jobsList).findByRole("button", { name: /Household energy costs/i });
     row.focus();
     fireEvent.click(row);
     const back = screen.getByRole("button", { name: /Back to jobs/i });

@@ -5,9 +5,12 @@ import { Surface } from "@/components/ui/surface-card";
 import {
   acceptScriptCandidate, approveScriptDraft, createScriptDraft, discardScriptCandidate,
   editScriptSection, estimatedNarrationSeconds, fillScriptSection, isScriptContextCurrent, loadScriptDraft,
-  proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, saveScriptDraft, scriptEvidenceFingerprint, type ScriptDraft, type ScriptEvidence,
-  type ScriptGeneratedText, type ScriptLocale, type ScriptPlatform, type ScriptRole,
+  insertScriptSection, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, saveScriptDraft, scriptEvidenceFingerprint, type ScriptDraft, type ScriptEvidence,
+  type ScriptGeneratedText, type ScriptLocale, type ScriptPlatform, type NewScriptSection,
 } from "./script-review-model";
+import {scriptSectionRole,MAX_SCRIPT_SECTIONS} from "../../scripts/video-production/script-contract.mjs";
+import {applyScriptImport,loadScriptBackup,saveScriptReplacement,type ScriptImportSection} from "./script-import";
+import {ScriptInsertDialog,ScriptImportDialog} from "./script-editing-tools";
 
 export interface ScriptReviewWorkspaceProps {
   productionId: string;
@@ -70,7 +73,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const failuresRef = useRef(new Set<string>());
-  const rejectedRef = useRef<Partial<Record<ScriptRole,string[]>>>({});
+  const rejectedRef = useRef<Partial<Record<string,string[]>>>({});
   const mountedRef = useRef(true);
   const batchStopped = useRef(false);
   const [autoPaused, setAutoPaused] = useState(false);
@@ -79,12 +82,17 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const [fullDraftRequested, setFullDraftRequested] = useState(platform === "youtube");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [regenerateId, setRegenerateId] = useState<ScriptRole | null>(null);
+  const [regenerateId, setRegenerateId] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
   const [fullRewriteOpen, setFullRewriteOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
-  const [editingId, setEditingId] = useState<ScriptRole | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editedText, setEditedText] = useState("");
+  const [editedClaims,setEditedClaims]=useState<string[]>([]);
+  const [inserting,setInserting]=useState<{id:string;heading:string;position:"before"|"after"}|null>(null);
+  const [importOpen,setImportOpen]=useState(false);
+  const [hasBackup,setHasBackup]=useState(()=>{try{return !!loadScriptBackup(productionId,platform);}catch{return false;}});
+  const pauseWriting=()=>{batchStopped.current=true;setAutoPaused(true);abortRef.current?.abort();};
   const [reviewConfirmed, setReviewConfirmed] = useState(false);
   // A pristine first draft can adopt evidence arriving after mount. Authored drafts
   // retain their original context until the editor explicitly reviews and adopts it.
@@ -106,9 +114,10 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   }, []);
   useEffect(() => {onStatusChange?.(busy ? "running" : error ? "failed" : "idle");}, [busy,error,onStatusChange]);
 
-  const persist = (next: ScriptDraft): boolean => {
+  const persist = (next: ScriptDraft, replacement=false): boolean => {
     try {
-      saveScriptDraft(next);
+      if(replacement&&viewRef.current.draft){saveScriptReplacement(next,viewRef.current.draft);setHasBackup(true);}
+      else saveScriptDraft(next);
       const state = { draft: next, warning: null };
       viewRef.current = state;
       setView(state);
@@ -120,7 +129,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     }
   };
 
-  async function generate(sectionId: ScriptRole, mode: "initial" | "regenerate", extraInstructions = "", useProposedPredecessors=false) {
+  async function generate(sectionId: string, mode: "initial" | "regenerate", extraInstructions = "", useProposedPredecessors=false) {
     const before = viewRef.current.draft;
     if (!before || busyRef.current || !mountedRef.current) return;
     if (!isScriptContextCurrent(before, context)) {
@@ -142,10 +151,10 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     setBusy(`${mode}:${sectionId}`);
     setError("");
     const continuity=(value:ScriptDraft)=>value.sections.map((item,position)=>({sectionId:item.id,
-      heading:item.heading,purpose:item.purpose,
+      role:scriptSectionRole(item),heading:item.heading,purpose:item.purpose,
       text:useProposedPredecessors&&position<index?value.pending[item.id]?.text??item.text:item.text}));
     const scriptSections=continuity(before);
-    const request = { sectionId, heading: section.heading, purpose: section.purpose, mode,
+    const request = { sectionId, sectionRole:scriptSectionRole(section), heading: section.heading, purpose: section.purpose, mode,
       title: before.input.title, viewerQuestion: before.input.viewerQuestion,
       audience: before.input.audience, angle: before.input.angle, brandVoice: before.input.brandVoice,
       locale: before.input.locale, platform: before.input.platform, requestedDurationSeconds: secondsPerSection[platform],
@@ -216,15 +225,18 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const staleContext = Boolean(draft && !isScriptContextCurrent(draft, context));
   const done = Boolean(draft?.sections.every(section => !!section.text.trim()));
 
-  const revise = (sectionId: ScriptRole, text: string) => {
+  const revise = (sectionId: string, text: string) => {
     const current = viewRef.current.draft;
     if (!current) return;
-    if (persist(editScriptSection(current, sectionId, text))) {
+    try {
+    const sourceRefs=[...new Set(evidence.filter(item=>editedClaims.includes(item.claimId)).map(item=>item.sourceId))];
+    if (persist(editScriptSection(current, sectionId, text,undefined,{claimRefs:editedClaims,sourceRefs}))) {
       setEditingId(null);
       setReviewConfirmed(false);
     }
+    } catch(problem){setError(problem instanceof Error?problem.message:"Unable to save section edit.");}
   };
-  const choose = (sectionId: ScriptRole, action: "accept" | "discard") => {
+  const choose = (sectionId: string, action: "accept" | "discard") => {
     const current = viewRef.current.draft;
     if (!current) return;
     try {
@@ -273,6 +285,26 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     if (ownerRef.current === identity) setBatchBusy(false);
   }
 
+  const addSection=(section:NewScriptSection)=>{
+    const current=viewRef.current.draft;if(!current||!inserting||busyRef.current||batchBusy)return false;
+    try {const saved=persist(insertScriptSection(current,inserting.id,inserting.position,section));if(saved){setReviewConfirmed(false);setError("");}return saved;}
+    catch(problem){setError(problem instanceof Error?problem.message:"Unable to add section.");return false;}
+  };
+  const importSections=(sections:ScriptImportSection[])=>{
+    const current=viewRef.current.draft;if(!current||busyRef.current||batchBusy)return false;
+    try {const saved=persist(applyScriptImport(current,sections,evidence),true);if(saved){setReviewConfirmed(false);setEditingId(null);setRegenerateId(null);setError("");failuresRef.current.clear();}return saved;}
+    catch(problem){setError(problem instanceof Error?problem.message:"Unable to import script.");return false;}
+  };
+  const restorePrevious=()=>{
+    pauseWriting();
+    try{const previous=loadScriptBackup(productionId,platform);if(!previous)throw Error("No previous script is available.");
+      if(previous.input.projectId!==projectId)throw Error("Previous script belongs to a different project.");
+      if(persist({...previous,status:"draft",approvedAt:null,updatedAt:new Date().toISOString()},true)){
+        setReviewConfirmed(false);setEditingId(null);setRegenerateId(null);setError("");
+      }
+    }catch(problem){setError(problem instanceof Error?problem.message:"Unable to restore script.");}
+  };
+
   return <div className="space-y-5" aria-label="Script review workspace">
     <Surface header={<div className="flex flex-wrap items-start justify-between gap-3">
       <div className="space-y-1">
@@ -280,7 +312,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
         <p className="text-sm text-muted-foreground">Generate a platform-specific draft, then review, edit or improve individual sections. YouTube starts automatically; other platforms start when you request them.</p>
       </div>
       <div className="rounded-control border border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground">{generated}/5 sections</span> · <Clock3 className="inline size-3" /> {platform === "blog" ? `${locale === "ja" ? "Japanese article" : `${articleWords.toLocaleString()} words`} · about ${articleReadMinutes} min read` : `Estimated ${duration(seconds)}`}
+        <span className="font-semibold text-foreground">{generated}/{draft?.sections.length??0} sections</span> · <Clock3 className="inline size-3" /> {platform === "blog" ? `${locale === "ja" ? "Japanese article" : `${articleWords.toLocaleString()} words`} · about ${articleReadMinutes} min read` : `Estimated ${duration(seconds)}`}
       </div>
     </div>}>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Platform script versions">
@@ -290,6 +322,10 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
         </button>)}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">Each destination has its own script and revision history. Switching platforms never overwrites another output.</p>
+      {draft&&<div className="mt-3 flex flex-wrap gap-2">
+        <Button onClick={()=>{pauseWriting();setError("");setImportOpen(true);}}>Import full script</Button>
+        {hasBackup&&<button type="button" className={secondary} disabled={!!busy||batchBusy} onClick={restorePrevious}>Restore previous script</button>}
+      </div>}
       {!done && <div className="mt-3">
         <Button disabled={!!busy || batchBusy || !evidence.length || !!view.warning || staleContext}
           onClick={() => { failuresRef.current.clear(); setError(""); setAutoPaused(false); setFullDraftRequested(true); }}
@@ -297,6 +333,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
           {generated ? `Generate remaining ${platforms[platform]} sections` : `Generate full ${platforms[platform]} script`}
         </Button>
         <p className="mt-2 text-xs text-muted-foreground">Writes missing sections in order, using captured evidence and previous sections. Accepted edits stay saved.</p>
+
       </div>}
       {staleContext && <div role="status" className="mt-3 space-y-3 rounded-control border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
         <p>The research, brand voice or creative brief changed since this script began. Existing narration and revisions will be preserved, but any previous approval must be renewed after reviewing source links.</p>
@@ -304,13 +341,13 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
           Use updated context and review again
         </button>
       </div>}
-      {done && <div className="mt-3">
+      {done && draft && <div className="mt-3">
         <button type="button" className={secondary} disabled={!!busy || batchBusy}
           onClick={() => setFullRewriteOpen(value => !value)}>Regenerate full script</button>
         {fullRewriteOpen && <div className="mt-3 space-y-2 rounded-control border border-amber-500/40 bg-amber-500/5 p-4">
           <p className="text-sm font-semibold">Generate a full alternative script?</p>
-          <p className="text-xs text-muted-foreground">This will request five independent AI suggestions. Your current text, manual changes and accepted versions stay untouched until you accept individual suggestions.</p>
-          <div className="flex flex-wrap gap-2"><Button onClick={() => void regenerateFullScript()}>Generate five suggestions</Button>
+          <p className="text-xs text-muted-foreground">This will request {draft.sections.length} AI suggestions in script order, using earlier proposed sections for continuity. Your current text, manual changes and accepted versions stay untouched until you accept individual suggestions.</p>
+          <div className="flex flex-wrap gap-2"><Button onClick={() => void regenerateFullScript()}>Generate {draft.sections.length} suggestions</Button>
             <button type="button" className={secondary} onClick={() => setFullRewriteOpen(false)}>Keep current script</button></div>
         </div>}
       </div>}
@@ -349,13 +386,19 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
             <p className="text-xs text-muted-foreground">{section.purpose}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" className={secondary} onClick={() => {setEditingId(section.id);setEditedText(section.text);}}
-              aria-label={`Edit section ${section.heading}`} disabled={!section.text}><PencilLine className="mr-1 inline size-4" />Edit section</button>
+            <button type="button" className={secondary} onClick={() => {pauseWriting();setEditingId(section.id);setEditedText(section.text);setEditedClaims(section.claimRefs);}}
+              aria-label={`Edit section ${section.heading}`}><PencilLine className="mr-1 inline size-4" />Edit section</button>
             <button type="button" className={secondary} onClick={() => {setRegenerateId(section.id);setInstructions("");}}
               aria-label={`Regenerate section ${section.heading}`} disabled={!section.text || !!busy || batchBusy}>
               <RefreshCw className="mr-1 inline size-4" />Regenerate section
             </button>
           </div>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {(["before","after"] as const).map(position=><button key={position} type="button" className={secondary}
+            disabled={draft.sections.length>=MAX_SCRIPT_SECTIONS} aria-label={`Add section ${position} ${section.heading}`}
+            onClick={()=>{pauseWriting();setError("");setInserting({id:section.id,heading:section.heading,position});}}>+ Add {position}</button>)}
+          {draft.sections.length>=MAX_SCRIPT_SECTIONS&&<span className="text-xs text-muted-foreground">20-section limit reached</span>}
         </div>
         <div className="mt-4 rounded-control bg-surface-subtle p-4 text-sm leading-7 text-foreground">
           {section.text ? <p className="whitespace-pre-wrap">{section.text}</p> :
@@ -380,6 +423,12 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
           <textarea id={`script-edit-${section.id}`} aria-label={`Edit ${section.heading}`} className={textField} rows={6}
             maxLength={6500} value={editedText} onChange={event => setEditedText(event.target.value)} />
           <p className="text-xs text-muted-foreground">Manual text remains yours. Recheck evidence for any new factual statements; previous accepted text stays in revision history.</p>
+          {evidence.length>0&&<fieldset className="space-y-2 rounded-control border border-border p-3">
+            <legend className="text-xs font-semibold">Supporting captured evidence (optional)</legend>
+            {evidence.map(item=><label key={item.claimId+item.sourceId} className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5 accent-primary"
+              checked={editedClaims.includes(item.claimId)} onChange={event=>setEditedClaims(value=>event.target.checked?[...new Set([...value,item.claimId])]:value.filter(id=>id!==item.claimId))} />
+              <span>{item.claimText} · {item.sourceId}</span></label>)}
+          </fieldset>}
           <div className="flex flex-wrap gap-2"><Button onClick={() => revise(section.id, editedText)}>Save section edit</Button>
             <button className={secondary} type="button" onClick={() => setEditingId(null)}>Cancel edit</button></div>
         </div>}
@@ -410,6 +459,8 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
       </section>;
     })}
 
+    {inserting&&<ScriptInsertDialog {...inserting} busy={!!busy||batchBusy} onApply={addSection} onClose={()=>setInserting(null)} saveError={error} />}
+    {importOpen&&<ScriptImportDialog busy={!!busy||batchBusy} onApply={importSections} onClose={()=>setImportOpen(false)} saveError={error} />}
     {draft && <Surface header={<h3 className="text-base font-semibold">Ready for storyboard?</h3>}>
       <p className="text-sm text-muted-foreground">Script changes are versioned. After approval, storyboard shots, narration timing and previously rendered assets may need review if you change a section.</p>
       <div className="mt-3 flex items-center gap-2 text-sm">

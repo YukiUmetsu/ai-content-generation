@@ -330,10 +330,25 @@ it("detects repeated Japanese narration without requiring spaces",async()=>{
 
 
 it("bounds continuity and discarded-text context before contacting a model",()=>{
-  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:sectionContext().slice(0,4)}),/five-section/i);
-  const wrong=sectionContext();wrong.reverse();
-  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:wrong}),/order/i);
+  assert.equal(validateScriptGenerationInput({...input,scriptSections:sectionContext().slice(0,4)}).scriptSections.length,4);
+  const wrong=sectionContext();wrong[1].sectionId=wrong[0].sectionId;
+  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:wrong}),/duplicate/i);
   const huge=sectionContext();huge[0].text="x".repeat(6501);
   assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:huge}),/Continuity narration/i);
   assert.throws(()=>validateScriptGenerationInput({...input,rejectedTexts:["a".repeat(40),"b".repeat(40),"c".repeat(40)]}),/two discarded/i);
+});
+
+it("sends six sections and an explicit promotion job for a custom section ID",async()=>{
+  const sections=[...sectionContext(),{sectionId:"section-product",role:"promotion",heading:"FileQuell",
+    purpose:"Connect the reviewed product evidence to the accountant workflow.",text:""}];
+  let supplied;
+  await generateScriptSection({...input,sectionId:"section-product",sectionRole:"promotion",scriptSections:sections},
+    {modelSettings:model,log:()=>{},transport:async(_url,init)=>{
+      const body=JSON.parse(init.body);supplied=JSON.parse(body.messages.at(-1).content);
+      assert.match(body.messages[0].content,/promotion.*workflow/u);
+      return response({narration:"Compare the captured cost and risk evidence with the needs of your workflow before selecting your next step."});
+    }});
+  assert.equal(supplied.sectionRole,"promotion");assert.equal(supplied.scriptSections.length,6);
+  assert.equal(supplied.scriptSections[5].sectionId,"section-product");
+  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:Array.from({length:21},(_,i)=>({...sections[5],sectionId:`section-${i}`}))}),/1–20/u);
 });
