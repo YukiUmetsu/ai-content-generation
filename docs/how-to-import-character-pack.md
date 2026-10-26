@@ -13,6 +13,25 @@ animation actions, expression presets, image variants, speech mapping, anchors
 and rest transforms. This is a checklist of authored fields, **not** evidence
 that the actions play correctly or the rig is ready to publish.
 
+The **Anatomy & joint placement** panel is a manifest-only calibration tool.
+Choose any named part and adjust its parent-relative X/Y position, clockwise
+rotation, horizontal/vertical scale, or part-local pivot. It does not assume
+human proportions or special limb names: squirrel muzzles, short hind legs,
+body-hugging paws, wings, tentacles and long tails all use the same fields.
+For example, increase a head's Y offset to lower it; reduce a short-legged
+creature's leg `scaleY` (without collapsing it to zero); adjust each paw's X
+offset to tuck it closer to its torso; set a tail's pivot at its actual base.
+These numbers must be measured against the character art, not copied from a
+generic human template. A trimmed sprite and its replacement expressions
+still require aligned landmarks to avoid jumps.
+
+To keep saved drafts immutable, calibration **does not overwrite or repack**
+the imported ZIP. Enter a **new revision**, select **Download revised
+character.json**, replace the old `character.json` alongside the unchanged
+`layers/` files, and create a new ZIP before importing again. The panel does
+not provide a composited pose preview, confirm joint alignment, or validate
+movement quality yet; those require the pinned Kumiki character presenter.
+
 Drafts are **unverified and immutable**. They are not publishing approvals,
 character registrations for rendering, lip-sync previews, voice grants or
 evidence of artwork rights. Changing art or metadata requires a different

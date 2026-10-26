@@ -8,12 +8,13 @@ import type { InspectedCharacterPack } from "./character-pack";
 import { characterDraftArchiveUrl, listCharacterDrafts, loadCharacterDraft, saveCharacterDraft } from "./character-drafts-api";
 import type { CharacterDraft } from "./character-drafts-api";
 import { summarizeRigMetadata } from "./rig-metadata";
+import { RigCalibrationEditor } from "./RigCalibrationEditor";
 import type { Locale } from "@/features/registry";
 
 export function CharacterPackInspector({ locale, projectId }: { locale: Locale; projectId: string }) {
   const ja = locale === "ja";
   const [status, setStatus] = useState<"idle" | "reading" | "ready" | "error">("idle");
-  const [preview, setPreview] = useState<{ pack: InspectedCharacterPack; urls: Map<string, string> } | null>(null);
+  const [preview, setPreview] = useState<{ pack: InspectedCharacterPack; urls: Map<string, string>; inspectionId: number } | null>(null);
   const [fileName, setFileName] = useState("");
   const [error, setError] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -67,7 +68,7 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
     urlsRef.current = nextUrls;
     bytesRef.current = bytes;
     setFileName(name);
-    setPreview({ pack: result, urls: nextUrls });
+    setPreview({ pack: result, urls: nextUrls, inspectionId: requestId });
     setStatus("ready");
   }
 
@@ -234,6 +235,7 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
           </div>
         </dl>
       </Surface>}
+      <RigCalibrationEditor key={preview.inspectionId} definition={pack.definition} locale={locale} />
       <Surface variant="outline" className="p-5">
         <h3 className="mb-3 font-semibold text-foreground">{ja ? "レイヤー一覧" : "Rig layers"}</h3>
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

@@ -51,6 +51,7 @@ describe("CharacterPackInspector", () => {
     expect(await screen.findByText("Structure checked")).toBeInTheDocument();
     expect(screen.getByText(/cannot be used for publishing yet/)).toBeInTheDocument();
     expect(screen.getByText("Rig metadata, not playback-tested")).toBeInTheDocument();
+    expect(screen.getByText("Anatomy & joint placement")).toBeInTheDocument();
     expect(screen.getByText("No gesture actions declared")).toBeInTheDocument();
     expect(screen.getByAltText("body sprite layer")).toHaveAttribute("src", "blob:local-character");
     expect(inspectCharacterZip).toHaveBeenCalledTimes(1);
@@ -80,6 +81,19 @@ describe("CharacterPackInspector", () => {
     releaseOld(fixture);
     await waitFor(() => expect(screen.queryByText("pip")).toBeNull());
     expect(screen.getByText("newest")).toBeInTheDocument();
+  });
+
+  it("discards calibration edits when another ZIP is inspected, even with the same identity", async () => {
+    vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
+    render(<CharacterPackInspector locale="en" projectId="project-local" />);
+    const input = screen.getByLabelText("Character ZIP");
+    fireEvent.change(input, { target: { files: [new File(["a"], "pip.zip")] } });
+    expect(await screen.findByText("Structure checked")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("X offset"), { target: { value: "12" } });
+    expect(screen.getByLabelText("X offset")).toHaveValue(12);
+    fireEvent.change(input, { target: { files: [new File(["b"], "pip.zip")] } });
+    await waitFor(() => expect(inspectCharacterZip).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByLabelText("X offset")).toHaveValue(0));
   });
 
   it("saves the exact checked bytes in the active project and reopens an immutable draft", async () => {
