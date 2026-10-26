@@ -404,6 +404,19 @@ pub fn used_search_calls(db: &Connection, now: i64) -> Result<i64, MarketError> 
     )?)
 }
 
+/// Reserve a one-shot Explore request without creating a watchlist or a run.
+/// A single conditional INSERT atomically shares the existing daily budget with
+/// scheduled and manually triggered watchlist collection.
+pub fn reserve_explore_search(db: &Connection, now: i64) -> Result<bool, MarketError> {
+    let inserted = db.execute(
+        "INSERT INTO market_search_budget(run_id,reserved_at)
+         SELECT 'explore_' || lower(hex(randomblob(16))), ?1
+         WHERE (SELECT COUNT(*) FROM market_search_budget WHERE reserved_at > ?2) < ?3",
+        params![now, now - DAILY_SECONDS, MAX_SEARCH_CALLS],
+    )?;
+    Ok(inserted == 1)
+}
+
 /// Explain why an explicit or scheduled collection could not reserve a search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimBlocked {
@@ -764,4 +777,59 @@ pub fn find_related_observations(
         }
     }
     Ok(matches)
+}
+
+#[cfg(test)]
+mod explore_tests {
+    use super::*;
+    use crate::db;
+
+    #[test]
+    fn direct_search_uses_existing_budget_without_creating_watchlists() {
+        let mut db = db::open_in_memory().unwrap();
+        db::migrate(&mut db).unwrap();
+        let now = 1_800_000_000;
+        for _ in 0..MAX_SEARCH_CALLS {
+            assert!(reserve_explore_search(&db, now).unwrap());
+        }
+        assert!(!reserve_explore_search(&db, now).unwrap());
+        assert_eq!(used_search_calls(&db, now).unwrap(), MAX_SEARCH_CALLS);
+        let saved: i64 = db
+            .query_row("SELECT COUNT(*) FROM market_watchlists", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(saved, 0);
+        assert!(reserve_explore_search(&db, now + DAILY_SECONDS + 1).unwrap());
+        assert_eq!(
+            used_search_calls(&db, now + DAILY_SECONDS + 1).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn direct_and_watchlist_search_reservations_share_the_same_limit() {
+        let mut db = db::open_in_memory().unwrap();
+        db::migrate(&mut db).unwrap();
+        let now = 1_800_000_000;
+        let watch = create_watchlist(
+            &db,
+            MarketWatchlistDraft {
+                name: "House Math".into(),
+                query: "home repairs".into(),
+                region: "US".into(),
+                language: "en".into(),
+                enabled: true,
+                query_mode: "manual".into(),
+                query_plan: vec![],
+                query_plan_source: "user-edited".into(),
+            },
+            now,
+        )
+        .unwrap();
+        let claimed = claim_watchlist(&db, &watch.id, now, true).unwrap();
+        assert!(claimed.is_some());
+        for _ in 1..MAX_SEARCH_CALLS {
+            assert!(reserve_explore_search(&db, now).unwrap());
+        }
+        assert!(!reserve_explore_search(&db, now).unwrap());
+    }
 }

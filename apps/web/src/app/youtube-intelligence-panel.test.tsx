@@ -29,6 +29,15 @@ function fakeApi(withVideo: boolean, enabled = true) {
       watchlists = [...watchlists,item];
       data = item;status=201;
     }
+    else if (url.endsWith("/explore") && init?.method === "POST") {
+      data = {videos:[{
+        videoId:"abcABC12345",title:"Heating systems compared",channelId:"UCdemo",
+        channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:320,
+        viewCount:1200,likeCount:null,commentCount:null,subscriberCount:500,
+        sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",
+        provider:"youtube-data-api",observedAt:123,expiresAt:1234567
+      }]};
+    }
     else if (url.endsWith("/market-queries") && init?.method === "POST") {
       data={queries:["mortgage closing costs","roof replacement price","heat pump ownership cost","property tax assessment"],source:"local-model-generated"};
     }
@@ -54,6 +63,7 @@ describe("YouTube Intelligence", () => {
     fakeApi(false);
     const user=userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.type(await screen.findByRole("textbox",{name:/niche name/i}),"House Math");
     expect(screen.getByRole("button",{name:/add watchlist/i})).toBeEnabled();
     await user.click(screen.getByRole("button",{name:/add watchlist/i}));
@@ -67,6 +77,7 @@ describe("YouTube Intelligence", () => {
     fakeApi(false);
     const user=userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.type(await screen.findByRole("textbox",{name:/niche name/i}),"House Math");
     await user.click(screen.getByRole("button",{name:/suggest searches with local ai/i}));
     expect((await screen.findByRole("textbox",{name:/proposed searches/i}) as HTMLTextAreaElement).value).toContain("mortgage closing costs");
@@ -78,6 +89,7 @@ describe("YouTube Intelligence", () => {
     const requests = fakeApi(false);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.type(await screen.findByRole("textbox",{name:/niche name/i}), "House Math");
     await user.type(screen.getByRole("textbox",{name:/search phrase/i}), "heat pump cost");
     await user.click(screen.getByRole("button",{name:/add watchlist/i}));
@@ -134,6 +146,7 @@ describe("YouTube Intelligence", () => {
     const onUseVideo=vi.fn(() => true);
     const user=userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={onUseVideo}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.click(await screen.findByRole("button",{name:/use for video/i}));
     const title = screen.getByRole("textbox",{name:/working video title/i});
     await user.clear(title);
@@ -150,6 +163,7 @@ describe("YouTube Intelligence", () => {
     const onCreateStoryboard = vi.fn((draft: EditorialDraft) => draft.version === 1);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)} onCreateStoryboard={onCreateStoryboard}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     const audience = await screen.findByRole("textbox",{name:"Who is this for?"});
     await user.clear(audience);
     await user.type(audience,"Homeowners comparing heating systems");
@@ -170,9 +184,53 @@ describe("YouTube Intelligence", () => {
     fakeApi(true);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)} onCreateStoryboard={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.click(await screen.findByRole("button",{name:/reference in brief/i}));
     expect(screen.getByRole("textbox",{name:/selected youtube inspiration/i})).toHaveValue("https://www.youtube.com/watch?v=abcABC12345");
     expect(screen.getByRole("textbox",{name:"Original topic"})).toHaveValue("heat pump cost");
     expect(JSON.stringify(localStorage)).not.toContain("Heating systems compared");
+  });
+});
+
+describe("Explore YouTube without a local model or watchlist", () => {
+  it("starts in Explore and performs direct YouTube search only after the user submits", async () => {
+    const requests = fakeApi(false);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    expect(screen.getByRole("tab", {name:"Explore"})).toHaveAttribute("aria-selected", "true");
+    expect(requests).not.toContain("POST /api/research/market/explore");
+    await user.type(screen.getByRole("searchbox", {name:/search youtube/i}), "heat pump cost");
+    await user.click(screen.getByRole("button", {name:/search youtube videos/i}));
+    expect(await screen.findByText("Heating systems compared")).toBeInTheDocument();
+    expect(requests).toContain("POST /api/research/market/explore");
+    expect(requests).not.toContain("POST /api/contentgen-director/market-queries");
+    expect(requests).not.toContain("POST /api/research/market/watchlists");
+  });
+
+  it("allows filtering the bounded result sample without a new API request", async () => {
+    const requests = fakeApi(false);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.type(screen.getByRole("searchbox", {name:/search youtube/i}), "heat pump cost");
+    await user.click(screen.getByRole("button", {name:/search youtube videos/i}));
+    expect(await screen.findByText("Heating systems compared")).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", {name:/minimum views/i}), "10000");
+    expect(screen.queryByText("Heating systems compared")).not.toBeInTheDocument();
+    expect(requests.filter(x=>x==="POST /api/research/market/explore")).toHaveLength(1);
+  });
+
+  it("saves a search as a disabled watchlist only when asked", async () => {
+    const requests = fakeApi(false);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.type(screen.getByRole("searchbox", {name:/search youtube/i}), "heat pump cost");
+    await user.click(screen.getByRole("button", {name:/search youtube videos/i}));
+    await screen.findByText("Heating systems compared");
+    await user.click(screen.getByRole("button", {name:/save search to monitor/i}));
+    await waitFor(()=>expect(requests).toContain("POST /api/research/market/watchlists"));
+    const posts=(fetch as ReturnType<typeof vi.fn>).mock.calls.filter((call:unknown[])=>String(call[0]).endsWith("/watchlists") && (call[1] as RequestInit)?.method==="POST");
+    expect(JSON.parse(String((posts[0][1] as RequestInit).body))).toMatchObject({
+      query:"heat pump cost",enabled:false,queryMode:"manual"
+    });
   });
 });
