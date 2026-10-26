@@ -168,7 +168,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
       if (ownerRef.current !== identity || controller.signal.aborted) return;
       const reason = problem instanceof Error ? problem.message : "Script generation failed.";
       if (mode === "initial") failuresRef.current.add(`${identity}:${sectionId}`);
-      setError(`${section.heading}: ${reason} Accepted sections and manual corrections remain saved. ${mode === "initial" ? "Retry this section when your local model is available." : "You can retry or discard the proposed change."}`);
+      setError(`${section.heading}: ${reason} Accepted sections and manual corrections remain saved. ${mode === "initial" ? "You can retry this section." : "You can retry or discard the proposed change."}`);
     } finally {
       if (ownerRef.current === identity) {
         busyRef.current = false;

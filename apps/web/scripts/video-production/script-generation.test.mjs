@@ -82,3 +82,112 @@ describe("bounded source-linked script AI", () => {
    await assert.rejects(() => generateScriptSection(input, {modelSettings: model,
      transport: async () => response({claimRefs: [], sourceRefs: []})}), /linked|citation|reference/i);
  });
+
+const envelopeResponse = (content, finishReason = "stop") => ({ok:true,headers:{get:()=>null},
+  text:async()=>JSON.stringify({choices:[{finish_reason:finishReason,message:{content}}]})});
+const validOutput = {narration:"Insurance premiums can change with rebuilding expenses and modeled property risks.",
+  claimRefs:["risk-1"],sourceRefs:["source-1"]};
+
+it("accepts complete cited narration with harmless echoed metadata and returns only canonical fields",async()=>{
+  const result=await generateScriptSection(input,{modelSettings:model,
+    transport:async()=>envelopeResponse(JSON.stringify({...validOutput,sectionId:"mechanism",heading:"How it works",verified:true}))});
+  assert.deepEqual(result,validOutput);
+  assert.equal(Object.hasOwn(result,"verified"),false);
+});
+
+it("accepts an entire JSON code fence without changing quoted narration",async()=>{
+  const output={...validOutput,narration:validOutput.narration+' The label `risk` is only a label.'};
+  assert.deepEqual(await generateScriptSection(input,{modelSettings:model,
+    transport:async()=>envelopeResponse('```json\n'+JSON.stringify(output)+'\n```')}),output);
+});
+
+it("repairs wrong output field types with changed instructions rather than replaying the failed request",async()=>{
+  const requests=[],logs=[];
+  const result=await generateScriptSection(input,{modelSettings:model,log:(...args)=>logs.push(args),
+    transport:async(_url,options)=>{
+      requests.push(JSON.parse(options.body));
+      return requests.length===1?envelopeResponse(JSON.stringify({...validOutput,narration:["private rejected prose"]})):
+        envelopeResponse(JSON.stringify(validOutput));
+    }});
+  assert.deepEqual(result,validOutput);
+  assert.equal(requests.length,2);
+  assert.notDeepEqual(requests[1],requests[0]);
+  assert.match(requests[1].messages[0].content,/repair|retry/i);
+  assert.match(requests[1].messages[0].content,/narration.*string/i);
+  assert.equal(JSON.stringify(requests[1]).includes("private rejected prose"),false);
+  assert.equal(logs.length,1);
+  assert.equal(JSON.stringify(logs).includes("private rejected prose"),false);
+});
+
+it("reports the failed field after bounded repair without logging model prose, unknown keys or input text",async()=>{
+  const logs=[];let attempts=0;
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,log:(...args)=>logs.push(args),
+    transport:async()=>{attempts++;return envelopeResponse(JSON.stringify({"private unknown field":"private raw value"}));}}),error=>{
+      assert.equal(error.code,"schema_invalid");
+      assert.equal(error.field,"narration");
+      assert.equal(error.attempts,2);
+      assert.match(error.message,/narration/);
+      return true;
+    });
+  assert.equal(attempts,2);
+  assert.equal(logs.length,2);
+  const diagnostics=JSON.stringify(logs);
+  for(const privateText of ["private unknown field","private raw value",input.title,input.evidence[0].quote])
+    assert.equal(diagnostics.includes(privateText),false);
+  assert.match(diagnostics,/schema_invalid/);
+  assert.match(diagnostics,/missing/);
+});
+
+it("does not accept a token-truncated answer even if its partial message happens to contain valid JSON",async()=>{
+  const requests=[];
+  const result=await generateScriptSection(input,{modelSettings:model,log:()=>{},transport:async(_url,options)=>{
+    requests.push(JSON.parse(options.body));
+    return envelopeResponse(JSON.stringify(validOutput),requests.length===1?"length":"stop");
+  }});
+  assert.deepEqual(result,validOutput);
+  assert.equal(requests.length,2);
+  assert.match(requests[1].messages[0].content,/shorter|compact/i);
+});
+
+it("distinguishes a missing assistant answer from invalid output fields",async()=>{
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,log:()=>{},
+    transport:async()=>envelopeResponse(null)}),error=>error.code==="output_missing"&&error.field==="response");
+});
+
+it("never uses harmless-metadata normalization to accept fabricated source IDs",async()=>{
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,
+    transport:async()=>envelopeResponse(JSON.stringify({...validOutput,heading:"extra",sourceRefs:["invented-source"]}))}),/unknown source/i);
+});
+
+it("does not reinterpret reasoning text as narration when the assistant answer is absent",async()=>{
+  const logs=[];
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,log:(...args)=>logs.push(args),
+    transport:async()=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({choices:[{message:{
+      content:null,reasoning_content:JSON.stringify(validOutput)}}]})})}),error=>error.code==="output_missing");
+  assert.equal(JSON.stringify(logs).includes(validOutput.narration),false);
+});
+
+it("cancellation during a rejected response stops repair even if a transport resolves after abort",async()=>{
+  const controller=new AbortController();let calls=0;
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,signal:controller.signal,log:()=>{},
+    transport:async()=>{calls++;controller.abort(Error("Stopped by editor"));return envelopeResponse('{"wrong":"shape"}');}}),/Stopped by editor/);
+  assert.equal(calls,1);
+});
+
+it("does not treat HTTP failures as schema errors or start a second model request",async()=>{
+  let calls=0;
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,log:()=>{},
+    transport:async()=>{calls++;return {ok:false,status:503};}}),/HTTP 503/);
+  assert.equal(calls,1);
+});
+
+it("matches Research's non-thinking request for Qwen3.5 so reasoning does not consume the script output budget",async()=>{
+  const requests=[];
+  for(const name of ["Qwen3.5-9B-Q4_K_M","another-local-model"]) {
+    await generateScriptSection(input,{modelSettings:{...model,model:name},transport:async(_url,options)=>{
+      requests.push(JSON.parse(options.body));return envelopeResponse(JSON.stringify(validOutput));
+    }});
+  }
+  assert.deepEqual(requests[0].chat_template_kwargs,{enable_thinking:false});
+  assert.equal(Object.hasOwn(requests[1],"chat_template_kwargs"),false);
+});
