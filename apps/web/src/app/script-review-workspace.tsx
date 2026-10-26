@@ -74,6 +74,9 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const mountedRef = useRef(true);
   const batchStopped = useRef(false);
   const [autoPaused, setAutoPaused] = useState(false);
+  // YouTube keeps its existing AI-first behavior. Other destinations start on
+  // explicit request, so switching tabs never launches an unexpected model job.
+  const [fullDraftRequested, setFullDraftRequested] = useState(platform === "youtube");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [regenerateId, setRegenerateId] = useState<ScriptRole | null>(null);
@@ -193,13 +196,13 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   useEffect(() => {
     if (!draft || draft.input.productionId !== productionId || draft.input.platform !== platform ||
         !isScriptContextCurrent(draft, context) ||
-        busyRef.current || autoPaused || error || !evidence.length || view.warning) return;
+        busyRef.current || autoPaused || error || !fullDraftRequested || !evidence.length || view.warning) return;
     const next = viewRef.current.draft?.sections.find(section => !section.text &&
       !failuresRef.current.has(`${ownerRef.current}:${section.id}`));
     if (next) void generate(next.id, "initial");
     // generate reads latest state from viewRef, never a stale closure or another platform.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, productionId, platform, busy, autoPaused, error, evidence.length, view.warning]);
+  }, [draft, productionId, platform, busy, autoPaused, error, fullDraftRequested, evidence.length, view.warning]);
 
   const cite = (claimRef: string) => evidence.find(item => item.claimId === claimRef);
   const generated = draft?.sections.filter(section => section.text).length ?? 0;
@@ -270,7 +273,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     <Surface header={<div className="flex flex-wrap items-start justify-between gap-3">
       <div className="space-y-1">
         <h2 className="flex items-center gap-2 text-xl font-semibold"><FileText className="size-5 text-primary" />Review AI-generated script</h2>
-        <p className="text-sm text-muted-foreground">AI prepares the complete first draft. Review the writing, edit only if needed, or improve any section with your own instructions.</p>
+        <p className="text-sm text-muted-foreground">Generate a platform-specific draft, then review, edit or improve individual sections. YouTube starts automatically; other platforms start when you request them.</p>
       </div>
       <div className="rounded-control border border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
         <span className="font-semibold text-foreground">{generated}/5 sections</span> · <Clock3 className="inline size-3" /> Estimated {duration(seconds)}
@@ -283,6 +286,14 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
         </button>)}
       </div>
       <p className="mt-3 text-xs text-muted-foreground">Each destination has its own script and revision history. Switching platforms never overwrites another output.</p>
+      {!done && <div className="mt-3">
+        <Button disabled={!!busy || batchBusy || !evidence.length || !!view.warning || staleContext}
+          onClick={() => { failuresRef.current.clear(); setError(""); setAutoPaused(false); setFullDraftRequested(true); }}
+          icon={<Sparkles className="size-4" />}>
+          {generated ? `Generate remaining ${platforms[platform]} sections` : `Generate full ${platforms[platform]} script`}
+        </Button>
+        <p className="mt-2 text-xs text-muted-foreground">Writes missing sections in order, using captured evidence and previous sections. Accepted edits stay saved.</p>
+      </div>}
       {staleContext && <div role="status" className="mt-3 space-y-3 rounded-control border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
         <p>The research, brand voice or creative brief changed since this script began. Existing narration and revisions will be preserved, but any previous approval must be renewed after reviewing source links.</p>
         <button type="button" className={secondary} disabled={!!busy || batchBusy} onClick={adoptUpdatedContext}>

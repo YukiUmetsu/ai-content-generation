@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScriptReviewWorkspace } from "./script-review-workspace";
-import { createScriptDraft, fillScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
+import { approveScriptDraft, createScriptDraft, fillScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
   type ScriptDraft, type ScriptEvidence } from "./script-review-model";
 
 const evidence: ScriptEvidence[] = [{ claimId: "cost", claimText: "Repairs can affect insurance risk estimates.",
@@ -112,6 +112,41 @@ describe("AI-first script review UI", () => {
     expect(calls).toBe(5);
     expect(after.sections).toEqual(before.sections);
     expect(Object.keys(after.pending)).toHaveLength(5);
+  });
+  it("generates all missing Blog sections on demand without overwriting the approved YouTube draft", async () => {
+    const youtube = approveScriptDraft(saved("youtube"));
+    saveScriptDraft(youtube);
+    const requests: Array<{platform:string;sectionId:string}> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init:RequestInit) => {
+      const request = JSON.parse(String(init.body));
+      requests.push(request);
+      return Response.json({narration:`Blog ${request.sectionId} explains the source-backed homeowner question in fresh editorial prose.`,
+        claimRefs:["cost"],sourceRefs:["insurance-study"]});
+    }));
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube", "blog"]} />);
+    fireEvent.click(screen.getByRole("button",{name:"Blog"}));
+    expect(requests).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button",{name:"Generate full Blog script"}));
+    await waitFor(() => expect(loadScriptDraft(base.productionId,"blog").draft?.sections.every(section=>section.text)).toBe(true));
+    expect(requests.map(request=>request.sectionId)).toEqual(["hook","context","mechanism","practical","closing"]);
+    expect(requests.every(request=>request.platform==="blog")).toBe(true);
+    expect(loadScriptDraft(base.productionId,"youtube").draft).toEqual(youtube);
+  });
+  it("retries the remaining Blog draft from saved sections after a failed local model request", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch",vi.fn(async () => {
+      calls++;
+      if(calls===2) return Response.json({error:"Local model temporarily unavailable"},{status:422});
+      return Response.json({narration:"This section explains the homeowner question with supported source context.",
+        claimRefs:["cost"],sourceRefs:["insurance-study"]});
+    }));
+    render(<ScriptReviewWorkspace {...base} platforms={["blog"]} />);
+    fireEvent.click(screen.getByRole("button",{name:"Generate full Blog script"}));
+    await waitFor(()=>expect(screen.getByRole("alert")).toHaveTextContent("temporarily unavailable"));
+    expect(loadScriptDraft(base.productionId,"blog").draft?.sections[0].text).not.toBe("");
+    fireEvent.click(screen.getByRole("button",{name:"Generate remaining Blog sections"}));
+    await waitFor(()=>expect(loadScriptDraft(base.productionId,"blog").draft?.sections.every(section=>section.text)).toBe(true));
+    expect(calls).toBe(6);
   });
   it("finishes all five initial sections under the application's StrictMode lifecycle", async () => {
     vi.stubGlobal("fetch", vi.fn(async (_url, init: RequestInit) => {

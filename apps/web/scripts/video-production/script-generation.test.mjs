@@ -181,6 +181,66 @@ it("does not treat HTTP failures as schema errors or start a second model reques
   assert.equal(calls,1);
 });
 
+it("recovers from one local model connection failure while keeping the same validated request",async()=>{
+  let calls=0;
+  const result=await generateScriptSection({...input,platform:"blog"},{modelSettings:model,transport:async()=>{
+    calls++;
+    if(calls===1)throw new TypeError("fetch failed",{cause:{code:"ECONNREFUSED"}});
+    return envelopeResponse(JSON.stringify(validOutput));
+  }});
+  assert.deepEqual(result,validOutput);
+  assert.equal(calls,2);
+});
+
+it("explains repeated local model connection failures without leaking provider URL or request text",async()=>{
+  let calls=0;
+  await assert.rejects(()=>generateScriptSection({...input,platform:"blog"},{modelSettings:model,transport:async()=>{
+    calls++;
+    throw new TypeError("fetch failed",{cause:{code:"ECONNREFUSED"}});
+  }}),error=>{
+    assert.equal(error.code,"local_model_unreachable");
+    assert.match(error.message,/Settings.*Local AI/i);
+    assert.match(error.message,/running|start/i);
+    assert.equal(error.message.includes(model.endpoint),false);
+    assert.equal(error.message.includes(input.evidence[0].quote),false);
+    return true;
+  });
+  assert.equal(calls,2);
+});
+
+it("does not replay a possibly received POST after an ambiguous connection reset",async()=>{
+  let calls=0;
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,transport:async()=>{
+    calls++;
+    throw new TypeError("fetch failed",{cause:{code:"ECONNRESET"}});
+  }}),error=>error.code==="local_model_unreachable"&&/Settings.*Local AI/.test(error.message));
+  assert.equal(calls,1);
+});
+
+it("turns a broken response body into a local-model error without retrying or exposing data",async()=>{
+  let calls=0;
+  await assert.rejects(()=>generateScriptSection({...input,platform:"blog"},{modelSettings:model,transport:async()=>{
+    calls++;
+    return {ok:true,headers:{get:()=>null},text:async()=>{throw new TypeError("terminated",{cause:{code:"UND_ERR_SOCKET"}});}};
+  }}),error=>{
+    assert.equal(error.code,"local_model_unreachable");
+    assert.match(error.message,/Settings.*Local AI/);
+    assert.equal(error.message.includes(input.evidence[0].quote),false);
+    return true;
+  });
+  assert.equal(calls,1);
+});
+
+it("never retries a disconnected or aborted local model request",async()=>{
+  const controller=new AbortController();let calls=0;
+  await assert.rejects(()=>generateScriptSection(input,{modelSettings:model,signal:controller.signal,transport:async()=>{
+    calls++;
+    controller.abort(Error("Editor stopped"));
+    throw new TypeError("fetch failed");
+  }}),/Editor stopped/);
+  assert.equal(calls,1);
+});
+
 it("matches Research's non-thinking request for Qwen3.5 so reasoning does not consume the script output budget",async()=>{
   const requests=[];
   for(const name of ["Qwen3.5-9B-Q4_K_M","another-local-model"]) {
