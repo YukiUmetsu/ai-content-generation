@@ -3,6 +3,7 @@ import { localChatEndpoint } from "./topic-generator.mjs";
 import { resolveStagePrompt } from "./prompt-profiles.mjs";
 import { withLocalInference } from "./local-inference-gate.mjs";
 import { isIP } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 
 const KEYS = ["sectionId", "heading", "purpose", "mode", "title", "viewerQuestion", "audience", "angle",
   "brandVoice", "locale", "platform", "requestedDurationSeconds", "previousSection", "nextSection",
@@ -224,6 +225,41 @@ function reportFormatFailure(log,input,error,attempt) {
   try {log("[contentgen-script-format]",JSON.stringify(diagnostic));}catch{/* Preserve the original error. */}
 }
 
+const connectionFailed=error=>error instanceof TypeError && /fetch failed|network|connection|terminated/iu.test(error.message) ||
+  ["ECONNREFUSED","ECONNRESET","EHOSTUNREACH","ENETUNREACH","UND_ERR_SOCKET"].includes(error?.cause?.code);
+// A dropped response can mean the server has already begun expensive inference.
+// Only definitely pre-connect failures are safe to replay automatically.
+const preconnectFailure=error=>{
+  const cause=error?.cause;
+  const codes=Array.isArray(cause?.errors)?cause.errors.map(item=>item?.code):[cause?.code];
+  return codes.length>0&&codes.every(code=>["ECONNREFUSED","EHOSTUNREACH","ENETUNREACH"].includes(code));
+};
+const unreachableError=(duringResponse=false)=>Object.assign(Error(duringResponse?
+  "The local script model connection closed while returning its answer. Check Settings → Local AI and confirm the model server is running before retrying this section.":
+  "Could not connect to the configured local script model. Check Settings → Local AI and confirm the selected model server is running and has enough memory."),
+{code:"local_model_unreachable"});
+const timeoutError=()=>Object.assign(Error("Local script model timed out. Check that the model is responding in Settings → Local AI, or choose a smaller model."),
+  {code:"local_model_timeout"});
+
+async function requestLocalModel(endpoint,body,transport,signal) {
+  for(let attempt=0;attempt<2;attempt++) {
+    signal?.throwIfAborted();
+    const timeout=AbortSignal.timeout(TIMEOUT);
+    const requestSignal=signal?AbortSignal.any([timeout,signal]):timeout;
+    try {
+      const response=await transport(endpoint,{method:"POST",redirect:"error",
+        headers:{"Content-Type":"application/json"},body,signal:requestSignal});
+      return {response,timeout};
+    }catch(error) {
+      signal?.throwIfAborted();
+      if(timeout.aborted)throw timeoutError();
+      if(!connectionFailed(error))throw error;
+      if(attempt===1||!preconnectFailure(error))throw unreachableError();
+      await delay(500,undefined,{signal});
+    }
+  }
+}
+
 /** Only this selected section's draft text is returned. The consumer stores a proposal and requires acceptance. */
 export async function generateScriptSection(candidate, {modelSettings, transport = fetch, signal, log = console.warn} = {}) {
   return withLocalInference(() => draftSection(candidate, {modelSettings, transport, signal, log}), signal);
@@ -248,14 +284,18 @@ async function draftSection(candidate, {modelSettings, transport, signal, log}) 
       ...(/qwen3[._-]5\b/iu.test(modelSettings.model)?{chat_template_kwargs:{enable_thinking:false}}:{}),
       messages:[{role:"system",content:systemContent+(feedback?"\n\n"+feedback:"")},
         {role:"user",content:userContent}]});
-    const timeout = AbortSignal.timeout(TIMEOUT);
-    const requestSignal = signal ? AbortSignal.any([timeout, signal]) : timeout;
-    const response = await transport(endpoint, {method: "POST", redirect: "error",
-      headers: {"Content-Type": "application/json"}, body, signal: requestSignal});
+    const {response,timeout} = await requestLocalModel(endpoint,body,transport,signal);
     if (!response.ok) throw Error(`Local script model returned HTTP ${response.status}.`);
     if (Number(response.headers?.get?.("content-length") ?? 0) > MAX_BODY)
       throw Error("Local script response exceeds safety limit.");
-    const text = await response.text();
+    let text;
+    try {text=await response.text();}
+    catch(error) {
+      signal?.throwIfAborted();
+      if(timeout.aborted)throw timeoutError();
+      if(connectionFailed(error))throw unreachableError(true);
+      throw error;
+    }
     if (Buffer.byteLength(text) > MAX_BODY) throw Error("Local script response exceeds safety limit.");
     signal?.throwIfAborted();
     try {return parseModelEnvelope(text, input);}
