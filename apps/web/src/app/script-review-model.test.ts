@@ -88,6 +88,17 @@ describe("AI-first script revision model", () => {
     const occupied = { ...filled(), input: targetContext };
     expect(() => copyShortFormScript(source, targetContext, occupied, {replaceExisting: true})).toThrow(/section structures differ/i);
   });
+  it("does not treat a blank user-inserted destination section as disposable", () => {
+    const source = { ...filled(), input: { ...context, platform: "youtube_shorts" as const } };
+    const targetContext = { ...context, platform: "tiktok" as const };
+    const inserted = insertScriptSection(createScriptDraft(targetContext), "hook", "after", {
+      heading: "Personal sponsor note", purpose: "Reserve space for a later product recommendation.", text: "",
+    }, timestamp);
+    expect(inserted.sections).toHaveLength(6);
+    expect(() => copyShortFormScript(source, targetContext, inserted)).toThrow(/replace/i);
+    expect(() => copyShortFormScript(source, targetContext, inserted, {replaceExisting: true})).toThrow(/structures differ/i);
+    expect(inserted.sections[1].heading).toBe("Personal sponsor note");
+  });
 
   it("refuses incomplete, stale, long-form and cross-project copies before touching targets", () => {
     const short = { ...filled(), input: { ...context, platform: "youtube_shorts" as const } };

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import {
   acceptScriptCandidate, approveScriptDraft, copyShortFormScript, createScriptDraft, discardScriptCandidate,
-  editScriptSection, estimatedNarrationSeconds, fillScriptSection, isScriptContextCurrent, loadScriptDraft,
+  editScriptSection, estimatedNarrationSeconds, fillScriptSection, hasAuthoredScriptWork, isScriptContextCurrent, loadScriptDraft,
   insertScriptSection, proposeScriptCandidate, rebaseScriptDraftContext, rebindEmptyScriptEvidence, restoreScriptRevision, saveScriptDraft,
   scriptEvidenceFingerprint, SHORT_FORM_SCRIPT_PLATFORMS,
   type ScriptDraft, type ScriptEvidence,
@@ -239,8 +239,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const openCopy = () => {
     const choices = shortDestinations.map(target => {
       const saved = loadScriptDraft(productionId, target);
-      const existing = Boolean(saved.draft && (saved.draft.status === "approved" ||
-        Object.keys(saved.draft.pending).length || saved.draft.sections.some(section => section.revision || section.text)));
+      const existing = Boolean(saved.draft && hasAuthoredScriptWork(saved.draft));
       return { platform: target, existing, warning: saved.warning, snapshot: saved.draft ? JSON.stringify(saved.draft) : null };
     });
     setCopyDestinations(choices);

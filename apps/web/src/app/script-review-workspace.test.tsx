@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScriptReviewWorkspace } from "./script-review-workspace";
-import { approveScriptDraft, createScriptDraft, editScriptSection, fillScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
+import { approveScriptDraft, createScriptDraft, editScriptSection, fillScriptSection, insertScriptSection, loadScriptDraft, saveScriptDraft, scriptEvidenceFingerprint,
   type ScriptDraft, type ScriptEvidence } from "./script-review-model";
 
 const evidence: ScriptEvidence[] = [{ claimId: "cost", claimText: "Repairs can affect insurance risk estimates.",
@@ -99,6 +99,23 @@ describe("AI-first script review UI", () => {
     const restored = loadScriptDraft(base.productionId,"tiktok").draft!;
     expect(restored.sections[0].text).toBe("My unique TikTok explanation before the copy.");
     expect(restored.sections[0].history.at(-1)).toMatchObject({origin:"restored",restoredFromRevision:2});
+  });
+
+  it("recognizes a blank but inserted destination section as authored work", () => {
+    saved("youtube_shorts");
+    const tiktok = insertScriptSection(createScriptDraft(saved("tiktok").input), "hook", "after", {
+      heading:"Reserved explanation",purpose:"Keep a section for a future example.",text:"",
+    }, timestamp);
+    saveScriptDraft(tiktok);
+    render(<ScriptReviewWorkspace {...base} platforms={["youtube_shorts", "tiktok"]} />);
+    fireEvent.click(screen.getByRole("button", {name:"Copy to other platforms"}));
+    expect(screen.getByRole("checkbox", {name:"Copy to TikTok"})).not.toBeChecked();
+    expect(screen.getByText(/Existing script — replacing requires confirmation/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", {name:"Copy to TikTok"}));
+    fireEvent.click(screen.getByRole("checkbox", {name:/Replace the selected existing scripts/i}));
+    fireEvent.click(screen.getByRole("button", {name:"Copy to 1 platform"}));
+    expect(screen.getByRole("alert")).toHaveTextContent(/section structures differ/i);
+    expect(loadScriptDraft(base.productionId,"tiktok").draft).toEqual(tiktok);
   });
 
   it("skips destinations whose saved drafts cannot be read", () => {

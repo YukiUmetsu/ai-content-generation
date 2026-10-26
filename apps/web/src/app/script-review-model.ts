@@ -140,12 +140,21 @@ export function createScriptDraft(input: ScriptReviewInput, now = new Date().toI
   return { version: 1, input: inputDocument(input), status: "draft", approvedAt: null, updatedAt: time(now),
     sections: SECTION_PLAN.map(s => ({ ...s, text: "", claimRefs: [], sourceRefs: [], revision: 0, history: [] })), pending: {} };
 }
+/** Includes structural editing (such as an inserted blank section), not merely authored narration. */
+export function hasAuthoredScriptWork(draft: ScriptDraft): boolean {
+  return draft.status === "approved" || Object.keys(draft.pending).length > 0 ||
+    draft.sections.length !== SECTION_PLAN.length || draft.sections.some((section, index) => {
+      const original = SECTION_PLAN[index];
+      return !original || section.id !== original.id || section.heading !== original.heading ||
+        section.purpose !== original.purpose || section.role !== undefined || !!section.text ||
+        !!section.revision || section.history.length > 0 || section.claimRefs.length > 0 || section.sourceRefs.length > 0;
+    });
+}
 /** A selected idea can load its captured passages after the blank Script screen has already mounted. */
 export function rebindEmptyScriptEvidence(draft: ScriptDraft, evidenceSnapshotId: string,
   now = new Date().toISOString()): ScriptDraft {
   const snapshot = text(evidenceSnapshotId, "evidence ID", 200);
-  if (draft.status !== "draft" || Object.keys(draft.pending).length ||
-      draft.sections.some(section => section.revision || section.text || section.history.length)) return draft;
+  if (hasAuthoredScriptWork(draft)) return draft;
   if (draft.input.evidenceSnapshotId === snapshot) return draft;
   return { ...draft, input: { ...draft.input, evidenceSnapshotId: snapshot }, updatedAt: time(now) };
 }
@@ -204,8 +213,7 @@ export function copyShortFormScript(source: ScriptDraft, targetInput: ScriptRevi
   let destination = existing ? validateScriptDraft(existing) : createScriptDraft(target, now);
   if (destination.input.productionId !== target.productionId || destination.input.projectId !== target.projectId ||
       destination.input.platform !== target.platform) throw Error("Destination script identity or project does not match.");
-  const occupied = destination.status === "approved" || Object.keys(destination.pending).length > 0 ||
-    destination.sections.some(section => section.text || section.revision || section.history.length);
+  const occupied = hasAuthoredScriptWork(destination);
   if (occupied && !options.replaceExisting) throw Error("Destination has existing work. Confirm replace before copying.");
   if (occupied && (destination.sections.length !== from.sections.length ||
       destination.sections.some((section, index) => section.id !== from.sections[index].id)))
@@ -215,7 +223,7 @@ export function copyShortFormScript(source: ScriptDraft, targetInput: ScriptRevi
     sections: from.sections.map(original => {
       const section = occupied ? destination.sections.find(item => item.id === original.id)! :
         { ...original, text: "", claimRefs: [], sourceRefs: [], revision: 0, history: [] };
-      const next = version({ ...section, heading: original.heading, purpose: original.purpose, ...(original.role ? { role: original.role } : {}) },
+      const next = version({ ...section, heading: original.heading, purpose: original.purpose, role: original.role },
         { narration: original.text, claimRefs: original.claimRefs,
         sourceRefs: original.sourceRefs }, "copied", now);
       return { ...next, history: [...next.history.slice(0, -1), { ...next.history.at(-1)!,
