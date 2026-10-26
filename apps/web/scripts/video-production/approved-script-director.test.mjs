@@ -100,3 +100,11 @@ test("edited storyboard visual instructions reach the Director but inconsistent 
   assert.throws(()=>compileApprovedScriptDirector({productionId,script,evidence,sources,
     storyboard:{...storyboard,assumptions:["Older approved revision"]}}),/revision/i);
 });
+
+ test("sections between 1600 and 2000 characters are split before reaching the render adapter", () => {
+   const text=("Insurance coverage and rebuilding risks change the renewal. ").repeat(30).trim();
+   assert.ok(text.length>1600&&text.length<2000);
+   const updated={...script,sections:script.sections.map(section=>({...section,text}))};
+   const result=compileApprovedScriptDirector({productionId,script:updated,evidence,sources});
+   assert.ok(compilePreproductionRenderJob(result.dossier,result.bundle).job.beats.every(beat=>beat.narration.length<=1600));
+ });

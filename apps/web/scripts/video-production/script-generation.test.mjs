@@ -77,3 +77,8 @@ describe("bounded source-linked script AI", () => {
     assert.equal(attempts, 2);
   });
 });
+
+ it("refuses uncited prose that would otherwise be approved but fail the Director handoff", async () => {
+   await assert.rejects(() => generateScriptSection(input, {modelSettings: model,
+     transport: async () => response({claimRefs: [], sourceRefs: []})}), /linked|citation|reference/i);
+ });

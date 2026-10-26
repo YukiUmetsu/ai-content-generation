@@ -131,10 +131,10 @@ export function createDirectorProduction(deps={}){
       throw Error("Saved media index is invalid; no entries were overwritten.");
     return data.records;
   }
-  async function recordMedia(runId,productionId){
+  async function recordMedia(runId,productionId,sourceRevision){
     const previous=await readMediaIndex();
     const records=[...previous.filter(item=>item.runId!==runId),
-      {runId,productionId,createdAt:Date.now()}].slice(-100);
+      {runId,productionId,sourceRevision,createdAt:Date.now()}].slice(-100);
     await mkdir(outputRoot,{recursive:true,mode:0o700});
     const temporary=join(outputRoot,".production-media-index-"+randomUUID()+".json");
     try{
@@ -153,14 +153,14 @@ export function createDirectorProduction(deps={}){
   async function productionAssets(productionId){
     const records=(await readMediaIndex()).filter(item=>item.productionId===productionId);
     const assets=[];
-    for(const {runId} of records){
+    for(const {runId,sourceRevision} of records){
       const releaseDir=join(outputRoot,"draft-"+runId,"release");
       for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"]]){
         try{
           const info=await stat(join(releaseDir,file));
           if(!info.isFile()||info.size===0)continue;
         }catch(error){if(error?.code==="ENOENT")continue;throw error;}
-        assets.push({id:kind+"-"+runId,kind,platform:"youtube",filename:file,
+        assets.push({id:kind+"-"+runId,kind,platform:"youtube",filename:file,sourceRevision,
           downloadUrl:"/api/contentgen-video/media/"+runId+"/"+file});
       }
     }
@@ -349,10 +349,12 @@ export function createDirectorProduction(deps={}){
         const input=await readBody(req);
         if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
           throw Error("Invalid production identity.");
+        if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
+          throw Error("Invalid source revision.");
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -381,10 +383,12 @@ export function createDirectorProduction(deps={}){
         const input=await readBody(req);
         if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
           throw Error("Invalid production identity.");
+        if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
+          throw Error("Invalid source revision.");
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
@@ -413,7 +417,7 @@ export function createDirectorProduction(deps={}){
             results.set(runId,result.releaseDir);
             if(results.size>5)results.delete(results.keys().next().value);
             let mediaWarning="";
-            try{await recordMedia(runId,input.productionId??null);}
+            try{await recordMedia(runId,input.productionId??null,input.sourceRevision??null);}
             catch(error){mediaWarning=" Media index was not saved; keep your local release folder. "+
               String(error?.message??"Index error").slice(0,140);}
             lastOutput=out;

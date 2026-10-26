@@ -23,6 +23,7 @@ export interface ScriptReviewWorkspaceProps {
   onApprove: (draft: ScriptDraft) => void;
   /** Allows the parent workflow to invalidate downstream approval when an accepted section changes. */
   onDraftChange?: (draft: ScriptDraft) => void;
+  onStatusChange?: (status: "idle" | "running" | "failed") => void;
 }
 
 type ViewState = { draft: ScriptDraft | null; warning: string | null };
@@ -53,7 +54,7 @@ interface ScriptReviewEditorProps extends ScriptReviewWorkspaceProps {
 }
 
 function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSelectPlatform, locale, title,
-  viewerQuestion, audience, angle, brandVoice, evidence, onApprove, onDraftChange }: ScriptReviewEditorProps) {
+  viewerQuestion, audience, angle, brandVoice, evidence, onApprove, onDraftChange, onStatusChange }: ScriptReviewEditorProps) {
   const snapshotId = scriptEvidenceFingerprint(evidence);
   const context = useMemo(() => ({ productionId, projectId, platform, locale, title, viewerQuestion,
     audience, angle, brandVoice, evidenceSnapshotId: snapshotId }),
@@ -69,6 +70,9 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const failuresRef = useRef(new Set<string>());
+  const mountedRef = useRef(true);
+  const batchStopped = useRef(false);
+  const [autoPaused, setAutoPaused] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [regenerateId, setRegenerateId] = useState<ScriptRole | null>(null);
@@ -83,10 +87,20 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const draft = useMemo(() => view.draft ? rebindEmptyScriptEvidence(view.draft, snapshotId) : null,
     [view.draft, snapshotId]);
 
-  useEffect(() => { viewRef.current = { ...view, draft }; }, [view, draft]);
+  // Accepted text is advanced synchronously by persist(). A delayed passive
+  // effect must never roll this ref back to an older committed render while
+  // another section is already being saved. Only pristine drafts can rebind.
+  useEffect(() => {
+    const latest=viewRef.current.draft;
+    if(latest)viewRef.current={...viewRef.current,draft:rebindEmptyScriptEvidence(latest,snapshotId)};
+  }, [snapshotId]);
   useEffect(() => { contextRef.current = context; }, [context]);
   // The editor is keyed by output identity: switching outputs remounts the local state.
-  useEffect(() => () => { abortRef.current?.abort(); }, []);
+  useEffect(() => {
+    mountedRef.current=true;
+    return () => {mountedRef.current=false;batchStopped.current=true;abortRef.current?.abort();};
+  }, []);
+  useEffect(() => {onStatusChange?.(busy ? "running" : error ? "failed" : "idle");}, [busy,error,onStatusChange]);
 
   const persist = (next: ScriptDraft): boolean => {
     try {
@@ -104,13 +118,14 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
 
   async function generate(sectionId: ScriptRole, mode: "initial" | "regenerate", extraInstructions = "") {
     const before = viewRef.current.draft;
-    if (!before || busyRef.current) return;
+    if (!before || busyRef.current || !mountedRef.current) return;
     if (!isScriptContextCurrent(before, context)) {
       setError("The script's research or creative brief changed. Review and adopt the updated context before generating.");
       return;
     }
     const index = before.sections.findIndex(section => section.id === sectionId);
     const section = before.sections[index];
+    if (mode === "initial" && section?.text.trim()) return;
     if (!section || !evidence.length) {
       setError("The idea has no captured evidence. Return to Discovery and complete its source research before drafting factual narration.");
       return;
@@ -132,7 +147,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     try {
       const response = await fetch(`/api/contentgen-director/script-${mode === "initial" ? "generate" : "regenerate-section"}`, {
         method: "POST", headers: { "Content-Type": "application/json", "X-Contentgen-Director": "local-only" },
-        body: JSON.stringify(request), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(160_000)]),
+        body: JSON.stringify(request), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(320_000)]),
       });
       const result = await response.json() as Partial<ScriptGeneratedText> & { error?: string };
       if (!response.ok) throw Error(result.error ?? `Script AI returned HTTP ${response.status}.`);
@@ -167,13 +182,13 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   useEffect(() => {
     if (!draft || draft.input.productionId !== productionId || draft.input.platform !== platform ||
         !isScriptContextCurrent(draft, context) ||
-        busyRef.current || error || !evidence.length || view.warning) return;
-    const next = draft.sections.find(section => !section.text &&
+        busyRef.current || autoPaused || error || !evidence.length || view.warning) return;
+    const next = viewRef.current.draft?.sections.find(section => !section.text &&
       !failuresRef.current.has(`${ownerRef.current}:${section.id}`));
     if (next) void generate(next.id, "initial");
     // generate reads latest state from viewRef, never a stale closure or another platform.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, productionId, platform, busy, error, evidence.length, view.warning]);
+  }, [draft, productionId, platform, busy, autoPaused, error, evidence.length, view.warning]);
 
   const cite = (claimRef: string) => evidence.find(item => item.claimId === claimRef);
   const generated = draft?.sections.filter(section => section.text).length ?? 0;
@@ -226,9 +241,10 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     const current = viewRef.current.draft;
     if (!current || !current.sections.every(section => section.text)) return;
     setFullRewriteOpen(false);
+    batchStopped.current=false;
     setBatchBusy(true);
     for (const section of current.sections) {
-      if (ownerRef.current !== identity) break;
+      if (ownerRef.current !== identity || !mountedRef.current || batchStopped.current) break;
       await generate(section.id, "regenerate", "Create a cohesive alternative to this section while preserving the overall question, sources and adjacent narrative continuity.");
     }
     if (ownerRef.current === identity) setBatchBusy(false);
@@ -269,13 +285,22 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
       </div>}
     </Surface>
 
+    {(busy || batchBusy) && <div role="status" className="flex items-center gap-3 text-sm">
+      <p>Writing one section at a time with your configured local script model…</p>
+      <button type="button" className={secondary} onClick={() => {
+        batchStopped.current=true;setAutoPaused(true);abortRef.current?.abort();
+      }}>Stop writing</button>
+    </div>}
+    {autoPaused && !busy && !done && <button type="button" className={secondary} onClick={() => {
+      setAutoPaused(false);setError("");failuresRef.current.clear();
+    }}>Continue writing missing sections</button>}
     {view.warning && <Surface><div className="space-y-3" role="alert">
       <p className="font-semibold">Saved script needs attention</p><p className="text-sm">{view.warning}</p>
       <p className="text-xs text-muted-foreground">Create a new draft only if you have saved a copy or are certain the old data is no longer needed.</p>
       <Button onClick={() => persist(createScriptDraft(context))}>Create a new script draft</Button>
     </div></Surface>}
     {!evidence.length && <p role="alert" className="rounded-control border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
-      This idea has no captured evidence yet. Return to Discovery, collect claim-supporting sources, then reopen Script. ContentGen will not invent research or citations.
+      This idea has no captured evidence yet. Collect supporting sources above to start AI writing. ContentGen will not invent research or citations.
     </p>}
     {error && <p role="alert" className="rounded-control border border-destructive/50 bg-destructive/5 p-3 text-sm text-foreground">{error}</p>}
 

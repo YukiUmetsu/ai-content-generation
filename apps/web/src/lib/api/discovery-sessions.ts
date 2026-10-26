@@ -226,7 +226,7 @@ function parseViralPotential(raw: unknown): ViralPotential | null {
   const score = raw.score === null ? null : raw.score;
   const numberOrNull = (value: unknown) => value === null ||
     typeof value === "number" && Number.isFinite(value);
-  const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   const percent = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
   if (!(score === null || Number.isInteger(score) && percent(score)) ||
     !numberOrNull(raw.youtubeScore) || !numberOrNull(raw.trendScore) ||

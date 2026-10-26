@@ -126,8 +126,8 @@ function inputDocument(candidate: ScriptReviewInput): ScriptReviewInput {
     throw Error("Invalid script platform or locale.");
   return { productionId, projectId, platform: value.platform as ScriptPlatform, locale: value.locale as ScriptLocale,
     title: text(value.title, "title", 200, 3), viewerQuestion: text(value.viewerQuestion, "viewer question", 400, 3),
-    audience: text(value.audience, "audience", 180, 2), angle: text(value.angle, "angle", 700),
-    brandVoice: text(value.brandVoice, "brand voice", 1200), evidenceSnapshotId: text(value.evidenceSnapshotId, "evidence ID", 200) };
+    audience: text(value.audience, "audience", 180, 2), angle: text(value.angle, "angle", 1200),
+    brandVoice: text(value.brandVoice, "brand voice", 2000), evidenceSnapshotId: text(value.evidenceSnapshotId, "evidence ID", 200) };
 }
 export function createScriptDraft(input: ScriptReviewInput, now = new Date().toISOString()): ScriptDraft {
   return { version: 1, input: inputDocument(input), status: "draft", approvedAt: null, updatedAt: time(now),

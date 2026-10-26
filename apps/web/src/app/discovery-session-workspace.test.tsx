@@ -374,26 +374,28 @@ describe("Select idea", () => {
     expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
     expect(screen.queryByText("78/100")).not.toBeInTheDocument();
     expect(screen.getAllByText("Not measured").length).toBeGreaterThanOrEqual(7);
-    await userEvent.setup().click(screen.getAllByRole("button", { name: "Explain this score" })[0]);
-    expect(screen.getByText(/Editorial research readiness: 78\/100/)).toBeInTheDocument();
-    expect(screen.getByText(/Audience demand: unknown/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getAllByRole("button", { name: /Viral score: insufficient data/ })[0]);
+    expect(screen.getByRole("dialog",{name:"Viral score evidence"})).toBeInTheDocument();
+    expect(screen.queryByText(/Editorial research readiness: 78\/100/)).not.toBeInTheDocument();
+    await userEvent.setup().keyboard("{Escape}");
     const rejected = screen.getByText("Why home insurance keeps rising").closest("article")!;
     await userEvent.setup().click(within(rejected).getByRole("button", { name: "Dismiss" }));
     await waitFor(() => expect(within(rejected).getByText("dismissed")).toBeInTheDocument());
     expect(screen.queryByText("Leads measured cohort")).not.toBeInTheDocument();
   });
 
-  it("explains the source-based score in Japanese with an accessible disclosure", async () => {
+  it("opens the current evidence popover in Japanese without promoting legacy readiness", async () => {
     const first = { ...ideas[0], opportunityScore: 60, scoreVersion: "evidence-readiness-v1",
       scoreInputs: { capturedPassages: 1, audienceDemand: "unknown" } };
     vi.spyOn(globalThis, "fetch").mockImplementation(async input =>
       new Response(JSON.stringify(String(input).endsWith("/ideas") ? { ideas: [first] } : session), { status: 200 }));
     render(<DiscoveryIdeaSelection projectId="brand-1" sessionId="session-1" locale="ja" onStartProduction={()=>{}} />);
-    const details = await screen.findByRole("button", { name: "評価の根拠を確認" });
+    const details = await screen.findByRole("button", { name: /バイラルスコア: データ不足/ });
     expect(details).toHaveAttribute("aria-expanded", "false");
     await userEvent.setup().click(details);
-    expect(screen.getByRole("button", { name: "評価の詳細を閉じる" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("視聴者の需要: 不明")).toBeInTheDocument();
+    expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("dialog",{name:"バイラルスコアの根拠"})).toBeInTheDocument();
+    expect(screen.queryByText("60/100")).not.toBeInTheDocument();
   });
 
   it("lets the creator revise an AI idea and send an approved brief under the original session", async () => {
