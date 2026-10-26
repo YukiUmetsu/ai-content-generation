@@ -16,6 +16,7 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let _ = market_store::prune_expired(&db, epoch_now());
             let _ = market_store::reconcile_orphaned_runs(&db, epoch_now());
             let _ = super::idea_market::prune_expired(&db, epoch_now());
+            let _ = super::google_ads::prune_expired(&db, epoch_now());
             let _ = super::idea_trends::prune_expired(&db, epoch_now());
             let _ = super::idea_market::reconcile_interrupted(&db, epoch_now());
             let _ = super::idea_trends::reconcile_interrupted(&db, epoch_now());
@@ -26,18 +27,29 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
         // Provider cooldowns and the shared daily budget prevent quota loops.
         if let Ok(mut db) = state.connect() {
             match super::discovery_store::queue_missing_market_runs(
-                &mut db, None, epoch_now(),
-                state.credentials().youtube_key().ok()
-                    .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+                &mut db,
+                None,
+                epoch_now(),
+                state
+                    .credentials()
+                    .youtube_key()
+                    .ok()
+                    .and_then(|key| YoutubeClient::from_key(key).ok())
+                    .is_some(),
             ) {
                 Ok(queued) if !queued.is_empty() => eprintln!(
-                    "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
+                    "contentgen-server: discovery_market_jobs_queued count={}",
+                    queued.len()
                 ),
-                Ok(_) => {},
-                Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
+                Ok(_) => {}
+                Err(_) => {
+                    eprintln!("contentgen-server: discovery_market_queue_failed reason=database")
+                }
             }
         }
-        tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
+        tokio::spawn(super::discovery_market_worker::process_pending(
+            state.clone(),
+        ));
         let mut ticks = tokio::time::interval(Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -46,20 +58,31 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             // SQLite run leases prevent duplicate work across caller paths.
             if let Ok(mut db) = state.connect() {
                 match super::discovery_store::queue_missing_market_runs(
-                    &mut db, None, epoch_now(),
-                    state.credentials().youtube_key().ok()
-                        .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+                    &mut db,
+                    None,
+                    epoch_now(),
+                    state
+                        .credentials()
+                        .youtube_key()
+                        .ok()
+                        .and_then(|key| YoutubeClient::from_key(key).ok())
+                        .is_some(),
                 ) {
                     Ok(queued) if !queued.is_empty() => eprintln!(
-                        "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
+                        "contentgen-server: discovery_market_jobs_queued count={}",
+                        queued.len()
                     ),
-                    Ok(_) => {},
-                    Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
+                    Ok(_) => {}
+                    Err(_) => eprintln!(
+                        "contentgen-server: discovery_market_queue_failed reason=database"
+                    ),
                 }
             }
             // Discovery enrichment has its own completion state and must run
             // even if no YouTube key is configured (Google Trends is independent).
-            tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
+            tokio::spawn(super::discovery_market_worker::process_pending(
+                state.clone(),
+            ));
             let Ok(key) = state.credentials().youtube_key() else {
                 continue;
             };
@@ -70,6 +93,7 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let now = epoch_now();
             let _ = market_store::prune_expired(&db, now);
             let _ = super::idea_market::prune_expired(&db, now);
+            let _ = super::google_ads::prune_expired(&db, now);
             let _ = super::idea_trends::prune_expired(&db, now);
             let Ok(due) = market_store::list_due_watchlist_ids(&db, now) else {
                 continue;
@@ -82,8 +106,43 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
                 // Shared semaphore serializes automatic and manual collection.
                 run_claim(state.clone(), run, client.clone()).await;
             }
+            refresh_saved_video_counts(state.clone(), client.clone()).await;
         }
     })
+}
+
+/// Weekly-ish known-video counter measurements with an independent, durable
+/// two-per-day allowance; never burns YouTube search.list quota.
+async fn refresh_saved_video_counts(state: AppState, client: YoutubeClient) {
+    let Ok(_permit) = state.market_semaphore().acquire_owned().await else {
+        return;
+    };
+    let Ok(mut db) = state.connect() else { return };
+    let Ok(Some((run_id, ids))) = super::idea_market::claim_video_refresh(&mut db, epoch_now())
+    else {
+        return;
+    };
+    drop(db);
+    let result =
+        tokio::time::timeout(Duration::from_secs(20), client.refresh_view_counts(&ids)).await;
+    let (observations, error) = match result {
+        Ok(Ok(values)) => (values, None),
+        Ok(Err(error)) => (vec![], Some(error.code())),
+        Err(_) => (vec![], Some("provider_unavailable")),
+    };
+    if let Ok(db) = state.connect() {
+        let _ = super::idea_market::finish_video_refresh(
+            &db,
+            &run_id,
+            &ids,
+            &observations,
+            error.map_or(Ok(()), Err),
+            epoch_now(),
+        );
+    }
+    if let Some(code) = error {
+        eprintln!("contentgen-server: video_snapshot_refresh_failed reason={code}");
+    }
 }
 
 pub async fn run_claim(state: AppState, run: MarketRun, client: YoutubeClient) {

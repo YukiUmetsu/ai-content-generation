@@ -3,7 +3,9 @@
 //! never holds the Discovery job open indefinitely.
 
 use super::{
-    discovery_store, idea_market,
+    discovery_store,
+    google_ads::{self, AdsError, GoogleAdsClient},
+    idea_market,
     idea_trends::{self, TrendPoint, TrendRun},
     market_api::epoch_now,
     youtube_api::YoutubeClient,
@@ -18,10 +20,12 @@ use std::time::Duration;
 /// The Google provider enforces a stricter 12/day local safety limit.
 const MAX_VIDEO_ATTEMPTS_PER_DISCOVERY: usize = 20;
 const MAX_TREND_ATTEMPTS_PER_DISCOVERY: usize = 12;
-const YOUTUBE_TIMEOUT: Duration = Duration::from_secs(35);
+const MAX_GOOGLE_ADS_ATTEMPTS_PER_DISCOVERY: usize = 8;
+const YOUTUBE_TIMEOUT: Duration = Duration::from_secs(150);
 const TRENDS_TIMEOUT: Duration = Duration::from_secs(12);
+const GOOGLE_ADS_TIMEOUT: Duration = Duration::from_secs(32);
 
-fn query_for_idea(title: &str) -> String {
+fn query_plan_for_idea(title: &str) -> Vec<String> {
     const SKIP: &[&str] = &[
         "how",
         "why",
@@ -52,24 +56,55 @@ fn query_for_idea(title: &str) -> String {
         "explained",
         "everyone",
         "knows",
+        "missing",
+        "link",
+        "secret",
+        "shocking",
+        "truth",
+        "revealed",
+        "in",
     ];
-    let relevant = title
+    let words = title
         .split(|character: char| !(character.is_alphanumeric() || character == '-'))
-        .filter(|word| !word.is_empty() && !SKIP.contains(&word.to_lowercase().as_str()))
+        .map(str::to_ascii_lowercase)
+        .filter(|word| !word.is_empty() && !SKIP.contains(&word.as_str()))
         .take(9)
-        .collect::<Vec<_>>()
-        .join(" ");
-    let query = if relevant.chars().count() >= 3 {
-        relevant
-    } else {
-        title.to_owned()
-    };
-    query
-        .chars()
-        .take(120)
-        .collect::<String>()
-        .trim()
-        .to_owned()
+        .collect::<Vec<_>>();
+    let mut queries = vec![];
+    let base = words.join(" ");
+    if base.chars().count() >= 3 {
+        queries.push(base.chars().take(120).collect::<String>());
+    }
+    if words.len() >= 3 {
+        // Broadening one modifier often exposes genuine viewer language while
+        // preserving at least two subject words. Never fall back to generic
+        // single-word queries such as "house" or "math".
+        let modifier = words
+            .iter()
+            .position(|word| word == "file" || word == "files");
+        let reduced = words
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| modifier.map_or(*index < words.len() - 1, |at| *index != at))
+            .map(|(_, word)| word.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if reduced.split_whitespace().count() >= 2 && !queries.iter().any(|query| query == &reduced)
+        {
+            queries.push(reduced.chars().take(120).collect());
+        }
+    }
+    if queries.is_empty() && title.trim().chars().count() >= 3 {
+        queries.push(title.trim().chars().take(120).collect::<String>());
+    }
+    queries
+}
+
+fn query_for_idea(title: &str) -> String {
+    query_plan_for_idea(title)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
 fn should_circuit_youtube(code: &str) -> bool {
@@ -162,7 +197,11 @@ where
     eprintln!(
         "contentgen-server: discovery_market_job_started run_id={} kind={} ideas={}",
         run_id,
-        if run.provider_health["marketBackfill"] == "queued" { "retry" } else { "initial" },
+        if run.provider_health["marketBackfill"] == "queued" {
+            "retry"
+        } else {
+            "initial"
+        },
         run.candidates.len(),
     );
     let format = if run.input_snapshot["platforms"]
@@ -182,12 +221,16 @@ where
     let credential = state.credentials().youtube_key();
     let missing_key_reason = match credential.as_ref() {
         Err(crate::credentials::CredentialError::Denied) => "credential_denied",
-        Err(crate::credentials::CredentialError::Unavailable | crate::credentials::CredentialError::Other) => "credential_unavailable",
+        Err(
+            crate::credentials::CredentialError::Unavailable
+            | crate::credentials::CredentialError::Other,
+        ) => "credential_unavailable",
         _ => "api_key_missing",
     };
     let client = credential
         .ok()
         .and_then(|key| YoutubeClient::from_key(key).ok());
+    let ads_client = GoogleAdsClient::from_env().ok();
     drop(db);
 
     let mut youtube_attempts = 0;
@@ -198,11 +241,16 @@ where
     let mut trends_unknown = 0;
     let mut blocked_trends: Option<&'static str> = None;
     let mut blocked_youtube: Option<&'static str> = None;
+    let mut ads_attempts = 0;
+    let mut ads_ok = 0;
+    let mut ads_unknown = 0;
+    let mut ads_blocked = false;
 
     for idea in &run.candidates {
         if !still_collecting(&state, run_id) {
             return;
         }
+        let query_plan = query_plan_for_idea(&idea.title);
         let query = query_for_idea(&idea.title);
         if !(3..=120).contains(&query.chars().count()) {
             continue;
@@ -212,7 +260,10 @@ where
         // and worker; successful or still-cooling-down data is reused.
         let (retry_youtube, retry_trends) = match state.connect() {
             Ok(db) => match discovery_store::market_retry_due(
-                &db, &idea.id, epoch_now(), client.is_some(),
+                &db,
+                &idea.id,
+                epoch_now(),
+                client.is_some(),
             ) {
                 Ok(due) => due,
                 Err(_) => return,
@@ -236,10 +287,8 @@ where
         {
             let reason = if client.is_none() {
                 missing_key_reason
-            } else if let Some(reason) = blocked_youtube {
-                reason
             } else {
-                "collection_limit"
+                blocked_youtube.unwrap_or("collection_limit")
             };
             if let Ok(mut db) = state.connect() {
                 let _ = idea_market::record_unavailable_assessment(
@@ -269,13 +318,24 @@ where
                     drop(db);
                     let result = tokio::time::timeout(
                         YOUTUBE_TIMEOUT,
-                        idea_market::run_assessment(
+                        idea_market::run_assessment_with_queries(
                             state.clone(),
                             reserved.clone(),
                             video_client.clone(),
+                            &query_plan[1..],
                         ),
                     )
                     .await;
+                    if let Ok(db) = state.connect() {
+                        let additional_calls: i64 = db
+                            .query_row(
+                                "SELECT COUNT(*) FROM idea_market_search_queries WHERE run_id=?1",
+                                [&reserved.id],
+                                |r| r.get(0),
+                            )
+                            .unwrap_or(0);
+                        youtube_attempts += additional_calls as usize;
+                    }
                     if result.is_err()
                         && let Ok(db) = state.connect()
                     {
@@ -298,11 +358,12 @@ where
                     {
                         // A shared quota denial must cool down the remaining
                         // ideas for a full day, not trigger retries every 6h.
-                        blocked_youtube = Some(if matches!(code, "quota_exceeded" | "rate_limited") {
-                            "budget_exhausted"
-                        } else {
-                            "provider_unavailable"
-                        });
+                        blocked_youtube =
+                            Some(if matches!(code, "quota_exceeded" | "rate_limited") {
+                                "budget_exhausted"
+                            } else {
+                                "provider_unavailable"
+                            });
                     }
                     let succeeded =
                         saved.is_some_and(|observation| observation.state == "succeeded");
@@ -326,6 +387,82 @@ where
                     youtube_unknown += 1;
                 }
                 Err(_) => youtube_unknown += 1,
+            }
+        }
+
+        // Google Ads is entirely optional. Its metrics are *Google Search*
+        // keyword estimates; they never unblock or falsify YouTube demand.
+        if let Some(ads) = ads_client.as_ref() {
+            let latest = state
+                .connect()
+                .ok()
+                .and_then(|db| google_ads::latest_assessment(&db, &idea.id).ok().flatten());
+            let fresh = latest.as_ref().is_some_and(|saved| {
+                epoch_now().saturating_sub(saved.observed_at)
+                    < if saved.state == "succeeded" {
+                        30 * 86_400
+                    } else {
+                        6 * 3_600
+                    }
+            });
+            if fresh {
+                if latest
+                    .as_ref()
+                    .is_some_and(|saved| saved.state == "succeeded")
+                {
+                    ads_ok += 1;
+                } else {
+                    ads_unknown += 1;
+                }
+            } else if ads_attempts < MAX_GOOGLE_ADS_ATTEMPTS_PER_DISCOVERY && !ads_blocked {
+                ads_attempts += 1;
+                let result = match tokio::time::timeout(
+                    GOOGLE_ADS_TIMEOUT,
+                    ads.generate_keyword_ideas(&query_plan),
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(_) => Err(AdsError::Unavailable),
+                };
+                if let Err(error) = &result {
+                    eprintln!(
+                        "contentgen-server: google_ads_keyword_failure reason={}",
+                        error.code()
+                    );
+                    ads_blocked = matches!(
+                        error,
+                        AdsError::Authentication
+                            | AdsError::Permission
+                            | AdsError::Quota
+                            | AdsError::Unavailable
+                    );
+                    ads_unknown += 1;
+                } else {
+                    ads_ok += 1;
+                }
+                if let Ok(mut db) = state.connect() {
+                    let _ = google_ads::save_assessment(
+                        &mut db,
+                        &idea.id,
+                        &query,
+                        result.as_ref().map(|items| items.as_slice()),
+                        epoch_now(),
+                    );
+                }
+            } else {
+                ads_unknown += 1;
+                // A finite per-run limit must not make skipped ideas look
+                // permanently unobserved and trigger immediate requeue loops.
+                if let Ok(mut db) = state.connect() {
+                    let _ = google_ads::save_assessment(
+                        &mut db,
+                        &idea.id,
+                        &query,
+                        Err(&AdsError::CollectionLimit),
+                        epoch_now(),
+                    );
+                }
             }
         }
 
@@ -449,6 +586,8 @@ where
         "state": state_name,
         "youtube": {"succeeded":youtube_ok,"unavailable":youtube_unknown,"attempts":youtube_attempts},
         "googleTrends": {"succeeded":trends_ok,"unavailable":trends_unknown,"attempts":trends_attempts},
+        "googleAds": {"state":if ads_client.is_some() { "configured" } else { "not_configured" },
+          "succeeded":ads_ok,"unavailable":ads_unknown,"attempts":ads_attempts},
     });
     if let Ok(db) = state.connect() {
         match discovery_store::finish_market_run(&db, run_id, &summary, epoch_now()) {
@@ -476,6 +615,312 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editorial_title_produces_distinct_viewer_searches_without_hook_words() {
+        let queries = query_plan_for_idea("The Missing Link in Bookkeeping File Automation");
+        assert_eq!(queries[0], "bookkeeping file automation");
+        assert!(queries.contains(&"bookkeeping automation".to_owned()));
+        assert!(queries.len() >= 2 && queries.len() <= 3);
+        assert!(queries.iter().all(|query| !query.contains("missing link")));
+    }
+
+    #[test]
+    fn short_specific_topic_does_not_expand_to_generic_single_word_searches() {
+        let queries = query_plan_for_idea("Why Home Insulation Installation Costs More");
+        assert_eq!(queries[0], "home insulation installation costs");
+        assert!(
+            queries
+                .iter()
+                .all(|query| query.split_whitespace().count() >= 2)
+        );
+        assert_eq!(
+            queries
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            queries.len()
+        );
+    }
+
+    #[test]
+    fn search_expansion_preserves_topic_intent_and_bounded_queries() {
+        assert_eq!(
+            query_plan_for_idea("The Missing Link in Bookkeeping File Automation"),
+            vec!["bookkeeping file automation", "bookkeeping automation"]
+        );
+        assert!(query_plan_for_idea("How To Save Money").len() <= 2);
+    }
+
+    #[test]
+    fn secondary_search_reserves_shared_budget_only_once() {
+        let (_dir, state, session_id, _) = setup();
+        let mut db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate
+            .id
+            .clone();
+        let reserved = idea_market::claim_assessment(
+            &mut db,
+            "proj-homes",
+            &session_id,
+            &idea_id,
+            "home insulation installation costs",
+            "long",
+            epoch_now(),
+        )
+        .unwrap();
+        assert!(
+            idea_market::reserve_additional_search(
+                &mut db,
+                &reserved.id,
+                1,
+                "home insulation installation",
+                epoch_now()
+            )
+            .unwrap()
+        );
+        assert!(
+            !idea_market::reserve_additional_search(
+                &mut db,
+                &reserved.id,
+                1,
+                "home insulation installation",
+                epoch_now()
+            )
+            .unwrap()
+        );
+        let uses: i64 = db
+            .query_row("SELECT COUNT(*) FROM market_search_budget", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(uses, 2);
+    }
+
+    #[test]
+    fn secondary_search_stops_at_shared_daily_limit() {
+        let (_dir, state, session_id, _) = setup();
+        let mut db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate
+            .id
+            .clone();
+        let reserved = idea_market::claim_assessment(
+            &mut db,
+            "proj-homes",
+            &session_id,
+            &idea_id,
+            "home insulation installation costs",
+            "long",
+            epoch_now(),
+        )
+        .unwrap();
+        for index in 0..19 {
+            db.execute(
+                "INSERT INTO market_search_budget(run_id,reserved_at) VALUES(?1,?2)",
+                rusqlite::params![format!("other-{index}"), epoch_now()],
+            )
+            .unwrap();
+        }
+        assert!(
+            !idea_market::reserve_additional_search(
+                &mut db,
+                &reserved.id,
+                1,
+                "home insulation installation",
+                epoch_now()
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn three_other_channel_uploads_produce_provisional_score_without_three_ideas() {
+        let (_dir, state, session_id, _) = setup();
+        let mut db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate
+            .id
+            .clone();
+        let now = epoch_now();
+        let run = idea_market::claim_assessment(
+            &mut db,
+            "proj-homes",
+            &session_id,
+            &idea_id,
+            "home insulation installation costs",
+            "long",
+            now,
+        )
+        .unwrap();
+        let observed_date = |age_days: i64| -> String {
+            db.query_row(
+                "SELECT strftime('%Y-%m-%dT%H:%M:%SZ',?1,'unixepoch')",
+                [now - age_days * 86_400],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let mk = |id: &str, views: i64, days: i64| super::super::market_store::VideoObservation {
+            video_id: id.into(),
+            title: "Home insulation installation costs".into(),
+            channel_id: "UChome".into(),
+            channel_title: "Demo".into(),
+            published_at: observed_date(days),
+            duration_seconds: Some(500),
+            view_count: Some(views),
+            like_count: None,
+            comment_count: None,
+            subscriber_count: None,
+        };
+        let target = mk("abcABC12345", 30_000, 30);
+        idea_market::save_channel_baselines(
+            &db,
+            &run.id,
+            &[
+                mk("otherAB1234", 3_000, 30),
+                mk("otherAB1235", 3_600, 30),
+                mk("otherAB1236", 4_000, 30),
+            ],
+            now,
+        )
+        .unwrap();
+        idea_market::complete_assessment(&db, &run.id, &[target], now).unwrap();
+        let assessment = idea_market::latest_assessment(&db, &idea_id, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(assessment.sample_size, 1);
+        assert_eq!(assessment.channel_baseline_videos, 3);
+        assert_eq!(assessment.channel_baseline_channels, 1);
+        assert_eq!(assessment.channel_baseline_examples.len(), 3);
+        assert!(assessment.channel_baseline_examples.iter().all(|source| {
+            source
+                .source_url
+                .starts_with("https://www.youtube.com/watch?v=")
+                && source.title == "Home insulation installation costs"
+        }));
+        assert!(assessment.channel_breakout_score.unwrap() > 70.0);
+        let potential = crate::research::viral_potential::assess(Some(&assessment), None);
+        assert_eq!(potential.state, "provisional");
+        assert!(potential.score.is_some());
+    }
+
+    #[test]
+    fn google_ads_search_volume_is_saved_as_optional_separate_evidence() {
+        let (_dir, state, session_id, _) = setup();
+        let mut db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate
+            .id
+            .clone();
+        assert!(
+            google_ads::latest_assessment(&db, &idea_id)
+                .unwrap()
+                .is_none()
+        );
+        google_ads::save_assessment(
+            &mut db,
+            &idea_id,
+            "home insulation costs",
+            Ok(&[google_ads::KeywordIdea {
+                keyword: "home insulation cost".into(),
+                close_variants: vec!["insulation installation".into()],
+                google_monthly_searches: Some(8100),
+                advertiser_competition: Some("HIGH".into()),
+                low_top_page_bid_micros: None,
+                high_top_page_bid_micros: None,
+            }]),
+            epoch_now(),
+        )
+        .unwrap();
+        let observation = google_ads::latest_assessment(&db, &idea_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(observation.metric_version, "google-ads-search-keywords-v1");
+        assert_eq!(observation.keywords[0].google_monthly_searches, Some(8100));
+        let ideas = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap();
+        assert_eq!(
+            ideas[0].google_ads.as_ref().unwrap().keywords[0].keyword,
+            "home insulation cost"
+        );
+    }
+
+    #[test]
+    fn seven_day_growth_is_unknown_until_two_real_dated_snapshots_exist() {
+        let (_dir, state, session_id, _) = setup();
+        let mut db = state.connect().unwrap();
+        let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
+            .candidate
+            .id
+            .clone();
+        let now = epoch_now();
+        let previous = now - 8 * 86_400;
+        let run = idea_market::claim_assessment(
+            &mut db,
+            "proj-homes",
+            &session_id,
+            &idea_id,
+            "home insulation installation costs",
+            "long",
+            previous,
+        )
+        .unwrap();
+        let date: String = db
+            .query_row(
+                "SELECT strftime('%Y-%m-%dT%H:%M:%SZ',?1,'unixepoch')",
+                [previous - 30 * 86_400],
+                |r| r.get(0),
+            )
+            .unwrap();
+        idea_market::complete_assessment(
+            &db,
+            &run.id,
+            &[super::super::market_store::VideoObservation {
+                video_id: "abcABC12345".into(),
+                title: "Home insulation installation costs".into(),
+                channel_id: "UChome".into(),
+                channel_title: "Demo".into(),
+                published_at: date,
+                duration_seconds: Some(600),
+                view_count: Some(12_000),
+                like_count: None,
+                comment_count: None,
+                subscriber_count: None,
+            }],
+            previous,
+        )
+        .unwrap();
+        let initial = idea_market::latest_assessment(&db, &idea_id, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(initial.observed_7d_median_view_delta, None);
+        let (refresh_id, ids) = idea_market::claim_video_refresh(&mut db, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(ids, vec!["abcABC12345"]);
+        idea_market::finish_video_refresh(
+            &db,
+            &refresh_id,
+            &ids,
+            &[("abcABC12345".into(), 15_600)],
+            Ok(()),
+            now,
+        )
+        .unwrap();
+        let measured = idea_market::latest_assessment(&db, &idea_id, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(measured.observed_7d_median_view_delta, Some(3600.0));
+        assert_eq!(measured.observed_7d_video_count, 1);
+        assert_eq!(measured.observed_30d_median_view_delta, None);
+        assert!(
+            idea_market::claim_video_refresh(&mut db, now)
+                .unwrap()
+                .is_none()
+        );
+    }
+
     use crate::{
         credentials::{CredentialError, CredentialStore, ProviderCredentials, ProviderId},
         db,
@@ -597,15 +1042,31 @@ mod tests {
         let (_dir, state, session_id, run_id) = setup();
         let mut db = state.connect().unwrap();
         // Simulate a completed session created before automatic market enrichment.
-        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
-                    WHERE id=?1", [&run_id]).unwrap();
+        db.execute(
+            "UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1",
+            [&run_id],
+        )
+        .unwrap();
         let queued = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap();
+            &mut db,
+            Some(("proj-homes", &session_id)),
+            epoch_now(),
+            false,
+        )
+        .unwrap();
         assert_eq!(queued, vec![run_id.clone()]);
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap().is_empty(), "double-click must not enqueue twice");
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .unwrap()
+            .is_empty(),
+            "double-click must not enqueue twice"
+        );
         let pending = discovery_store::get_run(&db, "proj-homes", &run_id).unwrap();
         assert_eq!(pending.stage, "measure_market");
         assert_eq!(pending.provider_health["marketBackfill"], "queued");
@@ -619,12 +1080,22 @@ mod tests {
         let ideas = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap();
         assert!(ideas[0].market_assessment.is_some());
         assert!(ideas[0].google_trends.is_some());
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap().is_empty(), "completed backfill must not loop");
-        let budget: i64 = db.query_row(
-            "SELECT COUNT(*) FROM market_search_budget", [], |row| row.get(0),
-        ).unwrap();
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .unwrap()
+            .is_empty(),
+            "completed backfill must not loop"
+        );
+        let budget: i64 = db
+            .query_row("SELECT COUNT(*) FROM market_search_budget", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(budget, 0, "missing YouTube key must not spend quota");
     }
 
@@ -633,42 +1104,88 @@ mod tests {
         let (_dir, state, session_id, first_id) = setup();
         let mut db = state.connect().unwrap();
         let first = discovery_store::get_run(&db, "proj-homes", &first_id).unwrap();
-        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
-                    WHERE id=?1", [&first_id]).unwrap();
+        db.execute(
+            "UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1",
+            [&first_id],
+        )
+        .unwrap();
         let second = discovery_store::start_or_get_active_for_session(
-            &mut db, "proj-homes", &session_id, "revision-2", 104,
-        ).unwrap();
-        discovery_store::finish_run(&mut db, &second.id, vec![discovery_store::CandidateDraft {
-            title: "The cost of replacing a water heater".into(),
-            hook: "What will it cost?".into(),
-            premise: "Compare water heater expenses".into(),
-            why_now: "Maintenance costs are rising".into(),
-            angle_key: "water-heater-expenses".into(),
-            source_ids: first.candidates[0].source_ids.clone(),
-            confidence: "medium".into(),
-        }], "completed", 105).unwrap();
-        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
-                    WHERE id=?1", [&second.id]).unwrap();
+            &mut db,
+            "proj-homes",
+            &session_id,
+            "revision-2",
+            104,
+        )
+        .unwrap();
+        discovery_store::finish_run(
+            &mut db,
+            &second.id,
+            vec![discovery_store::CandidateDraft {
+                title: "The cost of replacing a water heater".into(),
+                hook: "What will it cost?".into(),
+                premise: "Compare water heater expenses".into(),
+                why_now: "Maintenance costs are rising".into(),
+                angle_key: "water-heater-expenses".into(),
+                source_ids: first.candidates[0].source_ids.clone(),
+                confidence: "medium".into(),
+            }],
+            "completed",
+            105,
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1",
+            [&second.id],
+        )
+        .unwrap();
         let first_batch = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap();
+            &mut db,
+            Some(("proj-homes", &session_id)),
+            epoch_now(),
+            false,
+        )
+        .unwrap();
         assert_eq!(first_batch, vec![first_id.clone()]);
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap().is_empty(), "only one active market job per session");
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .unwrap()
+            .is_empty(),
+            "only one active market job per session"
+        );
         drop(db);
 
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
         let mut db = state.connect().unwrap();
         let second_batch = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap();
+            &mut db,
+            Some(("proj-homes", &session_id)),
+            epoch_now(),
+            false,
+        )
+        .unwrap();
         assert_eq!(second_batch, vec![second.id.clone()]);
         drop(db);
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
         let db = state.connect().unwrap();
-        assert_eq!(discovery_store::get_run(&db, "proj-homes", &second.id).unwrap().status, "completed");
-        assert_eq!(sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap().len(), 2);
+        assert_eq!(
+            discovery_store::get_run(&db, "proj-homes", &second.id)
+                .unwrap()
+                .status,
+            "completed"
+        );
+        assert_eq!(
+            sessions_store::list_ideas(&db, "proj-homes", &session_id)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -677,24 +1194,41 @@ mod tests {
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
         let mut db = state.connect().unwrap();
         let ideas = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap();
-        db.execute("DELETE FROM idea_trends_runs WHERE idea_id=?1", [&ideas[0].candidate.id]).unwrap();
-        let youtube_before: i64 = db.query_row(
-            "SELECT COUNT(*) FROM idea_market_runs", [], |row| row.get(0),
-        ).unwrap();
+        db.execute(
+            "DELETE FROM idea_trends_runs WHERE idea_id=?1",
+            [&ideas[0].candidate.id],
+        )
+        .unwrap();
+        let youtube_before: i64 = db
+            .query_row("SELECT COUNT(*) FROM idea_market_runs", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         let queued = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap();
+            &mut db,
+            Some(("proj-homes", &session_id)),
+            epoch_now(),
+            false,
+        )
+        .unwrap();
         assert_eq!(queued, vec![run_id]);
         drop(db);
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
         let db = state.connect().unwrap();
-        let youtube_after: i64 = db.query_row(
-            "SELECT COUNT(*) FROM idea_market_runs", [], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(youtube_before, youtube_after, "saved YouTube result must be reused");
-        let trends_after: i64 = db.query_row(
-            "SELECT COUNT(*) FROM idea_trends_runs", [], |row| row.get(0),
-        ).unwrap();
+        let youtube_after: i64 = db
+            .query_row("SELECT COUNT(*) FROM idea_market_runs", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            youtube_before, youtube_after,
+            "saved YouTube result must be reused"
+        );
+        let trends_after: i64 = db
+            .query_row("SELECT COUNT(*) FROM idea_trends_runs", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(trends_after, 1);
     }
 
@@ -702,19 +1236,44 @@ mod tests {
     fn backfill_is_scoped_and_does_not_queue_active_or_archived_sessions() {
         let (_dir, state, session_id, run_id) = setup();
         let mut db = state.connect().unwrap();
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("other-project", &session_id)), epoch_now(), false,
-        ).is_err(), "cross-project session must not be writable");
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap().is_empty(), "initial market job is already active");
-        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
-                    WHERE id=?1", [&run_id]).unwrap();
-        db.execute("UPDATE content_discovery_sessions SET archived_at=?2 WHERE id=?1",
-            rusqlite::params![session_id, epoch_now()]).unwrap();
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, None, epoch_now(), false,
-        ).unwrap().is_empty(), "archived sessions must not be reactivated");
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("other-project", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .is_err(),
+            "cross-project session must not be writable"
+        );
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .unwrap()
+            .is_empty(),
+            "initial market job is already active"
+        );
+        db.execute(
+            "UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1",
+            [&run_id],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE content_discovery_sessions SET archived_at=?2 WHERE id=?1",
+            rusqlite::params![session_id, epoch_now()],
+        )
+        .unwrap();
+        assert!(
+            discovery_store::queue_missing_market_runs(&mut db, None, epoch_now(), false,)
+                .unwrap()
+                .is_empty(),
+            "archived sessions must not be reactivated"
+        );
     }
 
     #[tokio::test]
@@ -722,22 +1281,40 @@ mod tests {
         let (_dir, state, session_id, run_id) = setup();
         process_pending_with(state.clone(), |_run| async { Err("provider_unavailable") }).await;
         let mut db = state.connect().unwrap();
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap().is_empty(), "fresh provider failures must cool down");
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .unwrap()
+            .is_empty(),
+            "fresh provider failures must cool down"
+        );
         db.execute(
             "UPDATE idea_trends_runs SET started_at=?1 WHERE state='failed'",
             [epoch_now() - 7 * 3_600],
-        ).unwrap();
+        )
+        .unwrap();
         db.execute(
             "UPDATE discovery_runs SET provider_health_json=json_set(
                 provider_health_json,'$.marketBackfill','completed') WHERE id=?1",
             [&run_id],
-        ).unwrap();
+        )
+        .unwrap();
         let queued = discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap();
-        assert_eq!(queued, vec![run_id.clone()], "Trends must retry independently of YouTube");
+            &mut db,
+            Some(("proj-homes", &session_id)),
+            epoch_now(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            queued,
+            vec![run_id.clone()],
+            "Trends must retry independently of YouTube"
+        );
         drop(db);
 
         let calls = Arc::new(AtomicUsize::new(0));
@@ -748,16 +1325,25 @@ mod tests {
                 seen.fetch_add(1, Ordering::SeqCst);
                 Err("provider_unavailable")
             }
-        }).await;
-        assert_eq!(calls.load(Ordering::SeqCst), 1, "retry must actually invoke provider");
+        })
+        .await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "retry must actually invoke provider"
+        );
         let db = state.connect().unwrap();
-        let attempts: i64 = db.query_row(
-            "SELECT COUNT(*) FROM idea_trends_runs", [], |row| row.get(0),
-        ).unwrap();
+        let attempts: i64 = db
+            .query_row("SELECT COUNT(*) FROM idea_trends_runs", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(attempts, 2, "retry must persist a new attempt");
-        let youtube: i64 = db.query_row(
-            "SELECT COUNT(*) FROM market_search_budget", [], |row| row.get(0),
-        ).unwrap();
+        let youtube: i64 = db
+            .query_row("SELECT COUNT(*) FROM market_search_budget", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(youtube, 0, "no YouTube key must not consume budget");
     }
 
@@ -766,29 +1352,65 @@ mod tests {
         let (_dir, state, session_id, run_id) = setup();
         let db = state.connect().unwrap();
         let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
-            .candidate.id.clone();
+            .candidate
+            .id
+            .clone();
         drop(db);
         let mut db = state.connect().unwrap();
         idea_market::record_unavailable_assessment(
-            &mut db, "proj-homes", &session_id, &idea_id,
-            "home insulation costs", "long", "api_key_missing", epoch_now(),
-        ).unwrap();
+            &mut db,
+            "proj-homes",
+            &session_id,
+            &idea_id,
+            "home insulation costs",
+            "long",
+            "api_key_missing",
+            epoch_now(),
+        )
+        .unwrap();
         // Keep Trends fresh so only YouTube can make this run eligible.
         idea_trends::record_unavailable_assessment(
-            &mut db, &idea_id, "home insulation costs", "rate_limited", epoch_now(),
-        ).unwrap();
-        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
-                    WHERE id=?1", [&run_id]).unwrap();
-        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), false)
-            .unwrap(), (false, false));
-        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true)
-            .unwrap(), (true, false));
-        assert!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), false,
-        ).unwrap().is_empty());
-        assert_eq!(discovery_store::queue_missing_market_runs(
-            &mut db, Some(("proj-homes", &session_id)), epoch_now(), true,
-        ).unwrap(), vec![run_id]);
+            &mut db,
+            &idea_id,
+            "home insulation costs",
+            "rate_limited",
+            epoch_now(),
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1",
+            [&run_id],
+        )
+        .unwrap();
+        assert_eq!(
+            discovery_store::market_retry_due(&db, &idea_id, epoch_now(), false).unwrap(),
+            (false, false)
+        );
+        assert_eq!(
+            discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true).unwrap(),
+            (true, false)
+        );
+        assert!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                false,
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(
+            discovery_store::queue_missing_market_runs(
+                &mut db,
+                Some(("proj-homes", &session_id)),
+                epoch_now(),
+                true,
+            )
+            .unwrap(),
+            vec![run_id]
+        );
     }
 
     #[test]
@@ -796,24 +1418,52 @@ mod tests {
         let (_dir, state, session_id, run_id) = setup();
         let mut db = state.connect().unwrap();
         let idea_id = sessions_store::list_ideas(&db, "proj-homes", &session_id).unwrap()[0]
-            .candidate.id.clone();
+            .candidate
+            .id
+            .clone();
         idea_market::record_unavailable_assessment(
-            &mut db, "proj-homes", &session_id, &idea_id,
-            "home insulation costs", "long", "budget_exhausted", epoch_now(),
-        ).unwrap();
+            &mut db,
+            "proj-homes",
+            &session_id,
+            &idea_id,
+            "home insulation costs",
+            "long",
+            "budget_exhausted",
+            epoch_now(),
+        )
+        .unwrap();
         idea_trends::record_unavailable_assessment(
-            &mut db, &idea_id, "home insulation costs", "rate_limited", epoch_now(),
-        ).unwrap();
-        db.execute("UPDATE discovery_runs SET status='completed',stage='completed'
-                    WHERE id=?1", [&run_id]).unwrap();
-        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true)
-            .unwrap(), (false, false));
-        db.execute("UPDATE idea_market_runs SET started_at=?1 WHERE idea_id=?2",
-            rusqlite::params![epoch_now() - 25 * 3_600, idea_id]).unwrap();
-        db.execute("UPDATE idea_trends_runs SET started_at=?1 WHERE idea_id=?2",
-            rusqlite::params![epoch_now() - 25 * 3_600, idea_id]).unwrap();
-        assert_eq!(discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true)
-            .unwrap(), (true, true));
+            &mut db,
+            &idea_id,
+            "home insulation costs",
+            "rate_limited",
+            epoch_now(),
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE discovery_runs SET status='completed',stage='completed'
+                    WHERE id=?1",
+            [&run_id],
+        )
+        .unwrap();
+        assert_eq!(
+            discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true).unwrap(),
+            (false, false)
+        );
+        db.execute(
+            "UPDATE idea_market_runs SET started_at=?1 WHERE idea_id=?2",
+            rusqlite::params![epoch_now() - 25 * 3_600, idea_id],
+        )
+        .unwrap();
+        db.execute(
+            "UPDATE idea_trends_runs SET started_at=?1 WHERE idea_id=?2",
+            rusqlite::params![epoch_now() - 25 * 3_600, idea_id],
+        )
+        .unwrap();
+        assert_eq!(
+            discovery_store::market_retry_due(&db, &idea_id, epoch_now(), true).unwrap(),
+            (true, true)
+        );
     }
 
     #[tokio::test]

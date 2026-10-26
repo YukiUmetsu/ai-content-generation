@@ -105,6 +105,45 @@ describe("discovery session API", () => {
     expect(idea.viralPotential).toEqual(viralPotential);
   });
 
+  it("accepts a low-confidence provisional channel benchmark without other idea cohorts", async () => {
+    const provisional = {score:72,state:"provisional",scoreVersion:"viral-potential-v2",
+      confidence:"low",comparisonBasis:"channel_baseline",format:"long",
+      youtubeScore:72,trendScore:null,trendChangePercent:null,coveragePercent:75,
+      sampleSize:2,distinctChannels:1,comparisonCohortSize:0,
+      channelBreakoutScore:72,channelBaselineVideos:6,channelBaselineChannels:1,
+      youtubeObservedAt:1760000000,trendsObservedAt:null};
+    const googleAds = {state:"succeeded",metricVersion:"google-ads-search-keywords-v1",
+      query:"bookkeeping automation",observedAt:1760000000,errorCode:null,
+      keywords:[{keyword:"bookkeeping software",closeVariants:["automated bookkeeping"],
+        googleMonthlySearches:1200,advertiserCompetition:"HIGH",
+        lowTopPageBidMicros:null,highTopPageBidMicros:null}]};
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[{
+      id:"idea-1",sessionId:"session-a",runId:"run-a",title:"Bookkeeping automation",
+      viralPotential:provisional,googleAds,
+    }]}),{status:200}));
+    const [idea] = await listSessionIdeas("brand-1","session-a");
+    expect(idea.viralPotential).toEqual(provisional);
+    expect(idea.googleAds).toEqual(googleAds);
+  });
+
+  it("exposes attributed comparison uploads but rejects malformed baseline links", async () => {
+    const source = {videoId:"abcABC12345",title:"Roof insulation tips",channelTitle:"Builder",
+      viewCount:6200,publishedAt:"2026-02-01T00:00:00Z",
+      sourceUrl:"https://www.youtube.com/watch?v=abcABC12345"};
+    const assessment = {runId:"market-1",state:"succeeded",query:"roof insulation",format:"long",
+      observedAt:1760000000,searchedVideos:3,sampleSize:1,distinctChannels:1,
+      medianViews:4000,p75Views:4000,medianViewsPerDay:40,recentUploads90d:1,
+      comparisonScore:null,comparisonCohortSize:0,channelBreakoutScore:72,
+      channelBaselineVideos:3,channelBaselineChannels:1,
+      channelBaselineExamples:[source,{...source,sourceUrl:"javascript:alert(1)"}],
+      errorCode:null,videos:[]};
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[{
+      id:"idea-1",sessionId:"session-a",runId:"run-a",title:"Roof insulation",marketAssessment:assessment,
+    }]}),{status:200}));
+    const [idea] = await listSessionIdeas("brand-1","session-a");
+    expect(idea.marketAssessment?.channelBaselineExamples).toEqual([source]);
+  });
+
   it("rejects malformed viral scores instead of rendering a fabricated 100/100", async () => {
     vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({ideas:[
       {id:"idea-1",sessionId:"session-a",runId:"run-a",title:"House costs",

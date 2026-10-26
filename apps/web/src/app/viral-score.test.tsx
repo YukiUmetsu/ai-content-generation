@@ -67,7 +67,7 @@ describe("ViralScore", () => {
     expect(trigger).not.toHaveTextContent("60");
     await user.click(trigger);
     expect(await screen.findByText(/No viral score yet/)).toBeInTheDocument();
-    expect(screen.getByText(/Requires 8 usable videos/)).toBeInTheDocument();
+    expect(screen.getByText(/Requires a comparable session cohort or at least 3 other public uploads/)).toBeInTheDocument();
   });
 
   it("marks a YouTube-only score as partial and does not invent Trends", async () => {
@@ -98,5 +98,23 @@ describe("ViralScore", () => {
     const trigger = screen.getByRole("button", {name:/バイラルスコア: 77 \/ 100/});
     await user.click(trigger);
     expect(await screen.findByRole("dialog", {name:"バイラルスコアの根拠"})).toBeInTheDocument();
+  });
+
+  it("shows one-channel data as provisional with explicit baseline and low confidence", async () => {
+    const user = userEvent.setup();
+    const estimate: ViralPotential = {...potential,
+      state:"provisional",scoreVersion:"viral-potential-v2",score:72,
+      confidence:"low",comparisonBasis:"channel_baseline",youtubeScore:72,
+      trendScore:null,trendChangePercent:null,coveragePercent:75,
+      sampleSize:2,distinctChannels:1,comparisonCohortSize:0,
+      channelBreakoutScore:72,channelBaselineChannels:1,channelBaselineVideos:6,
+      trendsObservedAt:null};
+    render(<ViralScore potential={estimate} assessment={{...market,sampleSize:2,distinctChannels:1,
+      comparisonCohortSize:0,comparisonScore:null}} googleTrends={null} format="long" locale="en" />);
+    const button = screen.getByRole("button",{name:/Viral score: 72 out of 100/});
+    expect(button).toHaveTextContent(/low confidence · provisional/);
+    await user.click(button);
+    const panel = await screen.findByRole("dialog",{name:"Viral score evidence"});
+    expect(within(panel).getByText(/compared with 6 other uploads/)).toBeInTheDocument();
   });
 });

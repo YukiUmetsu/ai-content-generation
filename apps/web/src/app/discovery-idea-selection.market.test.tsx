@@ -317,6 +317,7 @@ describe("per-idea YouTube market evidence", () => {
         collecting:false,searchCallsLast24h:1,searchCallLimit:20}),{status:200});
       if (url.endsWith("/ideas")) return new Response(JSON.stringify({ideas:[idea("idea-1",
         ++checks > 1 ? assessment("long", null) : running)]}),{status:200});
+      if (url.endsWith("/runs")) return new Response(JSON.stringify({runs:[]}),{status:200});
       return new Response(JSON.stringify(session),{status:200});
     });
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
@@ -347,6 +348,7 @@ describe("per-idea YouTube market evidence", () => {
         return new Response(JSON.stringify({ideas:[started ? {...first, marketAssessment:statusCollecting
           ? running : assessment("long",null)} : first, second]}),{status:200});
       }
+      if (url.endsWith("/runs")) return new Response(JSON.stringify({runs:[]}),{status:200});
       return new Response(JSON.stringify(session),{status:200});
     });
     const user = userEvent.setup();
