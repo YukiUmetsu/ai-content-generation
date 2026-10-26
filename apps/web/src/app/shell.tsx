@@ -8,13 +8,17 @@ import { usePreferences } from "./use-preferences";
 import { Workspace } from "./workspace";
 import { CatalogWorkspace } from "./catalog-workspace";
 import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type StudioCatalog } from "./catalog-model";
-import { ResearchWorkspace } from "./research-workspace";
+import { ResearchWorkspace, type ResearchIdeaHandoff } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import { ProductionWorkspace } from "./production-workspace";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
 import type { ResearchDraftResult } from "./researched-storyboard";
+import { deleteDiscoveryProject, syncDiscoveryProject } from "@/lib/api/discovery";
+import { enqueueProjectDeletion, flushProjectDeletions, pendingProjectDeletions } from "./project-deletion-queue";
+import { listDiscoverySessions, listProductions } from "@/lib/api/discovery-sessions";
 
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -25,11 +29,50 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 export function Shell() {
   const { locale } = usePreferences();
-  const [activeSection, setActiveSection] = useState<SectionId>("create");
+  const [activeSection, setActiveSection] = useState<SectionId>("production");
+  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"export"}|null>(null);
+  const [storyboardOwnerId,setStoryboardOwnerId] = useState<string|null>(null);
+  const selectSection = (next:SectionId) => {
+    if(next==="video-director")setDirectorEntry(null);
+    if(next==="create")setStoryboardOwnerId(null);
+    setActiveSection(next);
+  };
   const [activeFeatureId, setActiveFeatureId] = useState<FeatureId>(FEATURE_IDS[0]);
   const [initialCatalog] = useState(loadCatalog);
   const [catalog, setCatalog] = useState(initialCatalog.catalog);
   const [catalogError, setCatalogError] = useState<string | null>(initialCatalog.warning);
+  const [discoverySync, setDiscoverySync] = useState<"syncing" | "synced" | "offline">("syncing");
+  const [researchHandoff,setResearchHandoff] = useState<ResearchIdeaHandoff|null>(null);
+  const [discoveryVisit, setDiscoveryVisit] = useState(0);
+  useEffect(() => {
+    const visit = () => { if (document.visibilityState === "visible") setDiscoveryVisit(value => value + 1); };
+    document.addEventListener("visibilitychange", visit);
+    return () => document.removeEventListener("visibilitychange", visit);
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      setDiscoverySync("syncing");
+      void (async () => {
+        try {
+          const ordered = [...catalog.projects].sort((a,b) => Number(b.id === catalog.activeProjectId) - Number(a.id === catalog.activeProjectId));
+          for (const project of ordered) await syncDiscoveryProject(project, catalog.content, controller.signal);
+          if (controller.signal.aborted) return;
+          await flushProjectDeletions(window.localStorage,new Set(catalog.projects.map(project=>project.id)),deleteDiscoveryProject);
+          if (!controller.signal.aborted) {
+            setDiscoverySync("synced");
+            const outstanding=pendingProjectDeletions(window.localStorage);
+            setCatalogError(previous=>outstanding>0?previous??"Server cleanup for deleted projects is queued until the local Rust server responds.":
+              previous?.startsWith("Server cleanup for deleted projects")?null:previous);
+          }
+        } catch {
+          // Server may be stopped; the local catalog is saved independently.
+          if (!controller.signal.aborted) setDiscoverySync("offline");
+        }
+      })();
+    }, 600);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [catalog, discoveryVisit]);
   const saveCatalog = useCallback((next: StudioCatalog): boolean => {
     try {
       persistCatalog(next);
@@ -41,6 +84,22 @@ export function Shell() {
       return false;
     }
   }, []);
+  const queueProjectDeletion = useCallback(async (projectId:string):Promise<boolean>=>{
+    try{
+      // The browser catalog is not the durable source of discovery history.
+      // Never remove a brand locally until the Rust server confirms no saved work.
+      const [sessions,productions]=await Promise.all([listDiscoverySessions(projectId),listProductions(projectId)]);
+      if(sessions.length||productions.length){
+        setCatalogError("This project owns saved discovery sessions or productions. Preserve or explicitly export that work before deleting the brand.");
+        return false;
+      }
+      enqueueProjectDeletion(window.localStorage,projectId);return true;
+    }catch(error){
+      setCatalogError(error instanceof Error?`Cannot verify saved project work before deletion: ${error.message}`:
+        "Cannot verify saved project work while the local server is unavailable. Nothing was deleted.");
+      return false;
+    }
+  },[]);
   const saveVideoIdea = useCallback((idea: {title: string; sourceUrl: string}): boolean => {
     const item: LocalContent = {
       id: makeCatalogId("item"),
@@ -115,7 +174,7 @@ export function Shell() {
       <div className="hidden lg:block">
         <StudioSidebar
           activeSection={activeSection}
-          onSelectSection={setActiveSection}
+          onSelectSection={selectSection}
           locale={locale}
           onOpenShortcuts={() => setShortcutsOpen(true)}
         />
@@ -125,7 +184,7 @@ export function Shell() {
         open={mobileNavOpen}
         onOpenChange={setMobileNavOpen}
         activeSection={activeSection}
-        onSelectSection={setActiveSection}
+        onSelectSection={selectSection}
         locale={locale}
         onOpenShortcuts={() => setShortcutsOpen(true)}
       />
@@ -136,16 +195,35 @@ export function Shell() {
             Local catalog: {catalogError}. Existing data has not been overwritten.
           </div>
         )}
-        {activeSection !== "create" && (
+        {activeSection !== "create" && activeSection !== "production" && (
           <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
         )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-          {activeSection === "create" ? (
-            <Workspace
+          {activeSection === "production" ? (
+            <ProductionWorkspace
               key={catalog.activeProjectId}
               locale={locale}
-              projectId={catalog.activeProjectId}
+              catalog={catalog}
+              onSelectProject={(projectId) => {
+                if(catalog.projects.some(project=>project.id===projectId))
+                  saveCatalog({...catalog,activeProjectId:projectId});
+              }}
+              onOpenNav={() => setMobileNavOpen(true)}
+              onOpenProjects={() => setActiveSection("projects")}
+              onOpenResearch={() => setActiveSection("research")}
+              onOpenStoryboard={(productionId) => {setStoryboardOwnerId(productionId??catalog.activeProjectId);setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
+              onOpenVisuals={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
+              onOpenAudio={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
+              onOpenExport={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
+              onCreateStoryboard={startEditorialStoryboard}
+              onUseVideo={saveVideoIdea}
+            />
+          ) : activeSection === "create" ? (
+            <Workspace
+              key={storyboardOwnerId??catalog.activeProjectId}
+              locale={locale}
+              projectId={storyboardOwnerId??catalog.activeProjectId}
               activeFeatureId={activeFeatureId}
               onFeatureChange={setActiveFeatureId}
               onOpenNav={() => setMobileNavOpen(true)}
@@ -153,14 +231,19 @@ export function Shell() {
               onToolGuideOpenChange={setToolGuideOpen}
             />
           ) : activeSection === "video-director" ? (
-            <VideoDirectorWorkspace locale={locale}/>
+            <VideoDirectorWorkspace
+              key={(directorEntry?.projectId??catalog.activeProjectId)+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
+              locale={locale} projectId={directorEntry?.projectId??catalog.activeProjectId}
+              researchArtifactId={directorEntry?.artifactId}
+              focusStage={directorEntry?.stage}/>
           ) : activeSection === "research" ? (
-            <ResearchWorkspace key={catalog.activeProjectId} locale={locale} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}
+            <ResearchWorkspace key={catalog.activeProjectId+":"+(researchHandoff?.title??"")} locale={locale}
+              handoff={researchHandoff} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}
               projectTopic={catalog.content.filter(item=>item.projectId===catalog.activeProjectId && item.kind==="video").at(-1)?.name ??
                 (catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name === "My project" ? "" :
                   catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "")}/>
           ) : activeSection === "jobs-qa" ? (
-            <JobsWorkspace locale={locale} />
+            <JobsWorkspace locale={locale} projects={catalog.projects} />
           ) : (
             <CatalogWorkspace
               key={activeSection + ":" + catalog.activeProjectId}
@@ -168,7 +251,14 @@ export function Shell() {
               locale={locale}
               catalog={catalog}
               save={saveCatalog}
+              onDeleteProject={queueProjectDeletion}
               onCreate={() => setActiveSection("create")}
+              onResearchIdea={(idea,sources)=>{
+                setResearchHandoff({title:idea.title,hook:idea.hook,premise:idea.premise,
+                  sourceLeads:sources.map(source=>({title:source.title,url:source.url,evidenceState:source.evidenceState}))});
+                setActiveSection("research");
+              }}
+              discoverySync={discoverySync}
             />
           )}
 

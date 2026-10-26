@@ -36,6 +36,12 @@ Studio **Research → YouTube Intelligence** supports local niche watchlists and
 
 The API key remains server-side. The feature defaults to disabled watchlists, limits enabled niches to ten and API searches to twenty in a rolling 24 hours, and expires cached API observations after thirty days. Missing API key means no external calls; shutting down the server means no scheduled collection. YouTube search requests and metadata lookups still consume the quota assigned by Google. Saving a key does **not** call Google or consume quota. This is **not** a source of keyword search-volume, audience retention, CTR, advertiser RPM, or predicted video earnings. Public metadata belongs to its source, not to ContentGen; respect YouTube's current API policies.
 
+### Automatic market evidence in Discovery
+
+Starting a saved Discovery session now also authorizes bounded YouTube and Google Trends lookups for its generated ideas. Ideas are saved before the `measure_market` stage; **Select Idea opens automatically after that stage finishes**. No individual Measure click is needed. YouTube shares the existing limit of twenty reserved searches per rolling 24 hours with watchlists and manual requests. Google Trends uses a separate twelve-attempt daily safety limit. Both collectors stop on systemic provider errors, and unfinished attempts are recovered without silently re-spending YouTube quota.
+
+Google Trends is best-effort: its `gtrend-rs` Rust client accesses **unofficial Google endpoints** that can throttle or block requests. It requires native OpenSSL development libraries/headers on Linux (or an appropriately configured toolchain), and its observed 0–100 indices are relative to each query, **not keyword search volumes**. The UI displays same-query momentum (two consecutive 13-week windows), public YouTube metadata, sample coverage and provenance separately. A missing key, exhausted quota or blocked provider yields an explicit partial result; no unsupported score is defaulted to 50. Provider observations expire after thirty days. This collection is initiated only by the creator's Discovery action, and does not publish anything.
+
 ## Research evidence and packaging panels
 
 Launch both services from the repository root:

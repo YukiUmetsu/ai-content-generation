@@ -50,12 +50,12 @@ test("search provider treats results as untrusted leads and never includes priva
     assert.ok(new URL(requestUrl).searchParams.get("q")?.includes("heat"));
     return new Response(JSON.stringify({ results: [
       { title: "Private", url: "http://localhost:9999/internal" },
-      { title: "Public", url },
+      { title: "Public", url, content: "<strong>Insulation</strong> reduces heat transfer." },
       { title: "Repeated", url },
     ] }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
   const found = await searchCandidates("heat flow", options, { transport });
-  assert.deepEqual(found, [{ url, title: "Public" }]);
+  assert.deepEqual(found, [{ url, title: "Public", snippet: "Insulation reduces heat transfer." }]);
   await assert.rejects(searchCandidates("heat flow", { ...options, provider: "brave" },
     { transport }), /BRAVE_SEARCH_API_KEY/);
   const brave = await searchCandidates("heat flow", {
@@ -85,6 +85,87 @@ test("model output requires exact quotes and valid source IDs, never auto-verifi
   assert.throws(() => validateExtractedClaims({ claims: [], gaps: [] }, [capture()]), /1–16/);
 });
 
+test("research model selects a stable passage ID and server supplies the exact captured quote", async () => {
+  const result = await analyzeCapturedResearch([capture()], topic, options, {
+    transport: async (_endpoint, request) => {
+      const messages = JSON.parse(request.body).messages;
+      assert.match(messages[0].content, /passageId/u);
+      const source = JSON.parse(messages[1].content).sources[0];
+      assert.equal(source.id, "source_01");
+      assert.deepEqual(source.passages, [{ id: "p0001", text: content }]);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        claims: [{ text: "Insulation slows heat flow.", support: [{ passageId: "p0001" }] }], gaps: [],
+      }) } }] }), { status: 200 });
+    },
+  });
+  assert.deepEqual(result, { claims: [{ text: "Insulation slows heat flow.",
+    support: [{ sourceId: "source_01", quote: content }] }], gaps: [] });
+  assert.equal(validateExtractedClaims(result, [capture()]).claims[0].status, "unverified");
+});
+
+test("unknown passage references are excluded while valid claims survive with a visible research gap", async () => {
+  const model = { claims: [
+    { text: "Insulation resists heat flow.", support: [{ passageId: "p0001", quote: "Fake quote" }, { passageId: "p0001" }] },
+    { text: "An unsupported energy-cost estimate.", support: [{ passageId: "p9999" }] },
+  ], gaps: ["Price comparisons require a local quote."] };
+  const result = await analyzeCapturedResearch([capture()], topic, options, {
+    transport: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(model) } }] }),
+      { status: 200 }),
+  });
+  assert.deepEqual(result.claims, [{ text: "Insulation resists heat flow.",
+    support: [{ sourceId: "source_01", quote: content }] }]);
+  assert.ok(result.gaps.some(gap => /Claim 2 omitted.*passage/i.test(gap)));
+  assert.ok(result.gaps.includes("Price comparisons require a local quote."));
+  assert.equal(validateExtractedClaims(result, [capture()]).claims.length, 1);
+});
+
+test("all-invalid model references fall back to exact relevant excerpts, never to invented claims", async () => {
+  const result = await analyzeCapturedResearch([capture()], topic, options, {
+    transport: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      claims: [{ text: "Invented financial claim.", support: [{ passageId: "p9999" }] }], gaps: [],
+    }) } }] }), { status: 200 }),
+  });
+  assert.equal(result.claims.length, 1);
+  assert.equal(result.claims[0].text,
+    "Insulation is a material that resists the flow of heat through walls, floors, and ceilings.");
+  assert.deepEqual(result.claims[0].support, [{ sourceId: "source_01",
+    quote: "Insulation is a material that resists the flow of heat through walls, floors, and ceilings." }]);
+  assert.ok(!JSON.stringify(result).includes("Invented financial claim"));
+  assert.ok(result.gaps.some(gap => /model.*references.*invalid.*excerpts/iu.test(gap)));
+  assert.equal(validateExtractedClaims(result, [capture()]).claims[0].status, "unverified");
+});
+
+test("irrelevant captured text still fails closed if the model supplies only invented passage IDs", async () => {
+  const unrelated = { ...capture(), text: "Weather updates are available every day. " +
+    "The latest forecast includes warm temperatures and sunny skies throughout the weekend." };
+  await assert.rejects(analyzeCapturedResearch([unrelated], topic, options, {
+    transport: async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      claims: [{ text: "Invented claim about insulation.", support: [{ passageId: "p9999" }] }], gaps: [],
+    }) } }] }), { status: 200 }),
+  }), /no claims with valid captured passages/i);
+});
+
+test("local research sends at most 4000 captured characters per source to limit model load", async () => {
+  const original = capture();
+  const large = { ...original, text: content.repeat(90) };
+  const output = await analyzeCapturedResearch([large], topic, options, {
+    transport: async (_endpoint, request) => {
+      const { messages } = JSON.parse(request.body);
+      const passages = JSON.parse(messages[1].content).sources[0].passages;
+      const size = passages.reduce((sum, passage) => sum + passage.text.length, 0);
+      assert.ok(size <= 4000, `Sent ${size} characters to the research model`);
+      for (const passage of passages) {
+        assert.ok(large.text.includes(passage.text));
+        assert.ok(passage.text.length >= 10 && passage.text.length <= 400);
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        claims: [{ text: "Heat transfer is affected by insulation.", support: [{ passageId: "p0001" }] }], gaps: [],
+      }) } }] }), { status: 200 });
+    },
+  });
+  assert.ok(large.text.includes(output.claims[0].support[0].quote));
+});
+
 test("local model receives bounded research source passages without cloud fallback", async () => {
   const run = await analyzeCapturedResearch([capture()], topic, options, {
     transport: async (endpoint, request) => {
@@ -95,8 +176,10 @@ test("local model receives bounded research source passages without cloud fallba
       assert.equal(body.messages[0].content.includes(content),false);
       const userContext=JSON.parse(body.messages[1].content);
       assert.equal(userContext.sources[0].id,"source_01");
-      assert.equal(userContext.sources[0].capturedText,content);
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(candidate()) } }] }),
+      assert.equal(userContext.sources[0].passages[0].text,content);
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        claims:[{text:"Insulation resists heat flow.",support:[{passageId:"p0001"}]}],gaps:[],
+      }) } }] }),
         { status: 200 });
     }
   });
@@ -170,3 +253,4 @@ test("CLI writes captures and dossier to a NEW restricted folder, never replaces
   await assert.rejects(runResearchCli(params, { research: fake, log: () => {} }), /exists/);
   assert.equal(calls, 2);
 });
+

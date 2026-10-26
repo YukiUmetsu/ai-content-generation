@@ -1,4 +1,4 @@
-//! Exactly one local-background collector. Nothing survives server shutdown.
+//! Local background collector with durable SQLite claims and restart recovery.
 
 use std::future::Future;
 use std::time::Duration;
@@ -15,11 +15,51 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
         if let Ok(db) = state.connect() {
             let _ = market_store::prune_expired(&db, epoch_now());
             let _ = market_store::reconcile_orphaned_runs(&db, epoch_now());
+            let _ = super::idea_market::prune_expired(&db, epoch_now());
+            let _ = super::idea_trends::prune_expired(&db, epoch_now());
+            let _ = super::idea_market::reconcile_interrupted(&db, epoch_now());
+            let _ = super::idea_trends::reconcile_interrupted(&db, epoch_now());
+            let _ = super::discovery_store::recover_interrupted_market_runs(&db, epoch_now());
         }
+        // Recover completed sessions created before automatic enrichment existed.
+        // Retry missing, failed, and expired observations only when eligible.
+        // Provider cooldowns and the shared daily budget prevent quota loops.
+        if let Ok(mut db) = state.connect() {
+            match super::discovery_store::queue_missing_market_runs(
+                &mut db, None, epoch_now(),
+                state.credentials().youtube_key().ok()
+                    .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+            ) {
+                Ok(queued) if !queued.is_empty() => eprintln!(
+                    "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
+                ),
+                Ok(_) => {},
+                Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
+            }
+        }
+        tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
         let mut ticks = tokio::time::interval(Duration::from_secs(60));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             ticks.tick().await;
+            // Re-evaluate durable provider cooldowns on each scheduler tick.
+            // SQLite run leases prevent duplicate work across caller paths.
+            if let Ok(mut db) = state.connect() {
+                match super::discovery_store::queue_missing_market_runs(
+                    &mut db, None, epoch_now(),
+                    state.credentials().youtube_key().ok()
+                        .and_then(|key| YoutubeClient::from_key(key).ok()).is_some(),
+                ) {
+                    Ok(queued) if !queued.is_empty() => eprintln!(
+                        "contentgen-server: discovery_market_jobs_queued count={}", queued.len()
+                    ),
+                    Ok(_) => {},
+                    Err(_) => eprintln!("contentgen-server: discovery_market_queue_failed reason=database"),
+                }
+            }
+            // Discovery enrichment has its own completion state and must run
+            // even if no YouTube key is configured (Google Trends is independent).
+            tokio::spawn(super::discovery_market_worker::process_pending(state.clone()));
             let Ok(key) = state.credentials().youtube_key() else {
                 continue;
             };
@@ -29,6 +69,8 @@ pub fn spawn(state: AppState) -> tokio::task::JoinHandle<()> {
             let Ok(db) = state.connect() else { continue };
             let now = epoch_now();
             let _ = market_store::prune_expired(&db, now);
+            let _ = super::idea_market::prune_expired(&db, now);
+            let _ = super::idea_trends::prune_expired(&db, now);
             let Ok(due) = market_store::list_due_watchlist_ids(&db, now) else {
                 continue;
             };
@@ -65,8 +107,9 @@ where
     let Ok(watchlist) = market_store::get_watchlist(&db, &run.watchlist_id) else {
         return;
     };
-    // Disabled/deleted while the run waited: don't make an external request.
-    if !watchlist.enabled {
+    // Disabled automatic jobs are cancelled, but explicit one-off jobs that
+    // were accepted while scheduling was off may still run.
+    if !watchlist.enabled && !run.allowed_while_disabled {
         let _ = market_store::fail_run(&db, &run.id, "disabled", epoch_now());
         return;
     }
@@ -80,6 +123,13 @@ where
                 }
             }
             Err(err) => {
+                // Correlate provider diagnostics with an opaque generated run ID.
+                // Do not log watchlist names, search phrases or raw provider errors.
+                eprintln!(
+                    "contentgen-server: youtube_collection_failed run_id={} reason={}",
+                    run.id,
+                    err.code()
+                );
                 let _ = market_store::fail_run(&db, &run.id, err.code(), epoch_now());
             }
         }
@@ -120,33 +170,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn manual_collection_does_not_enable_the_background_scheduler() {
+        let (_dir, state, id) = setup();
+        let db = state.connect().unwrap();
+        market_store::set_enabled(&db, &id, false, epoch_now()).unwrap();
+        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
+            .unwrap()
+            .unwrap();
+        assert!(run.allowed_while_disabled);
+        drop(db);
+        run_claim_with(state.clone(), run, |_, query| async move {
+            assert_eq!(query, "home repair");
+            Ok(vec![])
+        })
+        .await;
+        let db = state.connect().unwrap();
+        let saved = market_store::get_watchlist(&db, &id).unwrap();
+        assert!(
+            !saved.enabled,
+            "one-off collection must not activate daily scheduling"
+        );
+        assert!(saved.last_finished_at.is_some());
+    }
+
+    #[tokio::test]
     async fn automatic_search_uses_the_phrase_frozen_when_the_run_was_claimed() {
         let (_dir, state, id) = setup();
         let db = state.connect().unwrap();
         let previous = market_store::get_watchlist(&db, &id).unwrap();
-        market_store::update_watchlist(&db, &id, MarketWatchlistDraft {
-            name: previous.name, query: "".into(), region: previous.region,
-            language: previous.language, enabled: true, query_mode: "auto".into(),
-            query_plan: vec!["roof installation cost".into(), "home insurance rates".into()],
-            query_plan_source: "user-edited".into(),
-        }, epoch_now()).unwrap();
-        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true).unwrap().unwrap();
+        market_store::update_watchlist(
+            &db,
+            &id,
+            MarketWatchlistDraft {
+                name: previous.name,
+                query: "".into(),
+                region: previous.region,
+                language: previous.language,
+                enabled: true,
+                query_mode: "auto".into(),
+                query_plan: vec![
+                    "roof installation cost".into(),
+                    "home insurance rates".into(),
+                ],
+                query_plan_source: "user-edited".into(),
+            },
+            epoch_now(),
+        )
+        .unwrap();
+        let run = market_store::claim_watchlist(&db, &id, epoch_now(), true)
+            .unwrap()
+            .unwrap();
         assert_eq!(run.effective_query, "roof installation cost");
         let watch = market_store::get_watchlist(&db, &id).unwrap();
-        market_store::update_watchlist(&db, &id, MarketWatchlistDraft {
-            name: watch.name, query: "".into(),region:watch.region,language:watch.language,
-            enabled:true,query_mode:"auto".into(),
-            query_plan:vec!["different phrase".into()],query_plan_source:"user-edited".into(),
-        },epoch_now()).unwrap();
+        market_store::update_watchlist(
+            &db,
+            &id,
+            MarketWatchlistDraft {
+                name: watch.name,
+                query: "".into(),
+                region: watch.region,
+                language: watch.language,
+                enabled: true,
+                query_mode: "auto".into(),
+                query_plan: vec!["different phrase".into()],
+                query_plan_source: "user-edited".into(),
+            },
+            epoch_now(),
+        )
+        .unwrap();
         drop(db);
-        run_claim_with(state.clone(),run,|_,query| async move {
-            assert_eq!(query,"roof installation cost");
+        run_claim_with(state.clone(), run, |_, query| async move {
+            assert_eq!(query, "roof installation cost");
             Ok(vec![])
-        }).await;
+        })
+        .await;
         let db = state.connect().unwrap();
         let updated = market_store::get_watchlist(&db, &id).unwrap();
-        assert_eq!(updated.next_search_query,"different phrase");
-        assert_eq!(updated.query_index,0);
+        assert_eq!(updated.next_search_query, "different phrase");
+        assert_eq!(updated.query_index, 0);
     }
 
     #[tokio::test]

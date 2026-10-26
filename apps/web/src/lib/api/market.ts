@@ -167,15 +167,31 @@ async function send(path: string, method = "GET", payload?: unknown, options?: {
     throw Error("Cannot reach the local ContentGen server. Start it and retry.");
   }
   if (response.status === 204) return null;
-  let raw: unknown;
-  try { raw = await response.json(); }
-  catch { throw Error(`Local market API returned HTTP ${response.status} without valid JSON.`); }
+  // Axum's JSON extractor can reject a draft before a handler runs; older
+  // ContentGen builds return HTTP 422 as text/plain rather than a JSON envelope.
+  // Read the body once so the original validation detail is never hidden.
+  const bodyText = await response.text();
+  let raw: unknown = null;
+  let validJson = false;
+  try {
+    raw = JSON.parse(bodyText);
+    validJson = true;
+  } catch { /* legacy Rust extractor or an upstream proxy response */ }
   if (!response.ok) {
-    const maybe = obj(raw, "market error");
-    const error = maybe.error && typeof maybe.error === "object" && !Array.isArray(maybe.error)
-      ? maybe.error as Record<string, unknown> : {};
-    throw Error(typeof error.message === "string" ? error.message : `Market API request failed (HTTP ${response.status}).`);
+    const envelope = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw as Record<string, unknown> : {};
+    const error = envelope.error && typeof envelope.error === "object" && !Array.isArray(envelope.error)
+      ? envelope.error as Record<string, unknown> : {};
+    if (typeof error.message === "string" && error.message.trim()) throw Error(error.message);
+    const plainText = (response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/plain")
+      ? bodyText.replace(/[\r\n\t]+/g, " ").trim().slice(0, 280) : "";
+    const detail = plainText ? ` ${plainText}` : "";
+    if (response.status === 422) {
+      throw Error(`Watchlist request rejected (HTTP 422).${detail} The local Rust API may be outdated. Rebuild and restart the ContentGen backend, then retry.`);
+    }
+    throw Error(`Market API request failed (HTTP ${response.status}).${detail}`);
   }
+  if (!validJson) throw Error(`Local market API returned HTTP ${response.status} without valid JSON.`);
   return raw;
 }
 

@@ -34,6 +34,7 @@ afterEach(() => {
 describe("fetchPackagingHypothesisSet", () => {
   it("accepts the checked-in illustrative QA fixture", async () => {
     const set = await parse(fixture);
+    if (!set) throw Error("Expected the saved packaging fixture, not an empty response.");
     expect(set.schemaVersion).toBe(1);
     expect(set.status).toBe("draft");
     expect(set.hypotheses).toHaveLength(3);

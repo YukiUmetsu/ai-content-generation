@@ -317,8 +317,8 @@ export function parseVideoProductionJob(input) {
                 typeof state.subjectId!=="string" || !Array.isArray(dir.subjectIds) ||
                 !dir.subjectIds.includes(state.subjectId) ||
                 !["problem","mechanism","payoff"].includes(dir.phase) ||
-                stateTexts.some((value,i)=>typeof value!=="string" || value.trim().length<8 ||
-                  value.length>(i===1?90:48) || /[\u0000-\u001f]/u.test(value)) ||
+                stateTexts.some(value=>typeof value!=="string" || value.trim().length<8 ||
+                  value.length>500 || /[\u0000-\u001f]/u.test(value)) ||
                 new Set(stateTexts.filter(value=>typeof value==="string").map(value=>value.trim().toLowerCase())).size!==3)
                 add("invalid-teaching-transformation",path+".transformation",
                   "Use distinct, bounded before/action/after states for one visible technical subject.");
@@ -355,10 +355,14 @@ export function parseVideoProductionJob(input) {
     if (family === "general-explainer-v1" && !has(beat, "visual")) add("missing-general-visual", `beats[${index}].visual`, "Generic scenes require authored visual copy and diagram labels.");
   }
   const beatIds = new Set(beats.map((beat) => beat.id));
-  const events = objects(input.events, "events", ["id", "beatId"]);
+  const events = objects(input.events, "events", ["id", "beatId", "anchor"]);
   const eventIds = new Set(events.map((event) => event.id));
   for (const [index, event] of events.entries()) {
     text(event.beatId, `events[${index}].beatId`);
+    if(has(event,"anchor")&&event.anchor!=="first-visual-reveal")
+      add("invalid-event-anchor",`events[${index}].anchor`,"Only real first-visual-reveal cues are supported.");
+    if(event.id===input.topic?.payoffEventId&&has(event,"anchor"))
+      add("invalid-payoff-anchor",`events[${index}].anchor`,"The answer reveal event must start the final payoff beat.");
     if (!beatIds.has(event.beatId)) add("orphan-event-beat", `events[${index}].beatId`, "Event beat does not exist.");
     const beat = beats.find((item) => item.id === event.beatId);
     if (beat && (!Array.isArray(beat.eventIds) || !beat.eventIds.includes(event.id))) {
@@ -373,15 +377,32 @@ export function parseVideoProductionJob(input) {
     !beats.at(-1)?.eventIds?.includes(input.topic?.payoffEventId) || beats.slice(0, -1).some((beat) => beat.eventIds?.includes(input.topic?.payoffEventId)))) {
     add("invalid-payoff-scene", "beats", "The final generic beat must own the payoff event and use general-payoff.");
   }
-  const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "licenseStatus"]);
+  const sounds = objects(input.sounds, "sounds", ["id", "eventId", "category", "assetRef", "assetSha256", "licenseStatus",
+    "kind", "offsetMs", "gainDb", "fadeInMs", "fadeOutMs"]);
   for (const [index, sound] of sounds.entries()) {
     for (const key of ["eventId", "category", "assetRef"]) text(sound[key], `sounds[${index}].${key}`);
     if (!eventIds.has(sound.eventId)) add("orphan-sound-event", `sounds[${index}].eventId`, "SFX event does not exist.");
     if (!["test-only", "verified", "unknown"].includes(sound.licenseStatus)) add("invalid-license", `sounds[${index}].licenseStatus`, "Explicit license status required.");
+    if (has(sound, "assetSha256") && (sound.licenseStatus !== "verified" ||
+      typeof sound.assetSha256 !== "string" || !/^[a-f\d]{64}$/iu.test(sound.assetSha256)))
+      add("invalid-sound-hash", `sounds[${index}].assetSha256`, "Only verified SFX may carry a valid 64-character source checksum.");
+    const ambience=sound.kind==="ambience";
+    if(has(sound,"kind")&&!ambience&&sound.kind!=="effect")
+      add("invalid-sound-kind",`sounds[${index}].kind`,"Only sound effects and ambience are supported.");
+    if(has(sound,"offsetMs")&&(!Number.isSafeInteger(sound.offsetMs)||sound.offsetMs<0||
+      sound.offsetMs>(ambience?0:10000)))
+      add("invalid-sound-offset",`sounds[${index}].offsetMs`,"Sound offset must be a bounded explicit millisecond value.");
+    if(has(sound,"gainDb")&&(!Number.isFinite(sound.gainDb)||sound.gainDb< -48||
+      sound.gainDb>(ambience?-12:0)))
+      add("invalid-sound-gain",`sounds[${index}].gainDb`,"Sound gain must be within the safe dB range.");
+    for(const key of ["fadeInMs","fadeOutMs"])if(has(sound,key)&&
+      (!Number.isSafeInteger(sound[key])||sound[key]<0||sound[key]>(ambience?5000:2000)))
+      add("invalid-sound-fade",`sounds[${index}].${key}`,"Fades must be bounded nonnegative milliseconds.");
   }
-  if (!sounds.some((sound) => sound.eventId === input.topic?.payoffEventId)) {
-    add("missing-payoff-sfx", "sounds", "The payoff must have an explicit semantic SFX.");
-  }
+  if(sounds.filter(sound=>sound.kind==="ambience").length>1)
+    add("multiple-ambience-beds","sounds","Only one looping ambience track is supported.");
+  // An intentional pause/silent payoff is a valid sound-design decision.
+  // The named payoff event itself remains mandatory for visual synchronization.
 
   if (input.approval === "approved" && (!input.policy?.commercialRightsVerified || !input.policy?.reviewerApproved ||
     input.voice?.licenseStatus !== "verified" ||

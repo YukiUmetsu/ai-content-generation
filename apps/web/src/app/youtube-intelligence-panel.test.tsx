@@ -4,13 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { YoutubeIntelligencePanel } from "./youtube-intelligence-panel";
 import type { EditorialDraft } from "./editorial-brief";
 
-afterEach(() => vi.unstubAllGlobals());
+const GENERATED_WATCHLIST_ID = "watch_419bc7901411bd7b609fb5bb38a927e2";
+afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); });
 
-function fakeApi(withVideo: boolean) {
+function fakeApi(withVideo: boolean, enabled = true) {
   let watchlists: Array<Record<string, unknown>> = withVideo ? [{
-    id: "watch-demo", name: "House Math", query: "heat pump cost",
+    id: GENERATED_WATCHLIST_ID, name: "House Math", query: "heat pump cost",
     queryMode:"manual", queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump cost",
-    region: "US", language: "en", enabled: true,
+    region: "US", language: "en", enabled,
     createdAt: 123, updatedAt: 123, nextDueAt: 456,
     lastFinishedAt: 789, backoffUntil: 0, errorCode: null,
   }] : [];
@@ -40,10 +41,13 @@ function fakeApi(withVideo: boolean) {
     else if (url.endsWith("/market-queries") && init?.method === "POST") {
       data={queries:["mortgage closing costs","roof replacement price","heat pump ownership cost","property tax assessment"],source:"local-model-generated"};
     }
+    else if (url.endsWith("/collect") && init?.method === "POST") {
+      data = {runId:"run-test",state:"queued"}; status = 202;
+    }
     else if (url.endsWith("/videos")) data = {videos: withVideo ? [{
       videoId:"abcABC12345",title:"Heating systems compared",channelId:"UCdemo",
       channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:320,
-      viewCount:1200,likeCount:null,commentCount:null,subscriberCount:null,
+      viewCount:120000,likeCount:null,commentCount:null,subscriberCount:null,
       sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",
       provider:"youtube-data-api",observedAt:123,expiresAt:1234567
     }] : []};
@@ -54,6 +58,7 @@ function fakeApi(withVideo: boolean) {
 }
 
 describe("YouTube Intelligence", () => {
+
   it("saves a niche-only watchlist without a phrase and marks automatic exploration", async () => {
     fakeApi(false);
     const user=userEvent.setup();
@@ -92,6 +97,50 @@ describe("YouTube Intelligence", () => {
     expect(requests).toContain("POST /api/research/market/watchlists");
   });
 
+  it("allows Collect now without activating daily automatic collection", async () => {
+    const requests = fakeApi(true, false);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    const collect = await screen.findByRole("button",{name:/collect now/i});
+    expect(collect).toBeEnabled();
+    await user.click(collect);
+    expect(await screen.findByText(/Collection queued locally/i)).toBeInTheDocument();
+    expect(requests).toContain(`POST /api/research/market/watchlists/${GENERATED_WATCHLIST_ID}/collect`);
+    expect(screen.getByText(/Daily automatic collection off/i)).toBeInTheDocument();
+  });
+
+  it("defaults to established videos and lets users show all observations without another API call", async () => {
+    const requests=fakeApi(true);
+    const user=userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    const filter = await screen.findByRole("combobox",{name:"Video performance filter"});
+    expect(filter).toHaveValue("established");
+    expect(await screen.findByText(/120,000/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox",{name:"Minimum views"}),"100000");
+    expect(screen.getByText(/120,000/)).toBeInTheDocument();
+    await user.selectOptions(filter,"all");
+    expect(screen.getByText(/120,000/)).toBeInTheDocument();
+    const requestsBefore=requests.filter(x=>x.endsWith("/videos")).length;
+    await user.selectOptions(filter,"fast-starters");
+    expect(screen.getByText(/No videos match this performance filter/)).toBeInTheDocument();
+    expect(requests.filter(x=>x.endsWith("/videos"))).toHaveLength(requestsBefore);
+  });
+
+  it("autosaves original-video edits for a real server-generated watchlist ID", async () => {
+    fakeApi(true);
+    const user = userEvent.setup();
+    render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    const audience = await screen.findByRole("textbox", {name:"Who is this for?"});
+    await user.type(audience, " considering upgrades");
+    const key = `contentgen:editorial-brief:v1:${GENERATED_WATCHLIST_ID}`;
+    await waitFor(() => {
+      const saved = localStorage.getItem(key);
+      expect(saved).not.toBeNull();
+      expect(JSON.parse(saved ?? "{}").input.audience).toContain("considering upgrades");
+    });
+    expect(screen.queryByText(/Invalid niche ID/)).not.toBeInTheDocument();
+  });
+
   it("saves an original editable idea without copying competitor metrics", async () => {
     fakeApi(true);
     const onUseVideo=vi.fn(() => true);
@@ -128,7 +177,7 @@ describe("YouTube Intelligence", () => {
     expect(draft.selectedId).toBe("comparison");
     expect(draft.input.audience).toBe("Homeowners comparing heating systems");
     expect(draft.approaches[2].hook).toBe("Before replacing a furnace, what needs comparing?");
-    expect(JSON.stringify(draft)).not.toContain("1200");
+    expect(JSON.stringify(draft)).not.toContain("120000");
   });
 
   it("keeps observed video links as inspiration only rather than factual evidence", async () => {

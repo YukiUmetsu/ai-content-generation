@@ -1,6 +1,10 @@
 /** Local metadata catalog for Studio navigation. Not the production backend or a media store.
  * Deliberately NO credentials, upload bytes, publishing tokens, fabricated analytics.
  */
+import {
+  PROJECT_APPEARANCE_HISTORY_LIMIT, validateProjectAppearance, validateProjectAppearanceDraft,
+  type ProjectAppearance, type ProjectAppearanceDraft,
+} from "./project-brand-appearance";
 export const CATALOG_KEY = "contentgen:studio-catalog:v1";
 export const MAX_CATALOG_BYTES = 512 * 1024;
 
@@ -12,7 +16,16 @@ export type ProductKind = "course" | "download" | "membership" | "service" | "ot
 export type ProductStage = "idea" | "planned" | "active" | "retired";
 
 interface BaseEntry { id: string; projectId: string; name: string; notes: string; createdAt: string }
-export interface LocalProject { id: string; name: string; notes: string; createdAt: string }
+export interface LocalProject {
+  id: string;
+  name: string;
+  notes: string;
+  createdAt: string;
+  /** Optional for compatibility with existing imported v1 catalogs. */
+  brandAppearance?: ProjectAppearance;
+  /** Earlier revisions remain unchanged when the brand evolves. */
+  brandAppearanceHistory?: ProjectAppearance[];
+}
 export interface LocalContent extends BaseEntry { kind: ContentKind; stage: ContentStage }
 export interface LocalAsset extends BaseEntry { kind: AssetKind; rights: Rights; source: string }
 export interface LocalProduct extends BaseEntry { kind: ProductKind; stage: ProductStage }
@@ -34,10 +47,10 @@ const PRODUCT_KINDS: readonly string[] = ["course", "download", "membership", "s
 const PRODUCT_STAGES: readonly string[] = ["idea", "planned", "active", "retired"];
 const IDENTIFIER = /^[a-z0-9][a-z0-9-]{1,79}$/i;
 
-function record(value: unknown, fields: readonly string[], location: string): Record<string, unknown> {
+function record(value: unknown, fields: readonly string[], location: string, optionalFields: readonly string[] = []): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error(location + " must be an object.");
   const input = value as Record<string, unknown>;
-  for (const key of Object.keys(input)) if (!fields.includes(key)) throw new Error("Unexpected field in " + location + ": " + key);
+  for (const key of Object.keys(input)) if (!fields.includes(key) && !optionalFields.includes(key)) throw new Error("Unexpected field in " + location + ": " + key);
   for (const key of fields) if (!(key in input)) throw new Error("Missing " + location + "." + key);
   return input;
 }
@@ -83,9 +96,20 @@ export function validateCatalog(value: unknown): StudioCatalog {
   if (raw.version !== 1) throw new Error("Unsupported catalog version.");
   const projects = collection(raw.projects, "Projects", 200).map((source, index) => {
     const label = "projects[" + index + "]";
-    const project = record(source, ["id", "name", "notes", "createdAt"], label);
+    const project = record(source, ["id", "name", "notes", "createdAt"], label, ["brandAppearance", "brandAppearanceHistory"]);
+    const appearance = project.brandAppearance === undefined ? undefined : validateProjectAppearance(project.brandAppearance);
+    const historyInput = project.brandAppearanceHistory;
+    const history = historyInput === undefined ? undefined : collection(historyInput,"Brand appearance history",PROJECT_APPEARANCE_HISTORY_LIMIT)
+      .map(item => validateProjectAppearance(item));
+    if (history?.length && !appearance) throw new Error(label + " requires the current appearance for history.");
+    if (history?.some((item,index)=>item.revision >= (appearance?.revision ?? 0) ||
+        (index > 0 && item.revision <= history[index-1].revision))) {
+      throw new Error(label + " has invalid appearance revision history.");
+    }
     return { id: id(project.id, label + ".id"), name: text(project.name, label + ".name", 1, 120),
-      notes: text(project.notes, label + ".notes", 0, 2000), createdAt: when(project.createdAt, label + ".createdAt") };
+      notes: text(project.notes, label + ".notes", 0, 2000), createdAt: when(project.createdAt, label + ".createdAt"),
+      ...(appearance ? {brandAppearance:appearance} : {}),
+      ...(history !== undefined ? {brandAppearanceHistory:history} : {}) };
   });
   if (!projects.length) throw new Error("At least one project is required.");
   uniqueIds(projects, "Projects");
@@ -152,6 +176,24 @@ export function withoutProject(catalog: StudioCatalog, projectId: string): Studi
     content: catalog.content.filter(item => item.projectId !== projectId),
     assets: catalog.assets.filter(item => item.projectId !== projectId),
     products: catalog.products.filter(item => item.projectId !== projectId) });
+}
+/** Save a new immutable palette revision without changing any existing render/other project. */
+export function saveProjectAppearance(
+  catalog: StudioCatalog, projectId: string, draft: ProjectAppearanceDraft, updatedAt = new Date().toISOString(),
+): StudioCatalog {
+  const clean = validateProjectAppearanceDraft(draft);
+  const target = catalog.projects.find(project => project.id === projectId);
+  if (!target) throw new Error("Project does not exist.");
+  const previous = target.brandAppearance;
+  if (previous && JSON.stringify({palette:previous.palette,typographyPreset:previous.typographyPreset})===JSON.stringify(clean)) {
+    return catalog;
+  }
+  const revision = (previous?.revision ?? 0) + 1;
+  const next = validateProjectAppearance({...clean,revision,updatedAt});
+  return validateCatalog({...catalog,projects:catalog.projects.map(project => project.id === projectId ? {
+    ...project, brandAppearance:next,
+    brandAppearanceHistory: [...(project.brandAppearanceHistory ?? []),...(previous?[previous]:[])].slice(-PROJECT_APPEARANCE_HISTORY_LIMIT),
+  } : project)});
 }
 /** Studio-only inventory counts; never impressions, CTR, revenue or predictions. */
 export function catalogCounts(catalog: StudioCatalog, projectId: string) {

@@ -58,7 +58,10 @@ async fn search_returns_only_actually_stored_passages_with_source_provenance() {
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["passageId"], "psg_house_cost_fixture_p1");
     assert_eq!(results[0]["source"]["sourceKind"], "test");
-    assert_eq!(results[0]["source"]["title"], "Illustrative house cost assumptions");
+    assert_eq!(
+        results[0]["source"]["title"],
+        "Illustrative house cost assumptions"
+    );
     assert_eq!(results[0]["version"]["id"], "srcv_house_cost_fixture_1");
     assert_eq!(results[0]["locator"]["page"], 1);
     assert!(results[0]["bm25"].as_f64().unwrap().is_finite());
@@ -86,7 +89,11 @@ async fn search_rejects_invalid_limits_and_treats_metacharacters_as_literal_term
     let (_directory, router) = setup(true);
     let (status, _) = get(&router, "/api/research/search?q=house&limit=9999").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, body) = get(&router, "/api/research/search?q=%22%20OR%20%2A%20%28house%29").await;
+    let (status, body) = get(
+        &router,
+        "/api/research/search?q=%22%20OR%20%2A%20%28house%29",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.unwrap()["results"].is_array());
 }

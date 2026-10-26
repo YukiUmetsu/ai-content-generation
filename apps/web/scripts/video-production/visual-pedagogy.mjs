@@ -50,9 +50,8 @@ export function validateTeachingSequences(plan, dossier) {
     if (seq.visualStates !== undefined && extra(seq.visualStates,["before","action","after"],p+".visualStates")) {
       const labels=["before","action","after"].map(kind=>{
         const value=seq.visualStates[kind],at=p+".visualStates."+kind;
-        const max=kind==="action"?90:48;
-        if (!nonempty(value,max) || value.trim().length<8 || /[\r\n]/u.test(value))
-          error("teaching-state-text",at,"Use an 8–"+max+" character, single-line visible state or action.");
+        if (!nonempty(value) || value.trim().length<8 || /[\r\n]/u.test(value))
+          error("teaching-state-text",at,"Use a concise, concrete, single-line visible state or action.");
         if (typeof value==="string" && /^(before|after|step\s*\d+|main idea|the problem|the answer|how it works|the process|something changes)$/iu.test(value.trim()))
           error("teaching-state-placeholder",at,"Replace a generic placeholder with a concrete visible state.");
         return typeof value==="string"?value.trim().toLocaleLowerCase():"";

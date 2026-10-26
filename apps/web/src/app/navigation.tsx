@@ -8,12 +8,14 @@ import {
   Package,
   PenTool,
   Clapperboard,
+  Workflow,
   Search,
   Settings,
 } from "lucide-react";
 import type { Locale } from "@/features/registry";
 
 export type SectionId =
+  | "production"
   | "projects"
   | "research"
   | "create"
@@ -26,6 +28,7 @@ export type SectionId =
   | "settings";
 
 export const SECTIONS: { id: SectionId; label: Record<Locale, string>; icon: ReactNode }[] = [
+  { id: "production", label: { en: "Production", ja: "動画制作" }, icon: <Workflow aria-hidden className="size-5" /> },
   { id: "projects", label: { en: "Projects", ja: "プロジェクト" }, icon: <Folder aria-hidden className="size-5" /> },
   { id: "research", label: { en: "Research", ja: "調査" }, icon: <Search aria-hidden className="size-5" /> },
   { id: "create", label: { en: "Create", ja: "作成" }, icon: <PenTool aria-hidden className="size-5" /> },

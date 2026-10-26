@@ -74,7 +74,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
       ["mechanism","process","question"].includes(shot.family) && (phase?.visualAction||"").trim())
       warnings.push("Shot "+shot.id+": detailed motion intent is represented by a schematic flow, not a custom 2D/3D scene.");
     if(voice.sfxIntent)warnings.push("Shot "+shot.id+": requested SFX '"+safe(voice.sfxIntent,60)+
-      "' is not rendered automatically; only the existing test-only payoff chime is supported.");
+      "' is not rendered automatically by plan compilation. The Video Director resolves reviewed CC0 sounds during Check and Start; unmatched intents stay silent.");
     return {intent,items:unique,headline,subhead,
       narration:voice.narration,emphasis:safe(i===0?"THE QUESTION":i===plan.shots.length-1?"THE ANSWER":phase?.kind??shot.purpose,28)};
   });
@@ -143,7 +143,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   if(dossier.review.status!=="human-reviewed")
     warnings.unshift("Research has not been human-reviewed. Export is strictly an unverified test draft.");
   if(dossier.gaps.length)warnings.push("Research dossier has "+dossier.gaps.length+" unresolved gap(s).");
-  warnings.unshift("Validated semantic mechanics, when present, animate in Kumiki's 2D stage. Legacy visible teaching states remain a text-based fallback; other generic shots remain schematic. Arbitrary 3D assets and per-shot SFX are not compiled.");
+  warnings.unshift("Validated semantic mechanics animate in Kumiki's 2D stage where available; generic shots may remain schematic. Arbitrary 3D assets are not compiled. Sound choices are bound from the approved local bank at production readiness, not at plan preview.");
   return {
     schemaVersion:1,kind:"research-to-render-job/v1",job,
     sourceResearchSha256:bundle.researchSha256,sourcePlanSha256:bundle.planSha256,

@@ -19,7 +19,7 @@ import {
   setTopic,
   updateCopy,
 } from "./model/edit";
-import { downloadBlob, downloadSvg, thumbnailPng, thumbnailSvg } from "./model/export";
+import { downloadBlob, downloadSvg, thumbnailFileName, thumbnailPng, thumbnailSvg } from "./model/export";
 import { createThumbnailDocument, HVAC_EXAMPLE_JA, VARIANT_ID_BY_CONCEPT } from "./model/fixtures";
 import { issuesFor } from "./model/qa";
 import type { ConceptId, Locale, ThumbnailCopy } from "./model/types";
@@ -92,7 +92,9 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
   const composed = useMemo(() => composeThumbnail(document, { locale }), [document, locale]);
   const media = composed.media;
 
-  const exported = useMemo(() => thumbnailSvg(document, { locale }), [document, locale]);
+  // The export action serializes the SVG. Rendering needs only cheap, stable metadata.
+  const exportSize = { width: document.output.width, height: document.output.height };
+  const exported = { size: exportSize, filename: thumbnailFileName(document, { locale }, "svg", exportSize) };
 
   const previewNode = useMemo(
     () =>

@@ -9,13 +9,20 @@ const RETENTION_SECONDS: i64 = 30 * DAILY_SECONDS;
 const MAX_SEARCH_CALLS: i64 = 20;
 const MAX_ENABLED: i64 = 10;
 
-fn manual_mode() -> String { "manual".into() }
-fn default_plan_source() -> String { "user-edited".into() }
+fn manual_mode() -> String {
+    "manual".into()
+}
+fn default_plan_source() -> String {
+    "user-edited".into()
+}
 
 fn fallback_query(name: &str) -> String {
     let name = name.trim();
-    if name.chars().count() >= 3 { name.to_string() }
-    else { format!("{name} YouTube videos") }
+    if name.chars().count() >= 3 {
+        name.to_string()
+    } else {
+        format!("{name} YouTube videos")
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -79,6 +86,9 @@ pub struct MarketRun {
     pub started_at: i64,
     pub effective_query: String,
     pub query_plan_revision: i64,
+    /// Explicit one-off collection may use a watchlist without enabling its scheduler.
+    /// False if the user disabled an enabled list after its collection was queued.
+    pub allowed_while_disabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,7 +135,9 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
         return Err(MarketError::Invalid("name must be 1–80 characters".into()));
     }
     if !matches!(draft.query_mode.as_str(), "auto" | "manual") {
-        return Err(MarketError::Invalid("queryMode must be manual or auto".into()));
+        return Err(MarketError::Invalid(
+            "queryMode must be manual or auto".into(),
+        ));
     }
     if draft.query_mode == "manual" && !(3..=160).contains(&query.chars().count()) {
         return Err(MarketError::Invalid(
@@ -133,10 +145,14 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
         ));
     }
     if draft.query_mode == "auto" && !query.is_empty() {
-        return Err(MarketError::Invalid("automatic mode does not accept a manual search phrase".into()));
+        return Err(MarketError::Invalid(
+            "automatic mode does not accept a manual search phrase".into(),
+        ));
     }
     if draft.query_plan.len() > 8 {
-        return Err(MarketError::Invalid("queryPlan cannot exceed eight phrases".into()));
+        return Err(MarketError::Invalid(
+            "queryPlan cannot exceed eight phrases".into(),
+        ));
     }
     let mut seen = std::collections::HashSet::new();
     for phrase in &draft.query_plan {
@@ -145,13 +161,20 @@ fn validate(draft: &MarketWatchlistDraft) -> Result<(), MarketError> {
             || text.chars().any(char::is_control)
             || !seen.insert(text.to_lowercase())
         {
-            return Err(MarketError::Invalid("queryPlan requires unique phrases of 3–160 characters".into()));
+            return Err(MarketError::Invalid(
+                "queryPlan requires unique phrases of 3–160 characters".into(),
+            ));
         }
     }
     if draft.query_mode == "manual" && !draft.query_plan.is_empty() {
-        return Err(MarketError::Invalid("manual mode cannot have a rotating queryPlan".into()));
+        return Err(MarketError::Invalid(
+            "manual mode cannot have a rotating queryPlan".into(),
+        ));
     }
-    if !matches!(draft.query_plan_source.as_str(), "user-edited" | "local-model-generated" | "niche-name fallback") {
+    if !matches!(
+        draft.query_plan_source.as_str(),
+        "user-edited" | "local-model-generated" | "niche-name fallback"
+    ) {
         return Err(MarketError::Invalid("invalid queryPlanSource".into()));
     }
     if draft.region.len() != 2 || !draft.region.bytes().all(|b| b.is_ascii_uppercase()) {
@@ -180,8 +203,9 @@ fn fresh_id(db: &Connection, prefix: &str) -> Result<String, MarketError> {
 fn read_watchlist(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketWatchlist> {
     let query_mode: String = row.get(12)?;
     let plan_json: String = row.get(13)?;
-    let query_plan: Vec<String> = serde_json::from_str(&plan_json).map_err(|err|
-        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err)))?;
+    let query_plan: Vec<String> = serde_json::from_str(&plan_json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(err))
+    })?;
     let stored_query: String = row.get(2)?;
     let name: String = row.get(1)?;
     let query_index: i64 = row.get(15)?;
@@ -189,11 +213,17 @@ fn read_watchlist(row: &rusqlite::Row<'_>) -> rusqlite::Result<MarketWatchlist> 
         query_plan[(query_index as usize) % query_plan.len()].clone()
     } else if query_mode == "auto" {
         fallback_query(&name)
-    } else { stored_query.clone() };
+    } else {
+        stored_query.clone()
+    };
     Ok(MarketWatchlist {
         id: row.get(0)?,
         name,
-        query: if query_mode == "auto" { String::new() } else { stored_query },
+        query: if query_mode == "auto" {
+            String::new()
+        } else {
+            stored_query
+        },
         region: row.get(3)?,
         language: row.get(4)?,
         enabled: row.get::<_, i64>(5)? == 1,
@@ -233,9 +263,19 @@ pub fn create_watchlist(
         }
     }
     let id = fresh_id(&txn, "watch")?;
-    let stored_query = if draft.query_mode == "auto" { fallback_query(&draft.name) } else { draft.query.trim().to_string() };
-    let plan = serde_json::to_string(&draft.query_plan.iter().map(|q| q.trim()).collect::<Vec<_>>())
-        .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
+    let stored_query = if draft.query_mode == "auto" {
+        fallback_query(&draft.name)
+    } else {
+        draft.query.trim().to_string()
+    };
+    let plan = serde_json::to_string(
+        &draft
+            .query_plan
+            .iter()
+            .map(|q| q.trim())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
     txn.execute(
         "INSERT INTO market_watchlists(id,name,query,region,language,enabled,created_at,updated_at,next_due_at,
          query_mode,query_plan_json,query_plan_source)
@@ -285,9 +325,19 @@ pub fn update_watchlist(
             return Err(MarketError::Limit);
         }
     }
-    let stored_query = if draft.query_mode == "auto" { fallback_query(&draft.name) } else { draft.query.trim().to_string() };
-    let plan = serde_json::to_string(&draft.query_plan.iter().map(|q| q.trim()).collect::<Vec<_>>())
-        .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
+    let stored_query = if draft.query_mode == "auto" {
+        fallback_query(&draft.name)
+    } else {
+        draft.query.trim().to_string()
+    };
+    let plan = serde_json::to_string(
+        &draft
+            .query_plan
+            .iter()
+            .map(|q| q.trim())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| MarketError::Invalid("invalid queryPlan".into()))?;
     let plan_changed = previous.query_mode != draft.query_mode
         || previous.query_plan != draft.query_plan
         || previous.name != draft.name.trim()
@@ -367,27 +417,96 @@ pub fn reserve_explore_search(db: &Connection, now: i64) -> Result<bool, MarketE
     Ok(inserted == 1)
 }
 
+/// Explain why an explicit or scheduled collection could not reserve a search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimBlocked {
+    Disabled,
+    Backoff {
+        seconds: i64,
+        last_error: Option<String>,
+    },
+    NotDue {
+        seconds: i64,
+    },
+    InProgress,
+    DailyBudget {
+        seconds: i64,
+    },
+}
+
+impl ClaimBlocked {
+    pub fn message(&self) -> String {
+        fn minutes(seconds: i64) -> i64 {
+            ((seconds.max(1) + 59) / 60).max(1)
+        }
+        match self {
+            Self::Disabled => "Daily collection is disabled for this watchlist.".into(),
+            Self::Backoff {
+                seconds,
+                last_error,
+            } => format!(
+                "Collection is temporarily paused after {}. Try again in about {} minute(s).",
+                last_error.as_deref().unwrap_or("a previous error"),
+                minutes(*seconds)
+            ),
+            Self::NotDue { seconds } => format!(
+                "Next scheduled collection is due in about {} minute(s).",
+                minutes(*seconds)
+            ),
+            Self::InProgress => {
+                "This watchlist is already collecting. Results refresh automatically.".into()
+            }
+            Self::DailyBudget { seconds } => format!(
+                "The rolling 24-hour YouTube search budget (20 searches) is exhausted. Try again in about {} minute(s).",
+                minutes(*seconds)
+            ),
+        }
+    }
+}
+
 /// Atomic per-watchlist lease and conservative project-level API budget reservation.
-/// Returns None when disabled, not due, active, backing off, or at quota.
-pub fn claim_watchlist(
+/// Scheduled collections require an enabled watchlist. Explicit one-off actions
+/// work even if the daily schedule is off, but obey backoff, lease and budget.
+pub fn claim_watchlist_detailed(
     db: &Connection,
     watchlist_id: &str,
     now: i64,
     manual: bool,
-) -> Result<Option<MarketRun>, MarketError> {
+) -> Result<Result<MarketRun, ClaimBlocked>, MarketError> {
     let txn = db.unchecked_transaction()?;
     let w = get_watchlist(&txn, watchlist_id)?;
-    if !w.enabled || w.backoff_until > now || (!manual && w.next_due_at > now) {
-        return Ok(None);
+    if !manual && !w.enabled {
+        return Ok(Err(ClaimBlocked::Disabled));
+    }
+    if w.backoff_until > now {
+        return Ok(Err(ClaimBlocked::Backoff {
+            seconds: w.backoff_until - now,
+            last_error: w.error_code,
+        }));
+    }
+    if !manual && w.next_due_at > now {
+        return Ok(Err(ClaimBlocked::NotDue {
+            seconds: w.next_due_at - now,
+        }));
     }
     let active: i64 = txn.query_row(
         "SELECT COUNT(*) FROM market_runs WHERE watchlist_id=?1 AND state='running'",
         [watchlist_id],
         |r| r.get(0),
     )?;
+    if active > 0 {
+        return Ok(Err(ClaimBlocked::InProgress));
+    }
     let usage = used_search_calls(&txn, now)?;
-    if active > 0 || usage >= MAX_SEARCH_CALLS {
-        return Ok(None);
+    if usage >= MAX_SEARCH_CALLS {
+        let earliest: Option<i64> = txn.query_row(
+            "SELECT MIN(reserved_at) FROM market_search_budget WHERE reserved_at > ?1",
+            [now - DAILY_SECONDS],
+            |r| r.get(0),
+        )?;
+        return Ok(Err(ClaimBlocked::DailyBudget {
+            seconds: (earliest.unwrap_or(now) + DAILY_SECONDS - now).max(1),
+        }));
     }
     let id = fresh_id(&txn, "run")?;
     let effective_query = w.next_search_query.clone();
@@ -405,14 +524,25 @@ pub fn claim_watchlist(
         params![watchlist_id, now + DAILY_SECONDS],
     )?;
     txn.commit()?;
-    Ok(Some(MarketRun {
+    Ok(Ok(MarketRun {
         id,
         watchlist_id: watchlist_id.into(),
         state: "running".into(),
         started_at: now,
         effective_query,
         query_plan_revision: w.query_plan_revision,
+        allowed_while_disabled: manual && !w.enabled,
     }))
+}
+
+/// Preserve the optional-claim interface used by the automatic worker.
+pub fn claim_watchlist(
+    db: &Connection,
+    watchlist_id: &str,
+    now: i64,
+    manual: bool,
+) -> Result<Option<MarketRun>, MarketError> {
+    Ok(claim_watchlist_detailed(db, watchlist_id, now, manual)?.ok())
 }
 
 pub fn complete_run(
@@ -450,12 +580,15 @@ pub fn complete_run(
         "UPDATE market_runs SET state='succeeded', finished_at=?2, video_count=?3 WHERE id=?1",
         params![run_id, now, observations.len() as i64],
     )?;
-    txn.execute("UPDATE market_watchlists
+    txn.execute(
+        "UPDATE market_watchlists
         SET last_finished_at=?2, backoff_until=0, error_code=NULL,
             last_search_query=?3,
             query_index=CASE WHEN query_mode='auto' AND query_plan_json!='[]'
                    AND query_plan_revision=?4 THEN query_index+1 ELSE query_index END
-        WHERE id=?1", params![watchlist_id, now, effective_query, plan_revision])?;
+        WHERE id=?1",
+        params![watchlist_id, now, effective_query, plan_revision],
+    )?;
     txn.commit()?;
     Ok(())
 }

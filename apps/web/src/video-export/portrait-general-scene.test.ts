@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { inspectSafeFrame, safeFrameContentRect } from "@/components/visual/safe-frame";
 import type { GeneralVisualPlan } from "../../scripts/video-production/general-visual-plan.mjs";
-import { PortraitGeneralExportScene, portraitProfile } from "./portrait-general-scene";
+import { PortraitGeneralExportScene } from "./portrait-general-scene";
+import { portraitProfile } from "./portrait-profile";
 
 const visual = (headline: string, items: string[], style = "snap") => ({
   headline, subhead: "What happens after pressing Send?",

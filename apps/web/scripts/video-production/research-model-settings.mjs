@@ -7,16 +7,30 @@ import { localChatEndpoint } from "./topic-generator.mjs";
 
 export const MODEL_SETTINGS_PATH = fileURLToPath(new URL("../../../../data/research-model.json", import.meta.url));
 export const DEFAULT_MODEL_ENDPOINT = "http://127.0.0.1:11434/v1/chat/completions";
+export const DEFAULT_RESEARCH_GENERATION=Object.freeze({outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240});
+export function validateResearchGeneration(candidate){
+  if(candidate===undefined)return {...DEFAULT_RESEARCH_GENERATION};
+  if(!candidate||typeof candidate!=="object"||Array.isArray(candidate)||
+    Object.keys(candidate).some(key=>!["outlineTokens","sceneTokens","timeoutSeconds"].includes(key)))
+    throw Error("Invalid research generation limits.");
+  const bounds={outlineTokens:[256,8192],sceneTokens:[512,16384],timeoutSeconds:[30,900]};
+  for(const [key,[min,max]] of Object.entries(bounds)){
+    if(!Number.isInteger(candidate[key])||candidate[key]<min||candidate[key]>max)
+      throw Error(`${key} limit must be an integer from ${min} to ${max}.`);
+  }
+  return {outlineTokens:candidate.outlineTokens,sceneTokens:candidate.sceneTokens,timeoutSeconds:candidate.timeoutSeconds};
+}
 export function validateResearchModelSettings(candidate) {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) ||
-    Object.keys(candidate).some(k => !["version","endpoint","model"].includes(k)) ||
+    Object.keys(candidate).some(k => !["version","endpoint","model","generation"].includes(k)) ||
     candidate.version !== 1)
     throw Error("Expected research-model-settings/v1 with endpoint and model.");
   const endpoint = localChatEndpoint(candidate.endpoint);
   if (typeof candidate.model !== "string" || !candidate.model.trim() ||
     candidate.model.length > 120 || /[\u0000-\u001f]/u.test(candidate.model))
     throw Error("Choose an installed local research model ID (1–120 characters).");
-  return { version: 1, endpoint, model: candidate.model.trim() };
+  return { version: 1, endpoint, model: candidate.model.trim(),
+    ...(candidate.generation!==undefined?{generation:validateResearchGeneration(candidate.generation)}:{}) };
 }
 export function readResearchModelSettingsSync(path = MODEL_SETTINGS_PATH) {
   try { return validateResearchModelSettings(JSON.parse(readFileSync(path, "utf8"))); }

@@ -387,7 +387,7 @@ function buildUnits(
  * word fits, so a break never costs a visible space. A unit wider than the box
  * still gets its own line: segments are never split or dropped.
  */
-function wrapUnits(units: Unit[], boxWidth: number): Unit[][] {
+function wrapUnits(units: Unit[], boxWidth: number, explicitOnly = false): Unit[][] {
   const lines: Unit[][] = [];
   let current: Unit[] = [];
   let currentWidth = 0;
@@ -421,7 +421,7 @@ function wrapUnits(units: Unit[], boxWidth: number): Unit[][] {
       continue;
     }
 
-    if (currentWidth - trailingWidth + unit.width <= boxWidth) {
+    if (explicitOnly || currentWidth - trailingWidth + unit.width <= boxWidth) {
       current.push(unit);
       currentWidth += unit.width;
       trailingWidth = 0;
@@ -485,7 +485,8 @@ function buildLayout(
   measure: MeasureText
 ): BuiltLayout {
   const lineHeight = spec.lineHeight * size;
-  const lines = wrapUnits(buildUnits(spec, size, resolved, measure), box.width).map(finalizeLine);
+  const lines = wrapUnits(buildUnits(spec, size, resolved, measure), box.width,
+    spec.lineBreak === "explicit-only").map(finalizeLine);
   const width = round(lines.reduce((widest, line) => Math.max(widest, line.width), 0));
   return {
     lines,

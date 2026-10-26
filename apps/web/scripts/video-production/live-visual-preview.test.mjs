@@ -29,6 +29,10 @@ test("visual preview compiles exactly the production scene plan with only estima
  assert.match(view.timing.note,/estimated/);
  assert.equal(view.plan.commercialReady,false);
  assert.match(view.renderPlanSha256,/^[a-f0-9]{64}$/);
+ assert.equal(view.quality.kind,"rendered-scene-quality/v1");
+ assert.equal(view.quality.summary.totalShots,bundle.plan.shots.length);
+ assert.equal(view.quality.basis,"compiled-renderer-static-preflight");
+ assert.deepEqual(view.quality.findings.map(f=>f.shotId).every(id=>bundle.plan.shots.some(s=>s.id===id)),true);
 });
 test("previews are reproducible at arbitrary frames, with a locked first payoff frame",()=>{
  const {dossier,bundle}=original();
@@ -59,7 +63,10 @@ test("no fabricated timing accuracy or unsupported malformed source is accepted"
  const {dossier,bundle}=original();
  assert.ok(estimateNarrationSamples("A very small phrase.")>=3*48000);
  assert.ok(estimateNarrationSamples("日本語の説明です", "ja-JP")>=3*48000);
- assert.ok(estimateNarrationSamples("A sentence.", "en-US",95)>estimateNarrationSamples("A sentence.", "en-US",210));
+ // Short speech is intentionally clamped to the minimum three-second preview.
+ // A longer phrase must still respond to the requested speaking pace.
+ const longer="There are several separate expenses to understand when buying and maintaining a home over time.";
+ assert.ok(estimateNarrationSamples(longer,"en-US",95)>estimateNarrationSamples(longer,"en-US",210));
  assert.throws(()=>compileLiveVisualPreview(dossier,bundle,{spokenWpm:2}),/pace/);
  const changed=structuredClone(bundle);
  changed.plan.shots[0].onScreenText="Tampered unsourced claim";

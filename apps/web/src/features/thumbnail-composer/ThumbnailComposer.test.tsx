@@ -35,23 +35,20 @@ describe("ThumbnailComposer", () => {
     expect(screen.getByTestId("thumbnail-mini-160")).toBeInTheDocument();
   });
 
-  it("updates the shared preview while the headline is edited", async () => {
-    const user = userEvent.setup();
+  it("updates the shared preview while the headline is edited", () => {
     render(<Harness />);
     const copy = copyFor("en");
     const headline = screen.getByLabelText(copy.headlineLabel) as HTMLInputElement;
     expect(headline.value).toBe("Same house. A new system. A new price.");
 
-    await user.clear(headline);
-    await user.type(headline, "The quote hides four costs");
+    fireEvent.change(headline, { target: { value: "The quote hides four costs" } });
 
     const stage = within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage");
     expect(stage).toHaveAttribute("aria-label", expect.stringContaining("The quote hides four costs"));
     expect(headline.value).toBe("The quote hides four costs");
 
     const value = screen.getByLabelText(copy.valueLabel);
-    await user.clear(value);
-    await user.type(value, "$13,500");
+    fireEvent.change(value, { target: { value: "$13,500" } });
     expect(
       within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage")
     ).toHaveAttribute("aria-label", expect.stringContaining("$13,500"));
@@ -73,16 +70,14 @@ describe("ThumbnailComposer", () => {
     const copy = copyFor("en");
     const headline = screen.getByLabelText(copy.headlineLabel) as HTMLInputElement;
 
-    await user.clear(headline);
-    await user.type(headline, "Price shock edit");
+    fireEvent.change(headline, { target: { value: "Price shock edit" } });
     await user.click(screen.getByRole("radio", { name: /hidden complexity/i }));
 
     expect(screen.getByRole("radio", { name: /hidden complexity/i })).toBeChecked();
     const hiddenStage = within(screen.getByTestId("shared-preview")).getByTestId("thumbnail-preview-stage");
     expect(hiddenStage).toHaveAttribute("aria-label", expect.stringContaining("The quote is never one number."));
 
-    await user.clear(screen.getByLabelText(copy.headlineLabel));
-    await user.type(screen.getByLabelText(copy.headlineLabel), "Hidden edit");
+    fireEvent.change(screen.getByLabelText(copy.headlineLabel), { target: { value: "Hidden edit" } });
     await user.click(screen.getByRole("radio", { name: /price shock/i }));
 
     expect((screen.getByLabelText(copy.headlineLabel) as HTMLInputElement).value).toBe("Price shock edit");
@@ -119,6 +114,7 @@ describe("ThumbnailComposer", () => {
   it("appears inside the existing Create workspace tab", async () => {
     const user = userEvent.setup();
     render(<App />);
+    await user.click(screen.getByRole("link", { name: "Create" }));
     await user.click(screen.getByRole("tab", { name: /thumbnail composer/i }));
     const editor = screen.getByTestId("thumbnail-composer");
     expect(within(editor).getByRole("heading", { name: "Thumbnail composer" })).toBeInTheDocument();

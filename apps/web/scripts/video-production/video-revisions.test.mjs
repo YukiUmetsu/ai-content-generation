@@ -8,6 +8,7 @@ import { compilePreproductionBundle } from "./preproduction.mjs";
 import { PROMPT_DEFAULTS,validatePromptOverrides,readPromptOverrides,
   readPromptOverridesSync,savePromptOverrides,resolveStagePrompt,fingerprintStagePrompt } from "./prompt-profiles.mjs";
 import { editPreproductionShot,validateHookCandidates } from "./video-revisions.mjs";
+import { compilePreproductionRenderJob } from "./preproduction-render-bridge.mjs";
 import { generateHookVariants } from "./hook-variants.mjs";
 const fixture=name=>JSON.parse(readFileSync(new URL("../../../../examples/"+name,import.meta.url),"utf8"));
 const source=()=>fixture("preproduction-research-smoke.json");
@@ -84,6 +85,22 @@ test("visual-only edits avoid TTS calls and keep other scenes byte-for-byte",()=
   assert.throws(()=>editPreproductionShot(d,b,{shotId:id,changes:{claimIds:["fabricated"]}}),/Editable fields/);
   const mutated=structuredClone(b);mutated.plan.sound[0].narration="tampered";
   assert.throws(()=>editPreproductionShot(d,mutated,{shotId:id,changes:{onScreenText:"Approved"}}),/untampered/);
+});
+test("changing a middle-shot scene layout changes actual renderer structure without regenerating speech",()=>{
+  const d=source(),plan=fixture("preproduction-plan-smoke.json");
+  plan.shots.forEach(shot=>delete shot.sceneRecipe);
+  const before=compilePreproductionBundle(d,plan),id=plan.shots[1].id;
+  const updated=editPreproductionShot(d,before,{shotId:id,changes:{family:"comparison"}});
+  const rendered=compilePreproductionRenderJob(d,updated.bundle);
+  assert.equal(updated.bundle.plan.shots[1].family,"comparison");
+  assert.equal(rendered.job.beats[1].visualIntent,"general-comparison");
+  assert.equal(rendered.job.beats[0].visualIntent,"general-intro");
+  assert.equal(rendered.job.beats[2].visualIntent,"general-payoff");
+  assert.deepEqual(updated.impacts.speechRegenerate,[]);
+  assert.deepEqual(updated.impacts.visualRerender,[id]);
+  assert.deepEqual(before.plan.shots,plan.shots);
+  assert.throws(()=>editPreproductionShot(d,before,{shotId:id,changes:{family:"imaginary-scene"}}),/Editable fields|family/);
+  assert.throws(()=>editPreproductionShot(d,before,{shotId:plan.shots[0].id,changes:{family:"comparison"}}),/opening|closing/i);
 });
 test("hook alternatives require audience clarity, suspense question, distinct strategies and honest payoff",()=>{
   const out=validateHookCandidates(candidates(),{audience:"Homeowners"});

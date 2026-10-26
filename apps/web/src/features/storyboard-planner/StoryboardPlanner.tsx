@@ -58,9 +58,16 @@ export function StoryboardPlanner({
   const [board, setBoard] = useState<SemanticStoryboard>(() =>
     cloneStoryboard(initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE)
   );
-  const [selectedBeatId, setSelectedBeatId] = useState(() =>
-    (initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats[0]?.id ?? ""
-  );
+  const [selectedBeatId, setSelectedBeatId] = useState(() => {
+    const beats=(initialBoard ?? restoredDraft.board ?? HVAC_EXAMPLE).beats;
+    if(projectId){
+      try{
+        const requested=sessionStorage.getItem("contentgen:storyboard-focus-beat:v1:"+projectId);
+        if(requested&&beats.some(beat=>beat.id===requested))return requested;
+      }catch{/* Continue with the first beat when storage is unavailable. */}
+    }
+    return beats[0]?.id ?? "";
+  });
   const [loadWarning, setLoadWarning] = useState(restoredDraft.warning);
   const [storageError, setStorageError] = useState<string | null>(restoredDraft.warning);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -195,7 +202,7 @@ export function StoryboardPlanner({
             <span>{t.checks}: {diagnostics.length}</span>
             <span aria-hidden="true">·</span>
             <span>{t.fps(String(board.fps.num / board.fps.den))}</span>
-            <span className="sp-example-notice">{t.exampleNotice}</span>
+            {!projectId && !initialBoard && <span className="sp-example-notice">{t.exampleNotice}</span>}
             {projectId && !storageError && (
               <span className="sp-example-notice">
                 {locale === "ja" ? "編集内容はこのプロジェクトのローカル下書きに保存されます" : "Project edits save as a local browser draft"}

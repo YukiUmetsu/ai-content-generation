@@ -1,0 +1,110 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { PlatformOptimization } from "./PlatformOptimization";
+import type { PlatformOptimizationInput } from "./model";
+
+const input: PlatformOptimizationInput = {
+  productionId: "production-test",
+  projectId: "project-test",
+  title: "The real cost of a $500,000 house",
+  summary: "A mortgage is only one part of the cost of owning a house.",
+  platforms: ["youtube", "tiktok", "blog"],
+  sourceRevision: "script-1",
+  scriptSections: [{ id: "one", heading: "Taxes and upkeep", text: "Property taxes and repairs add to cost.", startSeconds: 0 }],
+  assets: [{ id: "video-1", kind: "video", platform: "youtube", filename: "master.mp4" }],
+};
+
+describe("PlatformOptimization", () => {
+  const entries = new Map<string, string>();
+  beforeEach(() => {
+    entries.clear();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => { entries.set(key, value); },
+      removeItem: (key: string) => { entries.delete(key); },
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("auto-prepares metadata per destination and preserves manual edits across tabs and reopen", () => {
+    const view = render(<PlatformOptimization input={input} />);
+    const title = screen.getByLabelText("Upload title") as HTMLInputElement;
+    expect(title.value).toContain("$500,000 house");
+    fireEvent.change(title, { target: { value: "The Hidden Cost of Homeownership" } });
+    fireEvent.click(screen.getByRole("tab", { name: /TikTok/ }));
+    expect((screen.getByRole("textbox", { name: "Post caption" }) as HTMLTextAreaElement).value).toContain("mortgage is only one part");
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^YouTube\b/ }));
+    expect((screen.getByLabelText("Upload title") as HTMLInputElement).value).toBe("The Hidden Cost of Homeownership");
+    view.unmount();
+    render(<PlatformOptimization input={input} />);
+    expect((screen.getByLabelText("Upload title") as HTMLInputElement).value).toBe("The Hidden Cost of Homeownership");
+  });
+
+  it("approves reviewed metadata without media while keeping upload readiness blocked", () => {
+    render(<PlatformOptimization input={{ ...input, assets: [] }} />);
+    expect(screen.getByText(/attach a rendered destination-ready video/i)).toBeInTheDocument();
+    const approve = screen.getByRole("button", { name: "Approve metadata" });
+    expect(approve).toBeDisabled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Made for children?" }), { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /I checked this platform's current requirements/i }));
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+    expect(screen.getByText("Metadata approved", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText(/cannot be uploaded yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/No upload, scheduling, or publishing/i)).toBeInTheDocument();
+  });
+
+  it("keeps each field's label separate from its restore and copy actions", () => {
+    render(<PlatformOptimization input={input} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Upload title" }), { target: { value: "A human title" } });
+    expect(screen.getByRole("textbox", { name: "Upload title" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restore suggestion" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Video description" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+  });
+
+  it("keeps a failed local save editable without reporting it as persisted approval", () => {
+    const onManifestChange = vi.fn();
+    render(<PlatformOptimization input={input} onManifestChange={onManifestChange} />);
+    const initialNotifications = onManifestChange.mock.calls.length;
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw Error("Browser quota exceeded"); });
+    fireEvent.change(screen.getByRole("textbox", { name: "Upload title" }),
+      { target: { value: "My unsaved local title" } });
+    expect(screen.getByRole("textbox", { name: "Upload title" })).toHaveValue("My unsaved local title");
+    expect(screen.getByText(/Browser quota exceeded/i)).toBeInTheDocument();
+    expect(onManifestChange).toHaveBeenCalledTimes(initialNotifications);
+  });
+
+  it("never confirms a saved approval when browser storage rejects the write", () => {
+    const onManifestChange = vi.fn();
+    render(<PlatformOptimization input={input} onManifestChange={onManifestChange} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Made for children?" }),
+      { target: { value: "false" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /I checked this platform's current requirements/i }));
+    const notificationsBeforeApproval = onManifestChange.mock.calls.length;
+    vi.spyOn(localStorage, "setItem").mockImplementation(() => { throw Error("Storage disabled"); });
+    fireEvent.click(screen.getByRole("button", { name: "Approve metadata" }));
+    expect(screen.getByText(/was not saved/i)).toBeInTheDocument();
+    expect(screen.getByText(/Storage disabled/i)).toBeInTheDocument();
+    expect(onManifestChange).toHaveBeenCalledTimes(notificationsBeforeApproval);
+  });
+
+  it("does not silently overwrite manually reviewed titles when the source script changes", () => {
+    const view = render(<PlatformOptimization input={input} />);
+    fireEvent.change(screen.getByLabelText("Upload title"), { target: { value: "Human title" } });
+    view.rerender(<PlatformOptimization input={{ ...input, title: "Changed AI script title", sourceRevision: "script-2" }} />);
+    expect((screen.getByLabelText("Upload title") as HTMLInputElement).value).toBe("Human title");
+    expect(screen.getByText(/script, palette or assets changed/i)).toBeInTheDocument();
+  });
+
+  it("never enables article download before the Blog script is approved", () => {
+    render(<PlatformOptimization input={{ ...input, approvedPlatforms: ["youtube"] }} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Blog / Website" }));
+    expect(screen.getByText(/Approve your Blog script to unlock/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download illustrated HTML" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Markdown" })).toBeDisabled();
+    expect(screen.getByText(/Approve the current Blog \/ Website script in the Script stage/)).toBeInTheDocument();
+  });
+});
+

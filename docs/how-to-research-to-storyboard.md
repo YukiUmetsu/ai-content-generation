@@ -2,6 +2,15 @@
 
 This flow creates an **unapproved, editable video draft** from an original topic. It does not publish, synthesize a voice, approve facts, or claim any YouTube performance outcome.
 
+## Research tab: search, save, then generate
+
+1. Enter a research topic and (optionally) adjust the audience and viewer question in the **Research** tab.
+2. Click **Search & save sources** to ask local SearXNG for public-source leads and save the result list immediately. **This does not require or invoke a local AI model.** You can open each result, see its title, URL and available search excerpt, and inspect the search time. Results are *discovery leads*, not verified citations or fetched pages.
+3. Open **Saved searches** to restore a previous query and its links after refreshing the page. Each immutable bounded search snapshot is stored under local `data/studio-research`, separate from the Evidence Library's full-text SQLite index.
+4. Click **Generate storyboard from saved sources** to create a durable background job. The server captures pages once, selects exact, topic-relevant source excerpts **without local AI**, then makes separate bounded local AI calls for the narrative outline and for each three-phase teaching unit. A quoted excerpt is *unverified* source data, not a proven factual claim. If you skipped step 2, ContentGen searches and saves before starting the background job.
+5. The Research panel shows **job stage** and **saved teaching units**. A timeout, malformed model response, browser refresh or server restart keeps completed source captures, evidence, outline and teaching units. A failure stops only the affected job stage. Click **Resume saved job**, or **Regenerate failed scene only** to replace one scene and reassemble the plan. Jobs running during a server restart become paused and wait for an explicit Resume action. Saved searches work if SearXNG later goes offline.
+6. Only successfully captured, exact-quote-backed, still-unverified claims or verbatim fallback excerpts can enter a generated research dossier and editable storyboard. The Studio validates claim-to-source quote previews from the research result before generating a plan. Do not treat SearXNG snippets or topic-matched excerpts as fact verification; review the surrounding source context before publishing.
+
 1. Start the Rust API and `apps/web` Studio as usual. In `apps/web`, run `pnpm research:up` once if local SearXNG is not configured, and select an already-installed local research model in Settings.
 2. Open **Video Director**. Enter a topic, viewer question, audience and narration language.
 3. Check **Allow public web research** to explicitly permit local SearXNG searches and public HTTPS page capture. Click **Research & generate draft** once.
@@ -22,7 +31,11 @@ New research-generated teaching sequences specify three concise, visible states 
 
 The structured state labels are generated as part of the research-linked plan. The Research-tab Storyboard Planner exposes separate before/action/after editing fields; Video Director's production shot form does not yet expose them individually. Ordinary shot narration and on-screen copy remain editable. Research-tab static previews do not establish that the associated scene has been exported as a video.
 
-If the local planning model fails after source capture, the page keeps the research evidence visible. Choose **Retry storyboard generation** to retry planning without another web search. Changing a brief field clears the previous research and storyboard on screen so the old claims cannot silently attach to a new topic.
+If the local planning model fails after source capture, the job retains each successful intermediate artifact. The retry resumes at the incomplete stage; changing the Story model invalidates dependent outline/scene generation but preserves source captures and deterministic evidence. Changing a brief field clears the current job from the visible editor; its original immutable job remains local and can be restored for the matching topic.
+
+### Optional local-only fallback model
+
+By default, the job uses the model assigned to **Story** in Settings → Local AI. To opt in to automatic failover, select an installed **secondary local model profile** in the same settings, note its profile ID, and set `CONTENTGEN_STORY_FALLBACK_PROFILE_ID` to that ID before starting the Studio server. This must be a previously configured loopback model profile; the job does not select a cloud service or download models. Temporary local transport errors and timeouts have at most one same-model retry. After the bounded attempts, an explicitly configured fallback may take over. The job pauses with a safe error code if neither model succeeds. The legacy synchronous `/research-draft` API remains for older integrations, but the Research tab now creates `/research-jobs` and polls progress.
 
 ## Boundaries
 
@@ -30,3 +43,4 @@ If the local planning model fails after source capture, the page keeps the resea
 - The review quote previews are transient UI context derived from exact captured passages, not a durable, full-text snapshot viewer. The research dossier retains source IDs, URLs, capture hashes and locators; the existing preproduction bundle retains claim IDs.
 - External page capture requires explicit consent each time. The installed LLM handles evidence and story generation locally.
 - An unreviewed draft stays `draft-needs-review`. The existing render preflight and separate voice/rights consent gates still apply before any MP4 can be made.
+

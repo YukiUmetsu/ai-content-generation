@@ -4,7 +4,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readModelProfiles, saveModelProfiles, validateModelProfiles, resolveModelForTaskSync,
-  resolveModelForTask } from "./model-profiles.mjs";
+  resolveModelForTask,modelForTask } from "./model-profiles.mjs";
 
 const magna = "http://127.0.0.1:10100/inference/v1/chat/completions";
 const ollama = "http://127.0.0.1:11434/v1/chat/completions";
@@ -37,11 +37,24 @@ test("saved profiles reload; every task selects its configured model; fallback u
   const before = await readModelProfiles(path, legacyPath);
   assert.equal(before.profiles[0].model, "legacy");
   await saveModelProfiles(config, path);
-  assert.deepEqual(await readModelProfiles(path, legacyPath), config);
+  assert.deepEqual(await readModelProfiles(path, legacyPath),validateModelProfiles(config));
   assert.equal((await stat(path)).mode & 0o777, 0o600);
   assert.equal((await resolveModelForTask("research", { path, legacyPath })).model, "qwen3.6-35b-a3b");
   assert.equal(resolveModelForTaskSync("story", { path, legacyPath }).model, "qwen3:8b");
+  assert.deepEqual(resolveModelForTaskSync("story", { path, legacyPath }).generation,
+    {outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240});
   assert.equal(resolveModelForTaskSync("hooks", { path, legacyPath }).endpoint, magna);
   assert.equal(resolveModelForTaskSync("script", { path, legacyPath }).endpoint, ollama);
   assert.match(await readFile(legacyPath, "utf8"), /legacy/);
+});
+
+test("generation limits default, validate and follow story task selection",()=>{
+  const old=validateModelProfiles(config);
+  assert.deepEqual(old.generation,{outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240});
+  const generation={outlineTokens:1024,sceneTokens:3072,timeoutSeconds:360};
+  const adjusted=validateModelProfiles({...config,generation});
+  assert.deepEqual(modelForTask(adjusted,"story").generation,generation);
+  assert.deepEqual(modelForTask(adjusted,"research").generation,generation);
+  for(const patch of [{outlineTokens:0},{sceneTokens:999999},{timeoutSeconds:0},{timeoutSeconds:1.5}])
+    assert.throws(()=>validateModelProfiles({...config,generation:{...generation,...patch}}),/limit|tokens|timeout/i);
 });

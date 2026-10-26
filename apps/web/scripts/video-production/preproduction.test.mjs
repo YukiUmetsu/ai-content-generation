@@ -108,6 +108,14 @@ test("local planner never invents source IDs or retries rejected model output",a
     {label:"Ownership costs",detail:"Other costs can occur during ownership"},
     {label:"Conditions",detail:"Financing and time change the picture"}
   ];
+  valid.teachingSequences[0].visualStates={before:"The list price stands alone",
+    action:"Reveal borrowing and recurring costs",after:"The home has multiple cost categories"};
+  valid.teachingSequences[0].visualMechanic={version:1,operator:"accumulate",subjectId:"house",
+    actors:[{id:"house",label:"Home ownership",role:"subject",claimIds:["claim_illustration"]},
+      {id:"tax",label:"Property tax",role:"part",claimIds:["claim_illustration"]},
+      {id:"insurance",label:"Home insurance",role:"part",claimIds:["claim_illustration"]},
+      {id:"total",label:"Ownership cost",role:"result",claimIds:["claim_illustration"]}],
+    operands:["tax","insurance"],outcomeId:"total"};
   const transport=async(url,request)=>{calls++;
     assert.match(url,/127\.0\.0\.1/);
     assert.match(request.body,/research_home_cost/);
@@ -189,4 +197,16 @@ test("quality warnings flag copy and delivery monotony without pretending to mea
   assert.equal(result.ok,true);
   assert.ok(codes(result.findings).includes("monotone-performance"));
   assert.ok(codes(result.findings).includes("repeated-copy"));
+});
+
+test("allows only explicit summary postscripts after a visible central answer",()=>{
+  const p=plan();
+  p.shots.push({...p.shots[2],id:"shot_cta",explanationId:"explain_parts",family:"summary",purpose:"postscript",claimIds:["claim_parts"]});
+  p.sound.push({...p.sound[2],shotId:"shot_cta"});
+  p.continuity.push({fromShotId:"shot_answer",toShotId:"shot_cta",technique:"cut",subjectIds:["house"],reason:"Continue to a closing message."});
+  // Use the first explanation's actual declared claims.
+  p.shots[3].claimIds=p.explanation[0].claimIds;
+  assert.equal(parsePreproductionPlan(p,dossier()).ok,true);
+  p.shots[3].purpose="explain";
+  assert.ok(codes(parsePreproductionPlan(p,dossier()).findings).includes("payoff-not-visible"));
 });

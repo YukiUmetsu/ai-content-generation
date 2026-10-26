@@ -7,6 +7,7 @@ import { researchVideoTopic } from "./research-agent.mjs";
 import { generatePreproductionPlan } from "./preproduction-generator.mjs";
 import { configuredSearchEndpoint } from "./local-search-config.mjs";
 import { validateResearchModelSettings } from "./research-model-settings.mjs";
+import { loadStudioSearch, validateStudioSearchMatch } from "./studio-search.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-research",import.meta.url));
 const sha=value=>createHash("sha256").update(value).digest("hex");
@@ -26,14 +27,15 @@ export function validateStudioBrief(candidate){
 function checkedQuotes(output){
   const claims=new Map(output.dossier.claims.map(x=>[x.id,x]));
   const captures=new Map(output.captures.map(x=>[x.id,x]));
-  if(!Array.isArray(output.claimSupport)||!output.claimSupport.length)
+  const claimSupport=output.claimSupport??output.quotePreviews;
+  if(!Array.isArray(claimSupport)||!claimSupport.length)
     throw Error("Research returned no claim-specific source quotes.");
   for(const source of output.dossier.evidence){
     const capture=captures.get(source.id);
     if(!capture||sha(capture.text)!==source.snapshotSha256||capture.url!==source.sourceUri)
       throw Error("Source capture does not match its immutable citation hash.");
   }
-  const quotes=output.claimSupport.map(support=>{
+  const quotes=claimSupport.map(support=>{
     const claim=claims.get(support.claimId),capture=captures.get(support.sourceId);
     if(!claim||!capture||!claim.sourceRefs.includes(support.sourceId)||
       typeof support.quote!=="string"||support.quote.length<10||support.quote.length>400||
@@ -46,10 +48,21 @@ function checkedQuotes(output){
   return quotes;
 }
 
-async function persistSnapshot(output,plan,quotes,root){
+async function runLocalStage(stage, action) {
+  try { return await action(); }
+  catch (error) {
+    if (error?.name === "TimeoutError" ||
+      /operation was aborted due to timeout/iu.test(String(error?.message ?? "")))
+      throw Error(stage + " timed out after the local 3-minute inference limit. Saved source searches remain available. Choose a faster/smaller model in Settings → Local AI, then retry.");
+    throw error;
+  }
+}
+
+async function persistSnapshot(output,plan,quotes,root,searchArtifactId){
   if(!/^research_[a-z0-9_-]{1,78}$/iu.test(output.dossier.id))throw Error("Invalid research snapshot ID.");
   const document={schemaVersion:1,kind:"studio-research-snapshot",dossier:output.dossier,
-    captures:output.captures,plan,quotes,provider:output.provider,model:output.model,warnings:output.warnings};
+    captures:output.captures,plan,quotes,provider:output.provider,model:output.model,warnings:output.warnings,
+    ...(searchArtifactId?{searchArtifactId}:{})};
   const bytes=JSON.stringify(document);
   if(Buffer.byteLength(bytes)>512*1024)throw Error("Research snapshot exceeds 512 KiB limit.");
   await mkdir(root,{recursive:true,mode:0o700});
@@ -66,21 +79,28 @@ async function persistSnapshot(output,plan,quotes,root){
 
 /** Only called after an explicit local Studio POST; capture is an intentional external read. */
 export async function createStudioResearchDraft(candidate,modelSettings,deps={}){
-  const brief=validateStudioBrief(candidate);
+  const {searchArtifactId,...briefInput}=candidate??{};
+  const brief=validateStudioBrief(briefInput);
   const settings=validateResearchModelSettings({...modelSettings,version:1});
   const searchEndpoint=(deps.searchEndpoint??configuredSearchEndpoint());
-  if(!searchEndpoint)throw Error("Local SearXNG is not configured. Run pnpm research:up and pnpm research:check.");
+  if(!searchEndpoint&&!searchArtifactId)throw Error("Local SearXNG is not configured. Run pnpm research:up and pnpm research:check.");
   const options={provider:"searxng",searchEndpoint,model:settings.model,
     endpoint:settings.endpoint,allowNetwork:true,maxSources:4};
-  const output=await (deps.research??researchVideoTopic)(brief,options,{signal:deps.signal});
+  const searchSnapshot=searchArtifactId
+    ?await (deps.loadSearch??loadStudioSearch)(searchArtifactId,{root:deps.root??DEFAULT_ROOT})
+    :null;
+  if(searchSnapshot)validateStudioSearchMatch(searchSnapshot,brief);
+  const output=await runLocalStage("Research AI",()=>(deps.research??researchVideoTopic)(brief,options,{
+    signal:deps.signal,...(searchSnapshot?{search:async()=>searchSnapshot.results}:{})}));
   const quotes=checkedQuotes(output);
   const storySettings=deps.storyModelSettings
     ? validateResearchModelSettings({...deps.storyModelSettings,version:1}) : settings;
-  const plan=await (deps.generate??generatePreproductionPlan)(output.dossier,
-    {...options,model:storySettings.model,endpoint:storySettings.endpoint},{signal:deps.signal});
-  const saved=await (deps.persist??persistSnapshot)(output,plan,quotes,deps.root??DEFAULT_ROOT);
+  const plan=await runLocalStage("Storyboard planning AI",()=>(deps.generate??generatePreproductionPlan)(output.dossier,
+    {...options,model:storySettings.model,endpoint:storySettings.endpoint},{signal:deps.signal}));
+  const saved=await (deps.persist??persistSnapshot)(output,plan,quotes,deps.root??DEFAULT_ROOT,searchArtifactId);
   return {dossier:output.dossier,plan,quotes,snapshotId:output.dossier.id,
-    artifactId:typeof saved==="string"?basename(saved,".json"):undefined,warnings:output.warnings};
+    artifactId:typeof saved==="string"?basename(saved,".json"):undefined,
+    ...(searchArtifactId?{searchArtifactId}:{}),warnings:output.warnings};
 }
 
 /** Restores only bounded, internally generated research artifacts. Never returns raw page text to the browser. */
@@ -98,5 +118,7 @@ export async function loadStudioResearchDraft(artifactId,{root=DEFAULT_ROOT}={})
     throw Error("Stored research artifact is invalid.");
   const quotes=checkedQuotes({...saved,claimSupport:saved.quotes});
   return {dossier:saved.dossier,plan:saved.plan,quotes,
-    warnings:saved.warnings??[],snapshotId:saved.dossier.id,artifactId};
+    warnings:saved.warnings??[],snapshotId:saved.dossier.id,artifactId,
+    ...(saved.searchArtifactId?{searchArtifactId:saved.searchArtifactId}:{})};
 }
+

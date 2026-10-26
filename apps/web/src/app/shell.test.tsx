@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { CATALOG_KEY, parseCatalog } from "./catalog-model";
@@ -7,8 +7,48 @@ import { CATALOG_KEY, parseCatalog } from "./catalog-model";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Studio shell", () => {
+  it("keeps project keyword preferences without the former five-idea generator", async () => {
+    localStorage.removeItem(CATALOG_KEY);
+    let keywordPatch:unknown=null;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL,init?:RequestInit) => {
+      const path = String(input);
+      if(path.endsWith("/keywords")&&init?.method==="PATCH"){
+        keywordPatch=JSON.parse(String(init.body));
+        return new Response(JSON.stringify({keywords:[{
+          id:"keyword-saved",text:"Home insurance premiums",kind:"topic",origin:"manual",active:true,manualLock:true,
+        }]}),{status:200,headers:{"content-type":"application/json"}});
+      }
+      const data = path.endsWith("/sync") ? {id:"server-project",snapshotRevision:1,contentCount:0}
+        : path.endsWith("/keywords") ? {keywords:[]}
+          : path.endsWith("/graph") ? {nodes:[],edges:[],sources:[],signals:[],topicCount:0,sourceCount:0,supportedEdgeCount:0}
+            : path.endsWith("/watchlists") ? {watchlists:[],watchlistIds:[]}
+              : path.endsWith("/runs") ? {runs:[]} : null;
+      if (!data) throw Error(`Unexpected discovery request: ${path}`);
+      return new Response(JSON.stringify(data),{status:200,headers:{"content-type":"application/json"}});
+    }));
+    const user=userEvent.setup();
+    render(<App/>);
+    await user.click(screen.getByRole("link",{name:"Projects"}));
+    await user.click(screen.getByRole("tab",{name:"Discovery preferences"}));
+    expect(screen.getByRole("button",{name:"Add keyword"})).toBeDisabled();
+    expect(screen.queryByRole("button",{name:"Discover 5 Ideas"})).not.toBeInTheDocument();
+    await user.type(screen.getByRole("textbox",{name:"Keyword or search phrase"}),"Home insurance premiums");
+    await waitFor(()=>expect(screen.getByRole("button",{name:"Add keyword"})).toBeEnabled());
+    await user.click(screen.getByRole("button",{name:"Add keyword"}));
+    expect(await screen.findByText("Home insurance premiums")).toBeInTheDocument();
+    expect(keywordPatch).toEqual({add:[{text:"Home insurance premiums",kind:"topic",origin:"manual"}]});
+  });
+
+  it("opens the guided Production workspace by default", () => {
+    render(<App />);
+    expect(screen.getByRole("region", { name: "Guided production" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Production stages" })).toBeInTheDocument();
+  });
+
   it("opens directly into a focused create workspace with a real preview and a tool guide", async () => {
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
 
     expect(screen.getByRole("link", { name: /skip to workspace/i })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: /main navigation/i })).toBeInTheDocument();
@@ -38,6 +78,7 @@ describe("Studio shell", () => {
   it("lets the tool guide close and reopen from its own header and the preview toolbar", async () => {
     const user = userEvent.setup();
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
 
     await user.click(screen.getByRole("button", { name: /close tool guide/i }));
     expect(screen.getByRole("button", { name: /show tool guide/i })).toBeInTheDocument();
@@ -52,6 +93,7 @@ describe("Studio shell", () => {
   it("updates the shared preview when a brand palette color changes", async () => {
     const user = userEvent.setup();
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
 
     const canvasInput = screen.getAllByLabelText(/hex$/i)[0];
     await user.clear(canvasInput);
@@ -65,6 +107,7 @@ describe("Studio shell", () => {
   it("opens the now-live platform planner with per-platform preview and Kumiki safe-area checks", async () => {
     const user = userEvent.setup();
     render(<App />);
+    fireEvent.click(screen.getByRole("link", {name: "Create"}));
     await user.click(screen.getByRole("tab", { name: /platform layouts/i }));
     expect(screen.queryByText(/The editor isn't connected yet/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button",{name:/Export layout plan JSON/i})).toBeInTheDocument();
@@ -84,7 +127,7 @@ describe("Studio shell", () => {
         : url.endsWith("/watchlists")
           ? {watchlists:[{id:"watch-demo",name:"House Math",query:"heat pump savings",queryMode:"manual",queryPlan:[],queryPlanSource:"user-edited",queryIndex:0,queryPlanRevision:0,lastSearchQuery:null,nextSearchQuery:"heat pump savings",region:"US",language:"en",enabled:true,createdAt:1,updatedAt:1,nextDueAt:1,lastFinishedAt:1,backoffUntil:0,errorCode:null}]}
           : url.endsWith("/videos")
-            ? {videos:[{videoId:"abcABC12345",title:"Competitor video",channelId:"UCdemo",channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:60,viewCount:1234,likeCount:null,commentCount:null,subscriberCount:null,sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",provider:"youtube-data-api",observedAt:1,expiresAt:9999999999}]}
+            ? {videos:[{videoId:"abcABC12345",title:"Competitor video",channelId:"UCdemo",channelTitle:"Demo",publishedAt:"2026-01-01T00:00:00Z",durationSeconds:60,viewCount:123400,likeCount:null,commentCount:null,subscriberCount:null,sourceUrl:"https://www.youtube.com/watch?v=abcABC12345",provider:"youtube-data-api",observedAt:1,expiresAt:9999999999}]}
             : null;
       if (!data) throw Error("Unexpected route: " + url);
       return new Response(JSON.stringify(data),{headers:{"content-type":"application/json"}});
@@ -108,3 +151,4 @@ describe("Studio shell", () => {
     expect(screen.getByText("The Real Cost of Heat Pumps in Oklahoma")).toBeInTheDocument();
   });
 });
+

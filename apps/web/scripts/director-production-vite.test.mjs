@@ -29,6 +29,109 @@ async function invoke(controller,method,path,payload,headers){
   await controller.handle(r.req,r.res);
   return r.result();
 }
+async function audioResponse(controller,path){
+  const req=Readable.from([]);
+  Object.assign(req,{method:"GET",url:path,headers:{host:"127.0.0.1:5173"}});
+  let status=0,headers={};const bytes=[];
+  const res={writeHead(code,h){status=code;headers=h;},end(data){if(data)bytes.push(Buffer.from(data));},destroy(){}};
+  await controller.handle(req,res);
+  return {status,headers,bytes:Buffer.concat(bytes)};
+}
+async function waitSample(server){
+  for(let i=0;i<40;i++){
+    const result=await invoke(server,"GET","/narration-sample/status");
+    if(result.data.state!=="generating")return result.data;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  throw Error("Narration sample did not settle");
+}
+
+test("voice audition generates only a bounded first-scene excerpt and serves a protected WAV",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const calls=[];
+  const server=createDirectorProduction({outputRoot:dir,
+    synthesizeNarration:async(job,options)=>{
+      calls.push({beats:job.beats,settings:options});
+      const wavPath=join(options.cacheRoot,"sample.wav");
+      await writeFile(wavPath,Buffer.from("RIFFexampleWAVE"));
+      return [{wavPath}];
+    },build:async()=>{throw Error("audition should never build");},
+    produce:async()=>{throw Error("audition should never render");}});
+  const p=inputs();
+  const start=await invoke(server,"POST","/narration-sample",{...p,settings:config});
+  assert.equal(start.status,202);
+  const result=await waitSample(server);
+  assert.equal(result.state,"done");
+  assert.match(result.audioUrl,/\/narration-sample\/[a-f0-9-]+\.wav$/);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].beats.length,1);
+  assert.ok(calls[0].beats[0].narration.length<=180);
+  assert.equal(calls[0].settings.localVoiceAuthorized,true);
+  const samplePath=result.audioUrl.replace("/api/contentgen-video","");
+  assert.equal((await audioResponse(server,samplePath)).headers["Content-Type"],"audio/wav");
+  assert.equal((await audioResponse(server,samplePath)).bytes.toString(),"RIFFexampleWAVE");
+  assert.equal((await audioResponse(server,"/narration-sample/unknown.wav")).status,404);
+  const newSample=await invoke(server,"POST","/narration-sample",{...p,settings:config});
+  assert.equal(newSample.status,202);
+  const second=await waitSample(server);
+  assert.equal(second.state,"done");
+  assert.notEqual(second.audioUrl,result.audioUrl);
+  assert.equal((await audioResponse(server,samplePath)).status,404);
+});
+
+test("sample audition refuses unauthorized voices and concurrent render/check",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-block-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  let resolveSample,synthesis=0;
+  const server=createDirectorProduction({outputRoot:dir,
+    synthesizeNarration:async()=>{synthesis++;await new Promise(resolve=>{resolveSample=resolve;});
+      throw Error("cancelled");},
+    inspect:async()=>{throw Error("must not inspect");}});
+  const p=inputs();
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:{...config,localVoiceAuthorized:false}})).status,422);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:{...config,provider:"fish",apiKey:"key",voiceConsent:false,transmitText:true}})).status,422);
+  assert.equal(synthesis,0);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config})).status,202);
+  assert.equal((await invoke(server,"POST","/check",{...p,settings:config})).status,409);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config})).status,409);
+  assert.equal((await invoke(server,"POST","/narration-sample/cancel",{confirmed:true})).status,202);
+  if(resolveSample)resolveSample();
+  const ended=await waitSample(server);
+  assert.equal(ended.state,"cancelled");
+  assert.equal(ended.audioUrl,null);
+  assert.ok(synthesis<=1,"cancellation may prevent synthesis from starting at all");
+});
+
+test("cancelling an active voice sample retires its playback without interrupting a later render",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-active-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  let began,started=new Promise(resolve=>{began=resolve;});
+  const server=createDirectorProduction({outputRoot:dir,synthesizeNarration:async(_job,options)=>{
+    began();await new Promise((resolve,reject)=>{
+      options.signal.addEventListener("abort",()=>reject(Error("Cancelled by editor.")),{once:true});
+    });
+    return [];
+  }});
+  assert.equal((await invoke(server,"POST","/narration-sample",{...inputs(),settings:config})).status,202);
+  await started;
+  assert.equal((await invoke(server,"POST","/narration-sample/cancel",{confirmed:true})).status,202);
+  const settled=await waitSample(server);
+  assert.equal(settled.state,"cancelled");assert.equal(settled.audioUrl,null);
+  assert.equal((await invoke(server,"POST","/plan",inputs())).status,200);
+});
+
+test("a provider failure never repeats the API key in voice audition status",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-audition-secret-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const secret="sensitive-voice-key-123";
+  const server=createDirectorProduction({outputRoot:dir,synthesizeNarration:async()=>{
+    throw Error("Provider refused token "+secret);
+  }});
+  const settings={provider:"fish",voiceId:"licensed-fish-voice",providerRevision:"fish-v1",
+    apiKey:secret,voiceConsent:true,transmitText:true};
+  assert.equal((await invoke(server,"POST","/narration-sample",{...inputs(),settings})).status,202);
+  const result=await waitSample(server);
+  assert.equal(result.state,"failed");
+  assert.equal(result.message.includes(secret),false);
+  assert.match(result.message,/Voice sample failed/);
+});
 test("editor bridge is viewable without generating audio, and preview creates an offline rough cut",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-server-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let toolCalls=0;
@@ -111,6 +214,36 @@ test("a normal UI sequence checks tools, renders a new MP4, reuses previous outp
   assert.equal(performed[1].reuseFrom,performed[0].out);
   assert.equal(server.status().state,"done");
 });
+
+test("completed renders are discoverable by production across server restarts, never by another production",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-assets-test-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"a".repeat(24),otherId="production-"+"b".repeat(24);
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[],tools:{}}),
+    produce:async(_job,opts)=>{
+      const releaseDir=join(opts.out,"release");
+      await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock video media");
+      await writeFile(join(releaseDir,"captions.srt"),"1\n00:00:00,000 --> 00:00:01,000\nTest");
+      return {releaseDir};
+    }});
+  const params={...inputs(),settings:config,productionId,sourceRevision:"approved-script:revision-one:board-one:plan-one"};
+  assert.equal((await invoke(server,"POST","/check",params)).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...params,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)
+    await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"done");
+  const restarted=createDirectorProduction({outputRoot:dir});
+  const own=await invoke(restarted,"GET",`/assets/${productionId}`);
+  assert.equal(own.status,200);
+  assert.deepEqual(own.data.assets.map(asset=>asset.kind).sort(),["captions","video"]);
+  assert.ok(own.data.assets.every(asset=>asset.platform==="youtube"));
+  assert.ok(own.data.assets.every(asset=>asset.sourceRevision===params.sourceRevision));
+  assert.match(own.data.assets[0].downloadUrl,/^\/api\/contentgen-video\/media\//);
+  assert.deepEqual((await invoke(restarted,"GET",`/assets/${otherId}`)).data.assets,[]);
+  assert.equal((await invoke(restarted,"GET","/assets/../production-other")).status,404);
+});
 test("changing a checked setting demands a fresh preflight; revoked local voice is never rendered",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-mismatch-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let calls=0;
@@ -123,6 +256,64 @@ test("changing a checked setting demands a fresh preflight; revoked local voice 
   assert.equal((await invoke(server,"POST","/start",{...p,settings:changed,confirmRender:true})).status,409);
   assert.equal((await invoke(server,"POST","/start",{...p,settings:{...config,localVoiceAuthorized:false},confirmRender:true})).status,422);
   assert.equal(calls,0);
+});
+test("readiness and export bind reviewed SFX to the same measured beat events, and recheck after changes",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-reviewed-sfx-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const project=inputs();
+  let soundHash="a".repeat(64),renders=0,inspected=null;
+  const bankChoice=()=>project.bundle.plan.shots.map((shot,index)=>({shotId:shot.id,
+    mode:index===0?"pin":"mute",assetId:index===0?"11111111-2222-3333-4444-555555555555":null,
+    localPath:index===0?"/reviewed/bank/sfx.wav":null,sha256:index===0?soundHash:null,
+    license:index===0?"cc0":null,rightsStatus:index===0?"user-reviewed":null}));
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    resolveSfx:async ({projectId,bundle})=>{
+      assert.equal(projectId,project.dossier.id);assert.equal(bundle.researchId,projectId);
+      return bankChoice();
+    },build:async()=>{},inspect:async job=>{inspected=job;return {ready:true,findings:[],tools:{}};},
+    produce:async (job,opts)=>{
+      renders++;assert.deepEqual(job.sounds,inspected.sounds);
+      const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock mp4");return {releaseDir};
+    }});
+  const checked=await invoke(server,"POST","/check",{...project,settings:config});
+  assert.equal(checked.status,200);assert.equal(checked.data.ready,true);
+  assert.equal(checked.data.sfxSummary.approved,1);
+  assert.equal(checked.data.sfxSummary.muted,project.bundle.plan.shots.length-1);
+  assert.equal(inspected.sounds.length,1);
+  assert.equal(inspected.sounds[0].assetSha256,soundHash);
+  assert.equal(inspected.sounds[0].assetRef,"/reviewed/bank/sfx.wav");
+  assert.equal(inspected.events.find(e=>e.id===inspected.sounds[0].eventId).beatId,inspected.beats[0].id);
+  assert.ok(inspected.beats[0].eventIds.includes(inspected.sounds[0].eventId));
+  assert.ok(inspected.sounds.every(s=>s.licenseStatus==="verified"));
+  soundHash="b".repeat(64);
+  const stale=await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true});
+  assert.equal(stale.status,409);assert.equal(renders,0);
+  const refreshed=await invoke(server,"POST","/check",{...project,settings:config});
+  assert.equal(refreshed.data.ready,true);
+  assert.equal((await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true})).status,202);
+  for(let i=0;i<30&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(renders,1);assert.equal(server.status().state,"done");
+  assert.equal(inspected.sounds[0].assetSha256,"b".repeat(64));
+});
+test("changing a checked supplemental sound layer invalidates readiness without rendering",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-extra-sfx-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const project=inputs();let gainDb=-25,renderCount=0,checkedSound;
+  const extra={layerId:"layer_sample",shotId:project.bundle.plan.shots[0].id,
+    assetId:"11111111-2222-3333-4444-555555555555",sha256:"c".repeat(64),
+    localPath:"/trusted/approved.wav",license:"cc0",rightsStatus:"user-reviewed",
+    trigger:"shot-start",offsetMs:300,fadeInMs:30,fadeOutMs:70};
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    resolveSfx:async()=>[],resolveSoundDesign:async()=>({layers:[{...extra,gainDb}],ambience:null}),
+    build:async()=>{},inspect:async job=>{checkedSound=job.sounds.at(-1);return {ready:true,findings:[],tools:{}};},
+    produce:async()=>{renderCount++;throw Error("render should not start with changed sound settings");}});
+  const prior=await invoke(server,"POST","/check",{...project,settings:config});
+  assert.equal(prior.data.ready,true);
+  assert.equal(checkedSound.gainDb,-25);
+  assert.equal(prior.data.sfxSummary.extraLayers,1);
+  gainDb=-32;
+  const stale=await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true});
+  assert.equal(stale.status,409);
+  assert.equal(renderCount,0);
 });
 test("model authorization only configures the test-only free model; never raises rights",()=>{
   const base={voice:{profileId:"test"},locale:"en-US",approval:"test-only",policy:{}};
@@ -213,3 +404,4 @@ test("actual renderer preview is identical to the edit plan and never starts voi
  assert.equal(rejected.status,422);
  assert.equal(calls,0);
 });
+

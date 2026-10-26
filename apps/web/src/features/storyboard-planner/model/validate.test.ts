@@ -146,6 +146,32 @@ describe("narrative and copy checks", () => {
     expect(codes(value)).toContain("storyboard-claim-unresolved");
   });
 
+  it("does not call a source-linked but unverified claim missing evidence", () => {
+    const value = board();
+    value.claims.push({
+      id: "claim-source-linked",
+      status: "unverified",
+      note: "Claim has a source but still needs a human factual review.",
+      sourceRefs: ["source_01"],
+    });
+    value.beats[0].claimRefs.push("claim-source-linked");
+    const findings = validateStoryboard(value).filter(item => item.params?.claimId === "claim-source-linked");
+    expect(findings.some(item => item.code === "storyboard-claim-unresolved")).toBe(false);
+  });
+
+  it("reports an unverified claim with no source reference as unresolved", () => {
+    const value = board();
+    value.claims.push({
+      id: "claim-unlinked",
+      status: "unverified",
+      note: "A claim without captured evidence.",
+      sourceRefs: [],
+    });
+    value.beats[0].claimRefs.push("claim-unlinked");
+    expect(validateStoryboard(value).some(item =>
+      item.code === "storyboard-claim-unresolved" && item.params?.claimId === "claim-unlinked")).toBe(true);
+  });
+
   it("reports illustrative claims without an illustrative-data label", () => {
     const value = board();
     value.illustrativeData = false;
@@ -169,5 +195,19 @@ describe("helper queries", () => {
     expect(counts).toEqual({ errors: 1, warnings: 1 });
     expect(diagnosticsForBeat(diagnostics, "beat-hook")).toHaveLength(1);
     expect(diagnosticsForBeat(diagnostics, "beat-equipment")).toHaveLength(1);
+  });
+});
+
+describe("editorial repetition warnings", () => {
+  it("flags repeated teaching copy across separate scenes without blocking the draft", () => {
+    const value=board();
+    value.beats[1].onScreenText="Hidden costs: permits and ductwork";
+    value.beats[2].onScreenText="Hidden labor and permits drive the costs";
+    const issue=validateStoryboard(value).find(x=>x.code==="storyboard-repeated-information");
+    expect(issue).toMatchObject({severity:"warning",beatId:value.beats[2].id,
+      params:{previousIndex:2,field:"onScreenText"}});
+  });
+  it("does not confuse a new operation with a repeated idea merely because both mention costs", () => {
+    expect(validateStoryboard(HVAC_EXAMPLE)).toEqual([]);
   });
 });

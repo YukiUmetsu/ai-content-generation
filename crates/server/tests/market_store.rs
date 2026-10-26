@@ -4,7 +4,7 @@ use contentgen_server::research::market_store::{self, MarketWatchlistDraft, Vide
 fn db_ready() -> rusqlite::Connection {
     let mut db = db::open_in_memory().unwrap();
     let report = db::migrate(&mut db).unwrap();
-    assert_eq!(report.to_version, 4);
+    assert_eq!(report.to_version, db::MIGRATION_VERSION);
     db
 }
 
@@ -24,16 +24,27 @@ fn draft(enabled: bool) -> MarketWatchlistDraft {
 #[test]
 fn name_only_auto_watchlist_persists_without_an_explicit_search_phrase() {
     let db = db_ready();
-    let watch = market_store::create_watchlist(&db, MarketWatchlistDraft {
-        name: "House Math".into(), query: "".into(),
-        query_mode: "auto".into(), query_plan: vec![],
-        query_plan_source: "niche-name fallback".into(),
-        region: "US".into(), language: "en".into(), enabled: true,
-    }, 1_000_000).unwrap();
+    let watch = market_store::create_watchlist(
+        &db,
+        MarketWatchlistDraft {
+            name: "House Math".into(),
+            query: "".into(),
+            query_mode: "auto".into(),
+            query_plan: vec![],
+            query_plan_source: "niche-name fallback".into(),
+            region: "US".into(),
+            language: "en".into(),
+            enabled: true,
+        },
+        1_000_000,
+    )
+    .unwrap();
     assert_eq!(watch.query, "");
     assert_eq!(watch.query_mode, "auto");
     assert_eq!(watch.next_search_query, "House Math");
-    let run = market_store::claim_watchlist(&db, &watch.id, 1_000_000, true).unwrap().unwrap();
+    let run = market_store::claim_watchlist(&db, &watch.id, 1_000_000, true)
+        .unwrap()
+        .unwrap();
     assert_eq!(run.effective_query, "House Math");
     let reloaded = market_store::get_watchlist(&db, &watch.id).unwrap();
     assert_eq!(reloaded.query, "");
@@ -42,25 +53,45 @@ fn name_only_auto_watchlist_persists_without_an_explicit_search_phrase() {
 #[test]
 fn successful_auto_runs_rotate_queries_and_failed_runs_do_not() {
     let db = db_ready();
-    let watch = market_store::create_watchlist(&db, MarketWatchlistDraft {
-        name: "House Math".into(), query: "".into(),
-        query_mode: "auto".into(),
-        query_plan: vec!["roof replacement cost".into(), "home insurance premiums".into()],
-        query_plan_source: "user-edited".into(),
-        region: "US".into(), language: "en".into(), enabled: true,
-    }, 1_000_000).unwrap();
-    let first = market_store::claim_watchlist(&db, &watch.id, 1_000_000, true).unwrap().unwrap();
+    let watch = market_store::create_watchlist(
+        &db,
+        MarketWatchlistDraft {
+            name: "House Math".into(),
+            query: "".into(),
+            query_mode: "auto".into(),
+            query_plan: vec![
+                "roof replacement cost".into(),
+                "home insurance premiums".into(),
+            ],
+            query_plan_source: "user-edited".into(),
+            region: "US".into(),
+            language: "en".into(),
+            enabled: true,
+        },
+        1_000_000,
+    )
+    .unwrap();
+    let first = market_store::claim_watchlist(&db, &watch.id, 1_000_000, true)
+        .unwrap()
+        .unwrap();
     assert_eq!(first.effective_query, "roof replacement cost");
     market_store::complete_run(&db, &first.id, &[], 1_000_001).unwrap();
-    let second = market_store::claim_watchlist(&db, &watch.id, 1_000_002, true).unwrap().unwrap();
+    let second = market_store::claim_watchlist(&db, &watch.id, 1_000_002, true)
+        .unwrap()
+        .unwrap();
     assert_eq!(second.effective_query, "home insurance premiums");
     market_store::fail_run(&db, &second.id, "provider_unavailable", 1_000_003).unwrap();
-    let third = market_store::claim_watchlist(&db, &watch.id, 1_001_000, true).unwrap().unwrap();
+    let third = market_store::claim_watchlist(&db, &watch.id, 1_001_000, true)
+        .unwrap()
+        .unwrap();
     assert_eq!(third.effective_query, "home insurance premiums");
     market_store::complete_run(&db, &third.id, &[], 1_001_001).unwrap();
     let next = market_store::get_watchlist(&db, &watch.id).unwrap();
     assert_eq!(next.next_search_query, "roof replacement cost");
-    assert_eq!(next.last_search_query.as_deref(), Some("home insurance premiums"));
+    assert_eq!(
+        next.last_search_query.as_deref(),
+        Some("home insurance premiums")
+    );
     assert_eq!(market_store::used_search_calls(&db, 1_001_002).unwrap(), 3);
 }
 
@@ -160,7 +191,7 @@ fn disabled_watchlists_never_claim_and_deleting_cascades_results() {
     let db = db_ready();
     let watch = market_store::create_watchlist(&db, draft(false), 1_000_000).unwrap();
     assert!(
-        market_store::claim_watchlist(&db, &watch.id, 1_000_000, true)
+        market_store::claim_watchlist(&db, &watch.id, 1_000_000, false)
             .unwrap()
             .is_none()
     );
@@ -300,4 +331,72 @@ fn related_videos_reject_invalid_and_vague_topics() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn explicit_collect_runs_with_scheduler_off_and_explains_running_and_backoff() {
+    use contentgen_server::research::market_store::ClaimBlocked;
+    let db = db_ready();
+    let now = 1_000_000;
+    let watch = market_store::create_watchlist(&db, draft(false), now).unwrap();
+
+    assert!(matches!(
+        market_store::claim_watchlist_detailed(&db, &watch.id, now, false).unwrap(),
+        Err(ClaimBlocked::Disabled)
+    ));
+    let run = market_store::claim_watchlist_detailed(&db, &watch.id, now, true)
+        .unwrap()
+        .unwrap();
+    assert!(run.allowed_while_disabled);
+    assert!(!market_store::get_watchlist(&db, &watch.id).unwrap().enabled);
+    assert!(matches!(
+        market_store::claim_watchlist_detailed(&db, &watch.id, now, true).unwrap(),
+        Err(ClaimBlocked::InProgress)
+    ));
+    assert_eq!(market_store::used_search_calls(&db, now).unwrap(), 1);
+
+    market_store::fail_run(&db, &run.id, "provider_unavailable", now + 1).unwrap();
+    let rejected = market_store::claim_watchlist_detailed(&db, &watch.id, now + 2, true)
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(
+        rejected,
+        ClaimBlocked::Backoff {
+            seconds: 899,
+            last_error: Some(_)
+        }
+    ));
+    assert!(rejected.message().contains("provider_unavailable"));
+    let retried = market_store::claim_watchlist_detailed(&db, &watch.id, now + 902, true)
+        .unwrap()
+        .unwrap();
+    assert!(retried.allowed_while_disabled);
+    market_store::complete_run(&db, &retried.id, &[], now + 903).unwrap();
+    assert!(!market_store::get_watchlist(&db, &watch.id).unwrap().enabled);
+}
+
+#[test]
+fn manual_collect_is_bound_by_rolling_budget_even_when_scheduler_is_off() {
+    use contentgen_server::research::market_store::ClaimBlocked;
+    let db = db_ready();
+    let now = 1_000_000;
+    let watch = market_store::create_watchlist(&db, draft(false), now).unwrap();
+    for i in 0..20 {
+        let run = market_store::claim_watchlist_detailed(&db, &watch.id, now + i, true)
+            .unwrap()
+            .unwrap();
+        market_store::complete_run(&db, &run.id, &[], now + i).unwrap();
+    }
+    let limit = market_store::claim_watchlist_detailed(&db, &watch.id, now + 20, true)
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(
+        limit,
+        ClaimBlocked::DailyBudget { seconds: 86_380 }
+    ));
+    assert!(limit.message().contains("20 searches"));
+    let run = market_store::claim_watchlist_detailed(&db, &watch.id, now + 86_400, true)
+        .unwrap()
+        .unwrap();
+    market_store::complete_run(&db, &run.id, &[], now + 86_400).unwrap();
 }

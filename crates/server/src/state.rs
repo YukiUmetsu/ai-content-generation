@@ -14,6 +14,7 @@ use crate::settings::SettingsSessions;
 pub struct AppState {
     db_path: Arc<PathBuf>,
     market_semaphore: Arc<Semaphore>,
+    discovery_market_semaphore: Arc<Semaphore>,
     credentials: ProviderCredentials,
     settings_sessions: Arc<SettingsSessions>,
 }
@@ -27,6 +28,7 @@ impl AppState {
         Self {
             db_path: Arc::new(path.into()),
             market_semaphore: Arc::new(Semaphore::new(1)),
+            discovery_market_semaphore: Arc::new(Semaphore::new(1)),
             credentials,
             settings_sessions: Arc::new(SettingsSessions::default()),
         }
@@ -42,6 +44,10 @@ impl AppState {
 
     pub fn market_semaphore(&self) -> Arc<Semaphore> {
         self.market_semaphore.clone()
+    }
+
+    pub fn discovery_market_semaphore(&self) -> Arc<Semaphore> {
+        self.discovery_market_semaphore.clone()
     }
 
     pub fn credentials(&self) -> &ProviderCredentials {

@@ -32,6 +32,29 @@ function hasText(value: string | undefined): value is string {
   return typeof value === "string" && value.trim() !== "";
 }
 
+/** Conservative lexical check: catches obvious paraphrases without an LLM or a fabricated score. */
+const fillerWords=new Set([
+  "about","after","again","also","both","could","does","each","every","from","have","into",
+  "only","over","scene","show","shows","their","them","then","there","these","this","those",
+  "through","under","using","very","what","when","where","which","while","with","would",
+]);
+function meaningfulWords(text:string):Set<string>{
+  const words=(text.normalize("NFKC").toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu)??[])
+    .filter(word=>word.length>=4&&!fillerWords.has(word))
+    .map(word=>word.endsWith("ies")&&word.length>5?word.slice(0,-3)+"y":
+      word.endsWith("s")&&word.length>4&&!word.endsWith("ss")?word.slice(0,-1):word);
+  return new Set(words);
+}
+function repeatsInformation(left:string,right:string):boolean{
+  const a=meaningfulWords(left),b=meaningfulWords(right);
+  if(a.size<2||b.size<2)return false;
+  const common=[...a].filter(word=>b.has(word)).length;
+  if(common<2)return false;
+  if(common===a.size&&common===b.size)return true;
+  return common>=3&&common/Math.min(a.size,b.size)>=0.7&&
+    common/(a.size+b.size-common)>=0.45;
+}
+
 export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnostic[] {
   const diagnostics: StoryboardDiagnostic[] = [];
   const beats = Array.isArray(board.beats) ? board.beats : [];
@@ -84,6 +107,18 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
 
   for (const [index, beat] of beats.entries()) {
     const path = `beats[${index}]`;
+    // Warn once for the first likely repetition. Callbacks to the hook are allowed,
+    // but should still be reviewed to ensure the scene teaches something new.
+    for(let previousIndex=0;previousIndex<index;previousIndex++){
+      const previous=beats[previousIndex];
+      const field=(["onScreenText","objective","visualObjective"] as const).find(key=>
+        repeatsInformation(previous[key],beat[key]));
+      if(field){
+        addForBeat(beat,"storyboard-repeated-information","warning",`${path}.${field}`,
+          {previousIndex:previousIndex+1,field});
+        break;
+      }
+    }
 
     if (!hasText(beat.id)) {
       addForBeat(beat, "storyboard-beat-id-missing", "error", `${path}.id`, { index: index + 1 });
@@ -198,7 +233,7 @@ export function validateStoryboard(board: SemanticStoryboard): StoryboardDiagnos
         });
         continue;
       }
-      if (claim.status === "unverified" || (claim.status === "sourced" && claim.sourceRefs.length === 0)) {
+      if ((claim.status === "unverified" || claim.status === "sourced") && claim.sourceRefs.length === 0) {
         addForBeat(beat, "storyboard-claim-unresolved", "warning", `${path}.claimRefs`, {
           id: beat.id,
           claimId,

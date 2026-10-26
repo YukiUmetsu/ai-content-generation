@@ -49,7 +49,9 @@ test("timing is bounded, deterministic and payoff cannot be spoiled by editor se
      frame,frames:90,intent:"general-payoff",itemCount:5,motion
    }).visibleItems);
    assert.equal(states[0],0);
-   assert.ok(states.slice(1,30).every(n=>n===0));
+   // 30% of 90 frames is exactly 27 frames: the reveal begins at frame 27.
+   assert.ok(states.slice(1,27).every(n=>n===0));
+   assert.ok(states[27]>0);
    assert.equal(states.at(-1),5);
    assert.ok(states.every((n,i)=>i===0||n>=states[i-1]));
    assert.deepEqual(states,Array.from({length:90},(_,frame)=>motionRevealState({

@@ -7,7 +7,8 @@ import type { Locale } from "@/features/registry";
 type Provider = "ollama" | "magnitude" | "lm-studio" | "custom";
 type Task = "research" | "story" | "hooks" | "script";
 type Profile = { id: string; name: string; provider: Provider; endpoint: string; model: string };
-type ModelProfiles = { version: 1; profiles: Profile[]; defaultProfileId: string; assignments: Partial<Record<Task,string>> };
+type GenerationLimits = {outlineTokens:number;sceneTokens:number;timeoutSeconds:number};
+type ModelProfiles = { version: 1; profiles: Profile[]; defaultProfileId: string; assignments: Partial<Record<Task,string>>;generation:GenerationLimits };
 const route = "/api/local-research-model";
 const endpoints: Record<Exclude<Provider,"custom">,string> = {
   ollama: "http://127.0.0.1:11434/v1/chat/completions",
@@ -23,7 +24,7 @@ const taskLabels: Record<Task,{en:string;ja:string;hintEn:string;hintJa:string}>
 const field = "min-w-0 w-full rounded-control border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const label = "block text-sm font-medium text-foreground";
 const hint = "mt-1 text-xs leading-relaxed text-muted-foreground";
-const initial: ModelProfiles = { version:1, profiles:[{ id:"local-default", name:"Local model", provider:"ollama", endpoint:endpoints.ollama, model:"" }], defaultProfileId:"local-default",assignments:{} };
+const initial: ModelProfiles = { version:1, profiles:[{ id:"local-default", name:"Local model", provider:"ollama", endpoint:endpoints.ollama, model:"" }], defaultProfileId:"local-default",assignments:{},generation:{outlineTokens:2048,sceneTokens:4096,timeoutSeconds:240} };
 
 async function request(path: string,method:"GET"|"POST",value?:unknown) {
   const response=await fetch(route+path,{method,headers:method==="POST"
@@ -53,7 +54,7 @@ export function ResearchModelSettings({locale}:{locale:Locale}){
       if(!active)return;
       const loaded=raw.profiles as ModelProfiles;
       if(!Array.isArray(loaded?.profiles)||!loaded.profiles.length)throw Error("Invalid local profile settings response.");
-      setConfig(loaded);setSelectedId(loaded.defaultProfileId);
+      setConfig({...loaded,generation:{...initial.generation,...loaded.generation}});setSelectedId(loaded.defaultProfileId);
       setSearchEndpoint(typeof raw.searchEndpoint==="string"?raw.searchEndpoint:null);
     }).catch(error=>{if(active)setNotice({kind:"error",message:String(error.message??error)});})
       .finally(()=>{if(active)setLoading(false);});
@@ -85,6 +86,10 @@ export function ResearchModelSettings({locale}:{locale:Locale}){
       if(!id)delete assignments[task];else assignments[task]=id;
       return {...previous,assignments};
     });
+    setNotice(null);
+  }
+  function setGeneration(key:keyof GenerationLimits,value:string){
+    setConfig(previous=>({...previous,generation:{...previous.generation,[key]:value===""?NaN:Number(value)}}));
     setNotice(null);
   }
   async function discover(){
@@ -196,6 +201,22 @@ export function ResearchModelSettings({locale}:{locale:Locale}){
           </p>
         </section>
       </div>
+      <section className="space-y-3 rounded-xl border border-border bg-surface-subtle p-4 sm:p-5" aria-label={copy("Research generation limits","調査生成の制限") }>
+        <div><h3 className="text-sm font-semibold">{copy("3. Research generation limits","3. 調査生成の制限")}</h3>
+          <p className={hint}>{copy("Defaults work for most models. Larger values allow longer responses but may use more time and memory. New jobs use saved values; existing jobs keep their snapshot.","通常は初期値で十分です。値を増やすと長い応答を生成できますが、時間やメモリが増える場合があります。新しいジョブから適用されます。")}</p></div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {([
+            {key:"outlineTokens",en:"Outline output tokens",ja:"構成案の出力トークン数",min:256,max:8192},
+            {key:"sceneTokens",en:"Scene output tokens",ja:"シーンの出力トークン数",min:512,max:16384},
+            {key:"timeoutSeconds",en:"Request timeout (seconds)",ja:"リクエストのタイムアウト（秒）",min:30,max:900},
+          ] as const).map(setting=><label key={setting.key} className={label}>{copy(setting.en,setting.ja)}
+            <input className={`${field} mt-1.5`} type="number" inputMode="numeric" min={setting.min} max={setting.max} step={1}
+              aria-label={setting.en} value={Number.isNaN(config.generation[setting.key])?"":config.generation[setting.key]}
+              onChange={e=>setGeneration(setting.key,e.target.value)}/>
+            <span className={hint}>{setting.min.toLocaleString()}–{setting.max.toLocaleString()}</span>
+          </label>)}
+        </div>
+      </section>
       <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-start gap-2 text-xs leading-relaxed text-muted-foreground">
           <Search aria-hidden className="mt-0.5 size-4 shrink-0"/>

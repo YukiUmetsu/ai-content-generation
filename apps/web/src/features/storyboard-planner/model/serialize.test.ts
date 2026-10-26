@@ -187,7 +187,7 @@ describe("incomplete draft recovery", () => {
   it("rejects excessively long draft teaching copy without discarding ordinary incomplete edits",()=>{
     const raw=rawDocument();
     raw.beats[0].teachingState={phase:"mechanism",subjectId:"hvac-system",
-      before:"An initial cost category appears",action:"X".repeat(300),after:"A second category becomes visible"};
+      before:"An initial cost category appears",action:"X".repeat(501),after:"A second category becomes visible"};
     expect(parseStoryboardDraft(JSON.stringify(raw)).ok).toBe(false);
   });
 });

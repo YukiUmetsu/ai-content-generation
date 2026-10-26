@@ -18,6 +18,16 @@ async function previewView(spy: ReturnType<typeof vi.fn>) {
 }
 
 describe("StoryboardPlanner", () => {
+  it("shows essential scene fields first and keeps specialist controls on demand",async()=>{
+    const user=userEvent.setup();
+    render(<StoryboardPlanner locale="en"/>);
+    expect(screen.getByLabelText("Narration")).toBeVisible();
+    expect(screen.getByLabelText("On-screen text")).toBeVisible();
+    expect(screen.queryByLabelText("Camera / focus intent")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Advanced scene controls"}));
+    expect(screen.getByLabelText("Camera / focus intent")).toBeVisible();
+  });
+
   it("loads the HVAC example with a coherent sequence and runtime", () => {
     const spy = vi.fn();
     render(<StoryboardPlanner locale="en" onPreviewChange={spy} />);
@@ -30,6 +40,16 @@ describe("StoryboardPlanner", () => {
     expect(screen.getByText("0 blocking issues")).toBeInTheDocument();
     expect(screen.getByText("0 advisory warnings")).toBeInTheDocument();
     expect(screen.getByText(/A \$12,400 quote/)).toBeInTheDocument();
+  });
+
+  it("opens a requested beat linked from the Production issue list",async()=>{
+    const projectId="project-focus-test";
+    sessionStorage.setItem("contentgen:storyboard-focus-beat:v1:"+projectId,"beat-installation");
+    const spy=vi.fn();
+    try{
+      render(<StoryboardPlanner locale="en" projectId={projectId} onPreviewChange={spy}/>);
+      await waitFor(()=>expect(lastPreview(spy)?.props.beat.id).toBe("beat-installation"));
+    }finally{sessionStorage.removeItem("contentgen:storyboard-focus-beat:v1:"+projectId);}
   });
 
   it("publishes the selected scene and updates the shared preview", async () => {
