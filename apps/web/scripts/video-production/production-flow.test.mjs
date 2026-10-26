@@ -20,13 +20,21 @@ test('a video-only discovery idea can collect evidence and produce five sourced 
     loadIdeas:async()=>[{id:production.ideaId,sources:[]}],search:async()=>({results:[{title:'Insurance guide',url:'https://example.org/insurance'}]}),
     fetchPage:async()=>({type:'text/plain',html:'Insurance premiums change when rebuilding costs and insured risks change. Insurance premiums also reflect the coverage and policy terms selected by the homeowner. '.repeat(2)})});
   const snapshot=await store.capture(production.id,{allowNetwork:true,locale:'en'});
+  const narrative={
+    hook:"Your home may look unchanged when an insurance renewal arrives. Which part of the insured risk or coverage could explain the difference?",
+    context:"A useful comparison begins with the same policy terms. Otherwise a change in coverage can be mistaken for a change in the risks around the property.",
+    mechanism:"Rebuilding expenses and insured risks contribute to insurance pricing. Changes in those inputs can affect a renewal even when the house itself looks unchanged.",
+    practical:"Apply that distinction when comparing the renewal: examine the coverage terms alongside information about rebuilding expenses and local risks, and ask which inputs changed.",
+    closing:"The answer is that the house alone does not determine the renewal. Separate the contract from the risk being insured, then investigate the cause instead of treating every increase as the same problem.",
+  };
   const requestedSections=[];
   const model=createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;
     const envelope=JSON.parse(raw),input=JSON.parse(envelope.messages[1].content);
     assert.equal(input.platform,'youtube');
     requestedSections.push(input.sectionId);
-    const narration=`${input.heading}: Insurance premiums change when rebuilding costs and insured risks change. The homeowner can compare coverage and policy terms to understand what changed.`;
+    const narration=narrative[input.sectionId];
+    if(input.sectionId==="closing")assert.ok(input.scriptSections.find(section=>section.sectionId==="hook").text.includes("Your home"));
     res.writeHead(200,{'Content-Type':'application/json'});
     // Exercise a plausible rejected response, corrective retry, and metadata
     // emitted by a local model through the actual HTTP adapter.
@@ -44,7 +52,9 @@ test('a video-only discovery idea can collect evidence and produce five sourced 
     const request={sectionId,heading:'Insurance '+sectionId,purpose:'Explain insurance premium changes with captured sources.',mode:'initial',
       title:production.brief.title,viewerQuestion:production.brief.topic,audience:'Homeowners',angle:'Risks and coverage',brandVoice:'Clear',
       locale:'en',platform:'youtube',requestedDurationSeconds:106,previousSection:sections.at(-1)?.text??'',nextSection:'',
-      currentText:'',extraInstructions:'',evidence:snapshot.evidence};
+      currentText:'',extraInstructions:'',evidence:snapshot.evidence,
+      scriptSections:['hook','context','mechanism','practical','closing'].map(id=>({sectionId:id,heading:'Insurance '+id,
+        purpose:'Explain a distinct part of the insurance decision.',text:sections.find(section=>section.id===id)?.text??''}))};
     const req=Readable.from([Buffer.from(JSON.stringify(request))]);
     Object.assign(req,{method:'POST',url:'/script-generate',headers:{host:'127.0.0.1:5173',origin:'http://127.0.0.1:5173','x-contentgen-director':'local-only'}});
     let status,result;

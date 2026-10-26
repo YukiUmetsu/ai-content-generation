@@ -191,3 +191,77 @@ it("matches Research's non-thinking request for Qwen3.5 so reasoning does not co
   assert.deepEqual(requests[0].chat_template_kwargs,{enable_thinking:false});
   assert.equal(Object.hasOwn(requests[1],"chat_template_kwargs"),false);
 });
+
+const sectionContext = (texts={}) => ["hook","context","mechanism","practical","closing"].map(sectionId=>({
+  sectionId,heading:`Section ${sectionId}`,purpose:`Deliver the distinct ${sectionId} part of the explanation.`,text:texts[sectionId]??"",
+}));
+
+it("includes the whole ordered script and explicit distinct section jobs in the model request",async()=>{
+  const sections=sectionContext({hook:"Earlier opening asks why the renewal changed.",context:"Earlier context establishes comparable policy terms.",
+    mechanism:"Earlier mechanism explains local risk and rebuilding expenses."});
+  let sent;
+  await generateScriptSection({...input,sectionId:"practical",scriptSections:sections},{modelSettings:model,
+    transport:async(_url,options)=>{sent=JSON.parse(options.body);return response();}});
+  const context=JSON.parse(sent.messages[1].content);
+  assert.deepEqual(context.scriptSections,sections);
+  assert.match(sent.messages[0].content,/closing.*synthesi|synthesi.*closing/i);
+  assert.match(sent.messages[0].content,/transition|continue/i);
+  assert.match(sent.messages[0].content,/already|covered/i);
+});
+
+it("repairs a closing copied from an earlier section instead of saving it",async()=>{
+  const repeated="Compare the same coverage and deductible before judging the renewal. Changing policy terms can alter what a homeowner pays.";
+  const closing="The renewal reflects both insured risk and the terms of the contract. The useful takeaway is to separate those causes before deciding what to change.";
+  const requests=[];
+  const result=await generateScriptSection({...input,sectionId:"closing",scriptSections:sectionContext({practical:repeated})},
+    {modelSettings:model,log:()=>{},transport:async(_url,options)=>{
+      requests.push(JSON.parse(options.body));return response({narration:requests.length===1?repeated:closing});
+    }});
+  assert.equal(result.narration,closing);
+  assert.equal(requests.length,2);
+  assert.match(requests[1].messages[0].content,/continuity repair/i);
+  assert.match(requests[1].messages[0].content,/practical/);
+});
+
+it("rejects unchanged regeneration after bounded retry and does not expose the repeated prose in diagnostics",async()=>{
+  const original="Compare coverage and local rebuilding risks before judging a change in the insurance renewal.";
+  const logs=[];let calls=0;
+  await assert.rejects(()=>generateScriptSection({...input,mode:"regenerate",currentText:original},
+    {modelSettings:model,log:(...args)=>logs.push(args),transport:async()=>{calls++;return response({narration:original.toUpperCase()+"!!!"});}}),
+    error=>error.code==="content_repeated"&&error.issue==="unchanged"&&error.attempts===2);
+  assert.equal(calls,2);
+  assert.equal(JSON.stringify(logs).includes(original),false);
+});
+
+it("does not offer the same discarded candidate again",async()=>{
+  const discarded="Insurance renewal terms can change with local rebuilding risks and the coverage a homeowner chooses.";
+  await assert.rejects(()=>generateScriptSection({...input,mode:"regenerate",currentText:"The accepted original explanation is different and remains saved.",
+    rejectedTexts:[discarded]}, {modelSettings:model,log:()=>{},transport:async()=>response({narration:discarded})}),
+    error=>error.code==="content_repeated"&&error.issue==="rejected_candidate");
+});
+
+it("rejects an obvious near-copy with a new opening but permits a distinct closing that reuses the topic",async()=>{
+  const practical="Compare the coverage, deductible, and insured property risks before interpreting a renewal. Then check whether rebuilding expenses or the policy terms changed around the same home.";
+  await assert.rejects(()=>generateScriptSection({...input,sectionId:"closing",scriptSections:sectionContext({practical})},
+    {modelSettings:model,log:()=>{},transport:async()=>response({narration:"In conclusion, "+practical})}),error=>error.code==="content_repeated");
+  const distinct="The answer comes from separating changes to the insured risk from changes to the contract. That distinction helps a homeowner ask a precise question when comparing a renewal.";
+  const result=await generateScriptSection({...input,sectionId:"closing",scriptSections:sectionContext({practical})},
+    {modelSettings:model,transport:async()=>response({narration:distinct})});
+  assert.equal(result.narration,distinct);
+});
+
+it("detects repeated Japanese narration without requiring spaces",async()=>{
+  const repeated="保険料が変わった理由を調べるには、補償内容と建て直しにかかる費用を分けて確認することが大切です。";
+  await assert.rejects(()=>generateScriptSection({...input,locale:"ja",sectionId:"closing",scriptSections:sectionContext({practical:repeated})},
+    {modelSettings:model,log:()=>{},transport:async()=>response({narration:repeated})}),error=>error.code==="content_repeated");
+});
+
+
+it("bounds continuity and discarded-text context before contacting a model",()=>{
+  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:sectionContext().slice(0,4)}),/five-section/i);
+  const wrong=sectionContext();wrong.reverse();
+  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:wrong}),/order/i);
+  const huge=sectionContext();huge[0].text="x".repeat(6501);
+  assert.throws(()=>validateScriptGenerationInput({...input,scriptSections:huge}),/Continuity narration/i);
+  assert.throws(()=>validateScriptGenerationInput({...input,rejectedTexts:["a".repeat(40),"b".repeat(40),"c".repeat(40)]}),/two discarded/i);
+});

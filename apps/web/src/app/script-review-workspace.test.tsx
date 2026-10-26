@@ -140,5 +140,79 @@ describe("AI-first script review UI", () => {
     expect(screen.queryByText(/Accepted sections and manual corrections remain saved/)).not.toBeInTheDocument();
   });
 
+  it("sends all section text and uses earlier proposed rewrites when regenerating the full script",async()=>{
+    const before=saved();
+    const requests:Record<string,unknown>[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(_url,init:RequestInit)=>{
+      const request=JSON.parse(String(init.body));requests.push(request);
+      return Response.json({narration:`The proposed ${request.sectionId} uses a distinct explanation of the same captured evidence.`,
+        claimRefs:["cost"],sourceRefs:["insurance-study"]});
+    }));
+    render(<ScriptReviewWorkspace {...base}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Regenerate full script"}));
+    fireEvent.click(screen.getByRole("button",{name:"Generate five suggestions"}));
+    await waitFor(()=>expect(loadScriptDraft(base.productionId,"youtube").draft?.pending.closing).toBeTruthy());
+    expect(requests).toHaveLength(5);
+    const last=requests[4].scriptSections as {sectionId:string;text:string}[];
+    expect(last.map(section=>section.sectionId)).toEqual(["hook","context","mechanism","practical","closing"]);
+    expect(last[0].text).toContain("proposed hook");
+    expect(last[3].text).toContain("proposed practical");
+    expect(requests[4].previousSection).toBe(last[3].text);
+    expect(last[4].text).toBe(before.sections[4].text);
+    expect(loadScriptDraft(base.productionId,"youtube").draft?.sections).toEqual(before.sections);
+    fireEvent.click(screen.getByRole("button",{name:"Regenerate full script"}));
+    fireEvent.click(screen.getByRole("button",{name:"Generate five suggestions"}));
+    await waitFor(()=>expect(requests).toHaveLength(10));
+    expect(requests[5].rejectedTexts).toContain("The proposed hook uses a distinct explanation of the same captured evidence.");
+  });
+
+  it("sends a discarded candidate as text to avoid on the next regeneration",async()=>{
+    saved();
+    const requests:Record<string,unknown>[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(_url,init:RequestInit)=>{
+      requests.push(JSON.parse(String(init.body)));
+      return Response.json({narration:"This proposed insurance explanation was considered and discarded by the author.",
+        claimRefs:["cost"],sourceRefs:["insurance-study"]});
+    }));
+    render(<ScriptReviewWorkspace {...base}/>);
+    const regenerate=()=>fireEvent.click(screen.getAllByRole("button",{name:/Regenerate section/i})[0]);
+    regenerate();fireEvent.click(screen.getByRole("button",{name:"Generate section candidate"}));
+    fireEvent.click(await screen.findByRole("button",{name:"Discard suggestion"}));
+    regenerate();fireEvent.click(screen.getByRole("button",{name:"Generate section candidate"}));
+    await waitFor(()=>expect(requests).toHaveLength(2));
+    expect(requests[1].rejectedTexts).toEqual(["This proposed insurance explanation was considered and discarded by the author."]);
+  });
+
+  it("discards a response if another section was edited while regeneration was in flight",async()=>{
+    saved();
+    let release:(value:Response)=>void=()=>{};
+    const pending=new Promise<Response>(resolve=>{release=resolve;});
+    const fetcher=vi.fn(()=>pending);vi.stubGlobal("fetch",fetcher);
+    render(<ScriptReviewWorkspace {...base}/>);
+    fireEvent.click(screen.getAllByRole("button",{name:/Regenerate section/i})[4]);
+    fireEvent.click(screen.getByRole("button",{name:"Generate section candidate"}));
+    await waitFor(()=>expect(fetcher).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getAllByRole("button",{name:/Edit section/i})[0]);
+    fireEvent.change(screen.getByLabelText("Edit Opening hook"),{target:{value:"The author changed the opening while a closing was being written."}});
+    fireEvent.click(screen.getByRole("button",{name:"Save section edit"}));
+    release(Response.json({narration:"This closing belongs to an outdated version of the script and must be discarded.",
+      claimRefs:["cost"],sourceRefs:["insurance-study"]}));
+    await waitFor(()=>expect(screen.getByRole("alert")).toHaveTextContent("Another script section changed"));
+    const current=loadScriptDraft(base.productionId,"youtube").draft!;
+    expect(current.pending.closing).toBeUndefined();
+    expect(current.sections[0].text).toContain("author changed");
+  });
+
+  it("stops full regeneration on a failed section instead of writing an incoherent remainder",async()=>{
+    const before=saved();
+    const fetcher=vi.fn(async()=>new Response(JSON.stringify({error:"Continuity repair failed."}),{status:422}));
+    vi.stubGlobal("fetch",fetcher);render(<ScriptReviewWorkspace {...base}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Regenerate full script"}));
+    fireEvent.click(screen.getByRole("button",{name:"Generate five suggestions"}));
+    await waitFor(()=>expect(screen.getByRole("alert")).toHaveTextContent("Continuity repair failed"));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(loadScriptDraft(base.productionId,"youtube").draft?.sections).toEqual(before.sections);
+  });
+
 });
 

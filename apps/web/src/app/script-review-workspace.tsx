@@ -70,6 +70,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const failuresRef = useRef(new Set<string>());
+  const rejectedRef = useRef<Partial<Record<ScriptRole,string[]>>>({});
   const mountedRef = useRef(true);
   const batchStopped = useRef(false);
   const [autoPaused, setAutoPaused] = useState(false);
@@ -116,7 +117,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     }
   };
 
-  async function generate(sectionId: ScriptRole, mode: "initial" | "regenerate", extraInstructions = "") {
+  async function generate(sectionId: ScriptRole, mode: "initial" | "regenerate", extraInstructions = "", useProposedPredecessors=false) {
     const before = viewRef.current.draft;
     if (!before || busyRef.current || !mountedRef.current) return;
     if (!isScriptContextCurrent(before, context)) {
@@ -137,13 +138,19 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     busyRef.current = true;
     setBusy(`${mode}:${sectionId}`);
     setError("");
+    const continuity=(value:ScriptDraft)=>value.sections.map((item,position)=>({sectionId:item.id,
+      heading:item.heading,purpose:item.purpose,
+      text:useProposedPredecessors&&position<index?value.pending[item.id]?.text??item.text:item.text}));
+    const scriptSections=continuity(before);
     const request = { sectionId, heading: section.heading, purpose: section.purpose, mode,
       title: before.input.title, viewerQuestion: before.input.viewerQuestion,
       audience: before.input.audience, angle: before.input.angle, brandVoice: before.input.brandVoice,
       locale: before.input.locale, platform: before.input.platform, requestedDurationSeconds: secondsPerSection[platform],
-      previousSection: before.sections[index - 1]?.text.slice(-1800) ?? "",
-      nextSection: before.sections[index + 1]?.text.slice(0, 1800) ?? "",
-      currentText: section.text, extraInstructions, evidence };
+      previousSection: scriptSections[index - 1]?.text.slice(-1800) ?? "",
+      nextSection: scriptSections[index + 1]?.text.slice(0, 1800) ?? "",
+      currentText: section.text, extraInstructions, evidence,
+      scriptSections,rejectedTexts:[...new Set([...(rejectedRef.current[sectionId]??[]),
+        ...(before.pending[sectionId]?[before.pending[sectionId]!.text]:[])])].slice(-2) };
     try {
       const response = await fetch(`/api/contentgen-director/script-${mode === "initial" ? "generate" : "regenerate-section"}`, {
         method: "POST", headers: { "Content-Type": "application/json", "X-Contentgen-Director": "local-only" },
@@ -157,6 +164,10 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
       if (!isScriptContextCurrent(latest, contextRef.current) ||
           latest.input.evidenceSnapshotId !== before.input.evidenceSnapshotId) {
         setError("Research or creative context changed while AI was drafting. The outdated response was discarded; review updated sources and retry.");
+        return;
+      }
+      if(JSON.stringify(continuity(latest))!==JSON.stringify(request.scriptSections)) {
+        setError("Another script section changed while AI was writing. The outdated response was discarded; retry using the updated script.");
         return;
       }
       const candidate = { narration: result.narration ?? "", claimRefs: result.claimRefs ?? [],
@@ -210,8 +221,11 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     const current = viewRef.current.draft;
     if (!current) return;
     try {
-      if (persist(action === "accept" ? acceptScriptCandidate(current, sectionId) : discardScriptCandidate(current, sectionId)))
+      const discarded=current.pending[sectionId]?.text;
+      if (persist(action === "accept" ? acceptScriptCandidate(current, sectionId) : discardScriptCandidate(current, sectionId))) {
+        if(action==="discard"&&discarded)rejectedRef.current[sectionId]=[...(rejectedRef.current[sectionId]??[]),discarded].slice(-2);
         setReviewConfirmed(false);
+      }
     } catch (problem) {setError(problem instanceof Error ? problem.message : "Unable to apply script suggestion.");}
   };
   const approve = () => {
@@ -245,7 +259,9 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
     setBatchBusy(true);
     for (const section of current.sections) {
       if (ownerRef.current !== identity || !mountedRef.current || batchStopped.current) break;
-      await generate(section.id, "regenerate", "Create a cohesive alternative to this section while preserving the overall question, sources and adjacent narrative continuity.");
+      const previous=viewRef.current.draft?.pending[section.id];
+      await generate(section.id, "regenerate", "Create a cohesive alternative to this section while preserving the overall question, sources and narrative continuity. Earlier proposed sections are the beginning of this alternative script.",true);
+      if(viewRef.current.draft?.pending[section.id]===previous)break;
     }
     if (ownerRef.current === identity) setBatchBusy(false);
   }
