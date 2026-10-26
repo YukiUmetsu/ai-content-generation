@@ -15,6 +15,8 @@ import { generateProjectKeywords } from "./video-production/project-keyword-gene
 import { researchJobManager } from "./video-production/research-job-queue.mjs";
 import { discoveryJobManager } from "./video-production/discovery-job-queue.mjs";
 
+import { productionEvidenceStore } from "./video-production/production-evidence.mjs";
+
 const PREFIX="/api/contentgen-director";
 const cap=1_200_000;
 let researchDraftRunning=false;
@@ -92,8 +94,26 @@ export async function handleDirectorRequest(req,res,deps={}){
       const expectedMode=route==="/script-generate"?"initial":"regenerate";
       if(request?.mode!==expectedMode)throw Error("Script action does not match its endpoint.");
       const settings=await (deps.model??resolveModelForTask)("script");
-      const proposal=await (deps.script??generateScriptSection)(request,{modelSettings:settings});
-      send(res,200,{...proposal,status:expectedMode==="initial"?"generated-draft":"candidate-needs-acceptance"});
+      const controller=new AbortController();
+      const disconnected=()=>{if(!res.writableEnded)controller.abort(Error("Script editor disconnected."));};
+      res.on?.("close",disconnected);
+      try{
+        const proposal=await (deps.script??generateScriptSection)(request,{modelSettings:settings,signal:controller.signal});
+        if(!controller.signal.aborted)send(res,200,{...proposal,status:expectedMode==="initial"?"generated-draft":"candidate-needs-acceptance"});
+      }finally{res.off?.("close",disconnected);}
+    }else if(/^\/production-evidence\/production-[a-f0-9]{24}$/u.test(route)&&["GET","POST"].includes(req.method)){
+      const id=route.split("/")[2],store=deps.productionEvidence??productionEvidenceStore;
+      if(req.method==="GET"){send(res,200,{snapshot:await store.get(id)});return;}
+      const input=await readBody(req);
+      if(!input||Object.keys(input).some(key=>!["allowNetwork","locale"].includes(key)))
+        throw Error("Only source collection approval and script language are accepted.");
+      const controller=new AbortController();
+      const disconnected=()=>{if(!res.writableEnded)controller.abort(Error("Evidence collection cancelled."));};
+      res.on?.("close",disconnected);
+      try{
+        const snapshot=await store.capture(id,{...input,signal:controller.signal});
+        if(!controller.signal.aborted)send(res,200,{snapshot});
+      }finally{res.off?.("close",disconnected);}
     }else if(req.method==="POST"&&route==="/market-queries"){
       const request=await readBody(req);
       if(!request || typeof request!=="object" || Array.isArray(request) ||

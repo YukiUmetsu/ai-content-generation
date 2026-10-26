@@ -14,6 +14,7 @@ export interface PlatformAsset {
   kind: AssetKind;
   platform?: string;
   filename?: string;
+  sourceRevision?: string;
   /** Local, same-origin download for an actually existing release file. */
   downloadUrl?: string;
   durationSeconds?: number;

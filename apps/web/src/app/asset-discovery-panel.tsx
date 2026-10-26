@@ -79,7 +79,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
       await localAssets("select",{projectId,shotId:selectedShotId,provider:asset.provider,
         assetId:asset.assetId,sha256:asset.sha256});
       setSelected(await localAssets("selected?projectId="+encodeURIComponent(projectId)) as unknown as Selected);
-      setNotice("Selected for this scene. The current renderer does not place this footage automatically yet.");
+      setNotice("Scene reference saved. Imported media is not included in rendered video yet.");
     }catch(error){setNotice(error instanceof Error?error.message:"Could not select scene asset.");}
     finally{setBusy("");}
   }
@@ -154,8 +154,8 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
         {sceneApproved.map(asset=><div key={asset.provider+asset.assetType+asset.assetId+asset.sha256} className="space-y-1 border-t border-border pt-2 text-xs">
           <p className="font-medium">{asset.title} · {asset.license} · {fmt(asset.sizeBytes)}</p>
           <p className="break-all text-muted-foreground">{asset.localPath}</p>
-          {sceneSelected?.sha256===asset.sha256?<span className="inline-flex items-center gap-1 text-emerald-500"><CheckCircle2 className="size-3"/>Selected for this scene</span>:
-            <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose(asset)}>Use in scene</Button>}
+          {sceneSelected?.sha256===asset.sha256?<span className="inline-flex items-center gap-1 text-emerald-500"><CheckCircle2 className="size-3"/>Scene reference saved</span>:
+            <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose(asset)}>Save as scene reference</Button>}
         </div>)}
       </div>}
       {sceneSelected&&<div className="flex items-center justify-between gap-3 rounded-control border border-primary/30 p-3 text-xs">
@@ -163,7 +163,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
         <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void clearSelection()}>Clear selection</Button>
       </div>}
       {selected.invalidShots.includes(selectedShotId)&&<p role="status" className="rounded-control border border-destructive/40 p-3 text-xs">
-        Previously selected media is missing or modified. Choose a verified asset again before rendering.</p>}
+        The saved scene reference is missing or modified. Import the asset again to restore the reference.</p>}
       {results?.warnings?.map((warning,index)=><p className="text-xs text-muted-foreground" key={index}>{warning}</p>)}
       {notice&&<p role="status" className="rounded-control border border-border p-3 text-xs">{notice}</p>}
       <p className="text-xs text-muted-foreground">Scene selections are saved by asset hash for the future Kumiki adapter.

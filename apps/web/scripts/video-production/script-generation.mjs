@@ -1,6 +1,7 @@
 /** Provider-neutral, local-only one-section script drafting. No remote platform calls or silent persistence. */
 import { localChatEndpoint } from "./topic-generator.mjs";
 import { resolveStagePrompt } from "./prompt-profiles.mjs";
+import { withLocalInference } from "./local-inference-gate.mjs";
 import { isIP } from "node:net";
 
 const KEYS = ["sectionId", "heading", "purpose", "mode", "title", "viewerQuestion", "audience", "angle",
@@ -75,8 +76,8 @@ export function validateScriptGenerationInput(candidate) {
   return {sectionId: c.sectionId, heading: bounded(c.heading, "Section heading", 140, 3),
     purpose: bounded(c.purpose, "Section purpose", 500, 10), mode: c.mode,
     title: bounded(c.title, "Title", 200, 3), viewerQuestion: bounded(c.viewerQuestion, "Question", 400, 3),
-    audience: bounded(c.audience, "Audience", 180, 2), angle: bounded(c.angle, "Angle", 700),
-    brandVoice: bounded(c.brandVoice, "Brand voice", 1200), locale: c.locale, platform: c.platform,
+    audience: bounded(c.audience, "Audience", 180, 2), angle: bounded(c.angle, "Angle", 1200),
+    brandVoice: bounded(c.brandVoice, "Brand voice", 2000), locale: c.locale, platform: c.platform,
     requestedDurationSeconds: c.requestedDurationSeconds,
     previousSection: bounded(c.previousSection, "Previous section", 1800),
     nextSection: bounded(c.nextSection, "Next section", 1800), currentText,
@@ -93,6 +94,7 @@ function validateModelOutput(raw, input) {
   const narration = bounded(c.narration, "Generated narration", 6500, 30);
   const claimRefs = refs(c.claimRefs, "claim", new Set(input.evidence.map(e => e.claimId)));
   const sourceRefs = refs(c.sourceRefs, "source", new Set(input.evidence.map(e => e.sourceId)));
+  if (!claimRefs.length || !sourceRefs.length) throw Error("Script narration requires linked source and captured claim references.");
   if (claimRefs.some(claimId => !input.evidence.some(item =>
     item.claimId === claimId && sourceRefs.includes(item.sourceId))))
     throw Error("Every factual claim must have a linked source from the saved evidence.");
@@ -115,6 +117,10 @@ function parseModelEnvelope(text, input) {
 
 /** Only this selected section's draft text is returned. The consumer stores a proposal and requires acceptance. */
 export async function generateScriptSection(candidate, {modelSettings, transport = fetch, signal} = {}) {
+  return withLocalInference(() => draftSection(candidate, {modelSettings, transport, signal}), signal);
+}
+
+async function draftSection(candidate, {modelSettings, transport, signal}) {
   const input = validateScriptGenerationInput(candidate);
   if (!modelSettings?.model) throw Error("Choose an installed local script model in Studio Settings.");
   const endpoint = localChatEndpoint(modelSettings.endpoint);

@@ -164,7 +164,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       const raw=sessionStorage.getItem("contentgen:director-approved-script:v1:"+projectId);
       if(!raw)return;
       if(raw.length>900000)throw Error("Approved script handoff exceeds the Director browser-session limit.");
-      const handoff=JSON.parse(raw) as {productionId?:string;scriptRevision?:string;dossier?:Dossier;bundle?:Bundle};
+      const handoff=JSON.parse(raw) as {productionId?:string;scriptRevision?:string;sourcePrefix?:string;dossier?:Dossier;bundle?:Bundle};
       if(handoff.productionId!==projectId||typeof handoff.scriptRevision!=="string"||
         handoff.dossier?.kind!=="research-dossier"||handoff.bundle?.kind!=="preproduction-bundle"||
         !handoff.dossier.id||handoff.bundle.researchId!==handoff.dossier.id||
@@ -173,7 +173,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         throw Error("The approved script handoff is invalid. Return to Production and reopen the approved script.");
       // Two storyboard edits can share one script revision. Scope resumes to
       // the exact compiled visual plan so old edits never mask new visuals.
-      const sourceId="approved-script:"+handoff.scriptRevision+":"+handoff.bundle.planSha256;
+      const sourceId=(handoff.sourcePrefix??"approved-script:"+handoff.scriptRevision+":")+handoff.bundle.planSha256;
       const resumed=readDirectorSession(projectId,sourceId,handoff.bundle);
       acceptProject(resumed?.dossier??handoff.dossier,resumed?.bundle??handoff.bundle,"topic",sourceId);
       setStatus(resumed?"Resumed your saved edits from this approved script revision. Factual review and rights remain outstanding.":
@@ -561,7 +561,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         <div className={stage==="preview"?"space-y-4":"hidden"} aria-hidden={stage!=="preview"}>
           {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
-          <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle} recheckToken={recheckToken}
+          <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
+            sourceRevision={sourceArtifactId??undefined} recheckToken={recheckToken}
             productionId={projectId?.startsWith("production-")?projectId:undefined}
             selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
             onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>

@@ -78,5 +78,42 @@ describe("Production eight-step workspace",()=>{
     expect(open).toHaveBeenCalledWith("project-demo");
     expect(screen.getByRole("button",{name:"Continue to production"})).toBeInTheDocument();
   });
+  it("collects missing source evidence from Script and starts real section requests without rerunning discovery", async()=>{
+    const production={id:"production-"+"a".repeat(24),projectId:"project-demo",sessionId:"session-1",ideaId:"idea-1",
+      platforms:["youtube"],brief:{title:"Why insurance premiums change",topic:"Why insurance premiums change",angle:"Detailed evidence and narration direction. ".repeat(25),description:"",keywords:[],platforms:["youtube"]}};
+    localStorage.setItem("contentgen:production-flow:v2:project-demo",JSON.stringify({platforms:["youtube"],sessionId:"session-1",production}));
+    localStorage.setItem("contentgen:production-step:v1:"+production.id,"script");
+    const evidence=[{claimId:"claim_1",claimText:"Insurance premiums change with rebuilding costs.",sourceId:"source_1",
+      sourceUrl:"https://example.org/insurance",quote:"Insurance premiums change with rebuilding costs.",reviewStatus:"unverified"}];
+    const sources=[{id:"source_1",title:"Insurance costs",url:evidence[0].sourceUrl,provider:"captured-web",observedAt:1792929600}];
+    const calls:string[]=[];
+    const generatedSections:string[]=[];
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
+      const path=String(input);calls.push((init?.method??"GET")+" "+path);
+      if(path.includes("/production-evidence/"))return Response.json({snapshot:init?.method==="POST"?
+        {version:1,productionId:production.id,projectId:production.projectId,ideaId:production.ideaId,evidence,sources,warnings:[]}:null});
+      if(path.endsWith("/ideas"))return Response.json({ideas:[{id:"idea-1",sessionId:"session-1",runId:"run-1",title:production.brief.title,sources:[],evidence:[]}]});
+      if(path.includes("/assets/"))return Response.json({assets:[]});
+      if(path.endsWith("/script-generate")) {generatedSections.push(JSON.parse(String(init?.body)).sectionId);return Response.json({narration:"Insurance premiums reflect rebuilding costs and changes in insured risks.",claimRefs:["claim_1"],sourceRefs:["source_1"]});}
+      return Response.json({productions:[production]});
+    }));
+    render(<ProductionWorkspace {...props} catalog={{...catalog,projects:catalog.projects.map(project=>
+      ({...project,notes:"A detailed project audience description and calm editorial voice. ".repeat(25)}))}}/>);
+    const collect=await screen.findByRole("button",{name:"Collect sources and draft script"});
+    fireEvent.click(collect);
+    await waitFor(()=>expect(screen.getByText("5/5 sections")).toBeInTheDocument());
+    expect(generatedSections).toEqual(["hook","context","mechanism","practical","closing"]);
+    expect(calls.some(path=>path.startsWith("POST ")&&path.includes("/production-evidence/"))).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox",{name:/I have reviewed the factual claims/}));
+    fireEvent.click(screen.getByRole("button",{name:"Approve script & continue"}));
+    expect(await screen.findByRole("heading",{name:"Review your scenes"})).toBeInTheDocument();
+    const reviewed=await screen.findByRole("button",{name:"I reviewed this claim and its sources"});
+    expect(screen.getByText(evidence[0].quote,{selector:"blockquote"})).toBeInTheDocument();
+    fireEvent.click(reviewed);
+    expect(screen.getByText("Reviewed locally")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Produce stage"}));
+    expect(screen.getByRole("button",{name:"Open visual tools"})).toBeEnabled();
+  });
+
 });
 

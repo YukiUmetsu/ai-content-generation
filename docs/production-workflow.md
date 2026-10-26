@@ -1,15 +1,33 @@
 # Guided Production workspace
 
-Production is the primary, project-scoped entry point for making a video. It shows six stages in a slim left rail:
+Production is the project-scoped entry point for making content. The persistent navigator exposes eight stages:
 
-1. **Brief** — define the video question, audience and intended payoff.
-2. **Research** — search, capture sources, generate saved teaching units, and check references.
-3. **Storyboard** — inspect the editable explanation and issue groups; open Storyboard Planner for changes.
-4. **Visuals** — open the existing Video Director and Kumiki-backed visual tools.
-5. **Audio** — prepare narration and sound effects in the existing production tools.
-6. **Preview & Export** — inspect playback and produce the final artifact in the existing director.
+1. **Setup** — choose the project/brand and destinations.
+2. **Discover** — start or reopen a durable discovery session.
+3. **Select Idea** — compare preserved observations and prepare a production brief.
+4. **Script** — collect missing factual sources, generate sections with the configured local script model, review/edit/regenerate and approve each destination's draft.
+5. **Storyboard** — map the approved primary script into an editable outline and review its captured quotations.
+6. **Produce** — transfer the approved YouTube script, citations and outline to Director for visual editing, narration and sound.
+7. **Optimize** — prepare and review destination-specific metadata and file selections.
+8. **Export** — download actual local render files and metadata manifests.
 
-Each stage is navigable. Its status comes from saved project/storyboard or research-job state, not a timer, a guessed completion percentage or a successful page load. Stages without a canonical media artifact remain `Not started`; the new page does not pretend rendering has happened.
+## Script generation and source recovery
+
+A measured public video is evidence of an observation, not a factual source for narration. An idea can therefore be selectable while still lacking captured passages. **Collect sources and draft script** explicitly invokes `POST /api/contentgen-director/production-evidence/{productionId}`. The local adapter reads the canonical production and selected idea from Rust, attempts their public HTTPS source leads, and falls back to the existing local SearXNG search if necessary. It reuses bounded public-page capture and deterministic verbatim excerpt extraction; no model is needed to collect evidence.
+
+Successful captures are content-addressed in `data/production-evidence`, with an atomically replaced production pointer. Raw capture text stays on the server; the editor receives source records, excerpts and unverified claims. Reloading restores that evidence through GET without repeating public requests. Failure or cancellation preserves the previous snapshot. Collection never rewrites the immutable discovery result or automatically verifies facts.
+
+The Script editor generates missing sections sequentially through the existing `/script-generate` API. Regeneration uses `/script-regenerate-section`; proposals require explicit acceptance. Both select the script task's configured local model. The shared local-inference gate prevents simultaneous heavy inference. Disconnecting or stopping an editor request aborts its model request. **Stop writing** pauses automatic section generation; **Continue writing missing sections** resumes from accepted, browser-saved sections. This remains an editor request workflow, not a newly introduced durable job runner. Closing the editor preserves completed sections but stops its active request.
+
+Scripts must contain known linked claim/source references before accepting model output. Long project notes and production directions use compatible frontend/backend limits. A script approval creates an editable outline; it does not approve publication. The same captured quotations are available for explicit, reversible Storyboard claim-review receipts, even when no legacy research plan exists.
+
+## Render identity and supported outputs
+
+The current script-to-Director path renders landscape YouTube video. Other selected destinations support separate script drafts and metadata preparation; their dedicated portrait/article exporters remain unavailable. Disabled video actions show the required YouTube script/storyboard prerequisites.
+
+The render index records the imported script/outline revision alongside each production's MP4 and captions. Produce and Export completion are derived from a real MP4 matching that revision. Older/untracked files remain downloadable with a revision label, and are excluded from automatically prepared current-output asset choices. A readiness check, a page visit, or an approved script is never a completed render.
+
+Project colors currently apply to metadata and thumbnail previews; Director retains its built-in video palette. Imported footage, images and models can be approved/downloaded and saved as scene references; the generic renderer does not yet composite them. The asset action is named **Save as scene reference** so it does not promise placement in the MP4.
 
 ## Evidence is not approval
 
@@ -35,7 +53,7 @@ From **Visuals**, **Audio**, or **Preview & Export**, Production sends the selec
 
 If a storyboard has no matching stored research, Production opens manual Video Director setup rather than selecting another project's snapshot. For a matching saved storyboard, the compiler transfers **edited narration, on-screen text, and visual objectives** to a new, fingerprinted draft; the original research and plan remain unchanged. The storyboard must match the selected project, immutable research and original shot order. Claim-reference changes are rejected. When the combined visual objective contains semicolons, the bridge preserves the original shot/motion boundary if it can identify it; ambiguous multi-part edits are rejected so wording is not reassigned between fields. Camera, timing, semantic-mechanic and other storyboard-only changes are flagged for manual review and are **not silently treated as rendered media**. A changed source remains subject to evidence review; compilation never approves claims or rights.
 
-Video Director saves **applied shot edits** for the same project, research artifact, source fingerprint and storyboard revision in this browser tab's session storage, so switching between guided stages can resume those edits without changing the immutable snapshot. Unapplied form edits, manually imported projects and voice credentials are not auto-saved; use **Save project** to download durable editable JSON before closing the tab. **Start another project** discards that tab's saved session for the selected source. The generated preview is not itself a saved MP4, and a readiness check is not rendered audio. Visual, audio and export stage indicators therefore stay **Not started** until a durable project-bound media artifact is implemented; do not infer completion from a button click, a plan or a source snapshot.
+Video Director saves **applied shot edits** for the same project, research artifact, source fingerprint and storyboard revision in this browser tab's session storage, so switching between guided stages can resume those edits without changing the immutable snapshot. Unapplied form edits, manually imported projects and voice credentials are not auto-saved; use **Save project** to download durable editable JSON before closing the tab. **Start another project** discards that tab's saved session for the selected source. The generated preview is not itself a saved MP4, and a readiness check is not rendered audio. Production stage indicators only advance when the saved render index contains an actual MP4 with matching script/outline lineage; legacy artifacts without lineage remain untracked. Do not infer completion from a button click, a plan or a source snapshot.
 
 ## Resume and existing tools
 

@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScriptReviewWorkspace } from "./script-review-workspace";
@@ -112,5 +113,32 @@ describe("AI-first script review UI", () => {
     expect(after.sections).toEqual(before.sections);
     expect(Object.keys(after.pending)).toHaveLength(5);
   });
+  it("finishes all five initial sections under the application's StrictMode lifecycle", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, init: RequestInit) => {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 5);
+        init.signal?.addEventListener("abort", () => {clearTimeout(timer);reject(Error("Aborted"));}, {once:true});
+        if (init.signal?.aborted) {clearTimeout(timer);reject(Error("Aborted"));}
+      });
+      return new Response(JSON.stringify({narration: "A captured source explains how insurance changes as rebuilding expenses change.",
+        claimRefs: ["cost"], sourceRefs: ["insurance-study"]}));
+    }));
+    render(<StrictMode><ScriptReviewWorkspace {...base} /></StrictMode>);
+    await waitFor(() => expect(loadScriptDraft(base.productionId, "youtube").draft?.sections
+      .every(section => section.text.length > 0)).toBe(true));
+  });
+
+  it("stops the current request and preserves accepted text without starting later sections", async () => {
+    let cancelled=false;
+    vi.stubGlobal("fetch", vi.fn((_url, init:RequestInit)=>new Promise((_resolve,reject)=>{
+      init.signal?.addEventListener("abort",()=>{cancelled=true;reject(Error("Cancelled"));},{once:true});
+    })));
+    render(<ScriptReviewWorkspace {...base}/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Stop writing"}));
+    await waitFor(()=>expect(cancelled).toBe(true));
+    expect(await screen.findByRole("button",{name:"Continue writing missing sections"})).toBeInTheDocument();
+    expect(screen.queryByText(/Accepted sections and manual corrections remain saved/)).not.toBeInTheDocument();
+  });
+
 });
 

@@ -10,7 +10,7 @@ const safeNarration=(value,max)=>typeof value==="string"&&value.trim().length>0&
   value.length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(value);
 const flat=value=>value.replace(/\s+/gu," ").trim();
 function splitNarration(value){
-  if(value.length<=2000)return [value];
+  if(value.length<=1600)return [value];
   // Both Director's 2000-character contract and the headless exporter’s
   // stricter 1600-character per-beat contract must accept every split.
   const words=value.split(/\s+/u),chunks=[];

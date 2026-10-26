@@ -3,7 +3,7 @@
  * a new source citation, or permission to skip independent publishing gates.
  */
 import type { ClaimEvidenceIssue } from "./claim-evidence";
-import type { ResearchDraftResult } from "./researched-storyboard";
+import type { ClaimEvidenceSnapshot } from "./claim-evidence";
 
 const PREFIX="contentgen:claim-reviews:v1:";
 const PROJECT_ID=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
@@ -16,7 +16,7 @@ function storageKey(projectId:string){
 }
 
 /** Binds an attestation to the claim text, all source IDs, snapshot hashes and research artifact. */
-function fingerprintFor(issue:ClaimEvidenceIssue,draft:ResearchDraftResult):string {
+function fingerprintFor(issue:ClaimEvidenceIssue,draft:ClaimEvidenceSnapshot):string {
   if(issue.kind!=="needs_factual_review"||!draft.artifactId||
     issue.sourceRefs.length===0||!draft.dossier?.evidence||!draft.quotes)
     throw Error("Only source-linked claims with a saved research snapshot can be reviewed.");
@@ -33,12 +33,12 @@ function fingerprintFor(issue:ClaimEvidenceIssue,draft:ResearchDraftResult):stri
   return JSON.stringify([draft.artifactId,issue.claimId,issue.claimText,matches]);
 }
 export function createClaimReviewReceipt(
-  issue:ClaimEvidenceIssue,draft:ResearchDraftResult,at=new Date(),
+  issue:ClaimEvidenceIssue,draft:ClaimEvidenceSnapshot,at=new Date(),
 ):ClaimReviewReceipt {
   return {fingerprint:fingerprintFor(issue,draft),reviewedAt:at.toISOString()};
 }
 export function isClaimReviewCurrent(
-  issue:ClaimEvidenceIssue,draft:ResearchDraftResult|undefined|null,
+  issue:ClaimEvidenceIssue,draft:ClaimEvidenceSnapshot|undefined|null,
   receipt:ClaimReviewReceipt|undefined,
 ):boolean {
   if(!draft||!receipt)return false;
