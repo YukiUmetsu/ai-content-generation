@@ -6,6 +6,7 @@ import {createHash} from "node:crypto";
 import {mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile} from "node:fs/promises";
 import {basename, dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {rankShotCandidates} from "./asset-matching.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-assets",import.meta.url));
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u;
@@ -81,6 +82,7 @@ function polyCandidate(id,item,score){
     previewUrl:preview,sourceUrl:`https://polyhaven.com/a/${encodeURIComponent(id)}`,
     license:"CC0-1.0",licenseUrl:"https://polyhaven.com/license",
     creator:Object.keys(item.authors??{}).map(x=>visible(x,80)).filter(Boolean).join(", "),
+    keywords:(Array.isArray(item.tags)?item.tags:[]).slice(0,12).map(x=>visible(x,80)),
     relevance:score,rightsStatus:"needs-human-review"};
 }
 const catalogCache={at:0,value:null};
@@ -93,7 +95,7 @@ async function polyCatalog(opts){
 }
 async function pexelsCandidates(query,opts){
   if(!opts.pexelsKey)return [];
-  const url=`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=4`;
+  const url=`https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=4&orientation=${opts.destination??"landscape"}`;
   const data=await getJson(url,{...opts,headers:{Authorization:opts.pexelsKey}});
   return (Array.isArray(data.photos)?data.photos:[]).slice(0,4).flatMap(item=>{
     if(!Number.isSafeInteger(item.id)||item.id<1)return [];
@@ -103,15 +105,18 @@ async function pexelsCandidates(query,opts){
     return [{provider:"pexels",assetId:String(item.id),assetType:"photo",
       title:visible(item.alt,120)||`Pexels photo ${item.id}`,previewUrl:preview,sourceUrl:source,
       license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
-      creator:visible(item.photographer,100),relevance:1,rightsStatus:"needs-human-review"}];
+      creator:visible(item.photographer,100),
+      ...(Number.isSafeInteger(item.width)&&item.width>0&&Number.isSafeInteger(item.height)&&item.height>0?
+        {width:item.width,height:item.height}:{}),
+      relevance:1,rightsStatus:"needs-human-review"}];
   });
 }
 const VIDEO_HOSTS=["videos.pexels.com","player.vimeo.com"];
 function validPexelsVideoFiles(item){
   return (Array.isArray(item.video_files)?item.video_files:[]).filter(file=>{
     if(file?.file_type!=="video/mp4"||file.quality!=="hd"||
-      !Number.isSafeInteger(file.width)||file.width<1280||file.width>1920||
-      !Number.isSafeInteger(file.height)||file.height<720||file.height>1080)return false;
+      !Number.isSafeInteger(file.width)||!Number.isSafeInteger(file.height)||
+      Math.min(file.width,file.height)<720||Math.max(file.width,file.height)>1920)return false;
     try{providerUrl(file.link,VIDEO_HOSTS);return true;}catch{return false;}
   }).sort((a,b)=>a.width*a.height-b.width*b.height);
 }
@@ -122,15 +127,19 @@ function pexelsVideoCandidate(item){
   let source,preview;
   try{source=providerUrl(item.url,["www.pexels.com","pexels.com"]);
     preview=providerUrl(item.image,["images.pexels.com"]);}catch{return null;}
+  const slug=new URL(source).pathname.split("/").filter(Boolean).at(-1)??"";
+  const title=visible(slug.replace(/-\d+$/u,"").replace(/[-_]/gu," "),120);
+  const variant=validPexelsVideoFiles(item)[0];
   return {provider:"pexels",assetId:String(item.id),assetType:"video",
-    title:`Pexels footage ${item.id}`,previewUrl:preview,sourceUrl:source,
+    title:title&&title!=="video"?title:`Pexels footage ${item.id}`,
+    width:variant.width,height:variant.height,previewUrl:preview,sourceUrl:source,
     license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
     creator:visible(item.user?.name,100),durationSeconds:item.duration,
     relevance:1,rightsStatus:"needs-human-review"};
 }
 async function pexelsVideoCandidates(query,opts){
   if(!opts.pexelsKey)return [];
-  const url=`https://api.pexels.com/v1/videos/search?query=${encodeURIComponent(query)}&per_page=4`;
+  const url=`https://api.pexels.com/v1/videos/search?query=${encodeURIComponent(query)}&per_page=4&orientation=${opts.destination??"landscape"}`;
   const data=await getJson(url,{...opts,headers:{Authorization:opts.pexelsKey}});
   return (Array.isArray(data.videos)?data.videos:[]).slice(0,4)
     .map(pexelsVideoCandidate).filter(Boolean);
@@ -140,6 +149,13 @@ async function pexelsVideoCandidates(query,opts){
 export async function discoverShotAssets(input,opts={}){
   const needs=planSceneAssetNeeds(input?.bundle);
   if(input?.allowExternalSearch!==true)throw Error("Explicit approval is required before external asset search.");
+  const destination=input.destination??"landscape";
+  if(!["landscape","portrait"].includes(destination))throw Error("Unknown media matching destination.");
+  const durations=input.sceneDurationsSeconds??{};
+  if(!durations||typeof durations!=="object"||Array.isArray(durations)||
+    Object.entries(durations).some(([shotId,seconds])=>!needs.some(x=>x.shotId===shotId)||
+      typeof seconds!=="number"||!Number.isFinite(seconds)||seconds<=0||seconds>600))
+    throw Error("Invalid per-scene narration duration override.");
   const providers=input.providers??["polyhaven","pexels"];
   if(!Array.isArray(providers)||providers.length>2||providers.some(x=>!["polyhaven","pexels"].includes(x)))
     throw Error("Unknown asset search provider.");
@@ -162,8 +178,9 @@ export async function discoverShotAssets(input,opts={}){
       const queries=[...new Set(active.map(x=>x.query))].slice(0,12);
       for(let start=0;start<queries.length;start+=3){
         await Promise.all(queries.slice(start,start+3).map(async query=>{
+          const lookup={...opts,destination};
           const [photos,videos]=await Promise.allSettled([
-            pexelsCandidates(query,opts),pexelsVideoCandidates(query,opts)]);
+            pexelsCandidates(query,lookup),pexelsVideoCandidates(query,lookup)]);
           if(photos.status==="rejected")warnings.push(`Pexels photos ${query}: ${visible(photos.reason?.message,120)}`);
           if(videos.status==="rejected")warnings.push(`Pexels videos ${query}: ${visible(videos.reason?.message,120)}`);
           cache.set(query,[...(photos.status==="fulfilled"?photos.value:[]),
@@ -175,8 +192,14 @@ export async function discoverShotAssets(input,opts={}){
         warnings.push("Pexels requests were capped at 12 distinct subjects; use Poly Haven for remaining scenes.");
     }
   }
-  return {schemaVersion:1,kind:"contentgen-scene-asset-suggestions",providerCredit:"Assets via Poly Haven / Pexels",
-    scenes:needs.map(need=>({...need,candidates:byShot.get(need.shotId)})),warnings};
+  const sound=new Map((Array.isArray(input.bundle?.plan?.sound)?input.bundle.plan.sound:[])
+    .filter(x=>x&&typeof x.shotId==="string").map(x=>[x.shotId,x]));
+  const shots=new Map(input.bundle.plan.shots.map(shot=>[shot.id,shot]));
+  return {schemaVersion:1,kind:"contentgen-scene-asset-suggestions",destination,
+    providerCredit:"Assets via Poly Haven / Pexels",
+    scenes:needs.map(need=>({...need,...rankShotCandidates({shot:shots.get(need.shotId),
+      narration:sound.get(need.shotId),query:need.query,candidates:byShot.get(need.shotId),
+      destination,durationSeconds:durations[need.shotId]})})),warnings};
 }
 
 function leaf(value){return value&&typeof value==="object"&&typeof value.url==="string"&&Number.isSafeInteger(value.size);}
@@ -243,7 +266,9 @@ async function resolveAssetFiles(input,opts){
       assetType:"photo",title:visible(item.alt,120)||`Pexels photo ${input.assetId}`,
       sourceUrl:providerUrl(item.url,["www.pexels.com","pexels.com"]),
       license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
-      creator:visible(item.photographer,100)}};
+      creator:visible(item.photographer,100),
+      ...(Number.isSafeInteger(item.width)&&item.width>0&&Number.isSafeInteger(item.height)&&item.height>0?
+        {width:item.width,height:item.height}:{})}};
   }
   if(input.provider==="pexels"&&input.assetType==="video"){
     if(!opts.pexelsKey)throw Error("Set PEXELS_API_KEY locally before approving Pexels media.");
@@ -288,6 +313,8 @@ export async function approveAsset(input,opts={}){
       provider:input.provider,assetId,assetType:input.assetType,
       title:meta.title,sourceUrl:meta.sourceUrl,license:meta.license,licenseUrl:meta.licenseUrl,
       creator:meta.creator,...(Number.isSafeInteger(meta.durationSeconds)?{durationSeconds:meta.durationSeconds}:{}),
+      ...(Number.isSafeInteger(meta.width)&&meta.width>0&&Number.isSafeInteger(meta.height)&&meta.height>0?
+        {width:meta.width,height:meta.height}:{}),
       rightsStatus:"user-reviewed",approvedAt:(opts.now??(()=>new Date()))().toISOString(),
       sha256:primary.sha256,sizeBytes:entries.reduce((n,e)=>n+e.sizeBytes,0),files:entries};
     await writeFile(join(temp,"manifest.json"),JSON.stringify(manifest,null,2)+"\n",{flag:"wx",mode:0o600});

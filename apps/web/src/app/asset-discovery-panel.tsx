@@ -7,8 +7,10 @@ type Shot={id:string;purpose?:string;visualChange?:string;onScreenText?:string;
   visualElements?:Array<{label:string;detail:string}>};
 type Bundle={plan:{shots:Shot[]}};
 type Candidate={provider:"polyhaven"|"pexels";assetId:string;assetType:"model"|"texture"|"hdri"|"photo"|"video";
-  title:string;sourceUrl:string;previewUrl:string;license:string;licenseUrl:string;creator:string;durationSeconds?:number};
-type Scene={shotId:string;query:string;strategy:"search"|"kumiki";reason:string;candidates:Candidate[]};
+  title:string;sourceUrl:string;previewUrl:string;license:string;licenseUrl:string;creator:string;durationSeconds?:number;
+  width?:number;height?:number;match?:{grade:"strong"|"review"|"weak";reasons:string[];score:number}};
+type Scene={shotId:string;query:string;strategy:"search"|"kumiki";reason:string;candidates:Candidate[];
+  recommendedAssetKey:string|null;shotDuration:{seconds:number;source:"measured"|"estimated"}};
 type Results={scenes:Scene[];warnings:string[]};
 type Approved={shotId:string;assetId:string;provider:string;assetType:string;title:string;license:string;
   sourceUrl:string;localPath:string;sha256:string;sizeBytes:number;durationSeconds?:number};
@@ -28,14 +30,15 @@ const key=(asset:Candidate)=>`${asset.provider}:${asset.assetType}:${asset.asset
 
 /** Optional per-scene visual ingredients; does not alter the approved storyboard or renderer. */
 export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bundle;projectId:string;selectedShotId:string}){
-  const [search,setSearch]=useState<{bundle:Bundle;data:Results}|null>(null);
+  const [destination,setDestination]=useState<"landscape"|"portrait">("landscape");
+  const [search,setSearch]=useState<{bundle:Bundle;destination:"landscape"|"portrait";data:Results}|null>(null);
   const [approved,setApproved]=useState<Approved[]>([]);
   const [selected,setSelected]=useState<Selected>({selections:[],invalidShots:[]});
   const [pending,setPending]=useState<{bundle:Bundle;shotId:string;asset:Candidate}|null>(null);
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
-  const results=search?.bundle===bundle?search.data:null;
+  const results=search?.bundle===bundle&&search.destination===destination?search.data:null;
   const review=pending?.bundle===bundle&&pending.shotId===selectedShotId?pending.asset:null;
   const scene=results?.scenes.find(x=>x.shotId===selectedShotId);
   const sceneApproved=approved.filter(x=>x.shotId===selectedShotId);
@@ -54,9 +57,9 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
     setBusy("search");setNotice("");setPending(null);
     try{
       // This button is the user-facing opt-in to public-provider requests.
-      const result=await localAssets("suggest",{bundle,providers:["polyhaven","pexels"],allowExternalSearch:true});
-      setSearch({bundle,data:result as unknown as Results});
-      setNotice("Suggestions only—nothing was downloaded. Choose and approve each useful asset.");
+      const result=await localAssets("suggest",{bundle,destination,providers:["polyhaven","pexels"],allowExternalSearch:true});
+      setSearch({bundle,destination,data:result as unknown as Results});
+      setNotice("Ranked metadata suggestions only—no downloads or scene selections were made. Review the previews before importing.");
     }catch(error){setNotice(error instanceof Error?error.message:"Asset search failed.");}
     finally{setBusy("");}
   }
@@ -98,6 +101,12 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
       <p className="text-muted-foreground">Find relevant video footage, photos, 3D models and materials for each storyboard scene.
         Search uses public Poly Haven and optional <a href="https://www.pexels.com/" className="underline" target="_blank" rel="noopener noreferrer">Pexels</a> metadata; nothing is imported without your approval.</p>
       <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1" role="group" aria-label="Target video orientation">
+          <Button variant={destination==="landscape"?"primary":"outline"} size="sm" disabled={!!busy}
+            onClick={()=>{setDestination("landscape");setPending(null);}}>Landscape · 16:9</Button>
+          <Button variant={destination==="portrait"?"primary":"outline"} size="sm" disabled={!!busy}
+            onClick={()=>{setDestination("portrait");setPending(null);}}>Portrait · 9:16</Button>
+        </div>
         <Button variant="outline" disabled={!!busy} onClick={()=>void discover()}>
           <Search className="mr-2 size-4"/>{busy==="search"?"Searching public asset sites…":"Find assets for all scenes"}
         </Button>
@@ -106,7 +115,11 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
       <div className="rounded-control border border-border bg-surface-subtle p-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected scene · {selectedShotId}</p>
         {scene?.strategy==="kumiki"?<p className="mt-2 text-sm">{scene.reason}</p>:
-          scene?<p className="mt-2 text-sm">Matching physical subject: <strong>{scene.query}</strong> · {scene.candidates.length} suggestions</p>:
+          scene?<div className="mt-2 space-y-1 text-sm">
+            <p>Matching physical subject: <strong>{scene.query}</strong> · {scene.candidates.length} suggestions</p>
+            <p className="text-xs text-muted-foreground">{scene.shotDuration.source==="measured"?"Measured":"Estimated"} narration shot: {scene.shotDuration.seconds}s. Footage duration is checked against this; final timing still comes from audio.</p>
+            {!scene.recommendedAssetKey&&scene.candidates.length>0&&<p className="text-xs text-muted-foreground">No confident metadata match. Inspect footage before deciding.</p>}
+          </div>:
           <p className="mt-2 text-sm text-muted-foreground">Run discovery to see candidates tied to this scene.</p>}
       </div>
       {scene?.candidates.length===0&&scene.strategy==="search"&&
@@ -114,13 +127,22 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
       {scene&&scene.candidates.length>0&&<div className="grid gap-3 md:grid-cols-2">
         {scene.candidates.map(asset=>{
           const existing=sceneApproved.some(x=>x.assetId===asset.assetId&&x.provider===asset.provider&&x.assetType===asset.assetType);
-          return <div key={key(asset)} className="min-w-0 overflow-hidden rounded-control border border-border bg-surface">
+          const top=scene.recommendedAssetKey===key(asset);
+          return <div key={key(asset)} className={`min-w-0 overflow-hidden rounded-control border bg-surface ${top?"border-primary/60":"border-border"}`}>
             {asset.previewUrl&&<img src={asset.previewUrl} alt={asset.title} loading="lazy"
               referrerPolicy="no-referrer" className="h-36 w-full bg-surface-subtle object-cover"/>}
             <div className="space-y-2 p-3">
               <p className="font-semibold">{asset.title}</p>
+              {top&&<p className="text-xs font-semibold text-primary">Top metadata suggestion · preview required</p>}
               <p className="text-xs text-muted-foreground">{asset.assetType}{asset.durationSeconds?` · ${asset.durationSeconds}s`:""} · {asset.provider==="polyhaven"?"Poly Haven":"Pexels"}
                 {asset.creator?` · ${asset.creator}`:""}</p>
+              {asset.match&&<details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">{asset.match.grade==="strong"?"Promising metadata match":
+                  asset.match.grade==="review"?"Needs suitability review":"Weak metadata match"} · Why?</summary>
+                <ul className="mt-1 list-disc space-y-1 pl-4">
+                  {asset.match.reasons.map((reason,index)=><li key={index}>{reason}</li>)}
+                </ul>
+              </details>}
               <div className="flex flex-wrap gap-3 text-xs">
                 <a href={asset.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">View original <ExternalLink className="inline size-3"/></a>
                 <a href={asset.licenseUrl} target="_blank" rel="noopener noreferrer" className="underline">{asset.license} terms</a>
