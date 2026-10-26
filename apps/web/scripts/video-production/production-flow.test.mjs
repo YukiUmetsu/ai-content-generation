@@ -20,14 +20,21 @@ test('a video-only discovery idea can collect evidence and produce five sourced 
     loadIdeas:async()=>[{id:production.ideaId,sources:[]}],search:async()=>({results:[{title:'Insurance guide',url:'https://example.org/insurance'}]}),
     fetchPage:async()=>({type:'text/plain',html:'Insurance premiums change when rebuilding costs and insured risks change. Insurance premiums also reflect the coverage and policy terms selected by the homeowner. '.repeat(2)})});
   const snapshot=await store.capture(production.id,{allowNetwork:true,locale:'en'});
+  const requestedSections=[];
   const model=createServer(async(req,res)=>{
     let raw='';for await(const chunk of req)raw+=chunk;
     const envelope=JSON.parse(raw),input=JSON.parse(envelope.messages[1].content);
     assert.equal(input.platform,'youtube');
+    requestedSections.push(input.sectionId);
     const narration=`${input.heading}: Insurance premiums change when rebuilding costs and insured risks change. The homeowner can compare coverage and policy terms to understand what changed.`;
     res.writeHead(200,{'Content-Type':'application/json'});
-    res.end(JSON.stringify({choices:[{message:{content:JSON.stringify({narration,
-      claimRefs:[snapshot.evidence[0].claimId],sourceRefs:[snapshot.evidence[0].sourceId]})}}]}));
+    // Exercise a plausible rejected response, corrective retry, and metadata
+    // emitted by a local model through the actual HTTP adapter.
+    const answer={narration,claimRefs:[snapshot.evidence[0].claimId],sourceRefs:[snapshot.evidence[0].sourceId],
+      sectionId:input.sectionId,heading:input.heading};
+    if(requestedSections.length===1)answer.narration=[narration];
+    else if(requestedSections.length===2)assert.match(envelope.messages[0].content,/FORMAT REPAIR/);
+    res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(answer)}}]}));
   });
   await new Promise(resolve=>model.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>{model.closeAllConnections();model.close(resolve);}));
@@ -52,6 +59,7 @@ test('a video-only discovery idea can collect evidence and produce five sourced 
   const {dossier,bundle}=compileApprovedScriptDirector({productionId:production.id,script,evidence:snapshot.evidence,sources:snapshot.sources});
   const {job}=compilePreproductionRenderJob(dossier,bundle);
   assert.equal(job.beats.length,5);
+  assert.deepEqual(requestedSections,['hook','hook','context','mechanism','practical','closing']);
   assert.deepEqual(job.beats.map(beat=>beat.narration),sections.map(section=>section.text));
   assert.equal(dossier.review.status,'draft');
 });
