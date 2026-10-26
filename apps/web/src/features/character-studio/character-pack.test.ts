@@ -103,4 +103,48 @@ describe("character ZIP package inspector", () => {
     await expect(inspectCharacterZip(makeZip({ def: missing }))).rejects.toThrow(/path|layers/i);
     await expect(inspectCharacterZip(makeZip({ def: { ...definition(), schemaVersion: 999 } }))).rejects.toThrow(/version|schema/i);
   });
+
+  it("does not accept inherited JavaScript prototype names as actual ZIP assets", async () => {
+    for (const inherited of ["constructor", "toString", "__proto__"]) {
+      const missing = definition();
+      missing.parts[0].asset = inherited;
+      await expect(inspectCharacterZip(makeZip({ def: missing }))).rejects.toThrow(/missing asset/i);
+      const variant = definition();
+      variant.parts[0] = { ...variant.parts[0], variants: { smile: inherited } } as typeof variant.parts[0];
+      await expect(inspectCharacterZip(makeZip({ def: variant }))).rejects.toThrow(/no asset/i);
+    }
+  });
+
+  it("rejects pose and rest transforms that reference missing parts or contain invalid coordinates", async () => {
+    const extraPart = { ...definition(), poses: { idle: { "missing-arm": { rotation: 20 } } } };
+    await expect(inspectCharacterZip(makeZip({ def: extraPart }))).rejects.toThrow(/pose.*unknown part/i);
+    const badPose = { ...definition(), poses: { idle: { body: { x: "far-right" } } } };
+    await expect(inspectCharacterZip(makeZip({ def: badPose }))).rejects.toThrow(/pose.*finite/i);
+    const badRest = { ...definition(), parts: [{ ...definition().parts[0], rest: { rotation: "a lot" } }] };
+    await expect(inspectCharacterZip(makeZip({ def: badRest }))).rejects.toThrow(/rest.*finite/i);
+  });
+
+  it("rejects anchors attached to undeclared parts", async () => {
+    const invalid = { ...definition(), anchors: { hand: { part: "missing-hand", at: { x: 10, y: 20 } } } };
+    await expect(inspectCharacterZip(makeZip({ def: invalid }))).rejects.toThrow(/anchor.*unknown part/i);
+  });
+
+  it("rejects property names that could change renderer object prototypes", async () => {
+    for (const reserved of ["__proto__", "constructor", "prototype"]) {
+      const invalid = { ...definition(), parts: [{ ...definition().parts[0], id: reserved }] };
+      await expect(inspectCharacterZip(makeZip({ def: invalid }))).rejects.toThrow(/reserved/i);
+    }
+  });
+
+  it("accepts bounded rest transforms and anchors for valid articulated parts", async () => {
+    const valid = {
+      ...definition(),
+      parts: [{ ...definition().parts[0], rest: { x: 4, rotation: -10 }, variants: { neutral: "torso" } }],
+      poses: { idle: { body: { scaleX: 1, scaleY: 1 } } },
+      anchors: { heldProp: { part: "body", at: { x: 6, y: 2 } } },
+    };
+    const inspected = await inspectCharacterZip(makeZip({ def: valid }));
+    expect(inspected.parts[0].rest?.rotation).toBe(-10);
+    expect(inspected.definition.poses.idle.body.scaleX).toBe(1);
+  });
 });

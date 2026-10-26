@@ -8,6 +8,10 @@ inspector and can be reopened for another structural check or downloaded as
 the exact original ZIP after a restart.
 Saving is optional; nothing is sent to the local server until Save is selected.
 Temporary sprite URLs are discarded when the file changes or the panel closes.
+The report includes a **rig metadata inventory** of declared named poses,
+animation actions, expression presets, image variants, speech mapping, anchors
+and rest transforms. This is a checklist of authored fields, **not** evidence
+that the actions play correctly or the rig is ready to publish.
 
 Drafts are **unverified and immutable**. They are not publishing approvals,
 character registrations for rendering, lip-sync previews, voice grants or
@@ -111,7 +115,9 @@ the rig or art creates a new explicit `revision`.
 
 The browser inspector rejects traversal/absolute paths, overlapping or duplicate
 entries, ZIP64/multipart archives, symlinks, encrypted entries, broken sizes,
-bad CRC-32 and mismatched image paths. If a `sha256` is present on an image
+bad CRC-32, missing/non-owned asset references, invalid pose transforms,
+unknown pose parts, invalid rest transforms, broken anchors and mismatched
+image paths. If a `sha256` is present on an image
 asset, it verifies the hash against the unpacked bytes. It does not execute
 archive content or extract to the filesystem. Saving uploads the original ZIP
 to the local Rust server, where it is stored inert without unpacking. The

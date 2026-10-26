@@ -30,6 +30,7 @@ export interface CharacterPackPart {
   asset: string;
   variants?: Record<string, string>;
   pivot: { x: number; y: number };
+  rest?: Partial<{ x: number; y: number; rotation: number; scaleX: number; scaleY: number }>;
   z: number;
 }
 
@@ -43,7 +44,7 @@ export interface CharacterPackDefinition {
   palette: Record<string, string>;
   assets: Record<string, CharacterPackAsset>;
   parts: CharacterPackPart[];
-  poses: Record<string, unknown>;
+  poses: Record<string, Record<string, Partial<{ x: number; y: number; rotation: number; scaleX: number; scaleY: number }>>>;
   basePose: string;
   capabilities: string[];
   /** Other Kumiki definition fields are preserved in the parsed JSON but not trusted as validated. */
@@ -72,10 +73,25 @@ const str = (value: unknown, what: string, max = 200): string => {
   if (typeof value !== "string" || !value.trim() || value.length > max || hasControlCharacter(value)) reject(`${what} must be readable text (1–${max} characters).`);
   return value as string;
 };
+const reservedKeys = new Set(["__proto__", "prototype", "constructor"]);
+function safeKey(value: unknown, what: string, max = 80): string {
+  const name = str(value, what, max);
+  if (reservedKeys.has(name)) reject(`${what} uses a reserved object property name.`);
+  return name;
+}
 const finite = (value: unknown, what: string, lower = -100_000, upper = 100_000): number => {
   if (typeof value !== "number" || !Number.isFinite(value) || value < lower || value > upper) reject(`${what} must be a finite number from ${lower} to ${upper}.`);
   return value as number;
 };
+const owns = (source: Record<string, unknown>, key: string) => Object.prototype.hasOwnProperty.call(source, key);
+const poseFields = new Set(["x", "y", "rotation", "scaleX", "scaleY"]);
+function validatePoseDelta(value: unknown, name: string): void {
+  const pose = object(value);
+  for (const [key, number] of Object.entries(pose)) {
+    if (!poseFields.has(key)) reject(`${name} has unsupported transform field ${key}.`);
+    finite(number, `${name} ${key}`);
+  }
+}
 const isSafePath = (path: string): boolean => path.length <= 240 && path.length > 0 &&
   !/^[/.]|[\\:]/.test(path) && !hasControlCharacter(path) &&
   path.split("/").every(segment => !!segment && segment !== "." && segment !== "..");
@@ -188,7 +204,7 @@ async function inflateEntry(bytes: Uint8Array, entry: ZipEntry): Promise<Uint8Ar
 function validateManifest(value: unknown): CharacterPackDefinition {
   const doc = object(value);
   if (doc.schemaVersion !== 1) reject("Unsupported character schema version. Expected 1.");
-  str(doc.characterId, "characterId", 80);
+  safeKey(doc.characterId, "characterId", 80);
   str(doc.revision, "revision", 64);
   if (doc.mode !== "sprite-2d" && doc.mode !== "puppet-2.5d") reject("mode must be sprite-2d or puppet-2.5d.");
   const design = object(doc.design);
@@ -196,12 +212,12 @@ function validateManifest(value: unknown): CharacterPackDefinition {
   finite(design.height, "canvas height", 1, 8192);
   const channelValues = doc.channels;
   if (!Array.isArray(channelValues) || !channelValues.length || channelValues.length > 32) reject("Declare 1–32 animation channels.");
-  const channels = new Set<string>((channelValues as unknown[]).map(value => str(value, "channel", 64)));
+  const channels = new Set<string>((channelValues as unknown[]).map(value => safeKey(value, "channel", 64)));
   if (channels.size !== (channelValues as unknown[]).length) reject("Animation channels must be unique.");
   const assets = object(doc.assets);
   if (!Object.keys(assets).length || Object.keys(assets).length > 128) reject("Declare 1–128 sprite assets.");
   for (const [key, raw] of Object.entries(assets)) {
-    str(key, "asset key", 80);
+    safeKey(key, "asset key", 80);
     const asset = object(raw);
     if (asset.kind !== "image") reject(`Asset ${key} is not an image; this inspector currently supports raster layers only.`);
     const uri = str(asset.uri, `${key} file path`, 240);
@@ -219,19 +235,20 @@ function validateManifest(value: unknown): CharacterPackDefinition {
   if (!Array.isArray(partValues) || !partValues.length || partValues.length > 128) reject("Declare 1–128 character parts.");
   const parts = new Map<string, CharacterPackPart>();
   for (const raw of partValues as unknown[]) {
-    const part = object(raw), id = str(part.id, "part id", 80);
+    const part = object(raw), id = safeKey(part.id, "part id", 80);
     if (parts.has(id)) reject(`Duplicate part: ${id}`);
     if (!channels.has(part.channel as string)) reject(`Part ${id} uses an undeclared channel.`);
-    if (!(part.asset as string in assets)) reject(`Part ${id} refers to a missing asset.`);
+    if (typeof part.asset !== "string" || !owns(assets, part.asset)) reject(`Part ${id} refers to a missing asset.`);
     const pivot = object(part.pivot);
     finite(pivot.x, `${id} pivot x`);
     finite(pivot.y, `${id} pivot y`);
+    if (part.rest !== undefined) validatePoseDelta(part.rest, `${id} rest`);
     finite(part.z, `${id} z-index`, -1000, 1000);
-    if (part.parent !== undefined) str(part.parent, `${id} parent`, 80);
+    if (part.parent !== undefined) safeKey(part.parent, `${id} parent`, 80);
     if (part.variants !== undefined) {
       for (const [variant, asset] of Object.entries(object(part.variants))) {
-        str(variant, `${id} variant`, 80);
-        if (typeof asset !== "string" || !(asset in assets)) reject(`Variant ${variant} on ${id} has no asset.`);
+        safeKey(variant, `${id} variant`, 80);
+        if (typeof asset !== "string" || !owns(assets, asset)) reject(`Variant ${variant} on ${id} has no asset.`);
       }
     }
     parts.set(id, part as unknown as CharacterPackPart);
@@ -246,7 +263,42 @@ function validateManifest(value: unknown): CharacterPackDefinition {
     }
   }
   const poses = object(doc.poses);
-  if (!Object.prototype.hasOwnProperty.call(poses, str(doc.basePose, "basePose", 80))) reject("basePose must name a declared pose.");
+  if (Object.keys(poses).length > 64) reject("Character pack declares too many poses (64 max).");
+  for (const [name, rawPose] of Object.entries(poses)) {
+    safeKey(name, "pose name", 80);
+    const pose = object(rawPose);
+    for (const [id, transform] of Object.entries(pose)) {
+      if (!parts.has(id)) reject(`Pose ${name} refers to unknown part ${id}.`);
+      validatePoseDelta(transform, `Pose ${name} on ${id}`);
+    }
+  }
+  if (!Object.prototype.hasOwnProperty.call(poses, safeKey(doc.basePose, "basePose", 80))) reject("basePose must name a declared pose.");
+  if (doc.anchors !== undefined) {
+    const anchors = object(doc.anchors);
+    if (Object.keys(anchors).length > 128) reject("Character pack declares too many anchors (128 max).");
+    for (const [name, value] of Object.entries(anchors)) {
+      safeKey(name, "anchor name", 80);
+      const anchor = object(value), at = object(anchor.at);
+      finite(at.x, `Anchor ${name} x`);
+      finite(at.y, `Anchor ${name} y`);
+      if (anchor.part !== undefined && (typeof anchor.part !== "string" || !parts.has(anchor.part))) {
+        reject(`Anchor ${name} refers to unknown part.`);
+      }
+    }
+  }
+  for (const field of ["actions", "skins", "params"] as const) {
+    if (doc[field] === undefined) continue;
+    const declarations = object(doc[field]);
+    if (Object.keys(declarations).length > 128) reject(`${field} exceeds 128 declarations.`);
+    for (const name of Object.keys(declarations)) safeKey(name, `${field} key`);
+  }
+  if (doc.expressions !== undefined) {
+    const expressions = object(doc.expressions);
+    if (expressions.sets !== undefined) {
+      const sets = object(expressions.sets);
+      for (const name of Object.keys(sets)) safeKey(name, "expression key");
+    }
+  }
   object(doc.palette);
   const caps = doc.capabilities;
   if (!Array.isArray(caps)) reject("capabilities must be an array.");

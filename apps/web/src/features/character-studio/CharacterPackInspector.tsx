@@ -7,6 +7,7 @@ import { CHARACTER_PACK_LIMITS, inspectCharacterZip } from "./character-pack";
 import type { InspectedCharacterPack } from "./character-pack";
 import { characterDraftArchiveUrl, listCharacterDrafts, loadCharacterDraft, saveCharacterDraft } from "./character-drafts-api";
 import type { CharacterDraft } from "./character-drafts-api";
+import { summarizeRigMetadata } from "./rig-metadata";
 import type { Locale } from "@/features/registry";
 
 export function CharacterPackInspector({ locale, projectId }: { locale: Locale; projectId: string }) {
@@ -27,6 +28,7 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const draftsRun = useRef(0);
   const savingRef = useRef(false);
   const pack = preview?.pack;
+  const rig = pack ? summarizeRigMetadata(pack.definition) : null;
   const urls = preview?.urls;
   const draftsLoading = loadedProjectId !== projectId;
 
@@ -187,6 +189,51 @@ export function CharacterPackInspector({ locale, projectId }: { locale: Locale; 
             "Structural check only. Motion, voices, Kumiki rendering and rights are not approved. Saved drafts cannot be used for publishing yet."}
         </div>
       </Surface>
+      {rig && <Surface variant="outline" className="gap-4 p-5" aria-label="Rig metadata inventory">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-foreground">{ja ? "リグ設定の概要（動作未検証）" : "Rig metadata, not playback-tested"}</h3>
+            <p className="mt-1 text-xs text-muted-foreground">{ja
+              ? "ZIPに記述された機能のみ表示します。Kumikiでの動作・画質の確認は未実施です。"
+              : "Declarations in the ZIP only. Animation quality and Kumiki compatibility have not been tested."}</p>
+          </div>
+          <span className="rounded-full border border-warning/40 px-3 py-1 text-xs text-muted-foreground">{ja ? "設定情報のみ" : "Metadata only"}</span>
+        </div>
+        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-lg bg-surface-subtle p-3">
+            <dt className="text-xs font-medium text-muted-foreground">{ja ? "アクション・移動" : "Actions & movement"}</dt>
+            <dd className="mt-1 text-lg font-semibold tabular-nums">{rig.actions.length}</dd>
+            <dd className="mt-1 break-words text-xs text-muted-foreground">{rig.actions.length
+              ? rig.actions.slice(0, 6).join(" · ") + (rig.actions.length > 6 ? " …" : "")
+              : (ja ? "ジェスチャーアクション未定義" : "No gesture actions declared")}</dd>
+          </div>
+          <div className="rounded-lg bg-surface-subtle p-3">
+            <dt className="text-xs font-medium text-muted-foreground">{ja ? "ポーズ" : "Named poses"}</dt>
+            <dd className="mt-1 text-lg font-semibold tabular-nums">{rig.poses.length}</dd>
+            <dd className="mt-1 break-words text-xs text-muted-foreground">{rig.poses.slice(0, 6).join(" · ")}</dd>
+          </div>
+          <div className="rounded-lg bg-surface-subtle p-3">
+            <dt className="text-xs font-medium text-muted-foreground">{ja ? "差分画像" : "Artwork variants"}</dt>
+            <dd className="mt-1 text-lg font-semibold tabular-nums">{rig.variants}</dd>
+            <dd className="mt-1 text-xs text-muted-foreground">{ja ? "目・口・表情などの差し替え" : "Eye, mouth, face or outfit swaps"}</dd>
+          </div>
+          <div className="rounded-lg bg-surface-subtle p-3">
+            <dt className="text-xs font-medium text-muted-foreground">{ja ? "音声・口の設定" : "Speech / visemes"}</dt>
+            <dd className="mt-1 text-sm font-semibold">{rig.speechDeclared ? (ja ? "設定あり" : "Declared") : (ja ? "設定なし" : "Not declared")}</dd>
+            <dd className="mt-1 text-xs text-muted-foreground">{ja ? "音声合成とリップシンクは別途検証" : "Neither voice nor lip-sync verified"}</dd>
+          </div>
+          <div className="rounded-lg bg-surface-subtle p-3">
+            <dt className="text-xs font-medium text-muted-foreground">{ja ? "表情プリセット" : "Expression presets"}</dt>
+            <dd className="mt-1 text-lg font-semibold tabular-nums">{rig.expressions.length}</dd>
+            <dd className="mt-1 break-words text-xs text-muted-foreground">{rig.expressions.length ? rig.expressions.slice(0, 6).join(" · ") : (ja ? "未定義" : "Not declared")}</dd>
+          </div>
+          <div className="rounded-lg bg-surface-subtle p-3">
+            <dt className="text-xs font-medium text-muted-foreground">{ja ? "アンカー・初期配置" : "Anchors & rest placement"}</dt>
+            <dd className="mt-1 text-lg font-semibold tabular-nums">{rig.anchors} <span className="text-xs font-normal text-muted-foreground">{ja ? "アンカー" : "anchors"}</span></dd>
+            <dd className="mt-1 text-xs text-muted-foreground">{ja ? `${rig.restTransforms} パーツに初期配置あり` : `${rig.restTransforms} parts declare rest transforms`}</dd>
+          </div>
+        </dl>
+      </Surface>}
       <Surface variant="outline" className="p-5">
         <h3 className="mb-3 font-semibold text-foreground">{ja ? "レイヤー一覧" : "Rig layers"}</h3>
         <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

@@ -50,6 +50,8 @@ describe("CharacterPackInspector", () => {
     fireEvent.change(screen.getByLabelText("Character ZIP"), { target: { files: [new File(["zip"], "pip.zip")] } });
     expect(await screen.findByText("Structure checked")).toBeInTheDocument();
     expect(screen.getByText(/cannot be used for publishing yet/)).toBeInTheDocument();
+    expect(screen.getByText("Rig metadata, not playback-tested")).toBeInTheDocument();
+    expect(screen.getByText("No gesture actions declared")).toBeInTheDocument();
     expect(screen.getByAltText("body sprite layer")).toHaveAttribute("src", "blob:local-character");
     expect(inspectCharacterZip).toHaveBeenCalledTimes(1);
     unmount();
