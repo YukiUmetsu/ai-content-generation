@@ -30,7 +30,7 @@ type ViewState = { draft: ScriptDraft | null; warning: string | null };
 const platforms: Record<ScriptPlatform, string> = { youtube: "YouTube", youtube_shorts: "YouTube Shorts", tiktok: "TikTok",
   instagram: "Instagram", facebook: "Facebook", blog: "Blog", website: "Website" };
 const secondsPerSection: Record<ScriptPlatform, number> = { youtube: 106, youtube_shorts: 18, tiktok: 27,
-  instagram: 18, facebook: 28, blog: 110, website: 110 };
+  instagram: 18, facebook: 28, blog: 235, website: 110 };
 const textField = "w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
 const secondary = "rounded-control border border-border bg-surface px-3 py-2 text-sm font-medium hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50";
 
@@ -207,6 +207,10 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
   const cite = (claimRef: string) => evidence.find(item => item.claimId === claimRef);
   const generated = draft?.sections.filter(section => section.text).length ?? 0;
   const seconds = draft?.sections.reduce((total, section) => total + estimatedNarrationSeconds(section.text, locale), 0) ?? 0;
+  const articleWords = draft?.sections.reduce((total, section) => total + section.text.trim().split(/\s+/u).filter(Boolean).length, 0) ?? 0;
+  const articleReadMinutes = locale === "ja"
+    ? Math.max(1, Math.ceil((draft?.sections.reduce((total, section) => total + section.text.length, 0) ?? 0) / 500))
+    : Math.max(1, Math.ceil(articleWords / 200));
   const unreviewed = draft?.sections.some(section => section.claimRefs.some(id =>
     evidence.some(item => item.claimId === id && item.reviewStatus !== "verified" && item.reviewStatus !== "illustrative"))) ?? false;
   const staleContext = Boolean(draft && !isScriptContextCurrent(draft, context));
@@ -276,7 +280,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
         <p className="text-sm text-muted-foreground">Generate a platform-specific draft, then review, edit or improve individual sections. YouTube starts automatically; other platforms start when you request them.</p>
       </div>
       <div className="rounded-control border border-border bg-surface-subtle px-3 py-2 text-xs text-muted-foreground">
-        <span className="font-semibold text-foreground">{generated}/5 sections</span> · <Clock3 className="inline size-3" /> Estimated {duration(seconds)}
+        <span className="font-semibold text-foreground">{generated}/5 sections</span> · <Clock3 className="inline size-3" /> {platform === "blog" ? `${locale === "ja" ? "Japanese article" : `${articleWords.toLocaleString()} words`} · about ${articleReadMinutes} min read` : `Estimated ${duration(seconds)}`}
       </div>
     </div>}>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Platform script versions">
@@ -338,7 +342,7 @@ function ScriptReviewEditor({ productionId, projectId, allowed, platform, onSele
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="font-medium">SECTION {index + 1}</span>
-              <span>·</span><span>Estimated {duration(estimatedNarrationSeconds(section.text, locale))}</span>
+              <span>·</span><span>{platform === "blog" ? `${section.text.trim().split(/\s+/u).filter(Boolean).length} words` : `Estimated ${duration(estimatedNarrationSeconds(section.text, locale))}`}</span>
               {section.revision > 0 && <span>· Revision {section.revision}</span>}
             </div>
             <h3 className="text-lg font-semibold">{section.heading}</h3>

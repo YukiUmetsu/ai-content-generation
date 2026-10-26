@@ -18,6 +18,18 @@ export interface VideoExportManifest {
   fps:VideoFrameRate;
   /** Platform layout recipe; the producer must author at this size. */
   preset?:VideoPlatformPresetId;
+  /** Media the frames depend on. Checked before the first frame: reachable, rights reference present and, for video,
+   * decodable in the export browser. Optional; a manifest without assets is not checked.
+   */
+  assets?:readonly VideoExportAsset[];
+}
+export interface VideoExportAsset {
+  id:string;
+  kind:"video"|"image";
+  /** Same-origin URL, or absolute URL the preview can load. */
+  url:string;
+  /** Rights or licence reference for the asset. Required before export. */
+  licenseRef?:string;
 }
 export interface KumikiVideoExportApi {
   manifest:VideoExportManifest;

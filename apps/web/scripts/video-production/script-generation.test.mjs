@@ -60,6 +60,18 @@ describe("bounded source-linked script AI", () => {
     assert.match(instruction, /mechanism/);
   });
 
+  it("asks the blog model for substantial editorial prose without padding or fabricated facts", async () => {
+    const blog = { ...input, platform: "blog", requestedDurationSeconds: 235 };
+    let prompt = "";
+    await generateScriptSection(blog, { modelSettings: model, transport: async (_, options) => {
+      prompt = JSON.parse(options.body).messages[0].content;
+      return response();
+    } });
+    assert.match(prompt, /2,500–3,000 useful English words/u);
+    assert.match(prompt, /If sources do not support that length, write less/u);
+    assert.match(prompt, /not narration/u);
+  });
+
   it("rejects invented numerical claims and unlinked source references", async () => {
     await assert.rejects(() => generateScriptSection(input, {modelSettings: model,
       transport: async () => response({narration: "Premiums rise by 91% every year for everyone."})}), /unsupported numerical/i);
