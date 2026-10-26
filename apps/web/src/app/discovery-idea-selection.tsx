@@ -30,7 +30,7 @@ function safeSourceUrl(value: string): string | null {
 /** No cross-format or legacy editorial score may be used as viral potential. */
 function viralScore(idea: DiscoverySessionIdea, format: IdeaVideoFormat): number | null {
   const potential = idea.viralPotential;
-  return potential?.format === format && potential.scoreVersion === "viral-potential-v1"
+  return potential?.format === format && ["viral-potential-v1","viral-potential-v2"].includes(potential.scoreVersion)
     ? potential.score : null;
 }
 
@@ -68,6 +68,7 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [openReadiness, setOpenReadiness] = useState<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -363,13 +364,33 @@ function SessionIdeaSelection({ projectId, sessionId, locale, onStartProduction 
           {idea.premise && <p className="mt-2 text-sm leading-6 text-muted-foreground">{idea.premise}</p>}
         </div>
         <ViralScore potential={idea.viralPotential} assessment={idea.marketAssessment}
-          googleTrends={idea.googleTrends} format={compareFormat} locale={locale} />
+          googleTrends={idea.googleTrends} googleAds={idea.googleAds} format={compareFormat} locale={locale} />
       </div>
       {idea.whyNow && <p className="mt-3 text-xs text-muted-foreground">
         <span className="font-medium">{tr(locale, "Why consider", "選定理由")}:</span> {idea.whyNow}
       </p>}
+      {idea.scoreVersion === "evidence-readiness-v1" && idea.opportunityScore !== null &&
+        <div className="mt-2">
+          <button type="button" aria-expanded={openReadiness.includes(idea.id)}
+            onClick={() => setOpenReadiness(ids => ids.includes(idea.id)
+              ? ids.filter(id => id !== idea.id) : [...ids,idea.id])}
+            className="rounded-md px-1 py-1 text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {openReadiness.includes(idea.id) ? tr(locale,"Close score details","評価の詳細を閉じる")
+              : tr(locale,"Explain this score","評価の根拠を確認")}
+          </button>
+          {openReadiness.includes(idea.id) && <div className="mt-1 rounded-lg border border-border/70 bg-surface-subtle p-2.5 text-xs text-muted-foreground">
+            <p>{tr(locale,"Editorial research readiness","編集用の調査準備度")}: {Math.round(idea.opportunityScore)}/100</p>
+            <p className="mt-1">{tr(locale,"Audience demand","視聴者の需要")}: {
+              idea.scoreInputs.audienceDemand === "unknown" || idea.scoreInputs.audienceDemand == null
+                ? tr(locale,"unknown","不明") : String(idea.scoreInputs.audienceDemand)}</p>
+            <p className="mt-1">{tr(locale,"Source points","出典の評価点")}: {typeof idea.scoreInputs.sourcePoints === "number"
+              ? idea.scoreInputs.sourcePoints : tr(locale,"not recorded","記録なし")}</p>
+            <p className="mt-1">{tr(locale,"This is evidence readiness, not viewer demand or viral performance.",
+              "出典の準備度であり、視聴者の需要や再生数を示すものではありません。")}</p>
+          </div>}
+        </div>}
       <IdeaMarketEvidence key={idea.id} ideaId={idea.id} title={idea.title} locale={locale} format={compareFormat}
-        assessment={idea.marketAssessment} googleTrends={idea.googleTrends}
+        assessment={idea.marketAssessment} googleTrends={idea.googleTrends} googleAds={idea.googleAds}
         status={marketStatus} statusError={marketStatusError}
         collecting={collectingId === idea.id} onCollect={collect} />
       <div className="mt-4 rounded-control border border-border-subtle bg-surface-subtle p-3">

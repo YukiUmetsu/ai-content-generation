@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Activity, ArrowUpRight, ChevronDown, LoaderCircle, RotateCw, TrendingDown, TrendingUp } from "lucide-react";
 import type { Locale } from "@/features/registry";
-import { validIdeaMarketQuery, type IdeaGoogleTrends, type IdeaMarketAssessment } from "@/lib/api/discovery-sessions";
+import { validIdeaMarketQuery, type IdeaGoogleTrends, type IdeaGoogleAds, type IdeaMarketAssessment } from "@/lib/api/discovery-sessions";
 import type { MarketStatus } from "@/lib/api/market";
 import { marketErrorHint } from "./market-error-hint";
 import { usableComparison, type IdeaVideoFormat } from "./idea-market-comparison";
@@ -48,6 +48,7 @@ interface IdeaMarketEvidenceProps {
   format: IdeaVideoFormat;
   assessment: IdeaMarketAssessment | null | undefined;
   googleTrends?: IdeaGoogleTrends | null;
+  googleAds?: IdeaGoogleAds | null;
   status: MarketStatus | null;
   statusError: string | null;
   collecting: boolean;
@@ -55,7 +56,7 @@ interface IdeaMarketEvidenceProps {
 }
 
 /** Single idea evidence lens: scan a few values; hover, focus, or pin for provenance. */
-export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, googleTrends, status,
+export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, googleTrends, googleAds, status,
   statusError, collecting, onCollect }: IdeaMarketEvidenceProps) {
   const [query, setQuery] = useState(Array.from(assessment?.query || title).slice(0, 120).join(""));
   const [pinned, setPinned] = useState(false);
@@ -72,6 +73,8 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
   const matching = assessment?.format === format ? assessment : null;
   const finished = matching?.state === "succeeded";
   const comparing = usableComparison(matching, format);
+  const breakout = matching?.channelBreakoutScore != null && (matching.channelBaselineVideos ?? 0) >= 3
+    ? matching.channelBreakoutScore : null;
   const running = collecting || matching?.state === "running";
   const cooldown = (assessment?.nextCollectionAt ?? 0) > nowSeconds;
   const canCollect = status?.apiKeyConfigured === true &&
@@ -108,7 +111,7 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
       </button>
     </div>
 
-    <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+    <div className="mt-3 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
       <div className="min-w-0 rounded-xl border border-border/70 bg-surface/85 p-3">
         <div className="flex items-start justify-between gap-2">
           <p className="text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">YouTube</p>
@@ -116,8 +119,8 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
             {date(matching.observedAt, locale)}</time>}
         </div>
         <div className="mt-1 flex items-baseline gap-2">
-          {comparing !== null ? <span className="text-base font-semibold leading-none tabular-nums tracking-tight">
-            {Math.round(comparing)}<span className="ml-0.5 text-xs font-medium text-muted-foreground">/100</span></span>
+          {comparing !== null || breakout !== null ? <span className="text-base font-semibold leading-none tabular-nums tracking-tight">
+            {Math.round(comparing ?? breakout!)}<span className="ml-0.5 text-xs font-medium text-muted-foreground">/100</span></span>
             : <span className="text-sm font-semibold text-muted-foreground">{running ? tr(locale, "Collecting…", "収集中…")
               : finished ? tr(locale, "Comparison unavailable", "比較データ不足")
                 : matching?.state === "failed" || status?.apiKeyConfigured === false ? tr(locale, "YouTube unavailable", "YouTube を利用できません")
@@ -126,13 +129,15 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
           {finished && matching.medianViews !== null && <span className="truncate text-xs text-muted-foreground">
             {fmt(matching.medianViews, locale)} {tr(locale, "median views", "再生中央値")}</span>}
         </div>
-        <p className="mt-1 text-[11px] text-muted-foreground">{tr(locale, "Within-format public-video comparison", "同形式の公開動画で比較")}</p>
+        <p className="mt-1 text-[11px] text-muted-foreground">{breakout !== null && comparing === null
+          ? tr(locale,"Provisional · compared with other uploads by source channel","暫定値 · 投稿元の別動画と比較")
+          : tr(locale, "Within-format public-video comparison", "同形式の公開動画で比較")}</p>
         {finished && <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
           {tr(locale, `${matching.sampleSize} videos · ${matching.distinctChannels} channels`,
             `動画 ${matching.sampleSize}件 · チャンネル ${matching.distinctChannels}件`)}</p>}
-        {finished && comparing === null && <p className="mt-1 text-[11px] text-muted-foreground">
-          {tr(locale, "A score needs 8 usable videos, 3 channels and 3 comparable ideas in this format.",
-            "点数には有効動画8件、チャンネル3件、同形式の比較対象3案が必要です。")}</p>}
+        {finished && comparing === null && breakout === null && <p className="mt-1 text-[11px] text-muted-foreground">
+          {tr(locale, "Needs a relevant video and 3 comparable source-channel uploads, or a larger same-format cohort.",
+            "関連動画と同じチャンネルの別動画3件、または同形式のより大きな比較集団が必要です。")}</p>}
         {!assessment && <p className="mt-1 text-[11px] text-muted-foreground">
           {status?.apiKeyConfigured === false
             ? tr(locale, "Add a YouTube API key in Settings to collect observations.", "観測データの収集には設定で YouTube API キーを登録してください。")
@@ -170,6 +175,23 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
             {tr(locale, "A trend percentage needs 26 valid weeks and a nonzero previous baseline.",
               "変化率には有効な26週分のデータと、0ではない前期の基準値が必要です。")}</p>}
       </div>
+      <div className="min-w-0 rounded-xl border border-border/70 bg-surface/85 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">Google Ads</p>
+          {googleAds?.observedAt && <time className="text-[10px] text-muted-foreground"
+            dateTime={new Date(googleAds.observedAt * 1000).toISOString()}>{date(googleAds.observedAt,locale)}</time>}
+        </div>
+        <p className="mt-1 text-sm font-semibold text-foreground">{googleAds?.state === "succeeded"
+          ? tr(locale,`${googleAds.keywords.length} keyword ideas`,`${googleAds.keywords.length} 件のキーワード候補`)
+          : googleAds?.state === "failed" ? tr(locale,"Unavailable","利用不可")
+          : tr(locale,"Not connected","未接続")}</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          {tr(locale,"Google Search estimates, not YouTube searches or organic competition.",
+            "Google 検索の推定値であり、YouTube 検索量や自然検索の競合度ではありません。")}</p>
+        {googleAds?.state === "failed" && <p className="mt-1 text-[11px] text-muted-foreground">
+          {tr(locale,`Provider status: ${googleAds.errorCode ?? "unavailable"}`,
+            `接続状況: ${googleAds.errorCode ?? "unavailable"}`)}</p>}
+      </div>
     </div>
 
     {running && <p role="status" className="mt-3 flex items-center gap-2 text-xs font-medium text-primary">
@@ -194,17 +216,54 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
           <div><p className="text-muted-foreground">{tr(locale, "Search coverage", "検索のカバー範囲")}</p>
             <p className="mt-0.5 font-semibold tabular-nums">{matching.sampleSize}/{matching.searchedVideos}</p></div>
         </div>
+        {((matching.observed7dVideoCount ?? 0) > 0 || (matching.observed30dVideoCount ?? 0) > 0) &&
+          <div className="mt-3 rounded-lg border border-border/70 bg-surface-subtle p-3 text-xs">
+            <p className="font-semibold">{tr(locale,"Measured view-count change","観測された再生数の変化")}</p>
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+              {matching.observed7dMedianViewDelta != null && <span>
+                {tr(locale,"~7 days","約7日間")}: <strong className="text-foreground">
+                  {matching.observed7dMedianViewDelta > 0 ? "+" : ""}{fmt(matching.observed7dMedianViewDelta,locale)}
+                  </strong> {tr(locale,`median views · ${matching.observed7dVideoCount} videos`,
+                    `再生中央値 · 動画${matching.observed7dVideoCount}件`)}</span>}
+              {matching.observed30dMedianViewDelta != null && <span>
+                {tr(locale,"~30 days","約30日間")}: <strong className="text-foreground">
+                  {matching.observed30dMedianViewDelta > 0 ? "+" : ""}{fmt(matching.observed30dMedianViewDelta,locale)}
+                  </strong> {tr(locale,`median views · ${matching.observed30dVideoCount} videos`,
+                    `再生中央値 · 動画${matching.observed30dVideoCount}件`)}</span>}
+            </div>
+          </div>}
         {pinned && <p className="mt-3 break-words text-xs text-muted-foreground">
           {tr(locale, "Query", "検索語")}: <span className="font-medium text-foreground">{matching.query}</span>
           {` · ${matching.format === "long" ? tr(locale, "Long video", "長尺") : tr(locale, "Shorts", "ショート")}`}
           {matching.region && ` · ${tr(locale, "Search relevance", "検索対象")}: ${matching.region}`}
           {matching.language && ` / ${matching.language === "en" ? "English" : matching.language}`}
           {matching.metricVersion && ` · ${matching.metricVersion}`}
-          {comparing === null && ` · ${tr(locale, "Needs ≥8 usable videos, ≥3 channels and ≥3 comparable ideas", "有効な動画8件以上・チャンネル3件以上・比較対象3案以上が必要")}`}
+          {comparing === null && breakout === null && ` · ${tr(locale, "Needs comparable source-channel uploads or a larger cohort", "同じチャンネルの別動画またはより大きな比較集団が必要")}`}
         </p>}
         {pinned && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{tr(locale,
-          "One relevance-ranked YouTube search, up to 25 results. US/English scopes search relevance; view totals are global. Usable samples were uploaded 1–365 days ago, share title/query terms, and include at most 3 videos per channel. Shorts uses a ≤180-second duration proxy, not an official classification. Lifetime views/day is not current momentum, and this comparison is not a forecast.",
-          "関連度順の YouTube 検索1回・最大25件。米国・英語の指定は検索結果用で、再生数は世界全体です。対象は公開後1〜365日、タイトルと検索語が一致し、1チャンネル最大3件です。ショートは180秒以下という代用判定で公式分類ではありません。累計再生数の日割は最近の勢いを示さず、比較は予測ではありません。")}</p>}
+          "One or two relevance-ranked official YouTube searches, with up to 25 unique saved videos. US/English scopes search relevance; view totals are global. Usable samples were uploaded 1–365 days ago, share query terms, and include at most 3 videos per channel. Source-channel baselines exclude the measured video. Shorts duration ≤180 seconds is a proxy. Lifetime views/day is not current growth or a forecast.",
+          "関連度順の YouTube 検索1～2回・最大25件。米国・英語の指定は検索結果用で、再生数は世界全体です。対象は公開後1〜365日、タイトルと検索語が一致し、1チャンネル最大3件です。ショートは180秒以下という代用判定で公式分類ではありません。累計再生数の日割は最近の勢いを示さず、比較は予測ではありません。")}</p>}
+        {pinned && (matching.searchQueries?.length ?? 0) > 1 && <p className="mt-2 break-words text-xs text-muted-foreground">
+          {tr(locale,"Viewer-intent searches","視聴者が検索する語句")}: {matching.searchQueries?.join(" · ")}</p>}
+        {pinned && googleAds?.state === "succeeded" && googleAds.keywords.length > 0 && <div className="mt-3 space-y-1 border-t border-border/60 pt-3">
+          <p className="text-xs font-semibold">{tr(locale,"Google Search keyword ideas","Google 検索キーワード候補")}</p>
+          <ul className="space-y-1 text-xs">{googleAds.keywords.slice(0,8).map(keyword => <li key={keyword.keyword} className="flex items-baseline justify-between gap-2">
+            <span className="break-words">{keyword.keyword}</span>
+            <span className="shrink-0 tabular-nums text-muted-foreground">{keyword.googleMonthlySearches === null
+              ? "—" : `${fmt(keyword.googleMonthlySearches,locale)}/mo`}</span>
+          </li>)}</ul>
+        </div>}
+        {pinned && (matching.audienceQuestions?.length ?? 0) > 0 && <div className="mt-3 border-t border-border/60 pt-3">
+          <p className="text-xs font-semibold">{tr(locale,"Questions from public comments","公開コメントにあった質問")}</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">{tr(locale,
+            "Examples of viewer wording, not verified facts or demand estimates.",
+            "視聴者の表現例であり、事実の裏付けや需要の推定ではありません。")}</p>
+          <ul className="mt-2 space-y-2">{matching.audienceQuestions?.slice(0,6).map(question => <li key={question.commentId} className="text-xs">
+            <a href={`https://www.youtube.com/watch?v=${question.videoId}`} target="_blank" rel="noopener noreferrer"
+              className="break-words text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {question.question} <ArrowUpRight className="inline size-3" aria-hidden="true" />
+            </a></li>)}</ul>
+        </div>}
         {!pinned && <p className="mt-2 text-xs text-muted-foreground">{tr(locale,
           "Open Evidence details for methodology and source videos.", "観測の詳細を開くと、方法と参照動画を確認できます。")}</p>}
         {pinned && matching.videos.length > 0 && <ul className="mt-3 grid max-h-56 gap-x-4 gap-y-2 overflow-y-auto border-t border-border/60 pt-3 text-xs sm:grid-cols-2">
@@ -215,6 +274,21 @@ export function IdeaMarketEvidence({ ideaId, title, locale, format, assessment, 
               : <span className="font-medium">{video.title}</span>}
             <p className="mt-0.5 text-muted-foreground">{video.channelTitle} · {video.viewCount === null ? "—" : fmt(video.viewCount, locale)} {tr(locale, "views", "再生")}</p>
           </li>)}</ul>}
+        {pinned && breakout !== null && (matching.channelBaselineExamples?.length ?? 0) > 0 &&
+          <div className="mt-3 border-t border-border/60 pt-3">
+            <p className="text-xs font-semibold">{tr(locale, "Source-channel comparison uploads", "投稿元チャンネルの比較動画")}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">{tr(locale,
+              "Sample of other public uploads supporting the provisional baseline, excluding the measured videos.",
+              "対象の動画を除いた、暫定スコアの比較基準となる公開動画の例です。")}</p>
+            <ul className="mt-2 grid max-h-44 gap-x-4 gap-y-2 overflow-y-auto text-xs sm:grid-cols-2">
+              {matching.channelBaselineExamples?.map(video => <li key={video.videoId} className="min-w-0">
+                <a href={video.sourceUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex max-w-full items-start gap-1 break-words text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  {video.title}<ArrowUpRight className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                </a>
+                <p className="mt-0.5 text-muted-foreground">{video.channelTitle} · {video.viewCount === null ? "—" : fmt(video.viewCount, locale)} {tr(locale, "views", "再生")}</p>
+              </li>)}</ul>
+          </div>}
       </> : <p className="text-xs text-muted-foreground">{tr(locale,
         "No comparable YouTube observations have been saved for this format.",
         "この形式で比較できる YouTube 観測データはありません。")}</p>}

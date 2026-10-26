@@ -3,7 +3,7 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { ChevronDown, Info, TrendingDown, TrendingUp } from "lucide-react";
 import type { Locale } from "@/features/registry";
-import type { IdeaGoogleTrends, IdeaMarketAssessment, ViralPotential } from "@/lib/api/discovery-sessions";
+import type { IdeaGoogleTrends, IdeaGoogleAds, IdeaMarketAssessment, ViralPotential } from "@/lib/api/discovery-sessions";
 import type { IdeaVideoFormat } from "./idea-market-comparison";
 
 const tr = (locale: Locale, en: string, ja: string) => locale === "ja" ? ja : en;
@@ -62,12 +62,13 @@ export interface ViralScoreProps {
   potential: ViralPotential | null | undefined;
   assessment: IdeaMarketAssessment | null | undefined;
   googleTrends: IdeaGoogleTrends | null | undefined;
+  googleAds?: IdeaGoogleAds | null | undefined;
   format: IdeaVideoFormat;
   locale: Locale;
 }
 
 /** A compact score with a keyboard/touch-accessible, collision-aware evidence panel. */
-export function ViralScore({ potential, assessment, googleTrends, format, locale }: ViralScoreProps) {
+export function ViralScore({ potential, assessment, googleTrends, googleAds, format, locale }: ViralScoreProps) {
   const [open, setOpen] = useState(false);
   const reducedMotion = useReducedMotion();
   // Never display a saved long-form score when the user is comparing Shorts, or
@@ -78,7 +79,9 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
   const youtube = matching?.youtubeScore ?? null;
   const trends = matching?.trendScore ?? null;
   const momentum = matching?.trendChangePercent ?? null;
-  const partial = score !== null && matching?.state === "partial";
+  const partial = score !== null && ["partial","provisional"].includes(matching?.state ?? "");
+  const channelBased = matching?.comparisonBasis === "channel_baseline";
+  const legacy = matching?.scoreVersion === "viral-potential-v1";
   const sample = assessment?.format === format ? assessment : null;
   const change = momentum === null ? null : `${momentum > 0 ? "+" : ""}${compact(momentum, locale)}%`;
 
@@ -96,7 +99,8 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
         <span className="text-xs font-medium text-foreground">{verdict(score, locale)}</span>
         <span className="text-[11px] text-muted-foreground">{score === null
           ? tr(locale, "Needs YouTube data", "YouTube データが必要")
-          : partial ? tr(locale, "Partial evidence", "一部のデータのみ")
+          : partial ? legacy ? tr(locale,"Partial evidence","一部のデータのみ")
+            : tr(locale, `${matching?.confidence ?? "Limited"} confidence · provisional`, "確度限定 · 暫定評価")
             : tr(locale, "Measured signals", "実測データ")}</span>
       </span>
       <Info className="ml-0.5 size-3.5 text-muted-foreground transition-colors group-hover:text-primary" aria-hidden="true" />
@@ -125,8 +129,12 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
               <div className="mt-3 space-y-3.5">
                 <Factor locale={locale} name={tr(locale, "YouTube performance", "YouTube の実績")}
                   value={youtube} weight={score !== null && trends === null ? "100%" : "75%"} note={youtube === null
-                    ? tr(locale, "Requires 8 usable videos, 3 channels and 3 comparable ideas in this format.",
-                      "同形式の動画8件、チャンネル3件、比較対象3案が必要です。")
+                    ? legacy ? tr(locale, "Requires 8 usable videos, 3 channels and 3 comparable ideas in this format.",
+                        "同形式の動画8件、チャンネル3件、比較対象3案が必要です。")
+                      : tr(locale, "Requires a comparable session cohort or at least 3 other public uploads from a source channel.",
+                        "比較対象となる案、または投稿元チャンネルの別動画3件以上が必要です。")
+                    : channelBased ? tr(locale, `Provisional: ${matching?.sampleSize ?? 0} relevant videos, compared with ${matching?.channelBaselineVideos ?? 0} other uploads across ${matching?.channelBaselineChannels ?? 0} source channels.`,
+                      `暫定値: 関連動画 ${matching?.sampleSize ?? 0} 件と、同チャンネルの別動画 ${matching?.channelBaselineVideos ?? 0} 件を比較。`)
                     : tr(locale, `${matching?.sampleSize ?? 0} videos · ${matching?.distinctChannels ?? 0} channels · ${matching?.comparisonCohortSize ?? 0} ideas. Ranked by median lifetime views/day.`,
                       `動画 ${matching?.sampleSize ?? 0} 件 · チャンネル ${matching?.distinctChannels ?? 0} 件 · 比較対象 ${matching?.comparisonCohortSize ?? 0} 案。累計再生数の日割中央値で比較。`)} />
                 <Factor locale={locale} name={tr(locale, "Search momentum", "検索の勢い")}
@@ -160,8 +168,10 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
                 <p className="text-[11px] leading-relaxed text-muted-foreground">{score === null
                   ? tr(locale, "No viral score yet. Collect enough comparable YouTube evidence to evaluate this idea.",
                     "まだバイラルスコアはありません。比較できる YouTube データが必要です。")
-                  : partial ? tr(locale, "YouTube-only estimate. Trends is missing, so confidence is limited.",
-                    "YouTube のみの評価です。検索トレンドが不足しているため、確度は限定的です。")
+                  : partial ? legacy ? tr(locale,"YouTube-only estimate. Trends is missing, so confidence is limited.",
+                      "YouTube のみの評価です。検索トレンドが不足しているため、確度は限定的です。")
+                    : tr(locale, `Provisional ${matching?.confidence ?? "limited"}-confidence evidence; compare sources before publishing. Missing provider values are excluded.`,
+                      "暫定評価です。公開前に情報源を確認してください。不足データは計算に含めません。")
                     : tr(locale, "Both signals are available. This compares observed opportunity, not future views.",
                       "両方のデータを取得済みです。観測された機会の比較であり、将来の再生数予測ではありません。")}</p>
               </div>
@@ -171,13 +181,21 @@ export function ViralScore({ potential, assessment, googleTrends, format, locale
                   {tr(locale, "How this score works", "スコアの計算方法")}
                   <ChevronDown className="size-3.5 text-muted-foreground transition-transform group-open/method:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
                 </summary>
-                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{tr(locale,
+                <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{legacy ? tr(locale,
                   "When both signals exist: 75% YouTube within-session, same-format percentile + 25% Google Trends change (−100% to +100% mapped to 0–100). With Trends missing, show only the YouTube percentile and mark the result partial. Trends indices are normalized per query, not search volume. Hook quality, click-through rate and retention are not measured. This is a heuristic, not a prediction of virality or revenue.",
-                  "両方ある場合は、同一セッション・同形式の YouTube 百分位75%と、Google Trends の変化率25%（−100%〜+100%を0〜100に変換）を合成します。トレンドがない場合は YouTube のみを表示し、部分的な評価と明記します。Trends は検索語ごとに正規化され、検索量ではありません。フックの品質、クリック率、視聴維持率は未測定です。再生数や収益の予測ではありません。")}</p>
+                  "両方ある場合は、同一セッション・同形式の YouTube 百分位75%と、Google Trends の変化率25%を合成します。これは再生数の予測ではありません。") : tr(locale,
+                  "The YouTube anchor is either a within-session, same-format percentile or a provisional comparison against other uploads on the source channels (a 2x lifetime views/day ratio maps to 70/100). Available Google Trends momentum contributes 25%; absent data is excluded. Google Ads volume measures Google Search, never YouTube demand. Click-through rate, retention and revenue are not measured or predicted.",
+                  "同じ形式のセッション内順位、または投稿元チャンネルの別動画との比較を YouTube の基準にします。Google Trends が利用可能な場合のみ25%の重みで計算します。Google Ads の検索量は Google 検索向けで YouTube ではありません。視聴維持率や収益は測定・予測しません。")}</p>
                 {sample?.query && <p className="mt-2 break-words text-[11px] leading-relaxed text-muted-foreground">
                   {tr(locale, "YouTube query", "YouTube 検索語")}: {sample.query}</p>}
+                {sample?.searchQueries && sample.searchQueries.length > 1 && <p className="mt-1 break-words text-[11px] text-muted-foreground">
+                  {tr(locale,"Expanded queries","追加検索語")}: {sample.searchQueries.slice(1).join(" · ")}</p>}
                 {googleTrends?.query && <p className="mt-1 break-words text-[11px] leading-relaxed text-muted-foreground">
                   {tr(locale, "Trends query", "Trends 検索語")}: {googleTrends.query}</p>}
+                {googleAds && <p className="mt-1 break-words text-[11px] text-muted-foreground">
+                  {tr(locale,"Google Ads Keyword Planner","Google 広告キーワードプランナー")}: {googleAds.state === "succeeded"
+                    ? `${googleAds.keywords.length} ${tr(locale,"Google Search terms","Google 検索語")}`
+                    : tr(locale,"Unavailable","利用不可")}</p>}
                 <p className="mt-2 text-[10px] text-muted-foreground">{matching?.scoreVersion ?? "viral-potential-v1"}</p>
               </details>
             </PopoverPrimitive.Popup>

@@ -315,6 +315,7 @@ describe("per-idea YouTube market evidence", () => {
         collecting:false,searchCallsLast24h:1,searchCallLimit:20}),{status:200});
       if (url.endsWith("/ideas")) return new Response(JSON.stringify({ideas:[idea("idea-1",
         ++checks > 1 ? assessment("long", null) : running)]}),{status:200});
+      if (url.endsWith("/runs")) return new Response(JSON.stringify({runs:[]}),{status:200});
       return new Response(JSON.stringify(session),{status:200});
     });
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
@@ -338,10 +339,11 @@ describe("per-idea YouTube market evidence", () => {
         return new Response(JSON.stringify({runId:"market-1",state:"running"}),{status:202});
       }
       if (url.endsWith("/ideas")) {
-        if (started && ++checks > 2) statusCollecting = false;
+        if (started && ++checks > 1) statusCollecting = false;
         return new Response(JSON.stringify({ideas:[started ? {...first, marketAssessment:statusCollecting
           ? running : assessment("long",null)} : first, second]}),{status:200});
       }
+      if (url.endsWith("/runs")) return new Response(JSON.stringify({runs:[]}),{status:200});
       return new Response(JSON.stringify(session),{status:200});
     });
     const user = userEvent.setup();
@@ -355,18 +357,25 @@ describe("per-idea YouTube market evidence", () => {
   }, 12000);
 
   it("never ranks a shorts observation against a long-video cohort", async () => {
-    serve([idea("idea-1", assessment("shorts", 95)), idea("idea-2", assessment("long", 65)),
-      idea("idea-3", assessment("long", 45)), idea("idea-4", assessment("long", 25))]);
+    const observed = (id:string,format:"shorts"|"long",score:number):DiscoverySessionIdea => ({
+      ...idea(id,assessment(format,score)),
+      viralPotential:{score,state:"partial",scoreVersion:"viral-potential-v1",format,
+        youtubeScore:score,trendScore:null,trendChangePercent:null,coveragePercent:75,
+        sampleSize:12,distinctChannels:5,comparisonCohortSize:3,
+        youtubeObservedAt:1760000000,trendsObservedAt:null},
+    });
+    serve([observed("idea-1","shorts",95),observed("idea-2","long",65),
+      observed("idea-3","long",45),observed("idea-4","long",25)]);
     const user = userEvent.setup();
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
     const articleTitles = () => screen.getAllByRole("article").map(article => within(article).getByRole("heading", {level:3}).textContent);
     expect(articleTitles()[0]).toBe("Question idea-2");
-    expect(within(screen.getAllByRole("article")[0]).getByText("65")).toBeInTheDocument();
+    expect(within(screen.getAllByRole("article")[0]).getAllByText("65").length).toBeGreaterThan(0);
     expect(screen.queryByText("95")).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", {name:"Compare format"}), "shorts");
     expect(articleTitles()[0]).toBe("Question idea-1");
-    expect(within(screen.getAllByRole("article")[0]).getByText("95")).toBeInTheDocument();
+    expect(within(screen.getAllByRole("article")[0]).getAllByText("95").length).toBeGreaterThan(0);
     expect(screen.queryByText("65")).not.toBeInTheDocument();
   });
 });

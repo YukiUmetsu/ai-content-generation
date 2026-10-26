@@ -62,6 +62,8 @@ fn safe_failure_log(
         "search" => "search",
         "videos" => "videos",
         "channels" => "channels",
+        "playlistItems" => "playlistItems",
+        "commentThreads" => "commentThreads",
         _ => "unknown",
     };
     let http_status = status
@@ -99,6 +101,14 @@ pub struct YoutubeClient {
     base: String,
     key: String,
     http: reqwest::Client,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudienceQuestion {
+    pub video_id: String,
+    pub comment_id: String,
+    pub question: String,
 }
 
 impl YoutubeClient {
@@ -332,6 +342,250 @@ impl YoutubeClient {
             .filter_map(|id| details.remove(&id))
             .collect())
     }
+
+    /// Low-quota official uploads-playlist lookup. Fetches at most 3 channels,
+    /// 20 recent uploads per channel and one videos.list batch; no scraping.
+    pub async fn channel_upload_baselines(
+        &self,
+        channel_ids: &[String],
+    ) -> Result<Vec<VideoObservation>, YoutubeError> {
+        let ids: Vec<&str> = channel_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            })
+            .take(3)
+            .collect();
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let response = self
+            .request(
+                "channels",
+                &[
+                    ("part", "contentDetails".into()),
+                    ("id", ids.join(",")),
+                    ("maxResults", "3".into()),
+                ],
+            )
+            .await?;
+        let channels = response
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or(YoutubeError::InvalidPayload)?;
+        let mut video_ids = vec![];
+        for channel in channels.iter().take(3) {
+            let Some(playlist) = channel
+                .pointer("/contentDetails/relatedPlaylists/uploads")
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            if playlist.len() > 128
+                || !playlist
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            {
+                continue;
+            }
+            let response = self
+                .request(
+                    "playlistItems",
+                    &[
+                        ("part", "contentDetails".into()),
+                        ("playlistId", playlist.into()),
+                        ("maxResults", "20".into()),
+                    ],
+                )
+                .await?;
+            let items = response
+                .get("items")
+                .and_then(Value::as_array)
+                .ok_or(YoutubeError::InvalidPayload)?;
+            for item in items {
+                if let Some(id) = item
+                    .pointer("/contentDetails/videoId")
+                    .and_then(Value::as_str)
+                    && valid_video_id(id)
+                    && !video_ids.iter().any(|known| known == id)
+                {
+                    video_ids.push(id.to_owned());
+                }
+            }
+        }
+        let mut videos = Vec::new();
+        for batch in video_ids.chunks(50) {
+            let response = self
+                .request(
+                    "videos",
+                    &[
+                        ("part", "snippet,statistics,contentDetails".into()),
+                        ("id", batch.join(",")),
+                        ("maxResults", "50".into()),
+                    ],
+                )
+                .await?;
+            let items = response
+                .get("items")
+                .and_then(Value::as_array)
+                .ok_or(YoutubeError::InvalidPayload)?;
+            for item in items {
+                let (Some(id), Some(channel_id), Some(date)) = (
+                    item.get("id").and_then(Value::as_str),
+                    item.pointer("/snippet/channelId").and_then(Value::as_str),
+                    item.pointer("/snippet/publishedAt").and_then(Value::as_str),
+                ) else {
+                    continue;
+                };
+                if !valid_video_id(id) || !ids.contains(&channel_id) {
+                    continue;
+                }
+                videos.push(VideoObservation {
+                    video_id: id.into(),
+                    title: item
+                        .pointer("/snippet/title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .chars()
+                        .take(400)
+                        .collect(),
+                    channel_id: channel_id.into(),
+                    channel_title: item
+                        .pointer("/snippet/channelTitle")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .chars()
+                        .take(300)
+                        .collect(),
+                    published_at: date.into(),
+                    duration_seconds: item
+                        .pointer("/contentDetails/duration")
+                        .and_then(Value::as_str)
+                        .and_then(duration_seconds),
+                    view_count: count_at(item, "/statistics/viewCount"),
+                    like_count: count_at(item, "/statistics/likeCount"),
+                    comment_count: count_at(item, "/statistics/commentCount"),
+                    subscriber_count: None,
+                });
+            }
+        }
+        Ok(videos)
+    }
+
+    /// Refresh exact, already-known video IDs without performing a search.
+    /// Missing/hidden public counters remain unknown and are never zeroed.
+    pub async fn refresh_view_counts(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<(String, i64)>, YoutubeError> {
+        if ids.len() > 50 || ids.iter().any(|id| !valid_video_id(id)) {
+            return Err(YoutubeError::InvalidRequest);
+        }
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let response = self
+            .request(
+                "videos",
+                &[("part", "statistics".into()), ("id", ids.join(","))],
+            )
+            .await?;
+        let items = response
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or(YoutubeError::InvalidPayload)?;
+        Ok(items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?;
+                if !ids.iter().any(|candidate| candidate == id) {
+                    return None;
+                }
+                Some((id.to_owned(), count_at(item, "/statistics/viewCount")?))
+            })
+            .collect())
+    }
+
+    /// Attributed public questions; only textual questions are retained and
+    /// deliberately exclude contact details, URLs and commenter identities.
+    pub async fn public_questions(
+        &self,
+        video_id: &str,
+    ) -> Result<Vec<AudienceQuestion>, YoutubeError> {
+        if !valid_video_id(video_id) {
+            return Err(YoutubeError::InvalidRequest);
+        }
+        let response = self
+            .request(
+                "commentThreads",
+                &[
+                    ("part", "snippet".into()),
+                    ("videoId", video_id.into()),
+                    ("maxResults", "25".into()),
+                    ("order", "relevance".into()),
+                    ("textFormat", "plainText".into()),
+                ],
+            )
+            .await?;
+        let rows = response
+            .get("items")
+            .and_then(Value::as_array)
+            .ok_or(YoutubeError::InvalidPayload)?;
+        let mut found = Vec::new();
+        for row in rows {
+            let Some(comment_id) = row
+                .pointer("/snippet/topLevelComment/id")
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(text) = row
+                .pointer("/snippet/topLevelComment/snippet/textOriginal")
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let Some(question) = sanitize_public_question(text) else {
+                continue;
+            };
+            if comment_id.is_empty()
+                || comment_id.len() > 160
+                || comment_id.chars().any(char::is_control)
+            {
+                continue;
+            }
+            found.push(AudienceQuestion {
+                video_id: video_id.into(),
+                comment_id: comment_id.into(),
+                question,
+            });
+            if found.len() >= 8 {
+                break;
+            }
+        }
+        Ok(found)
+    }
+}
+
+fn sanitize_public_question(text: &str) -> Option<String> {
+    let clean = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = clean.to_lowercase();
+    if !clean.contains('?')
+        || clean.chars().count() < 12
+        || clean.chars().count() > 240
+        || clean.chars().any(char::is_control)
+        || lower.contains("http")
+        || lower.contains("www.")
+        || clean.contains('@')
+    {
+        return None;
+    }
+    Some(clean)
 }
 
 /// Google returns both legacy errors[].reason and google.rpc.ErrorInfo
@@ -491,6 +745,47 @@ mod tests {
         assert_eq!(duration_seconds("nonsense"), None);
     }
 
+    #[test]
+    fn public_questions_exclude_urls_contact_details_and_nonquestions() {
+        assert_eq!(
+            sanitize_public_question("How can I automate these receipts?"),
+            Some("How can I automate these receipts?".into())
+        );
+        assert_eq!(
+            sanitize_public_question("This is a great explanation."),
+            None
+        );
+        assert_eq!(
+            sanitize_public_question("Can you send that to person@example.com?"),
+            None
+        );
+        assert_eq!(
+            sanitize_public_question("What about https://example.com?"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn samples_only_attributed_public_comment_questions() {
+        let app=Router::new().route("/youtube/v3/commentThreads",get(|uri:Uri|async move {
+            assert!(uri.query().unwrap_or("").contains("textFormat=plainText"));
+            Json(json!({"items":[
+                {"snippet":{"topLevelComment":{"id":"comment1","snippet":{"textOriginal":"How can I automate my invoices?"}}}},
+                {"snippet":{"topLevelComment":{"id":"comment2","snippet":{"textOriginal":"I enjoyed this tutorial."}}}}
+            ]}))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client =
+            YoutubeClient::for_testing(format!("http://{address}/youtube/v3"), "fixture-key");
+        let questions = client.public_questions("abcABC12345").await.unwrap();
+        server.abort();
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].video_id, "abcABC12345");
+        assert_eq!(questions[0].question, "How can I automate my invoices?");
+    }
+
     #[tokio::test]
     async fn collects_public_video_details_and_keeps_missing_counts_unknown() {
         let app = Router::new()
@@ -536,6 +831,38 @@ mod tests {
         assert_eq!(records[0].subscriber_count, Some(20000));
         assert_eq!(records[1].like_count, None);
         assert_eq!(records[1].subscriber_count, None);
+    }
+
+    #[tokio::test]
+    async fn channel_uploads_benchmark_uses_official_playlists_and_public_video_counts() {
+        let app=Router::new()
+            .route("/youtube/v3/channels",get(||async {
+                Json(json!({"items":[{"id":"UChome",
+                  "contentDetails":{"relatedPlaylists":{"uploads":"UUhome"}}}]}))
+            }))
+            .route("/youtube/v3/playlistItems",get(|uri:Uri|async move {
+                assert!(uri.query().unwrap().contains("playlistId=UUhome"));
+                Json(json!({"items":[{"contentDetails":{"videoId":"abcABC12345"}}]}))
+            }))
+            .route("/youtube/v3/videos",get(||async {
+                Json(json!({"items":[{"id":"abcABC12345",
+                  "snippet":{"channelId":"UChome","title":"Home costs","channelTitle":"Demo","publishedAt":"2026-01-01T00:00:00Z"},
+                  "contentDetails":{"duration":"PT10M"},
+                  "statistics":{"viewCount":"5000"}}]}))
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client =
+            YoutubeClient::for_testing(format!("http://{address}/youtube/v3"), "synthetic-key");
+        let values = client
+            .channel_upload_baselines(&["UChome".into()])
+            .await
+            .unwrap();
+        server.abort();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].view_count, Some(5000));
+        assert_eq!(values[0].duration_seconds, Some(600));
     }
 
     #[test]

@@ -11,20 +11,21 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 pub mod discovery_api;
+pub mod discovery_market_worker;
 pub mod discovery_projects;
 pub mod discovery_store;
-pub mod sessions_api;
-pub mod sessions_store;
 pub mod evidence_api;
+pub mod google_ads;
 pub mod graph_store;
+pub mod idea_market;
+pub mod idea_trends;
 pub mod market_api;
 pub mod market_store;
 pub mod market_worker;
-pub mod youtube_api;
-pub mod idea_market;
-pub mod idea_trends;
+pub mod sessions_api;
+pub mod sessions_store;
 pub mod viral_potential;
-pub mod discovery_market_worker;
+pub mod youtube_api;
 
 pub fn router() -> Router<AppState> {
     Router::new()

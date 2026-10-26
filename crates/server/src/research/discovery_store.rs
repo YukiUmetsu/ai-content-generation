@@ -87,9 +87,14 @@ pub fn start_or_get_active_for_session(
     // The partial unique index is a second line of defense against double-clicks.
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     exists(&tx, project_id)?;
-    let scoped: i64 = tx.query_row("SELECT EXISTS(SELECT 1 FROM content_discovery_sessions WHERE id=?1 AND project_id=?2)",
-        params![session_id,project_id],|r|r.get(0))?;
-    if scoped == 0 { return Err(DiscoveryError::NotFound); }
+    let scoped: i64 = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM content_discovery_sessions WHERE id=?1 AND project_id=?2)",
+        params![session_id, project_id],
+        |r| r.get(0),
+    )?;
+    if scoped == 0 {
+        return Err(DiscoveryError::NotFound);
+    }
     let active:Option<String>=tx.query_row("SELECT id FROM discovery_runs WHERE project_id=?1 AND session_id=?2 AND status IN ('queued','running','paused')",
         params![project_id,session_id],|r|r.get(0)).optional()?;
     if let Some(active) = active {
@@ -127,21 +132,47 @@ pub fn start_or_get_active_for_session(
         [project_id],
         |row| row.get(0),
     )?;
-    let (platforms_json,settings_json):(String,String)=tx.query_row(
+    let (platforms_json, settings_json): (String, String) = tx.query_row(
         "SELECT platforms_json,settings_snapshot_json FROM content_discovery_sessions
-         WHERE id=?1 AND project_id=?2",params![session_id,project_id],
-        |r|Ok((r.get(0)?,r.get(1)?)))?;
-    let platforms:serde_json::Value=serde_json::from_str(&platforms_json)
-        .map_err(|_|DiscoveryError::Invalid("Stored session platforms are invalid".into()))?;
-    let session_settings:serde_json::Value=serde_json::from_str(&settings_json)
-        .map_err(|_|DiscoveryError::Invalid("Stored session settings are invalid".into()))?;
+         WHERE id=?1 AND project_id=?2",
+        params![session_id, project_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let platforms: serde_json::Value = serde_json::from_str(&platforms_json)
+        .map_err(|_| DiscoveryError::Invalid("Stored session platforms are invalid".into()))?;
+    let session_settings: serde_json::Value = serde_json::from_str(&settings_json)
+        .map_err(|_| DiscoveryError::Invalid("Stored session settings are invalid".into()))?;
     let pinned = session_id.starts_with("session_");
-    let frozen_name = if pinned { session_settings.pointer("/project/name").and_then(serde_json::Value::as_str) } else { None }
-        .map(str::to_owned).unwrap_or(name);
-    let frozen_description = if pinned { session_settings.pointer("/project/description").and_then(serde_json::Value::as_str) } else { None }
-        .map(str::to_owned).unwrap_or(description);
-    let frozen_revision = if pinned { session_settings.pointer("/project/revision").and_then(serde_json::Value::as_i64) } else { None };
-    let frozen_keywords = if pinned { session_settings.pointer("/project/keywords").cloned() } else { None };
+    let frozen_name = if pinned {
+        session_settings
+            .pointer("/project/name")
+            .and_then(serde_json::Value::as_str)
+    } else {
+        None
+    }
+    .map(str::to_owned)
+    .unwrap_or(name);
+    let frozen_description = if pinned {
+        session_settings
+            .pointer("/project/description")
+            .and_then(serde_json::Value::as_str)
+    } else {
+        None
+    }
+    .map(str::to_owned)
+    .unwrap_or(description);
+    let frozen_revision = if pinned {
+        session_settings
+            .pointer("/project/revision")
+            .and_then(serde_json::Value::as_i64)
+    } else {
+        None
+    };
+    let frozen_keywords = if pinned {
+        session_settings.pointer("/project/keywords").cloned()
+    } else {
+        None
+    };
     let snapshot = serde_json::json!({"version":1,"projectName":frozen_name,
         "ideaScoreVersion":super::sessions_store::IDEA_SCORE_VERSION_V1,
         "description":frozen_description,
@@ -262,11 +293,17 @@ pub fn checkpoint(
     }
     // A delayed/retried Node checkpoint cannot move a durable market phase
     // backward into candidate generation or reopen a paused collection.
-    let current: Option<String> = db.query_row(
-        "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2",
-        params![project_id,run_id], |r| r.get(0),
-    ).optional()?;
-    if current.as_deref().is_some_and(|stage| stage.starts_with("measure_market")) {
+    let current: Option<String> = db
+        .query_row(
+            "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2",
+            params![project_id, run_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if current
+        .as_deref()
+        .is_some_and(|stage| stage.starts_with("measure_market"))
+    {
         return Ok(());
     }
     let changed = db.execute(
@@ -286,11 +323,17 @@ pub fn checkpoint(
         // The Node checkpoint may race the candidate finish transaction.
         // That transition must win atomically, even if the SELECT above
         // observed the previous generation stage.
-        let actual: Option<String> = db.query_row(
-            "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2",
-            params![project_id,run_id], |r| r.get(0),
-        ).optional()?;
-        if actual.as_deref().is_some_and(|stage| stage.starts_with("measure_market")) {
+        let actual: Option<String> = db
+            .query_row(
+                "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2",
+                params![project_id, run_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if actual
+            .as_deref()
+            .is_some_and(|stage| stage.starts_with("measure_market"))
+        {
             return Ok(());
         }
         return Err(DiscoveryError::NotFound);
@@ -497,7 +540,14 @@ pub fn finish_run(
     let tx = db.transaction()?;
     let (project_id,session_id):(String,Option<String>)=tx.query_row("SELECT project_id,session_id FROM discovery_runs WHERE id=?1 AND status IN ('queued','running','paused')",
         [run_id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(DiscoveryError::NotFound)?;
-    let result_limit = if session_id.as_deref().is_some_and(|id| id.starts_with("session_")) { 100 } else { 5 };
+    let result_limit = if session_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("session_"))
+    {
+        100
+    } else {
+        5
+    };
     // Validate *before* persisting any candidate. A search lead is not evidence,
     // and observed_at is only the import time (not a video's publishing date).
     let mut ranked = Vec::new();
@@ -654,7 +704,9 @@ pub fn finish_run(
     // Discovery job. Candidates are durable already, but the job is NOT ready
     // to navigate until every bounded market attempt has finished or failed.
     let measure_market = final_status == "completed"
-        && session_id.as_deref().is_some_and(|id| id.starts_with("session_"));
+        && session_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("session_"));
     if measure_market {
         tx.execute("UPDATE discovery_runs SET status='running',stage='measure_market',updated_at=?2,finished_at=NULL WHERE id=?1",
             params![run_id,now])?;
@@ -693,13 +745,28 @@ pub fn market_retry_due(
             Some((state, _, started, finished)) if state == "succeeded" => {
                 finished.unwrap_or(started).saturating_add(THIRTY_DAYS) <= now
             }
-            Some((state, reason, started, _)) if matches!(state.as_str(), "failed" | "unavailable" | "expired") => {
-                if matches!(reason.as_deref(), Some("api_key_missing" | "credential_denied" | "credential_unavailable")) {
+            Some((state, reason, started, _))
+                if matches!(state.as_str(), "failed" | "unavailable" | "expired") =>
+            {
+                if matches!(
+                    reason.as_deref(),
+                    Some("api_key_missing" | "credential_denied" | "credential_unavailable")
+                ) {
                     true // Key was added or unlocked after the previous attempt.
                 } else {
-                    let delay = if matches!(reason.as_deref(), Some(
-                        "quota_exceeded" | "rate_limited" | "budget_exhausted" | "collection_limit"
-                    )) { DAY } else { SIX_HOURS };
+                    let delay = if matches!(
+                        reason.as_deref(),
+                        Some(
+                            "quota_exceeded"
+                                | "rate_limited"
+                                | "budget_exhausted"
+                                | "collection_limit"
+                        )
+                    ) {
+                        DAY
+                    } else {
+                        SIX_HOURS
+                    };
                     started.saturating_add(delay) <= now
                 }
             }
@@ -719,9 +786,14 @@ pub fn market_retry_due(
             finished.unwrap_or(started).saturating_add(THIRTY_DAYS) <= now
         }
         Some((state, reason, started, _)) if matches!(state.as_str(), "failed" | "unavailable") => {
-            let delay = if matches!(reason.as_deref(), Some(
-                "rate_limited" | "budget_exhausted" | "collection_limit"
-            )) { DAY } else { SIX_HOURS };
+            let delay = if matches!(
+                reason.as_deref(),
+                Some("rate_limited" | "budget_exhausted" | "collection_limit")
+            ) {
+                DAY
+            } else {
+                SIX_HOURS
+            };
             started.saturating_add(delay) <= now
         }
         _ => false,
@@ -772,6 +844,9 @@ pub fn queue_missing_market_runs(
         rows.collect::<Result<Vec<String>, _>>()?
     };
     let mut queued = Vec::new();
+    // Configuring Google Ads later also makes completed Discovery results
+    // eligible for keyword-only backfill, without redoing YouTube searches.
+    let ads_ready = super::google_ads::GoogleAdsClient::from_env().is_ok();
     for run_id in candidates {
         let idea_ids: Vec<String> = {
             let mut stmt = tx.prepare("SELECT id FROM discovery_candidates WHERE run_id=?1")?;
@@ -781,7 +856,10 @@ pub fn queue_missing_market_runs(
         let mut needs_collection = false;
         for idea_id in idea_ids {
             let (youtube_due, trends_due) = market_retry_due(&tx, &idea_id, now, youtube_ready)?;
-            if youtube_due || trends_due {
+            if youtube_due
+                || trends_due
+                || (ads_ready && super::google_ads::needs_refresh(&tx, &idea_id, now)?)
+            {
                 needs_collection = true;
                 break;
             }
@@ -800,7 +878,8 @@ pub fn queue_missing_market_runs(
                      AND active.id<>discovery_runs.id
                      AND active.status IN ('queued','running','paused'))",
             params![run_id, now],
-        )? == 1 {
+        )? == 1
+        {
             queued.push(run_id);
         }
         if queued.len() >= 4 {
@@ -819,15 +898,20 @@ pub fn claim_pending_market_run(
     now: i64,
 ) -> Result<Option<String>, DiscoveryError> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let run: Option<String> = tx.query_row(
-        "SELECT id FROM discovery_runs WHERE status='running' AND stage='measure_market'
+    let run: Option<String> = tx
+        .query_row(
+            "SELECT id FROM discovery_runs WHERE status='running' AND stage='measure_market'
          ORDER BY updated_at ASC,id ASC LIMIT 1",
-        [], |row| row.get(0),
-    ).optional()?;
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
     if let Some(ref id) = run {
-        tx.execute("UPDATE discovery_runs SET stage='measure_market_collecting',updated_at=?2
+        tx.execute(
+            "UPDATE discovery_runs SET stage='measure_market_collecting',updated_at=?2
                     WHERE id=?1 AND status='running' AND stage='measure_market'",
-            params![id,now])?;
+            params![id, now],
+        )?;
     }
     tx.commit()?;
     Ok(run)
@@ -837,8 +921,11 @@ pub fn claim_pending_market_run(
 /// reset only its run claim on restart. Per-provider durable reservations are
 /// independently reconciled and never silently replayed.
 pub fn recover_interrupted_market_runs(db: &Connection, now: i64) -> Result<(), DiscoveryError> {
-    db.execute("UPDATE discovery_runs SET stage='measure_market',updated_at=?1
-                WHERE status='running' AND stage='measure_market_collecting'", [now])?;
+    db.execute(
+        "UPDATE discovery_runs SET stage='measure_market',updated_at=?1
+                WHERE status='running' AND stage='measure_market_collecting'",
+        [now],
+    )?;
     Ok(())
 }
 
@@ -911,7 +998,10 @@ pub fn pause_run(
             "SELECT stage FROM discovery_runs WHERE project_id=?1 AND id=?2 AND status='running'",
             params![project_id,run_id], |r| r.get(0),
         ).optional()?;
-        if stage.as_deref().is_some_and(|value| value.starts_with("measure_market")) {
+        if stage
+            .as_deref()
+            .is_some_and(|value| value.starts_with("measure_market"))
+        {
             return Ok(());
         }
         return Err(DiscoveryError::NotFound);
@@ -1039,4 +1129,3 @@ pub fn list_runs(db: &Connection, project_id: &str) -> Result<Vec<DiscoveryRun>,
     };
     ids.iter().map(|id| get_run(db, project_id, id)).collect()
 }
-

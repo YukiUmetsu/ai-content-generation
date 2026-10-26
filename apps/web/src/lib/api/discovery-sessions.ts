@@ -43,6 +43,7 @@ export interface IdeaMarketAssessment {
   runId: string;
   state: "running" | "succeeded" | "failed" | "expired";
   query: string;
+  searchQueries?: string[];
   format: "long" | "shorts";
   metricVersion?: string;
   region?: string;
@@ -58,11 +59,23 @@ export interface IdeaMarketAssessment {
   recentUploads90d: number;
   comparisonScore: number | null;
   comparisonCohortSize: number;
+  channelBreakoutScore?: number | null;
+  channelBaselineVideos?: number;
+  channelBaselineChannels?: number;
+  channelBaselineExamples?: Array<{
+    videoId: string; title: string; channelTitle: string;
+    viewCount: number | null; publishedAt: string; sourceUrl: string;
+  }>;
+  observed7dMedianViewDelta?: number | null;
+  observed7dVideoCount?: number;
+  observed30dMedianViewDelta?: number | null;
+  observed30dVideoCount?: number;
   errorCode: string | null;
   videos: Array<{
     videoId: string; title: string; channelTitle: string;
     viewCount: number | null; publishedAt: string; sourceUrl: string;
   }>;
+  audienceQuestions?: Array<{ videoId:string; commentId:string; question:string }>;
 }
 
 /** A within-query Google search-interest change; indices are not keyword volumes. */
@@ -79,11 +92,33 @@ export interface IdeaGoogleTrends {
   errorCode: string | null;
 }
 
+/** Google Ads estimates are Google *Search* volumes, never YouTube searches. */
+export interface IdeaGoogleAds {
+  state: "succeeded" | "failed";
+  metricVersion: "google-ads-search-keywords-v1";
+  query: string;
+  observedAt: number;
+  errorCode: string | null;
+  keywords: Array<{
+    keyword: string;
+    closeVariants: string[];
+    googleMonthlySearches: number | null;
+    advertiserCompetition: "LOW" | "MEDIUM" | "HIGH" | null;
+    lowTopPageBidMicros: number | null;
+    highTopPageBidMicros: number | null;
+  }>;
+}
+
 /** Evidence-based relative opportunity estimate; not a probability or view forecast. */
 export interface ViralPotential {
   score: number | null;
-  state: "measured" | "partial" | "insufficient_data";
-  scoreVersion: "viral-potential-v1";
+  state: "measured" | "partial" | "provisional" | "insufficient_data";
+  scoreVersion: "viral-potential-v1" | "viral-potential-v2";
+  confidence?: "none" | "low" | "medium" | "high";
+  comparisonBasis?: "within_session" | "channel_baseline" | null;
+  channelBreakoutScore?: number | null;
+  channelBaselineVideos?: number;
+  channelBaselineChannels?: number;
   format: "long" | "shorts" | null;
   youtubeScore: number | null;
   trendScore: number | null;
@@ -117,6 +152,7 @@ export interface DiscoverySessionIdea {
   evidence?: ScriptEvidence[];
   marketAssessment?: IdeaMarketAssessment | null;
   googleTrends?: IdeaGoogleTrends | null;
+  googleAds?: IdeaGoogleAds | null;
   viralPotential?: ViralPotential | null;
 }
 
@@ -215,22 +251,30 @@ function requireIdea(value: unknown): DiscoverySessionIdea {
       ["verified", "unverified", "illustrative", "disputed"].includes(String(item.reviewStatus))) as ScriptEvidence[] : [],
     marketAssessment: parseIdeaMarketAssessment(value.marketAssessment),
     googleTrends: parseIdeaGoogleTrends(value.googleTrends),
+    googleAds: parseIdeaGoogleAds(value.googleAds),
     viralPotential: parseViralPotential(value.viralPotential),
   } as DiscoverySessionIdea;
 }
 
 function parseViralPotential(raw: unknown): ViralPotential | null {
-  if (!record(raw) || raw.scoreVersion !== "viral-potential-v1" ||
-    !["measured", "partial", "insufficient_data"].includes(String(raw.state)) ||
+  if (!record(raw) || !["viral-potential-v1", "viral-potential-v2"].includes(String(raw.scoreVersion)) ||
+    !["measured", "partial", "provisional", "insufficient_data"].includes(String(raw.state)) ||
     !(raw.format === null || raw.format === "long" || raw.format === "shorts")) return null;
+  const v2 = raw.scoreVersion === "viral-potential-v2";
   const score = raw.score === null ? null : raw.score;
   const numberOrNull = (value: unknown) => value === null ||
     typeof value === "number" && Number.isFinite(value);
   const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   const percent = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+  const coverage = typeof raw.coveragePercent === "number" ? raw.coveragePercent : -1;
+  const sampleSize = typeof raw.sampleSize === "number" ? raw.sampleSize : -1;
+  const distinctChannels = typeof raw.distinctChannels === "number" ? raw.distinctChannels : -1;
+  const comparisonCohortSize = typeof raw.comparisonCohortSize === "number" ? raw.comparisonCohortSize : -1;
+  const channelBaselineVideos = typeof raw.channelBaselineVideos === "number" ? raw.channelBaselineVideos : -1;
+  const channelBaselineChannels = typeof raw.channelBaselineChannels === "number" ? raw.channelBaselineChannels : -1;
   if (!(score === null || Number.isInteger(score) && percent(score)) ||
     !numberOrNull(raw.youtubeScore) || !numberOrNull(raw.trendScore) ||
-    !numberOrNull(raw.trendChangePercent) || !count(raw.coveragePercent) || raw.coveragePercent > 100 ||
+    !numberOrNull(raw.trendChangePercent) || !count(coverage) || coverage > 100 ||
     !count(raw.sampleSize) || !count(raw.distinctChannels) || !count(raw.comparisonCohortSize) ||
     !numberOrNull(raw.youtubeObservedAt) || !numberOrNull(raw.trendsObservedAt) ||
     raw.youtubeScore !== null && !percent(raw.youtubeScore) ||
@@ -238,13 +282,50 @@ function parseViralPotential(raw: unknown): ViralPotential | null {
     (score === null) !== (raw.state === "insufficient_data") ||
     (score !== null && (raw.youtubeScore === null || raw.format === null)) ||
     (raw.state === "measured" && (raw.youtubeScore === null || raw.trendScore === null ||
-      raw.coveragePercent !== 100)) ||
-    (raw.state === "partial" && (raw.youtubeScore === null || raw.trendScore !== null ||
-      raw.coveragePercent !== 75)) ||
+      coverage !== 100)) ||
+    (raw.state === "partial" && (v2 || raw.youtubeScore === null || raw.trendScore !== null ||
+      coverage !== 75)) ||
     (raw.state === "insufficient_data" && raw.youtubeScore !== null) ||
-    (raw.youtubeScore !== null && (raw.sampleSize < 8 || raw.distinctChannels < 3 ||
-      raw.comparisonCohortSize < 3))) return null;
+    (!v2 && raw.state === "provisional") ||
+    (!v2 && raw.youtubeScore !== null && (sampleSize < 8 || distinctChannels < 3 ||
+      comparisonCohortSize < 3))) return null;
+  if (v2) {
+    if (!["none", "low", "medium", "high"].includes(String(raw.confidence)) ||
+      !(raw.comparisonBasis === null || ["within_session", "channel_baseline"].includes(String(raw.comparisonBasis))) ||
+      !numberOrNull(raw.channelBreakoutScore) ||
+      raw.channelBreakoutScore !== null && !percent(raw.channelBreakoutScore) ||
+      !count(channelBaselineVideos) || !count(channelBaselineChannels) ||
+      raw.state === "partial" ||
+      (raw.state === "provisional" && score === null) ||
+      (raw.state === "measured" && (raw.comparisonBasis !== "within_session" ||
+        sampleSize < 8 || distinctChannels < 3 || comparisonCohortSize < 3)) ||
+      (score !== null && !(sampleSize >= 8 && distinctChannels >= 3 && comparisonCohortSize >= 3)
+        && !(raw.comparisonBasis === "channel_baseline" && raw.channelBreakoutScore !== null &&
+          sampleSize >= 1 && channelBaselineChannels >= 1 && channelBaselineVideos >= 3)) ||
+      (score === null && raw.comparisonBasis !== null)) return null;
+  }
   return raw as unknown as ViralPotential;
+}
+
+function parseIdeaGoogleAds(raw: unknown): IdeaGoogleAds | null {
+  if (!record(raw) || !["succeeded","failed"].includes(String(raw.state)) ||
+    raw.metricVersion !== "google-ads-search-keywords-v1" || typeof raw.query !== "string" ||
+    typeof raw.observedAt !== "number" || !Number.isSafeInteger(raw.observedAt) || raw.observedAt <= 0 ||
+    !(raw.errorCode === null || typeof raw.errorCode === "string")) return null;
+  const nonnegative = (value: unknown) => value === null ||
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const keywords: IdeaGoogleAds["keywords"] = [];
+  if (!Array.isArray(raw.keywords)) return null;
+  for (const item of raw.keywords.slice(0, 50)) {
+    if (!record(item) || typeof item.keyword !== "string" || item.keyword.length > 120 ||
+      !Array.isArray(item.closeVariants) || !item.closeVariants.every(value => typeof value === "string") ||
+      !nonnegative(item.googleMonthlySearches) || !nonnegative(item.lowTopPageBidMicros) ||
+      !nonnegative(item.highTopPageBidMicros) ||
+      !(item.advertiserCompetition === null || ["LOW","MEDIUM","HIGH"].includes(String(item.advertiserCompetition)))) continue;
+    keywords.push(item as IdeaGoogleAds["keywords"][number]);
+  }
+  return {state: raw.state as IdeaGoogleAds["state"],metricVersion:"google-ads-search-keywords-v1",
+    query:raw.query,observedAt:raw.observedAt,errorCode:raw.errorCode as string|null,keywords};
 }
 
 function parseIdeaGoogleTrends(raw: unknown): IdeaGoogleTrends | null {
@@ -273,8 +354,19 @@ function parseIdeaMarketAssessment(raw: unknown): IdeaMarketAssessment | null {
   const videos = Array.isArray(raw.videos) ? raw.videos.slice(0, 25).filter(video => record(video) &&
     ["videoId", "title", "channelTitle", "publishedAt", "sourceUrl"].every(key => typeof video[key] === "string") &&
     (video.viewCount == null || optionalNumber(video.viewCount) !== null)) : [];
+  const channelBaselineExamples = Array.isArray(raw.channelBaselineExamples) ? raw.channelBaselineExamples.slice(0, 9)
+    .filter(video => record(video) && /^[A-Za-z0-9_-]{11}$/.test(String(video.videoId)) &&
+      ["title", "channelTitle", "publishedAt", "sourceUrl"].every(key => typeof video[key] === "string") &&
+      video.sourceUrl === `https://www.youtube.com/watch?v=${video.videoId}` &&
+      (video.viewCount == null || optionalNumber(video.viewCount) !== null)) : [];
+  const audienceQuestions = Array.isArray(raw.audienceQuestions) ? raw.audienceQuestions.slice(0,24).filter(question => record(question) &&
+    typeof question.videoId === "string" && /^[A-Za-z0-9_-]{11}$/.test(question.videoId) &&
+    typeof question.commentId === "string" && typeof question.question === "string" &&
+    question.question.length <= 240 && question.question.includes("?")) : [];
   return {
     runId: raw.runId, state: raw.state as IdeaMarketAssessment["state"], query: raw.query,
+    ...(Array.isArray(raw.searchQueries) ? {searchQueries:raw.searchQueries.slice(0, 4)
+      .filter((query: unknown) => typeof query === "string" && query.length <= 120)} : {}),
     format: raw.format as IdeaMarketAssessment["format"],
     ...(typeof raw.metricVersion === "string" ? { metricVersion: raw.metricVersion } : {}),
     ...(typeof raw.region === "string" ? { region: raw.region } : {}),
@@ -287,8 +379,20 @@ function parseIdeaMarketAssessment(raw: unknown): IdeaMarketAssessment | null {
     medianViewsPerDay: optionalNumber(raw.medianViewsPerDay),
     recentUploads90d: count(raw.recentUploads90d), comparisonScore: optionalNumber(raw.comparisonScore),
     comparisonCohortSize: count(raw.comparisonCohortSize),
+    ...(raw.channelBreakoutScore === null || optionalNumber(raw.channelBreakoutScore) !== null
+      ? {channelBreakoutScore:optionalNumber(raw.channelBreakoutScore)} : {}),
+    ...(typeof raw.channelBaselineVideos === "number" ? {channelBaselineVideos:count(raw.channelBaselineVideos)} : {}),
+    ...(typeof raw.channelBaselineChannels === "number" ? {channelBaselineChannels:count(raw.channelBaselineChannels)} : {}),
+    ...(Array.isArray(raw.channelBaselineExamples) ? {channelBaselineExamples: channelBaselineExamples as NonNullable<IdeaMarketAssessment["channelBaselineExamples"]>} : {}),
+    ...(raw.observed7dMedianViewDelta === null || typeof raw.observed7dMedianViewDelta === "number" && Number.isFinite(raw.observed7dMedianViewDelta)
+      ? {observed7dMedianViewDelta:raw.observed7dMedianViewDelta as number|null} : {}),
+    ...(typeof raw.observed7dVideoCount === "number" ? {observed7dVideoCount:count(raw.observed7dVideoCount)} : {}),
+    ...(raw.observed30dMedianViewDelta === null || typeof raw.observed30dMedianViewDelta === "number" && Number.isFinite(raw.observed30dMedianViewDelta)
+      ? {observed30dMedianViewDelta:raw.observed30dMedianViewDelta as number|null} : {}),
+    ...(typeof raw.observed30dVideoCount === "number" ? {observed30dVideoCount:count(raw.observed30dVideoCount)} : {}),
     errorCode: typeof raw.errorCode === "string" ? raw.errorCode : null,
     videos: videos as IdeaMarketAssessment["videos"],
+    ...(Array.isArray(raw.audienceQuestions) ? {audienceQuestions: audienceQuestions as NonNullable<IdeaMarketAssessment["audienceQuestions"]>} : {}),
   };
 }
 

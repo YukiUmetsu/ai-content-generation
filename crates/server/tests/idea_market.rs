@@ -272,32 +272,98 @@ fn quota_is_shared_with_existing_watchlists_and_does_not_reserve_on_rejection() 
 fn automatic_missing_credentials_is_visible_but_does_not_consume_quota_or_block_manual_retry() {
     let (mut db, session, idea) = seeded();
     let now = 1_792_886_400;
-    idea_market::record_unavailable_assessment(&mut db,"brand",&session,&idea,
-        "roof repair","long","api_key_missing",now).unwrap();
-    let latest=idea_market::latest_assessment(&db,&idea,now+1).unwrap().unwrap();
-    assert_eq!(latest.state,"failed");
-    assert_eq!(latest.error_code.as_deref(),Some("api_key_missing"));
+    idea_market::record_unavailable_assessment(
+        &mut db,
+        "brand",
+        &session,
+        &idea,
+        "roof repair",
+        "long",
+        "api_key_missing",
+        now,
+    )
+    .unwrap();
+    let latest = idea_market::latest_assessment(&db, &idea, now + 1)
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest.state, "failed");
+    assert_eq!(latest.error_code.as_deref(), Some("api_key_missing"));
     assert!(latest.next_collection_at <= now);
-    assert_eq!(db.query_row("SELECT COUNT(*) FROM market_search_budget",[],|r|r.get::<_,i64>(0)).unwrap(),0);
-    assert!(idea_market::claim_assessment(&mut db,"brand",&session,&idea,"roof repair","long",now+1).is_ok());
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM market_search_budget", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert!(
+        idea_market::claim_assessment(
+            &mut db,
+            "brand",
+            &session,
+            &idea,
+            "roof repair",
+            "long",
+            now + 1
+        )
+        .is_ok()
+    );
 }
 
 #[test]
 fn automatic_retry_blockers_are_persisted_without_overwriting_success_or_spamming() {
     let (mut db, session, idea) = seeded();
     let now = 1_792_886_400;
-    idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
-        "roof repair", "long", "api_key_missing", now).unwrap();
+    idea_market::record_unavailable_assessment(
+        &mut db,
+        "brand",
+        &session,
+        &idea,
+        "roof repair",
+        "long",
+        "api_key_missing",
+        now,
+    )
+    .unwrap();
     // The key was added, but the provider quota is exhausted. Do not leave
     // the stale missing-key error eligible for an immediate retry loop.
-    idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
-        "roof repair", "long", "budget_exhausted", now).unwrap();
-    let latest = idea_market::latest_assessment(&db, &idea, now + 1).unwrap().unwrap();
+    idea_market::record_unavailable_assessment(
+        &mut db,
+        "brand",
+        &session,
+        &idea,
+        "roof repair",
+        "long",
+        "budget_exhausted",
+        now,
+    )
+    .unwrap();
+    let latest = idea_market::latest_assessment(&db, &idea, now + 1)
+        .unwrap()
+        .unwrap();
     assert_eq!(latest.error_code.as_deref(), Some("budget_exhausted"));
-    idea_market::record_unavailable_assessment(&mut db, "brand", &session, &idea,
-        "roof repair", "long", "budget_exhausted", now + 2).unwrap();
-    assert_eq!(db.query_row("SELECT COUNT(*) FROM idea_market_runs", [], |r|r.get::<_,i64>(0)).unwrap(), 2);
-    assert_eq!(db.query_row("SELECT COUNT(*) FROM market_search_budget", [], |r|r.get::<_,i64>(0)).unwrap(), 0);
+    idea_market::record_unavailable_assessment(
+        &mut db,
+        "brand",
+        &session,
+        &idea,
+        "roof repair",
+        "long",
+        "budget_exhausted",
+        now + 2,
+    )
+    .unwrap();
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM idea_market_runs", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM market_search_budget", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -336,6 +402,7 @@ fn cohort_percentiles_require_three_comparable_ideas_and_preserve_ties() {
             run_id: "run".into(),
             state: "succeeded".into(),
             query: "roof repair".into(),
+            search_queries: vec!["roof repair".into()],
             format: format.into(),
             metric_version: "youtube-comparables-v1".into(),
             region: "US".into(),
@@ -351,8 +418,17 @@ fn cohort_percentiles_require_three_comparable_ideas_and_preserve_ties() {
             recent_uploads90d: 9,
             comparison_score: None,
             comparison_cohort_size: 0,
+            channel_breakout_score: None,
+            channel_baseline_videos: 0,
+            channel_baseline_channels: 0,
+            channel_baseline_examples: vec![],
+            observed_7d_median_view_delta: None,
+            observed_7d_video_count: 0,
+            observed_30d_median_view_delta: None,
+            observed_30d_video_count: 0,
             error_code: None,
             videos: vec![],
+            audience_questions: vec![],
         })
     }
     let mut only_two = vec![

@@ -82,6 +82,31 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0012_discovery_google_trends",
         sql: include_str!("../../../migrations/0012_discovery_google_trends.sql"),
     },
+    Migration {
+        version: 13,
+        name: "0013_idea_market_search_queries",
+        sql: include_str!("../../../migrations/0013_idea_market_search_queries.sql"),
+    },
+    Migration {
+        version: 14,
+        name: "0014_google_ads_idea_research",
+        sql: include_str!("../../../migrations/0014_google_ads_idea_research.sql"),
+    },
+    Migration {
+        version: 15,
+        name: "0015_idea_channel_baselines",
+        sql: include_str!("../../../migrations/0015_idea_channel_baselines.sql"),
+    },
+    Migration {
+        version: 16,
+        name: "0016_video_view_snapshots",
+        sql: include_str!("../../../migrations/0016_video_view_snapshots.sql"),
+    },
+    Migration {
+        version: 17,
+        name: "0017_idea_audience_questions",
+        sql: include_str!("../../../migrations/0017_idea_audience_questions.sql"),
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
