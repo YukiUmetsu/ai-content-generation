@@ -271,7 +271,9 @@ async function draftSection(candidate, {modelSettings, transport, signal, log}) 
   const endpoint = localChatEndpoint(modelSettings.endpoint);
   const userContent = JSON.stringify(input);
   const systemContent = resolveStagePrompt("script", SYSTEM + "\n" + continuityDirections + (["blog", "website"].includes(input.platform)
-    ? "\nFor this blog/website output, write readable editorial prose with short paragraphs, not a voice-over transcript. Keep a traceable argument and clear caveats."
+    ? input.platform === "blog"
+      ? "\nThis is a substantive, long-form blog ARTICLE, not narration. Across five sections aim for 2,500–3,000 useful English words, approximately 450–650 words in THIS section when evidence supports it. Use short editorial paragraphs, precise H2/H3 subheadings when useful, practical examples and substantive explanations. Avoid padding, repetitive introductions, unfounded numerical examples and invented citations. If sources do not support that length, write less and state the limitation rather than invent content. No opening hook repeated in later sections."
+      : "\nFor this website output, write readable editorial prose with short paragraphs, not a voice-over transcript. Keep a traceable argument and clear caveats."
     : "\nFor this video output, write natural speech designed to be narrated, and do not insert spoken citations or URLs."));
   let feedback="",continuityRetry=false;
   // A format repair gets a changed contract hint, never a replay of the bad

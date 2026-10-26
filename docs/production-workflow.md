@@ -6,9 +6,9 @@ Production is the project-scoped entry point for making content. The persistent 
 2. **Discover** — start or reopen a durable discovery session.
 3. **Select Idea** — compare preserved observations and prepare a production brief.
 4. **Script** — collect missing factual sources, generate sections with the configured local script model, review/edit/regenerate and approve each destination's draft.
-5. **Storyboard** — map the approved primary script into an editable outline and review its captured quotations.
-6. **Produce** — transfer the approved YouTube script, citations and outline to Director for visual editing, narration and sound.
-7. **Optimize** — prepare and review destination-specific metadata and file selections.
+5. **Plan Scenes** — turn the approved script into editable scene cards, check the flow and move forward with one clear action. Previous edits are backed up when the script changes.
+6. **Create Video** — three tasks open the existing YouTube Director in visuals, audio or preview/export mode. Other formats are directed to the publishing kit with limitations explained.
+7. **Publish Kit** — prepare editable title/caption metadata, local graphic covers, illustrations and article exports by destination.
 8. **Export** — download actual local render files and metadata manifests.
 
 ## Script generation and source recovery
@@ -27,13 +27,17 @@ Normalized identical text and conservative whole-passage near-copies trigger one
 
 Scripts must contain known linked claim/source references before accepting model output. Long project notes and production directions use compatible frontend/backend limits. A script approval creates an editable outline; it does not approve publication. The same captured quotations are available for explicit, reversible Storyboard claim-review receipts, even when no legacy research plan exists.
 
+Blog output uses the same five source-linked sections with a longer editorial-writing target (about 2,500–3,000 useful English words in total when the evidence supports it). The model is instructed to write less if sources are insufficient, rather than adding filler or invented facts. The editor shows word count and approximate reading time.
+
 ## Render identity and supported outputs
 
-The current script-to-Director path renders landscape YouTube video. Other selected destinations support separate script drafts and metadata preparation; their dedicated portrait/article exporters remain unavailable. Disabled video actions show the required YouTube script/storyboard prerequisites.
+The current script-to-Director path renders landscape YouTube video. Dedicated portrait video exporters remain unavailable. Other selected destinations now receive actual locally downloadable Kumiki-designed PNG cover images and metadata; blogs receive illustrated HTML and Markdown/article images. These graphics depict approved script wording and section order, not invented photographic scenes, measurements or externally sourced artwork. Cited source links are included in the exported blog for verification, and publication remains manual.
+
+The static-image producer uses the pinned Kumiki infographic layout/PNG export contract, so preview and download come from one deterministic visual model. The source revision is pinned and hashed; it is updated deliberately after local review, never fetched afresh during a video render. Real render assets take priority over generated covers. Deliberately cleared media choices stay cleared.
 
 The render index records the imported script/outline revision alongside each production's MP4 and captions. Produce and Export completion are derived from a real MP4 matching that revision. Older/untracked files remain downloadable with a revision label, and are excluded from automatically prepared current-output asset choices. A readiness check, a page visit, or an approved script is never a completed render.
 
-Project colors currently apply to metadata and thumbnail previews; Director retains its built-in video palette. Imported footage, images and models can be approved/downloaded and saved as scene references; the generic renderer does not yet composite them. The asset action is named **Save as scene reference** so it does not promise placement in the MP4.
+Project colors apply to metadata and generated static covers; Director retains its built-in video palette. Imported footage, images and models can be approved/downloaded and saved as scene references; the generic renderer does not yet composite them. The asset action is named **Save as scene reference** so it does not promise placement in the MP4.
 
 ## Evidence is not approval
 
@@ -81,4 +85,4 @@ pnpm --dir apps/web run build
 
 The headless-video command includes source-link repair, storyboard synchronization, the saved-research API, and the Director production/readiness route tests. These checks are local and do not request a GitHub Actions runner.
 
-Then use a project with a saved captured-research artifact to open **Production → Storyboard → Video Director**. Edit a shot's narration, screen copy, and visual action; confirm all three are present in Director, the source claim references remain unchanged, unsupported camera/semantic/timing edits show explicit review warnings, and a source mismatch cannot reuse an older Director session. Preview and export require actual visual/audio inspection and rights approval. A saved plan or test result is not a completed media artifact.
+Then use a project with a saved captured-research artifact to open **Production → Plan Scenes → Create Video → Publish Kit**. Check scenes and output, download a generated PNG for each destination, open the blog HTML offline and inspect its diagrams and cited sources. Confirm Director output, rights and disclosure requirements manually; a saved plan or passing test is not a completed media artifact.

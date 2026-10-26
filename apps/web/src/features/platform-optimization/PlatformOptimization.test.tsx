@@ -97,5 +97,14 @@ describe("PlatformOptimization", () => {
     expect((screen.getByLabelText("Upload title") as HTMLInputElement).value).toBe("Human title");
     expect(screen.getByText(/script, palette or assets changed/i)).toBeInTheDocument();
   });
+
+  it("never enables article download before the Blog script is approved", () => {
+    render(<PlatformOptimization input={{ ...input, approvedPlatforms: ["youtube"] }} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Blog / Website" }));
+    expect(screen.getByText(/Approve your Blog script to unlock/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download illustrated HTML" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Markdown" })).toBeDisabled();
+    expect(screen.getByText(/Approve the current Blog \/ Website script in the Script stage/)).toBeInTheDocument();
+  });
 });
 

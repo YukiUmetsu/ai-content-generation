@@ -20,7 +20,7 @@ describe("Production eight-step workspace",()=>{
     render(<ProductionWorkspace {...props}/>);
     expect(screen.getByRole("navigation",{name:"Production stages"})).toBeInTheDocument();
     expect(screen.getByRole("button",{name:"Setup stage"})).toHaveAttribute("aria-current","step");
-    for(const name of ["Discover","Select Idea","Script","Storyboard","Produce","Optimize","Export"]){
+    for(const name of ["Discover","Select Idea","Script","Plan Scenes","Create Video","Publish Kit","Export"]){
       expect(screen.getByRole("button",{name:`${name} stage`})).toBeInTheDocument();
     }
     expect(screen.getByRole("combobox",{name:"Project / brand"})).toHaveValue("project-demo");
@@ -70,13 +70,13 @@ describe("Production eight-step workspace",()=>{
     saveProjectStoryboard("project-demo",board);
     const open=vi.fn();
     render(<ProductionWorkspace {...props} onOpenStoryboard={open}/>);
-    fireEvent.click(screen.getByRole("button",{name:"Storyboard stage"}));
+    fireEvent.click(screen.getByRole("button",{name:"Plan Scenes stage"}));
     expect(screen.getByRole("heading",{name:"Review your scenes"})).toBeInTheDocument();
     expect(screen.getByText(/1 potentially repeated scene/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:"Edit scene 3"}));
     expect(sessionStorage.getItem("contentgen:storyboard-focus-beat:v1:project-demo")).toBe("beat-installation");
     expect(open).toHaveBeenCalledWith("project-demo");
-    expect(screen.getByRole("button",{name:"Continue to production"})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/Looks good · Create video/})).toBeInTheDocument();
   });
   it("collects missing source evidence from Script and starts real section requests without rerunning discovery", async()=>{
     const production={id:"production-"+"a".repeat(24),projectId:"project-demo",sessionId:"session-1",ideaId:"idea-1",
@@ -111,7 +111,7 @@ describe("Production eight-step workspace",()=>{
     expect(screen.getByText(evidence[0].quote,{selector:"blockquote"})).toBeInTheDocument();
     fireEvent.click(reviewed);
     expect(screen.getByText("Reviewed locally")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button",{name:"Produce stage"}));
+    fireEvent.click(screen.getByRole("button",{name:"Create Video stage"}));
     expect(screen.getByRole("button",{name:"Open visual tools"})).toBeEnabled();
   });
 
