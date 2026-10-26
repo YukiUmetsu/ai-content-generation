@@ -19,6 +19,7 @@ import { PromptStudio } from "./prompt-studio";
 import { ProviderConnections } from "./provider-connections";
 import { ProjectDiscoveryPanel } from "./project-discovery-panel";
 import { ProjectBrandAppearancePanel } from "./project-brand-appearance-panel";
+import { CharacterPackInspector } from "@/features/character-studio/CharacterPackInspector";
 import type {DiscoveryCandidate,GraphSource} from "@/lib/api/discovery";
 
 interface Props {
@@ -266,6 +267,7 @@ function InventoryWorkspace({section,locale,catalog,save}:Props) {
         </form>
       </Surface>
     </div>
+    {key === "assets" && <CharacterPackInspector locale={locale} />}
   </>;
 }
 function InsightsWorkspace({catalog,locale}:Pick<Props,"catalog"|"locale">) {
