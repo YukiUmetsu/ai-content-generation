@@ -14,7 +14,7 @@ const arr = (v, max) => Array.isArray(v) && v.length <= max;
 const enums = {
   pattern: ["investigation","misconception","mechanism","cost-dissection","decision","failure","scale"],
   family: ["question","process","comparison","cost-breakdown","mechanism","evidence","summary"],
-  purpose: ["hook","reveal","explain","compare","prove","answer"],
+  purpose: ["hook","reveal","explain","compare","prove","answer","postscript"],
   transition: ["cut","match-cut","shared-element","morph","camera-follow","sound-bridge","dissolve"],
   delivery: ["curious","conversational","measured","surprised","confident","reflective"]
 };
@@ -164,9 +164,11 @@ export function parsePreproductionPlan(plan,dossier){
   if(shots.length){
     if(shots[0].family!=="question"||shots[0].purpose!=="hook")
       v.add("hook-not-visible","shots[0]","Open with an on-screen question shot, not a generic title slide.");
-    const last=shots.at(-1);
-    if(last.explanationId!==plan.story?.answerExplanationId||last.purpose!=="answer")
-      v.add("payoff-not-visible","shots","The ending must visually answer the central question.");
+    const answerIndex=shots.findLastIndex(shot=>shot.explanationId===plan.story?.answerExplanationId&&shot.purpose==="answer");
+    // A reviewed call to action can follow the answer without replacing it.
+    // Only explicit summary postscripts may trail the actual payoff.
+    if(answerIndex<1||shots.slice(answerIndex+1).some(shot=>shot.family!=="summary"||shot.purpose!=="postscript"))
+      v.add("payoff-not-visible","shots","Show the central answer before any summary postscripts.");
   }
   const shotIds=new Set(shots.filter(obj).map(x=>x.id));
   const boundaries=new Set(shots.slice(1).map((s,i)=>shots[i].id+">"+s.id)), seen=new Set();

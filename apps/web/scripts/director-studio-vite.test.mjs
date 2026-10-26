@@ -304,3 +304,30 @@ test("closing a keyword stream aborts its own running generator",async()=>{
 });
 
 
+
+test("production evidence restores by canonical identity and only captures after an explicit local POST",async()=>{
+  const id="production-"+"a".repeat(24),events=[];
+  const snapshot={version:1,productionId:id,evidence:[{quote:"Actual captured words."}],sources:[]};
+  const deps={productionEvidence:{get:async value=>{events.push(["get",value]);return snapshot;},
+    capture:async(value,options)=>{events.push(["capture",value,options.allowNetwork,options.locale]);return snapshot;}}};
+  assert.deepEqual((await get("/production-evidence/"+id,deps)).result,{snapshot});
+  assert.equal((await post("/production-evidence/"+id,{allowNetwork:true,locale:"en"},deps)).status,200);
+  assert.equal((await post("/production-evidence/"+id,{url:"https://unrelated.example.org"},deps)).status,422);
+  assert.deepEqual(events,[["get",id],["capture",id,true,"en"]]);
+});
+
+test("disconnecting a script request aborts the actual model operation",async()=>{
+  const req=Readable.from([Buffer.from(JSON.stringify({mode:"initial"}))]);
+  Object.assign(req,{method:"POST",url:"/script-generate",headers:{host:"127.0.0.1:5173",origin:"http://127.0.0.1:5173","x-contentgen-director":"local-only"}});
+  const res=Object.assign(new EventEmitter(),{writableEnded:false,writeHead(){},end(){this.writableEnded=true;}});
+  let started,aborted=false;
+  const ready=new Promise(resolve=>{started=resolve;});
+  const pending=handleDirectorRequest(req,res,{model:async()=>({model:"local-script"}),
+    script:async(_input,{signal})=>{
+      started();await new Promise(resolve=>signal.addEventListener("abort",()=>{aborted=true;resolve();},{once:true}));
+      return {narration:"Cancelled",claimRefs:[],sourceRefs:[]};
+    }});
+  await ready;res.emit("close");await pending;
+  assert.equal(aborted,true);
+  assert.equal(res.writableEnded,false);
+});

@@ -14,6 +14,7 @@ export interface PlatformAsset {
   kind: AssetKind;
   platform?: string;
   filename?: string;
+  sourceRevision?: string;
   /** Local, same-origin download for an actually existing release file. */
   downloadUrl?: string;
   durationSeconds?: number;
@@ -24,6 +25,8 @@ export interface PlatformScriptSection {
   id: string;
   heading: string;
   text: string;
+  /** Captured source IDs carried through from the accepted model output. */
+  sourceRefs?: readonly string[];
   /** An actual confirmed point in the exported video, not an estimate. */
   startSeconds?: number;
 }
@@ -44,9 +47,12 @@ export interface PlatformOptimizationInput {
   primaryKeyword?: string;
   language?: string;
   platforms: readonly string[];
+  /** Only current, explicitly approved destination scripts can produce exportable artwork. */
+  approvedPlatforms?: readonly string[];
   scriptSections: readonly PlatformScriptSection[];
   /** Optional independently edited script for each destination (aliases accepted). */
   platformScripts?: Record<string, readonly PlatformScriptSection[]>;
+  sourceEvidence?: readonly { sourceId: string; sourceUrl: string; reviewStatus: string }[];
   brandColors?: PlatformBrandColors;
   assets?: readonly PlatformAsset[];
   /** The approved source revision, if known. An input signature is also checked. */
@@ -229,12 +235,23 @@ function prepareFields(target: PlatformTarget, input: PlatformOptimizationInput)
 
 /** A compact change detector, not an artifact content hash or security checksum. */
 export function sourceSignature(input: PlatformOptimizationInput, target?: PlatformTarget): string {
+  const realAssets = (target ? input.assets?.filter((asset) => !asset.platform || normalizeTarget(asset.platform) === target) : input.assets)
+    ?.filter((asset) => !asset.id.startsWith("kumiki-art-"));
+  const citedSources = new Set((target ? sectionsForTarget(input, target) :
+    Object.values(input.platformScripts ?? {}).flat().concat(input.scriptSections)).flatMap((section) => section.sourceRefs ?? []));
+  const sourceEvidence = input.sourceEvidence?.filter((source) => citedSources.has(source.sourceId))
+    .map((source) => [source.sourceId, source.sourceUrl, source.reviewStatus]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
   const text = JSON.stringify({
     title: input.title, summary: input.summary, audience: input.audience,
     keyword: input.primaryKeyword, language: input.language, revision: input.sourceRevision,
+    approvedPlatforms: target ? input.approvedPlatforms?.some((name) => normalizeTarget(name) === target) : input.approvedPlatforms,
     sections: target ? sectionsForTarget(input, target) : input.scriptSections,
     platformScripts: target ? undefined : input.platformScripts,
-    assets: target ? input.assets?.filter((asset) => !asset.platform || normalizeTarget(asset.platform) === target) : input.assets,
+    sourceEvidence,
+    // Browser-generated Kumiki covers are a deterministic *derivative* of this
+    // source, never another source revision. Including their IDs would cause
+    // a circular signature and make production progress permanently stale.
+    assets: realAssets,
     colors: input.brandColors,
   });
   let hash = 2166136261;
@@ -264,6 +281,27 @@ function initialPackage(target: PlatformTarget, input: PlatformOptimizationInput
     approvedRevision: null,
     revisions: [{ revision: 1, at: new Date().toISOString(), reason: "prepared" }],
   };
+}
+
+function addSuggestedArtwork(pkg: PlatformPackage, input: PlatformOptimizationInput): PlatformPackage {
+  // Existing approvals must not silently acquire a newly generated asset.
+  if (pkg.status === "approved") return pkg;
+  const kind = pkg.platform === "blog" ? "hero" : "thumbnail";
+  // A person can explicitly clear or replace a cover. Only backfill legacy
+  // drafts that have never had a deliberate media choice.
+  if (pkg.assetIds[kind] || pkg.revisions.some((item) => item.reason === "asset-changed" && item.field === kind)) return pkg;
+  const id = suitableAsset(input, pkg.platform, kind);
+  return id ? { ...pkg, assetIds: { ...pkg.assetIds, [kind]: id } } : pkg;
+}
+
+function currentArtworkSelection(pkg: PlatformPackage, input: PlatformOptimizationInput, kind: "thumbnail" | "hero"): string | null {
+  const selected = pkg.assetIds[kind];
+  if (selected?.startsWith("kumiki-art-")) {
+    // Old, now-unapproved art must never masquerade as the current export.
+    return input.assets?.some((asset) => asset.id === selected) ? selected : suitableAsset(input, pkg.platform, kind);
+  }
+  if (selected || pkg.revisions.some((item) => item.reason === "asset-changed" && item.field === kind)) return selected;
+  return suitableAsset(input, pkg.platform, kind);
 }
 
 export function createPlatformOptimizationManifest(input: PlatformOptimizationInput): PlatformOptimizationManifest {
@@ -333,7 +371,7 @@ export function reconcilePlatformOptimizationManifest(manifest: PlatformOptimiza
     const signature = sourceSignature(input, target);
     const pkg = existing.get(target);
     if (!pkg) return initialPackage(target, input);
-    if (pkg.sourceSignature === signature) return pkg;
+    if (pkg.sourceSignature === signature) return addSuggestedArtwork(pkg, input);
     const generatedFields = prepareFields(target, input);
     const fields = { ...pkg.fields };
     for (const key of Object.keys(generatedFields) as PlatformField[]) {
@@ -344,14 +382,14 @@ export function reconcilePlatformOptimizationManifest(manifest: PlatformOptimiza
       }
     }
     const updated = newRevision(pkg, "source-changed");
-    return { ...updated, sourceSignature: signature, stale: true, fields,
+    return addSuggestedArtwork({ ...updated, sourceSignature: signature, stale: true, fields,
       assetIds: {
         video: pkg.assetIds.video ?? (target === "blog" ? null : suitableAsset(input, target, "video")),
-        thumbnail: pkg.assetIds.thumbnail ?? (target === "blog" ? null : suitableAsset(input, target, "thumbnail")),
+        thumbnail: target === "blog" ? null : currentArtworkSelection(pkg, input, "thumbnail"),
         captions: pkg.assetIds.captions ?? (target === "blog" ? null : suitableAsset(input, target, "captions")),
-        hero: pkg.assetIds.hero ?? (target === "blog" ? suitableAsset(input, target, "hero") : null),
+        hero: target === "blog" ? currentArtworkSelection(pkg, input, "hero") : null,
       },
-    };
+    }, input);
   });
   return { ...manifest, brandColors: input.brandColors ? { ...input.brandColors } : null, packages };
 }

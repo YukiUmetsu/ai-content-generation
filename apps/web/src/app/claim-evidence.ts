@@ -4,6 +4,8 @@
 import type { SemanticStoryboard } from "@/features/storyboard-planner/model/types";
 import type { ResearchDraftResult } from "./researched-storyboard";
 
+export type ClaimEvidenceSnapshot = Pick<ResearchDraftResult,"artifactId"|"dossier"|"quotes">;
+
 export type ClaimEvidenceKind =
   | "source_missing"
   | "source_mismatch"
@@ -34,7 +36,7 @@ export function countClaimIssues(issues: readonly ClaimEvidenceIssue[]): Record<
 
 export function inspectClaimEvidence(
   board: SemanticStoryboard,
-  draft?: ResearchDraftResult,
+  draft?: ClaimEvidenceSnapshot,
 ): ClaimEvidenceIssue[] {
   const byId = new Map(board.claims.map(claim => [claim.id, claim]));
   const sourceById = new Map(draft?.dossier?.evidence?.map(source => [source.id, source] as const) ?? []);

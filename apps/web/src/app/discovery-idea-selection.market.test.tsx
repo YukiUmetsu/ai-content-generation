@@ -311,6 +311,8 @@ describe("per-idea YouTube market evidence", () => {
     const running = { ...assessment("long", null), state: "running" as const, observedAt: null, videos: [] };
     vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
       const url = String(input);
+      if (url.endsWith("/runs")) return Response.json({runs:[]});
+      if (url.endsWith("/market/backfill")) return Response.json({state:"no_pending",queuedRunIds:[]});
       if (url.endsWith("/market/status")) return new Response(JSON.stringify({apiKeyConfigured:true,
         collecting:false,searchCallsLast24h:1,searchCallLimit:20}),{status:200});
       if (url.endsWith("/ideas")) return new Response(JSON.stringify({ideas:[idea("idea-1",
@@ -320,6 +322,7 @@ describe("per-idea YouTube market evidence", () => {
     });
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     expect(await screen.findByText(/Collecting public videos/i)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button",{name:"Evidence details"}));
     expect(await screen.findByText("12 videos · 5 channels", {}, {timeout:8000})).toBeInTheDocument();
   }, 12000);
 
@@ -332,6 +335,8 @@ describe("per-idea YouTube market evidence", () => {
     let statusCollecting = false;
     vi.spyOn(globalThis,"fetch").mockImplementation(async (request,init) => {
       const url = String(request);
+      if (url.endsWith("/runs")) return Response.json({runs:[]});
+      if (url.endsWith("/market/backfill")) return Response.json({state:"no_pending",queuedRunIds:[]});
       if (url.endsWith("/market/status")) return new Response(JSON.stringify({apiKeyConfigured:true,
         collecting:statusCollecting,searchCallsLast24h:started?2:1,searchCallLimit:20}),{status:200});
       if (url.endsWith("/idea-1/market") && init?.method === "POST") {
@@ -357,25 +362,22 @@ describe("per-idea YouTube market evidence", () => {
   }, 12000);
 
   it("never ranks a shorts observation against a long-video cohort", async () => {
-    const observed = (id:string,format:"shorts"|"long",score:number):DiscoverySessionIdea => ({
-      ...idea(id,assessment(format,score)),
-      viralPotential:{score,state:"partial",scoreVersion:"viral-potential-v1",format,
-        youtubeScore:score,trendScore:null,trendChangePercent:null,coveragePercent:75,
-        sampleSize:12,distinctChannels:5,comparisonCohortSize:3,
-        youtubeObservedAt:1760000000,trendsObservedAt:null},
-    });
-    serve([observed("idea-1","shorts",95),observed("idea-2","long",65),
-      observed("idea-3","long",45),observed("idea-4","long",25)]);
+    const scored=(id:string,format:"long"|"shorts",score:number)=>({...idea(id,assessment(format,score)),
+      viralPotential:{score,state:"partial" as const,scoreVersion:"viral-potential-v1" as const,format,
+        youtubeScore:score,trendScore:null,trendChangePercent:null,coveragePercent:75,sampleSize:12,
+        distinctChannels:5,comparisonCohortSize:3,youtubeObservedAt:1760000000,trendsObservedAt:null}});
+    serve([scored("idea-1","shorts",95),scored("idea-2","long",65),
+      scored("idea-3","long",45),scored("idea-4","long",25)]);
     const user = userEvent.setup();
     render(<DiscoveryIdeaSelection projectId="project-1" sessionId="session-1" locale="en" onStartProduction={()=>{}} />);
     await screen.findByText("Question idea-1");
     const articleTitles = () => screen.getAllByRole("article").map(article => within(article).getByRole("heading", {level:3}).textContent);
     expect(articleTitles()[0]).toBe("Question idea-2");
-    expect(within(screen.getAllByRole("article")[0]).getAllByText("65").length).toBeGreaterThan(0);
+    expect(within(screen.getAllByRole("article")[0]).getByRole("button",{name:/Viral score: 65 out of 100/})).toBeInTheDocument();
     expect(screen.queryByText("95")).not.toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", {name:"Compare format"}), "shorts");
     expect(articleTitles()[0]).toBe("Question idea-1");
-    expect(within(screen.getAllByRole("article")[0]).getAllByText("95").length).toBeGreaterThan(0);
+    expect(within(screen.getAllByRole("article")[0]).getByRole("button",{name:/Viral score: 95 out of 100/})).toBeInTheDocument();
     expect(screen.queryByText("65")).not.toBeInTheDocument();
   });
 });

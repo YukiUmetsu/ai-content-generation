@@ -11,6 +11,7 @@ import {
   type PlatformOptimizationManifest, type PlatformTarget,
 } from "./model";
 import { loadPlatformOptimization, savePlatformOptimization } from "./storage";
+import { artworkPng, canExportPlatformArtwork, generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog } from "./generated-art";
 
 interface PlatformOptimizationProps {
   input: PlatformOptimizationInput;
@@ -36,6 +37,17 @@ function outputFilename(filename: string): string {
 
 function saveJson(filename: string, payload: unknown): void {
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2) + "\n"], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = outputFilename(filename);
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function saveFile(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = outputFilename(filename);
@@ -148,15 +160,21 @@ export function PlatformOptimization({ input, onManifestChange }: PlatformOptimi
 }
 
 function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimizationProps) {
-  const incomingSignature = sourceSignature(input);
+  // Generated artwork is a genuine, reproducible browser-side artifact, not an
+  // imaginary server media URL. Real renderer files win when both are present.
+  const availableInput = useMemo<PlatformOptimizationInput>(() => ({
+    ...input, assets: [...generatedArtworkCatalog(input), ...(input.assets ?? [])],
+  }), [input]);
+  const incomingSignature = sourceSignature(availableInput);
   const targets = input.platforms.map(normalizeTarget).filter((target): target is PlatformTarget => target !== null);
   const targetKey = [...new Set(targets)].join("|");
   const [snapshot, setSnapshot] = useState(() => ({
-    manifest: initialDocument(input).manifest, signature: incomingSignature, targetKey, persisted: true,
+    manifest: initialDocument(availableInput).manifest, signature: incomingSignature, targetKey, persisted: true,
   }));
-  const [warning, setWarning] = useState<string | null>(() => initialDocument(input).warning);
+  const [warning, setWarning] = useState<string | null>(() => initialDocument(availableInput).warning);
   const [selected, setSelected] = useState<PlatformTarget>(() => targets[0] ?? "youtube");
   const [notice, setNotice] = useState("");
+  const [exportingArt, setExportingArt] = useState<string | null>(null);
   const titleInputId = useId();
   const descriptionInputId = useId();
 
@@ -164,7 +182,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
   // saved while changing destinations, and manual fields survive source updates.
   if (snapshot.signature !== incomingSignature || snapshot.targetKey !== targetKey) {
     setSnapshot({
-      manifest: reconcilePlatformOptimizationManifest(snapshot.manifest, input),
+      manifest: reconcilePlatformOptimizationManifest(snapshot.manifest, availableInput),
       signature: incomingSignature, targetKey, persisted: false,
     });
   }
@@ -196,8 +214,13 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
 
   const pkg = manifest.packages.find((item) => item.platform === selected) ?? manifest.packages[0];
   const platform = pkg?.platform;
+  // Covers are immutable derivatives of the approved production topic. An
+  // editable upload title must not silently mutate bytes behind the same asset
+  // identity; thumbnail copy can be edited as a separate future asset revision.
+  const artwork = useMemo(() => platform ? generatePlatformArtwork(input, platform, input.title) : [], [input, platform]);
+  const artApproved = Boolean(platform && canExportPlatformArtwork(input, platform));
   const showUploadTitle = platform !== "instagram" && platform !== "tiktok";
-  const review = useMemo(() => pkg ? reviewPlatformPackage(pkg, input) : null, [pkg, input]);
+  const review = useMemo(() => pkg ? reviewPlatformPackage(pkg, availableInput) : null, [pkg, availableInput]);
   const change = <K extends PlatformField,>(field: K, value: PlatformMetadataFields[K]) => {
     if (!platform) return;
     setManifest((previous) => updatePlatformField(previous, platform, field, value));
@@ -209,11 +232,11 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
   };
   const restore = (field: PlatformField) => {
     if (!platform) return;
-    setManifest((previous) => resetPlatformField(previous, platform, field, input));
+    setManifest((previous) => resetPlatformField(previous, platform, field, availableInput));
     setNotice("Source suggestion restored for this field.");
   };
   const exportAll = () => {
-    saveJson(`contentgen-${input.productionId}-upload-packages.json`, platformExportManifest(manifest, input));
+    saveJson(`contentgen-${input.productionId}-upload-packages.json`, platformExportManifest(manifest, availableInput));
     setNotice("Metadata manifest downloaded. No media was uploaded or published.");
   };
   const exportCurrent = () => {
@@ -221,7 +244,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
     saveJson(`contentgen-${input.productionId}-${pkg.platform}-metadata.json`, {
       exportNotice: "Metadata only. No publishing action was performed.",
       productionId: input.productionId, projectId: input.projectId,
-      package: pkg, checks: reviewPlatformPackage(pkg, input),
+      package: pkg, checks: reviewPlatformPackage(pkg, availableInput),
     });
     setNotice(`${PLATFORM_NAMES[pkg.platform]} metadata saved as JSON.`);
   };
@@ -236,14 +259,38 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
     }
   };
   const approvedCount = manifest.packages.filter((item) => item.status === "approved").length;
+  const downloadArt = async (id: string) => {
+    const art = artwork.find((entry) => entry.id === id);
+    if (!art || exportingArt) return;
+    setExportingArt(id);
+    try {
+      saveFile(art.filename, await artworkPng(art));
+      setNotice(`${art.label} downloaded as ${art.width}×${art.height} PNG. Review legibility before posting.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Artwork export failed.");
+    } finally { setExportingArt(null); }
+  };
+  const exportArticle = (format: "markdown" | "html") => {
+    if (!pkg || platform !== "blog" || !artApproved) { setNotice("Approve the current Blog script before exporting the article."); return; }
+    try {
+    const md = generateBlogMarkdown(input, pkg.fields.title, artwork, pkg.fields.description);
+    if (format === "markdown") {
+      saveFile(`${pkg.fields.slug || "article"}.md`, new Blob([md], { type: "text/markdown;charset=utf-8" }));
+    } else {
+      const html = generateBlogHtml(input, pkg.fields.title, pkg.fields.description, pkg.fields.metaDescription, artwork);
+      saveFile(`${pkg.fields.slug || "article"}.html`, new Blob([html], { type: "text/html;charset=utf-8" }));
+    }
+    setNotice(`${format === "html" ? "Self-contained illustrated HTML" : "Article Markdown"} downloaded. Review citations, visual accuracy and rights before publishing.`);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Article export failed."); }
+  };
 
   return <section className="space-y-5" aria-label="Platform optimization">
     <header className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <p className="mb-1 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Step 7 · Optimize</p>
-        <h2 className="font-serif text-2xl font-semibold text-foreground">Prepare every platform</h2>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-[.14em] text-muted-foreground">Step 7 · Publish Kit</p>
+        <h2 className="font-serif text-2xl font-semibold text-foreground">Everything you need to post</h2>
         <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Titles, captions, keywords and chapters are prefilled from your source. Approve metadata now; real video files, rights and final disclosures remain separate release checks.
+          Metadata is prefilled as you draft. After a destination's script is approved, its cover and article illustrations are generated locally. Check accuracy and then finish publication requirements.
         </p>
       </div>
       <div className="flex items-center gap-2">
@@ -259,7 +306,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
     <nav className="flex flex-wrap gap-2" role="tablist" aria-label="Upload destinations">
       {manifest.packages.map((item) => {
         const active = item.platform === platform;
-        const count = reviewPlatformPackage(item, input).issues.filter((finding) => finding.severity === "error").length;
+        const count = reviewPlatformPackage(item, availableInput).issues.filter((finding) => finding.severity === "error").length;
         return <button key={item.platform} role="tab" type="button" aria-selected={active} aria-label={PLATFORM_NAMES[item.platform]}
           onClick={() => { setSelected(item.platform); setNotice(""); }}
           className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition-colors ${active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-surface text-muted-foreground hover:border-primary/50 hover:text-foreground"}`}>
@@ -319,12 +366,12 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
           </div>
 
           <div className={`${cardClass} space-y-4`}>
-            <SectionHeading note="References current media, without re-rendering">Media and format</SectionHeading>
+            <SectionHeading note="Existing renders + generated local graphics">Media and format</SectionHeading>
             <div className="grid gap-3 sm:grid-cols-2">
-              {isBlog(platform) ? <AssetPicker label="Article hero image" kind="hero" value={pkg.assetIds.hero} input={input} platform={platform} onChange={(value) => changeAsset("hero", value)} /> : <>
-                <AssetPicker label="Rendered video" kind="video" value={pkg.assetIds.video} input={input} platform={platform} onChange={(value) => changeAsset("video", value)} />
-                <AssetPicker label="Thumbnail / cover" kind="thumbnail" value={pkg.assetIds.thumbnail} input={input} platform={platform} onChange={(value) => changeAsset("thumbnail", value)} />
-                <AssetPicker label="Captions / subtitle file" kind="captions" value={pkg.assetIds.captions} input={input} platform={platform} onChange={(value) => changeAsset("captions", value)} />
+              {isBlog(platform) ? <AssetPicker label="Article hero image" kind="hero" value={pkg.assetIds.hero} input={availableInput} platform={platform} onChange={(value) => changeAsset("hero", value)} /> : <>
+                <AssetPicker label="Rendered video" kind="video" value={pkg.assetIds.video} input={availableInput} platform={platform} onChange={(value) => changeAsset("video", value)} />
+                <AssetPicker label="Thumbnail / cover" kind="thumbnail" value={pkg.assetIds.thumbnail} input={availableInput} platform={platform} onChange={(value) => changeAsset("thumbnail", value)} />
+                <AssetPicker label="Captions / subtitle file" kind="captions" value={pkg.assetIds.captions} input={availableInput} platform={platform} onChange={(value) => changeAsset("captions", value)} />
               </>}
               <label className="block text-xs font-medium text-muted-foreground">Content language
                 <input aria-label="Content language" className={`${inputClass} mt-1.5`} value={pkg.fields.language}
@@ -349,6 +396,25 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
               <input aria-label="Video category" className={`${inputClass} mt-1.5`} value={pkg.fields.category}
                 onChange={(event) => change("category", event.target.value)} placeholder="e.g. Education" />
             </label>}
+          </div>
+
+          <div className={`${cardClass} space-y-4`}>
+            <SectionHeading note="Made locally with the pinned Kumiki renderer">Ready-made visuals</SectionHeading>
+            <p className="text-xs leading-relaxed text-muted-foreground">The approved script and original project topic supply every label. Editing an upload title does not silently change this cover. These are outline graphics, not invented data or licensed photography.</p>
+            {artwork.length === 0 ? <p className="text-sm text-muted-foreground">Approve the current {PLATFORM_NAMES[platform]} script in the Script stage to generate download-ready artwork.</p> :
+              <div className="grid gap-3 sm:grid-cols-2">{artwork.map((art) => <div key={art.id} className="min-w-0 rounded-xl border border-border p-2.5">
+                <img src={art.preview} alt={`${art.label}: outline of the current script`} className="aspect-video w-full rounded-lg bg-muted object-contain" />
+                <div className="mt-2 flex items-center justify-between gap-2"><span className="truncate text-xs font-semibold">{art.label}</span>
+                  <button type="button" className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
+                    disabled={!!exportingArt} onClick={() => void downloadArt(art.id)}>{exportingArt === art.id ? "Rendering…" : "PNG ↓"}</button></div>
+                <p className="mt-1 text-[11px] text-muted-foreground">{art.width}×{art.height} · script-derived</p>
+              </div>)}</div>}
+            {isBlog(platform) && <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
+              <p className="text-sm font-semibold">{artApproved ? "Your illustrated article is ready to export" : "Approve your Blog script to unlock the illustrated article"}</p>
+              <p className="text-xs text-muted-foreground">HTML includes the graphics inline. Markdown references the PNGs above—download those beside the article file.</p>
+              <div className="flex flex-wrap gap-2"><button type="button" disabled={!artApproved} className={inputClass + " w-auto font-medium disabled:cursor-not-allowed disabled:opacity-40"} onClick={() => exportArticle("html")}>Download illustrated HTML</button>
+                <button type="button" disabled={!artApproved} className={inputClass + " w-auto font-medium disabled:cursor-not-allowed disabled:opacity-40"} onClick={() => exportArticle("markdown")}>Download Markdown</button></div>
+            </div>}
           </div>
 
           <div className={`${cardClass} space-y-4`}>
@@ -389,8 +455,9 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
         <aside className="space-y-4 xl:sticky xl:top-4">
           <div className={`${cardClass} space-y-3`}>
             <SectionHeading note="Illustrative text preview">Destination preview</SectionHeading>
-            <ThumbnailPlaceholder filename={(input.assets ?? []).find((asset) => asset.id === (isBlog(platform) ? pkg.assetIds.hero : pkg.assetIds.thumbnail))?.filename}
-              colors={input.brandColors} />
+            {artwork[0] ? <img className="w-full rounded-xl border border-border object-contain" src={artwork[0].preview} alt={`${PLATFORM_NAMES[platform]} generated cover preview`} /> :
+              <ThumbnailPlaceholder filename={(availableInput.assets ?? []).find((asset) => asset.id === (isBlog(platform) ? pkg.assetIds.hero : pkg.assetIds.thumbnail))?.filename}
+                colors={input.brandColors} />}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               {isBlog(platform) ? <FileText className="size-3.5" aria-hidden /> : <Video className="size-3.5" aria-hidden />}
               {PLATFORM_NAMES[platform]} · content preview
@@ -430,7 +497,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
               <button type="button" disabled={!review.metadataReady || pkg.status === "approved"}
                 onClick={() => {
                   try {
-                    const saved = setManifest((current) => approvePlatformPackage(current, platform, input));
+                    const saved = setManifest((current) => approvePlatformPackage(current, platform, availableInput));
                     setNotice(saved ? "Metadata approved and saved. File, rights and disclosure checks still control upload readiness." :
                       "Metadata review is visible here but was not saved. Restore browser storage before leaving this page.");
                   }

@@ -137,5 +137,44 @@ describe("platform optimization authoring", () => {
     expect(second.packages[1].stale).toBe(true);
     expect(second.packages[1].fields.description).toContain("new short-form voiceover");
   });
+
+  it("preserves legacy approvals when a newly generated cover becomes available", () => {
+    const original = { ...input, platforms: ["youtube"], assets: input.assets?.filter((asset) => asset.kind === "video") };
+    let manifest = createPlatformOptimizationManifest(original);
+    manifest = updatePlatformField(manifest, "youtube", "platformPolicyReviewed", true);
+    manifest = updatePlatformField(manifest, "youtube", "madeForKids", false);
+    manifest = approvePlatformPackage(manifest, "youtube", original);
+    expect(manifest.packages[0].assetIds.thumbnail).toBeNull();
+    const updated = reconcilePlatformOptimizationManifest(manifest, { ...original, assets: [
+      ...(original.assets ?? []), {id:"kumiki-art-derived",kind:"thumbnail" as const,platform:"youtube",filename:"cover.png"},
+    ] });
+    expect(updated.packages[0]).toBe(manifest.packages[0]);
+    expect(updated.packages[0].status).toBe("approved");
+    expect(updated.packages[0].assetIds.thumbnail).toBeNull();
+  });
+
+  it("does not revoke another destination's approval when Blog script becomes approved", () => {
+    const base = { ...input, platforms: ["youtube", "blog"], approvedPlatforms: ["youtube"] };
+    let manifest = createPlatformOptimizationManifest(base);
+    manifest = updatePlatformField(manifest, "youtube", "platformPolicyReviewed", true);
+    manifest = updatePlatformField(manifest, "youtube", "madeForKids", false);
+    manifest = approvePlatformPackage(manifest, "youtube", base);
+    const updated = reconcilePlatformOptimizationManifest(manifest, { ...base, approvedPlatforms: ["youtube", "blog"] });
+    expect(updated.packages[0]).toBe(manifest.packages[0]);
+    expect(updated.packages[0].status).toBe("approved");
+    expect(updated.packages[1].stale).toBe(true);
+  });
+
+  it("marks an approved article stale if a linked evidence URL or review status changes", () => {
+    const base = { ...input, platforms: ["blog"], approvedPlatforms: ["blog"],
+      scriptSections: [{ id: "section-1", heading: "What we know", text: "A sourced explanation.", sourceRefs: ["ref-1"] }],
+      sourceEvidence: [{ sourceId: "ref-1", sourceUrl: "https://example.com/v1", reviewStatus: "verified" }],
+    };
+    const current = createPlatformOptimizationManifest(base);
+    const changed = reconcilePlatformOptimizationManifest(current, { ...base,
+      sourceEvidence: [{ sourceId: "ref-1", sourceUrl: "https://example.com/v2", reviewStatus: "unverified" }],
+    });
+    expect(changed.packages[0].stale).toBe(true);
+  });
 });
 

@@ -1,10 +1,10 @@
 import type { Locale } from "@/features/registry";
-import type { ResearchDraftResult } from "./researched-storyboard";
+import type { ClaimEvidenceSnapshot } from "./claim-evidence";
 import type { ClaimEvidenceIssue } from "./claim-evidence";
 
 interface ProductionClaimIssuesProps {
   issues: readonly ClaimEvidenceIssue[];
-  draft?: ResearchDraftResult | null;
+  draft?: ClaimEvidenceSnapshot | null;
   locale?: Locale;
   onOpenBeat: (beatId: string) => void;
   onFindEvidence: () => void;

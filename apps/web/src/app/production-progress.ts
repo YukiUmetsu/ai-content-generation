@@ -22,6 +22,7 @@ export interface ProductionProgressInput {
   sessionId?: string | null;
   ideaId?: string | null;
   scriptReady?: boolean;
+  scriptActivity?: "idle" | "running" | "failed";
   scriptStale?: boolean;
   discoveryJob?: Job | null;
   discoverySessionRun?: SessionRun | null;
@@ -85,7 +86,7 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
       discoverStatus==="needs_review"?"Review source links":discoverStatus==="failed"?"Retry discovery":"Discover ideas"),
     stage("select",input.ideaId?"complete":"not_started",
       input.ideaId?"An idea has been selected for this production.":"Review saved opportunities and select one idea.","Select an idea"),
-    stage("script",input.scriptStale?"stale":input.scriptReady?"complete":"not_started",
+    stage("script",input.scriptStale?"stale":input.scriptReady?"complete":input.scriptActivity==="running"?"running":input.scriptActivity==="failed"?"failed":"not_started",
       input.scriptStale?"Research or creative inputs changed. Reapprove the updated script.":
       input.scriptReady?"The script has an approved revision.":"Review the AI-written script and its evidence.","Review script"),
     stage("storyboard",boardStatus,
