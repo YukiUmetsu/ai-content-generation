@@ -8,7 +8,7 @@ import type { CharacterCue, CharacterPoseCorrectionTracks, CharacterVec2 } from 
 import { applyMatrixToPoint, IDENTITY } from "@/components/motion/matrix";
 import { characterPartWorldMatrices, prepareCharacterPreview, restCharacterDefinition, screenDragToDesign } from "./character-editor-model";
 import type { CharacterPackDefinition } from "./character-pack";
-import type { RigPlacementInput, RigPlacementInputs } from "./rig-calibration";
+import type { RigLayerOverrides, RigPlacementInput, RigPlacementInputs } from "./rig-calibration";
 import type { Locale } from "@/features/registry";
 
 type EditMode = "rig" | "animate";
@@ -25,10 +25,11 @@ interface DragStart {
   frame: number;
 }
 
-export function CharacterRigCanvas({ definition, placements, spriteUrls, selectedId, onSelectPart, onPlace,
+export function CharacterRigCanvas({ definition, placements, layerZ, spriteUrls, selectedId, onSelectPart, onPlace,
   corrections, onCorrections, onGestureStart, locale }: {
     definition: CharacterPackDefinition;
     placements: RigPlacementInputs;
+    layerZ?: RigLayerOverrides;
     spriteUrls?: ReadonlyMap<string, string>;
     selectedId: string;
     onSelectPart: (id: string) => void;
@@ -47,7 +48,7 @@ export function CharacterRigCanvas({ definition, placements, spriteUrls, selecte
   const [dragError, setDragError] = useState("");
   const drag = useRef<DragStart | null>(null);
   const stage = useRef<HTMLDivElement | null>(null);
-  const preview = useMemo(() => prepareCharacterPreview(definition, placements), [definition, placements]);
+  const preview = useMemo(() => prepareCharacterPreview(definition, placements, layerZ), [definition, placements, layerZ]);
   const stageDefinition = useMemo(() => mode === "rig" ? restCharacterDefinition(preview.definition) : preview.definition, [mode, preview]);
   // Rig calibration always displays the rest pose; a previously selected
   // action must not silently rotate a joint while its rest pivot is edited.

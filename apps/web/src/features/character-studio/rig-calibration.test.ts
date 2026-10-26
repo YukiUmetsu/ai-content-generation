@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calibrateRigDefinition, initialRigPlacements } from "./rig-calibration";
+import { calibrateRigDefinition, initialRigPlacements, moveRigLayer, rigLayerPeers } from "./rig-calibration";
 import type { CharacterPackDefinition } from "./character-pack";
 
 const animal: CharacterPackDefinition = {
@@ -67,5 +67,45 @@ describe("non-human rig calibration manifest", () => {
 
   it("does not generate a new manifest when no placement changed", () => {
     expect(() => calibrateRigDefinition(animal, initialRigPlacements(animal), "r2")).toThrow(/change at least one/i);
+  });
+
+  it("moves an animal limb behind its torso, previewing and exporting the layer-only edit", () => {
+    const first = rigLayerPeers(animal, {}, "front-paw");
+    expect(first.map(part => part.id)).toEqual(["tail-curl", "torso", "front-paw", "rear-leg", "muzzle"]);
+    const behind = moveRigLayer(animal, {}, "front-paw", "bottom");
+    expect(behind).not.toBeNull();
+    expect((behind?.["front-paw"] ?? 0) < (behind?.torso ?? 0)).toBe(true);
+    const revised = calibrateRigDefinition(animal, initialRigPlacements(animal), "r2", behind!);
+    expect(revised.parts.find(part => part.id === "front-paw")?.z).toBeLessThan(revised.parts[0].z);
+    expect(animal.parts.find(part => part.id === "front-paw")?.z).toBe(1);
+  });
+
+  it("preserves grandchild occlusion while changing a parent layer", () => {
+    const nested: CharacterPackDefinition = { ...animal, parts: [
+      ...animal.parts,
+      { id: "paw-tip", parent: "front-paw", asset: "torso", channel: "paws", pivot: { x: 10, y: 10 }, z: 3 },
+    ] };
+    const moved = moveRigLayer(nested, {}, "torso", "top")!;
+    expect(moved["paw-tip"] - moved["front-paw"]).toBe(2);
+    expect(rigLayerPeers(nested, moved, "front-paw")[0].id).toBe("front-paw");
+    expect(moveRigLayer(nested, moved, "torso", "top")).toBeNull();
+  });
+
+  it("lets the user select the torso and bring its artwork in front of the wing", () => {
+    const arranged = moveRigLayer(animal, {}, "torso", "top")!;
+    const torso = animal.parts.find(part => part.id === "torso")!;
+    const paw = animal.parts.find(part => part.id === "front-paw")!;
+    expect(arranged[torso.id] ?? torso.z).toBeGreaterThan(arranged[paw.id] ?? paw.z);
+    expect(rigLayerPeers(animal, arranged, "torso").at(-1)?.id).toBe("torso");
+    expect(moveRigLayer(animal, arranged, "torso", "top")).toBeNull();
+  });
+
+  it("rejects arbitrary or overflowing layer depths", () => {
+    expect(() => calibrateRigDefinition(animal, initialRigPlacements(animal), "r2", { "unknown-part": 2 })).toThrow(/unknown/i);
+    expect(() => calibrateRigDefinition(animal, initialRigPlacements(animal), "r2", { torso: 1001 })).toThrow(/depth/i);
+    expect(() => calibrateRigDefinition(animal, initialRigPlacements(animal), "r2", { torso: NaN })).toThrow(/depth/i);
+    const extreme: CharacterPackDefinition = { ...animal, parts: animal.parts.map(part => part.id === "torso" ? { ...part, z: -1000 } : part) };
+    const ordered = rigLayerPeers(extreme, {}, "front-paw");
+    expect(ordered.some(part => part.id === "torso")).toBe(true);
   });
 });

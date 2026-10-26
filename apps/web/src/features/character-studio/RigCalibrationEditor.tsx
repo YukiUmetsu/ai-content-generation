@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Download, Layers3, RotateCcw, SlidersHorizontal, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsDown, ChevronsUp, Download, Layers3, RotateCcw, SlidersHorizontal, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { CharacterPoseCorrectionTracks } from "@/components/character/definition";
 import type { CharacterPackDefinition } from "./character-pack";
-import { calibrateRigDefinition, initialRigPlacements } from "./rig-calibration";
-import type { RigPlacementInput, RigPlacementInputs } from "./rig-calibration";
+import { calibrateRigDefinition, initialRigPlacements, moveRigLayer, rigLayerPeers } from "./rig-calibration";
+import type { RigLayerMovement, RigLayerOverrides, RigPlacementInput, RigPlacementInputs } from "./rig-calibration";
 import type { Locale } from "@/features/registry";
 import { CharacterRigCanvas } from "./CharacterRigCanvas";
 
@@ -37,14 +37,19 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
   const ja = locale === "ja";
   const [selectedId, setSelectedId] = useState(definition.parts[0]?.id ?? "");
   const [placements, setPlacements] = useState(() => initialRigPlacements(definition));
+  const [layerZ, setLayerZ] = useState<RigLayerOverrides>({});
   const [revision, setRevision] = useState("");
   const [downloadError, setDownloadError] = useState("");
   const [corrections, setCorrections] = useState<CharacterPoseCorrectionTracks>({});
-  const [undo, setUndo] = useState<Array<{ placements: RigPlacementInputs; corrections: CharacterPoseCorrectionTracks; revision: string }>>([]);
+  const [undo, setUndo] = useState<Array<{ placements: RigPlacementInputs; layers: RigLayerOverrides; corrections: CharacterPoseCorrectionTracks; revision: string }>>([]);
   const selectedPart = definition.parts.find(part => part.id === selectedId);
   const selectedAsset = selectedPart && definition.assets[selectedPart.asset];
   const selectedImage = selectedAsset ? spriteUrls?.get(selectedAsset.uri) : undefined;
   const placement = placements[selectedId];
+  const peers = rigLayerPeers(definition, layerZ, selectedId);
+  const selectedLayerIndex = peers.findIndex(part => part.id === selectedId);
+  const hasChildren = definition.parts.some(part => part.parent === selectedId);
+  const changedLayers = definition.parts.filter(part => (layerZ[part.id] ?? part.z) !== part.z).length;
   const initial = initialRigPlacements(definition);
   const adjustedIds = new Set(definition.parts.filter(part => fields.some(({ field }) => {
     const next = placements[part.id]?.[field] ?? "";
@@ -55,12 +60,19 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
 
   let candidate: CharacterPackDefinition | null = null;
   let reason = "";
-  try { candidate = calibrateRigDefinition(definition, placements, revision); }
+  try { candidate = calibrateRigDefinition(definition, placements, revision, layerZ); }
   catch (error) { reason = error instanceof Error ? error.message : "Invalid placement settings."; }
 
   const remember = () => setUndo(current => [...current.slice(-19), {
-    placements: structuredClone(placements), corrections: structuredClone(corrections), revision,
+    placements: structuredClone(placements), layers: { ...layerZ }, corrections: structuredClone(corrections), revision,
   }]);
+  const moveLayer = (movement: RigLayerMovement) => {
+    const next = moveRigLayer(definition, layerZ, selectedId, movement);
+    if (!next) return;
+    remember();
+    setLayerZ(next);
+    setDownloadError("");
+  };
   const updateParts = (id: string, changes: Partial<RigPlacementInput>) => {
     setDownloadError("");
     setPlacements(current => ({ ...current, [id]: { ...current[id], ...changes } }));
@@ -73,6 +85,7 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
   const reset = () => {
     remember();
     setPlacements(initialRigPlacements(definition));
+    setLayerZ({});
     setCorrections({});
     setRevision("");
     setDownloadError("");
@@ -81,6 +94,7 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
     const previous = undo.at(-1);
     if (!previous) return;
     setPlacements(previous.placements);
+    setLayerZ(previous.layers);
     setCorrections(previous.corrections);
     setRevision(previous.revision);
     setUndo(current => current.slice(0, -1));
@@ -120,7 +134,7 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
       </div>
       <div className="flex items-center gap-2">
         <span className="rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs font-medium tabular-nums text-muted-foreground" role="status">
-          {ja ? `${adjustedIds.size} 配置変更 · ${correctedCount} 動作補正` : `${adjustedIds.size} placed · ${correctedCount} corrected`}
+          {ja ? `${adjustedIds.size} 配置変更 · ${correctedCount} 動作補正` : `${adjustedIds.size} placed · ${correctedCount} corrected`}{changedLayers ? ` · ${changedLayers} ${ja ? "レイヤー変更" : "layers changed"}` : ""}
         </span>
         <Button size="sm" variant="outline" icon={<Undo2 className="size-4" />} onClick={undoLast} disabled={!undo.length}>{ja ? "元に戻す" : "Undo"}</Button>
       </div>
@@ -129,7 +143,7 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
       <div className="min-w-0 rounded-xl border border-border bg-surface-subtle/60 p-2">
         <p className="px-2 pb-2 pt-1 text-xs font-semibold text-muted-foreground">{ja ? `パーツ一覧 · ${definition.parts.length}` : `PARTS · ${definition.parts.length}`}</p>
         <div className="max-h-[22rem] space-y-1 overflow-y-auto" aria-label={ja ? "リグパーツ一覧" : "Rig part list"}>
-          {[...definition.parts].sort((a, b) => a.z - b.z).map(part => {
+          {[...definition.parts].sort((a, b) => (layerZ[a.id] ?? a.z) - (layerZ[b.id] ?? b.z)).map(part => {
             const asset = definition.assets[part.asset];
             const image = asset ? spriteUrls?.get(asset.uri) : undefined;
             const adjusted = adjustedIds.has(part.id);
@@ -141,7 +155,7 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-foreground" title={part.id}>{part.id}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">{part.parent ? `↳ ${part.parent}` : (ja ? "基点" : "Root")} · z {part.z}</span>
+                <span className="block truncate text-[11px] text-muted-foreground">{part.parent ? `↳ ${part.parent}` : (ja ? "基点" : "Root")} · z {layerZ[part.id] ?? part.z}</span>
               </span>
               {adjusted && <span className="size-2 shrink-0 rounded-full bg-primary" aria-label={ja ? "変更あり" : "adjusted"} />}
             </button>;
@@ -150,7 +164,7 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
       </div>
       <div className="min-w-0 space-y-4">
         <CharacterRigCanvas definition={definition} locale={locale} selectedId={selectedId} onSelectPart={setSelectedId}
-          placements={placements} spriteUrls={spriteUrls} corrections={corrections} onCorrections={setCorrections}
+          placements={placements} layerZ={layerZ} spriteUrls={spriteUrls} corrections={corrections} onCorrections={setCorrections}
           onPlace={updateParts} onGestureStart={remember} />
         <div className="flex min-w-0 flex-wrap items-center gap-4 rounded-xl border border-border bg-surface-subtle/50 p-3">
           <div className="grid size-28 shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60 bg-surface sm:size-32" style={checkerStyle}>
@@ -164,6 +178,24 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
             <p className="mt-2 text-xs font-medium text-muted-foreground">{ja ? "単一画像の確認 · 合成プレビューではありません" : "Source artwork only · not a composed rig preview"}</p>
           </div>
         </div>
+        {selectedPart && <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3 py-3" aria-label={ja ? "レイヤーの前後関係" : "Layer order controls"}>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-foreground">{ja ? "レイヤーの重なり順" : "Layer order"}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{ja
+              ? `奥から ${selectedLayerIndex + 1} / ${peers.length} · ${hasChildren ? "子パーツとの前後" : "親・同階層のパーツとの前後"}`
+              : `Back to front · ${selectedLayerIndex + 1} of ${peers.length} · ${hasChildren ? "against child parts" : "against parent and peers"}`}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ja ? `${selectedId} の重なり順` : `${selectedId} layer actions`}>
+            {([
+              { movement: "bottom", icon: ChevronsDown, en: "Send to back", jp: "最背面へ" },
+              { movement: "down", icon: ChevronDown, en: "Move backward", jp: "一つ奥へ" },
+              { movement: "up", icon: ChevronUp, en: "Move forward", jp: "一つ手前へ" },
+              { movement: "top", icon: ChevronsUp, en: "Bring to front", jp: "最前面へ" },
+            ] as const).map(({ movement, icon: Icon, en, jp }) => <Button key={movement} size="sm" variant="outline"
+              icon={<Icon className="size-4" />} disabled={!moveRigLayer(definition, layerZ, selectedId, movement)}
+              onClick={() => moveLayer(movement)}>{ja ? jp : en}</Button>)}
+          </div>
+        </div>}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {fieldGroups.map(group => <fieldset key={group.title} className="min-w-0 rounded-xl border border-border p-3">
             <legend className="px-1 text-sm font-semibold text-foreground">{ja ? group.titleJa : group.title}</legend>
@@ -203,11 +235,11 @@ export function RigCalibrationEditor({ definition, locale, spriteUrls }: {
           schemaVersion: 1, kind: "character-pose-corrections", characterId: definition.characterId,
           sourceRevision: definition.revision, calibratedRevision: candidate?.revision ?? null, frameRate: 30, tracks: corrections,
         })}>{ja ? "ポーズ補正を保存" : "Download pose corrections"}</Button>
-      <Button size="sm" variant="outline" icon={<RotateCcw className="size-4" />} onClick={reset} disabled={adjustedIds.size === 0 && !revision && !correctedCount}>
+      <Button size="sm" variant="outline" icon={<RotateCcw className="size-4" />} onClick={reset} disabled={adjustedIds.size === 0 && !changedLayers && !revision && !correctedCount}>
         {ja ? "配置をリセット" : "Reset placement edits"}
       </Button>
     </div>
-    {(downloadError || ((revision || adjustedIds.size > 0) && reason)) &&
+    {(downloadError || ((revision || adjustedIds.size > 0 || changedLayers > 0) && reason)) &&
       <p className="text-xs text-muted-foreground" role="status">{downloadError || reason}</p>}
     </div>
   </Surface>;

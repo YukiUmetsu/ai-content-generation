@@ -4,7 +4,7 @@ import { IDENTITY, multiplyMatrix } from "@/components/motion/matrix";
 import type { AffineMatrix } from "@/components/motion/types";
 import type { CharacterDefinition, CharacterFrameState, CharacterPart, CharacterVec2 } from "@/components/character/definition";
 import type { CharacterPackDefinition } from "./character-pack";
-import type { RigPlacementInputs } from "./rig-calibration";
+import type { RigLayerOverrides, RigPlacementInputs } from "./rig-calibration";
 
 const fallback = { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 };
 const numeric = (text: string | undefined, old: number, scale = false): number => {
@@ -15,16 +15,16 @@ const numeric = (text: string | undefined, old: number, scale = false): number =
 };
 
 /** Build only from structurally checked ZIP data; unknown or broken actions never run. */
-export function prepareCharacterPreview(source: CharacterPackDefinition, placements: RigPlacementInputs): {
+export function prepareCharacterPreview(source: CharacterPackDefinition, placements: RigPlacementInputs, layers: RigLayerOverrides = {}): {
   definition: CharacterDefinition;
   actions: string[];
   limited: boolean;
 } {
   const parts: CharacterPart[] = source.parts.map(part => {
     const entry = placements[part.id];
-    if (!entry) return part;
+    if (!entry) return { ...part, z: layers[part.id] ?? part.z };
     const rest = { ...fallback, ...part.rest };
-    return { ...part,
+    return { ...part, z: layers[part.id] ?? part.z,
       pivot: { x: numeric(entry.pivotX, part.pivot.x), y: numeric(entry.pivotY, part.pivot.y) },
       rest: {
         x: numeric(entry.x, rest.x), y: numeric(entry.y, rest.y),

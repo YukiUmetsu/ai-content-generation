@@ -76,4 +76,28 @@ describe("RigCalibrationEditor", () => {
     expect(screen.getByText("0 placed · 0 corrected")).toBeInTheDocument();
     expect(screen.getByLabelText("Y offset")).toHaveValue(-130);
   });
+
+  it("reorders limb behind body with an immediate canvas update, Undo, and a layer-only export", async () => {
+    render(<RigCalibrationEditor definition={animal} locale="en" />);
+    fireEvent.click(within(screen.getByLabelText("Rig part list")).getByRole("button", { name: /muzzle/ }));
+    const controls = within(screen.getByLabelText("Layer order controls"));
+    expect(controls.getByRole("button", { name: "Move backward" })).toBeEnabled();
+    fireEvent.click(controls.getByRole("button", { name: "Send to back" }));
+    expect(screen.getByText(/layers changed/)).toBeInTheDocument();
+    expect(controls.getByRole("button", { name: "Move backward" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("New revision"), { target: { value: "r2" } });
+    fireEvent.click(screen.getByRole("button", { name: /Download revised character.json/ }));
+    const blob = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+    const json = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result)));
+      reader.addEventListener("error", () => reject(reader.error));
+      reader.readAsText(blob);
+    });
+    const revised = JSON.parse(json) as CharacterPackDefinition;
+    expect(revised.parts.find(part => part.id === "muzzle")!.z).toBeLessThan(revised.parts.find(part => part.id === "body")!.z);
+    expect(animal.parts.find(part => part.id === "muzzle")?.z).toBe(3);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.queryByText(/layers changed/)).not.toBeInTheDocument();
+  });
 });
