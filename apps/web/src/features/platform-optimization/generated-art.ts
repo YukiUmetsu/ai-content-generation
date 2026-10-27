@@ -48,7 +48,7 @@ export function canExportPlatformArtwork(input: PlatformOptimizationInput, targe
   return sectionsFor(input,target).some(section=>section.text.trim().length>0);
 }
 
-export interface CoverArtOptions {imageDataUri?:string}
+export interface CoverArtOptions {imageDataUri?:string;headlines?:readonly [string,string,string]}
 function validateCoverImage(uri:string|undefined):void{
   if(uri!==undefined && (uri.length>1_450_000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(uri)))
     throw Error("Thumbnail image must be an embedded PNG, JPEG or WebP under 1 MB.");
@@ -65,6 +65,27 @@ function excerpt(text: string, limit: number): string {
   if (single.length <= limit) return single;
   const fragment = single.slice(0, limit - 1);
   return `${fragment.slice(0, fragment.lastIndexOf(" ") > limit / 2 ? fragment.lastIndexOf(" ") : fragment.length).trimEnd()}…`;
+}
+
+/** Three different script-grounded promises; no fabricated figures or facts. */
+export function suggestCoverHeadlines(title:string,sections:readonly PlatformScriptSection[]):[string,string,string]{
+  const normalized=(value:string)=>excerpt(value.replace(/\s+/gu," "),58);
+  const primary=normalized(title)||"An important question";
+  const headings=sections.map(section=>normalized(section.heading)).filter(Boolean);
+  const used=new Set([primary.toLocaleLowerCase()]);
+  const pick=(alternatives:string[])=>{
+    for(const proposal of alternatives){
+      const candidate=normalized(proposal);
+      if(candidate&&!used.has(candidate.toLocaleLowerCase())){used.add(candidate.toLocaleLowerCase());return candidate;}
+    }
+    return normalized(`Explore: ${primary}`);
+  };
+  const second=pick([...headings,`Inside: ${primary}`]);
+  const third=pick([...headings.slice(1),`Beyond ${second}`,`Behind ${primary}`]);
+  return [primary,second,third];
+}
+export function suggestCoverHeadlinesFor(input:PlatformOptimizationInput,platform:PlatformTarget):[string,string,string]{
+  return suggestCoverHeadlines(input.title,sectionsFor(input,platform));
 }
 
 function sourceFor(title: string, sections: readonly PlatformScriptSection[], id: string, language: string,
@@ -113,8 +134,11 @@ function makeArtwork(label: string, filename: string, id: string, title: string,
 export function generatePlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget, title: string,
   options:CoverArtOptions={}): GeneratedArtwork[] {
   validateCoverImage(options.imageDataUri);
+  if(options.headlines&&(options.headlines.length!==3||options.headlines.some(headline=>
+    typeof headline!=="string"||!headline.trim()||headline.length>110)))
+    throw Error("Three nonempty thumbnail headlines under 110 characters are required.");
   if (!canExportPlatformArtwork(input, target)) return [];
-  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}:${imageIdentity(options.imageDataUri)}`;
+  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}:${imageIdentity(options.imageDataUri)}:${JSON.stringify(options.headlines??null)}`;
   const cached = artworkCache.get(key);
   if (cached) return cached;
   const sections = sectionsFor(input, target).filter((section) => section.text.trim());
@@ -123,7 +147,9 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
   // generated image follows the editable destination title.
   const safeName = platformSlug(input.title).slice(0, 58);
   if (target !== "blog") {
-    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName,options.imageDataUri);
+    const headlines=options.headlines??suggestCoverHeadlines(title,sections);
+    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName,
+      options.imageDataUri,headlines);
     artworkCache.set(key, result);
     if (artworkCache.size > 16) artworkCache.delete(artworkCache.keys().next().value!);
     return result;

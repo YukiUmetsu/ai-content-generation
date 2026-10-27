@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createPlatformOptimizationManifest, sourceSignature, type PlatformOptimizationInput } from "./model";
-import { generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog } from "./generated-art";
+import { generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog,
+  suggestCoverHeadlines } from "./generated-art";
 
 const input: PlatformOptimizationInput = {
   productionId: "production-1", projectId: "project-1", title: "How workflows move from paper to reports",
@@ -18,6 +19,16 @@ const input: PlatformOptimizationInput = {
 };
 
 describe("Kumiki-generated publishing artwork", () => {
+  it("offers three script-specific thumbnail promises instead of repeating the upload title",()=>{
+    const suggestions=suggestCoverHeadlines(input.title,input.scriptSections);
+    expect(new Set(suggestions.map(s=>s.toLowerCase()))).toHaveProperty("size",3);
+    expect(suggestions[0]).toContain("workflows");
+    expect(suggestions[1]).toContain("initial question");
+    expect(suggestions[2]).toContain("current process");
+    const art=generatePlatformArtwork(input,"youtube",input.title,{headlines:suggestions});
+    expect(art).toHaveLength(3);
+    for(let i=0;i<3;i++)expect(JSON.stringify(art[i].media)).toContain(suggestions[i]);
+  });
   it("produces real SVG previews for platform covers and long-form article illustrations", () => {
     for (const target of ["youtube", "youtube-shorts", "tiktok", "instagram", "facebook"] as const) {
       const artwork = generatePlatformArtwork(input, target, input.title);

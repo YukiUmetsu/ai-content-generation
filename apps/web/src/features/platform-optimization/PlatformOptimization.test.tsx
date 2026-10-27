@@ -123,22 +123,25 @@ describe("PlatformOptimization", () => {
     expect(screen.getByRole("button",{name:"Download selected thumbnail"})).toBeEnabled();
     view.unmount();
     const reopened = render(<PlatformOptimization input={approved}/>);
-    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("Taxes and upkeep");
     expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
     expect(screen.getByLabelText("Thumbnail accent color")).toHaveValue("#ffcc44");
+    fireEvent.click(screen.getByRole("button",{name:"Story layout"}));
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
     reopened.rerender(<PlatformOptimization input={{...approved,assets:[
       ...(approved.assets ?? []),{id:"video-2",kind:"video",platform:"youtube",filename:"final.mp4"}],
       sourceEvidence:[{sourceId:"source-new",sourceUrl:"https://example.org/",reviewStatus:"verified"}],
       brandColors:{primary:"#145E58",secondary:"#164B49",accent:"#EDAA46",background:"#FFF7E8",text:"#182C2B"}}}/>);
-    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("Taxes and upkeep");
     expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
   });
 
   it("retains a manually designed thumbnail when its source script is rewritten", () => {
     const view=render(<PlatformOptimization input={input}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
     fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),
       {target:{value:"The hidden maintenance bill"}});
-    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
     const updated={...input,title:"A completely rewritten video title",sourceRevision:"script-2",
       scriptSections:[{id:"new-1",heading:"Replacement section",text:"A totally new script.",startSeconds:0}]};
     view.rerender(<PlatformOptimization input={updated}/>);
@@ -148,6 +151,58 @@ describe("PlatformOptimization", () => {
     render(<PlatformOptimization input={updated}/>);
     expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The hidden maintenance bill");
     expect(screen.getByRole("button",{name:"Editorial layout"})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("offers different editable headlines per concept and preserves the chosen concept after reopening",()=>{
+    const view=render(<PlatformOptimization input={{...input,scriptSections:[
+      {id:"one",heading:"Taxes and upkeep",text:"Property taxes and repairs add to cost."},
+      {id:"two",heading:"Mortgage interest",text:"Interest is part of home ownership."}]}}/>);
+    const field=screen.getByRole("textbox",{name:"Thumbnail headline"});
+    const story=String((field as HTMLInputElement).value);
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    expect(field).toHaveValue("Taxes and upkeep");
+    fireEvent.change(field,{target:{value:"The hidden tax bill"}});
+    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
+    expect(field).toHaveValue("Mortgage interest");
+    fireEvent.click(screen.getByRole("button",{name:"Story layout"}));
+    expect(field).toHaveValue(story);
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    expect(field).toHaveValue("The hidden tax bill");
+    view.unmount();
+    render(<PlatformOptimization input={{...input,scriptSections:[
+      {id:"one",heading:"Taxes and upkeep",text:"Property taxes and repairs add to cost."},
+      {id:"two",heading:"Mortgage interest",text:"Interest is part of home ownership."}]}}/>);
+    expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The hidden tax bill");
+  });
+
+  it("keeps a pinned concept while refreshing untouched concepts from the rewritten script",()=>{
+    const view=render(<PlatformOptimization input={{...input,scriptSections:[
+      {id:"first",heading:"Roof maintenance",text:"First draft."},
+      {id:"second",heading:"Property tax",text:"The other half."}]}}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),{target:{value:"My chosen hook"}});
+    view.rerender(<PlatformOptimization input={{...input,title:"A new home ownership question",sourceRevision:"script-new",
+      scriptSections:[{id:"first",heading:"Unexpected repairs",text:"Updated intro."},
+        {id:"second",heading:"Insurance costs",text:"Updated payoff."}]}}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("My chosen hook");
+    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("Insurance costs");
+    fireEvent.click(screen.getByRole("button",{name:"Story layout"}));
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("A new home ownership question");
+  });
+
+  it("restores just the selected concept's suggested copy without deleting other edited concepts",()=>{
+    render(<PlatformOptimization input={{...input,scriptSections:[
+      {id:"a",heading:"Property taxes",text:"First section."},
+      {id:"b",heading:"Repairs",text:"Second section."}]}}/>);
+    fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),{target:{value:"Story is mine"}});
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),{target:{value:"My tile headline"}});
+    fireEvent.click(screen.getByRole("button",{name:"Restore concept suggestion"}));
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("Property taxes");
+    fireEvent.click(screen.getByRole("button",{name:"Story layout"}));
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("Story is mine");
   });
 
   it("refreshes untouched cover copy when the script title changes", () => {
