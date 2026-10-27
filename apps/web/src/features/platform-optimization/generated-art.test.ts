@@ -94,6 +94,7 @@ describe("Kumiki-generated publishing artwork", () => {
     expect(withPhoto).toHaveLength(3);
     expect(withPhoto[0].svg).toContain("data:image/png;base64,");
     expect(withPhoto[0].media?.assets["cover-image"]?.uri).toBe(photo);
+    expect(withPhoto[0].description).toMatch(/permissions and commercial rights still require review/i);
     expect(withPhoto[0].svg).not.toBe(without[0].svg);
     expect(without[0].svg).not.toBe(generatePlatformArtwork(input,"youtube",input.title)[0].svg);
     expect(() => generatePlatformArtwork(changed,"youtube",changed.title,{imageDataUri:"data:image/svg+xml;base64,PHN2Zz4="})).toThrow(/image/i);

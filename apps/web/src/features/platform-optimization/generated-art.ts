@@ -32,7 +32,7 @@ const artProfile: Record<PlatformTarget, OutputProfileId> = {
   instagram: "social-portrait", facebook: "social-square", blog: "youtube-landscape",
 };
 // Avoid repeating several costly layouts when Production re-renders its
-// platform input. Bounded, in-memory only; approval is checked before lookup.
+// platform input. Bounded, in-memory only; draft availability is checked before lookup.
 const artworkCache = new Map<string, GeneratedArtwork[]>();
 
 function sectionsFor(input: PlatformOptimizationInput, platform: PlatformTarget): readonly PlatformScriptSection[] {

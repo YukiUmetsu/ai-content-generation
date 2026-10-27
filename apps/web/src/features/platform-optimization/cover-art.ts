@@ -155,7 +155,9 @@ export function createCoverArtwork(title:string,sections:readonly PlatformScript
     const output=documentToSvg(media);
     if(output.diagnostics.some(d=>d.severity==="error"))return null;
     return {id:`cover-${target}${suffix}`,filename:`${filenameBase}-${target}${suffix||"-cover"}.png`,label:labels[index],
-      description:"Kumiki thumbnail: editable headline, approved-script section headings, no unsourced photos or figures.",
+      description:imageDataUri?
+        "Kumiki thumbnail with a user-supplied image. Image permissions and commercial rights still require review.":
+        "Kumiki thumbnail with an editable headline and draft-script headings; no external media included.",
       media,svg:output.svg,width:output.size.width,height:output.size.height,
       preview:`data:image/svg+xml;charset=utf-8,${encodeURIComponent(output.svg)}`};
   }).filter((result):result is NonNullable<typeof result>=>result!==null);
