@@ -60,3 +60,17 @@ it("a manual refresh reports when no completed draft has stored media suggestion
   await userEvent.setup().click(screen.getByRole("button",{name:"Load draft suggestions"}));
   await waitFor(()=>expect(screen.getByText(/No saved media suggestions yet/i)).toBeInTheDocument());
 });
+
+it("marks Pexels selections as usable in the next video and keeps unsupported models unselectable",async()=>{
+  const selectedPhoto={shotId:"scene-1",provider:"pexels",assetType:"photo",assetId:"42",sha256:"a".repeat(64),
+    rightsStatus:"user-reviewed",title:"Residential porch",license:"Pexels License",sizeBytes:1200,localPath:"/approved/photo.jpg"};
+  const model={...selectedPhoto,provider:"polyhaven",assetType:"model",assetId:"building",sha256:"b".repeat(64),
+    title:"A building model",license:"CC0-1.0",localPath:"/approved/building.gltf"};
+  vi.stubGlobal("fetch",vi.fn(async(url:string)=>({ok:true,json:async()=>String(url).includes("/approved?")?
+    {assets:[selectedPhoto,model]}:String(url).includes("/selected?")?
+    {selections:[selectedPhoto],invalidShots:[]}:{found:false}})));
+  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1"/>);
+  expect(await screen.findByText("Residential porch",{selector:"strong"})).toBeInTheDocument();
+  expect(screen.getByText(/included in the next draft video/i)).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/3D models are not yet rendered/i})).toBeDisabled();
+});

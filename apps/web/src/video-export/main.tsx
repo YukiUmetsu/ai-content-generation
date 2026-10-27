@@ -10,6 +10,7 @@ import { HouseMathExportScene } from "./house-math-scene";
 import { GeneralExportScene } from "./general-scene";
 import { PortraitGeneralExportScene } from "./portrait-general-scene";
 import { waitForChartStoryReadiness } from "./chart-story-preflight";
+import { prepareStockMediaFrame } from "./stock-media-readiness";
 declare global { interface Window { __contentgenBuildHash?: string } }
 
 /** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
@@ -24,6 +25,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   if (!stage || stage.dataset.frame !== String(target)) throw new Error(`Video scene frame ${target} did not settle`);
   await document.fonts.ready;
   await waitForChartStoryReadiness(stage);
+  await prepareStockMediaFrame(stage);
   const isHouse = kind === "house-math-visual-plan";
   const copy = stage.querySelectorAll<SVGGraphicsElement>(isHouse ? "[data-house-copy]" : "[data-general-copy]");
   if (!portrait && !copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");

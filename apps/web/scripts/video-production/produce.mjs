@@ -19,6 +19,7 @@ import { startLocalStageServer } from "./stage-server.mjs";
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
 import { buildQaReport } from "./report.mjs";
+import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
 
 const run = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -71,7 +72,7 @@ async function toolVersions() {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,expectedSceneMediaFingerprint?:string}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -158,6 +159,16 @@ export async function produceVideo(candidate, options, deps = {}) {
     const assetSearch=options.prepareAssetSuggestions?
       await options.prepareAssetSuggestions({signal:options.signal}):{status:"skipped"};
     if(options.signal?.aborted)fail("cancelled during scene media discovery");
+    if (Boolean(options.sceneAssetProjectId) !== Boolean(options.sceneShotMap))
+      fail("both the scene asset project and shot mapping are required");
+    const sceneMedia = options.sceneAssetProjectId ? await
+      (deps.prepareApprovedSceneMedia ?? prepareApprovedSceneMedia)({
+        projectId: options.sceneAssetProjectId, shotMap: options.sceneShotMap,
+        outputDir: join(out, ".render", "scene-media"),
+        expectedFingerprint: options.expectedSceneMediaFingerprint, signal: options.signal,
+      }, { ffprobe: options.ffprobe }) : { bindings: {}, assets: [] };
+    if (Object.keys(sceneMedia.bindings).length && job.visualFamily !== "general-explainer-v1")
+      fail("reviewed scene media requires the general Kumiki explainer; change the selected visual recipe");
     options.onProgress?.({ phase: "narration", assetSearchSummary:assetSearch,
       message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
@@ -188,6 +199,16 @@ export async function produceVideo(candidate, options, deps = {}) {
       timeline=visualCueTimeline;
       plan=compileGeneralVisuals(job,timeline);
     }
+    if (Object.keys(sceneMedia.bindings).length) {
+      const known = new Set(plan.chapters.map(chapter => chapter.id));
+      if (Object.keys(sceneMedia.bindings).some(beatId => !known.has(beatId)))
+        fail("a selected scene no longer matches the narrated storyboard");
+      plan = { ...plan, chapters: plan.chapters.map(chapter => ({ ...chapter,
+        visual: { ...chapter.visual,
+          ...(sceneMedia.bindings[chapter.id] ? { stockMedia: sceneMedia.bindings[chapter.id] } : {}),
+        },
+      })) };
+    }
     const frames = plan.manifest.durationFrames;
     const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
     const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));
@@ -202,7 +223,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
     });
-    stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan });
+    stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan,
+      approvedMedia: sceneMedia.assets });
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {
@@ -275,7 +297,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       ...(offsetMs!==undefined?{offsetMs}:{}),...(gainDb!==undefined?{gainDb}:{}),
       ...(fadeInMs!==undefined?{fadeInMs}:{}),...(fadeOutMs!==undefined?{fadeOutMs}:{})
     }));
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
+    const mediaProvenance=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({beatId,...media}));
+    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, sceneMedia:mediaProvenance, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.

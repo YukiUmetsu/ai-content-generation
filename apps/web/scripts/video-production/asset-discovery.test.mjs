@@ -298,6 +298,22 @@ test("Pexels video import refuses forged hosts and non-MP4 download payloads",as
   assert.deepEqual(await listApprovedAssets({projectId:"project-1"},{root}),[]);
 });
 
+test("Pexels image import refuses HTML or spoofed JPEG responses before recording approval", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-photo-reject-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const input = { projectId: "project-1", shotId: "shot-house", provider: "pexels", assetId: "49",
+    assetType: "photo", confirmDownload: true, confirmRights: true };
+  for (const [contentType, bytes] of [["text/html", "<html>not a JPEG</html>"],
+    ["image/jpeg", "<html>pretend-image</html>"]]) {
+    const fetchImpl = async url => String(url).includes("api.pexels.com") ? response({
+      id: 49, url: "https://www.pexels.com/photo/roof-49/", alt: "Roof", photographer: "Photographer",
+      src: { large: "https://images.pexels.com/photos/49/roof.jpeg" },
+    }) : new Response(bytes, { headers: { "content-type": contentType } });
+    await assert.rejects(approveAsset(input, { root, pexelsKey: "test", fetchImpl }), /JPEG|image|type/i);
+  }
+  assert.deepEqual(await listApprovedAssets({ projectId: "project-1" }, { root }), []);
+});
+
 test("scene selection pins only an approved SHA, can be revised and detects a damaged source",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-selection-test-"));
   t.after(()=>rm(root,{recursive:true,force:true}));

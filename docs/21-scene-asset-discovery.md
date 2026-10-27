@@ -1,6 +1,6 @@
 # Automatic scene media discovery and selection
 
-**Owner:** ContentGen discovers, reviews, imports and selects third-party media; Kumiki-UI will render selected assets when its adapter is available. This describes the Studio slice, **not** an automatic render integration.
+**Owner:** ContentGen discovers, reviews, imports and selects third-party media. The existing Kumiki general-scene renderer now consumes reviewed Pexels photos and compatible H.264 MP4 clips on the next video draft; Poly Haven models and textures are not yet connected to that compositor.
 
 ## User workflow
 
@@ -10,7 +10,9 @@
 4. Approved assets are placed in the local `data/studio-assets/<dossier-id>/<shot-id>/asset_<content-hash>/` directory beside a manifest. A manifest records the source, creator, license URL, media type, file hashes, local paths and human review status. `GET /api/contentgen-assets/approved?projectId=<dossier-id>` gives the adapter a per-scene manifest list.
 5. Choose **Use in scene** on an approved asset to pin its SHA-256 reference for that shot, or **Clear selection** to remove the binding without deleting media. Scene-local `scene-media-selection.json` holds the selected provider/ID/type/hash. `GET /api/contentgen-assets/selected?projectId=<dossier-id>` resolves these against intact approved files and flags invalidated scenes; `POST /select` and `POST /clear` are same-origin local Studio actions.
 
-The interface shows imported paths and scene selection. The current generic Kumiki renderer **does not automatically incorporate selected footage, images, or 3D models**. Renderer consumption, composition, trimming and visual inspection remain subsequent integration work.
+6. On the next **Generate draft video** run, the worker checks the current selection fingerprint, verifies each selected local file's hash and provenance, and freezes the exact bytes into its own render directory **before narration**. Kumiki renders approved photographs with restrained pan/zoom motion or displays H.264 footage in a silent frame-synchronized visual panel. The existing explanatory text and scene layout remain editable; changing a selection requires a new draft. The render fails with a selection-specific instruction if a pinned file is missing, changed, unsupported, or rejected by FFprobe.
+
+This is an explicit editor-reviewed media path, **not** automatic approval or download of search suggestions. The saved Pexels assets are intended as illustrative footage, not independent evidence for claims. Poly Haven models are selectable only through a future compatible compositor, so the current UI does not offer **Use in scene** for them.
 
 ## Providers, terms and limits
 
@@ -26,7 +28,7 @@ Commercial *finished videos* still need human review. Quaternius, Sketchfab, Fab
 ## Integration boundary and follow-up
 
 - Vite's loopback-only bridge is an interim Studio worker. For durable catalog/release ownership, promote manifests and approvals into ContentGen's Rust/SQLite asset ledger with migrations and hash verification. Keep secrets server-side.
-- Extend the Kumiki compiler contract to **consume the implemented** approved `shotId → selected asset artifact` mapping and include its SHA-256/rights state in render fingerprints. Validate/trim MP4 duration, frame-safe cropping and container codecs via the final media worker. Never infer that stock media proves a researched claim.
+- Promote the current Kumiki general-scene binding to richer layouts and per-scene preview/editing, with explicit crop and trim controls. The worker already includes selected-file SHA-256 and rights state in render identity, validates MP4 using FFprobe, and serves immutable bytes locally with HTTP range support. It does **not** yet trim/transcode footage or produce a real-browser visual QA report. Never infer that stock media proves a researched claim.
 - Add a creative placement review: relevance to narration, legible at target size, 16:9/9:16 safe areas, copyright/trademark/person rights, and 3D texture/dependency completeness. Keep semantic diagrams as default when footage does not teach.
 - Add an approved local upload adapter and more providers only after provider-specific contract, license and failure tests. Avoid using provider assets as training/evaluation datasets.
 

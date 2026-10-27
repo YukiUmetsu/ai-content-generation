@@ -9,7 +9,7 @@ import {fileURLToPath} from "node:url";
 import {setTimeout as pause} from "node:timers/promises";
 import {rankShotCandidates} from "./asset-matching.mjs";
 
-const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-assets",import.meta.url));
+export const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-assets",import.meta.url));
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u;
 const MAX_FILE=80*1024*1024;
 const MAX_JSON=18*1024*1024;
@@ -259,7 +259,16 @@ async function downloadFile(file,{fetchImpl=fetch,signal,provider}={}){
         const error=Error(`Asset provider temporarily unavailable (HTTP ${response.status}).`);
         error.retryable=true;throw error;
       }
+      const contentType=(response.headers.get("content-type")??"").split(";")[0].trim().toLowerCase();
+      if(provider==="pexels"&&file.name==="photo.jpg"&&contentType!=="image/jpeg")
+        throw Error("Pexels photograph did not return JPEG media type.");
+      if(provider==="pexels"&&file.name==="video.mp4"&&contentType!=="video/mp4")
+        throw Error("Pexels footage did not return MP4 media type.");
       const bytes=await readLimited(response,MAX_FILE);
+      if(provider==="pexels"&&file.name==="photo.jpg"&&
+        (bytes.length<12||bytes[0]!==0xff||bytes[1]!==0xd8||bytes[2]!==0xff||
+          bytes[bytes.length-2]!==0xff||bytes[bytes.length-1]!==0xd9))
+        throw Error("Pexels photograph is not valid JPEG media.");
       if(file.name==="video.mp4"&&(bytes.length<12||bytes.toString("ascii",4,8)!=="ftyp"))
         throw Error("Provider did not return a compatible MP4 video file.");
       if(file.size&&bytes.length!==file.size){

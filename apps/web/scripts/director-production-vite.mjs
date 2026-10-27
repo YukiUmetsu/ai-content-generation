@@ -23,7 +23,8 @@ import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 import { synthesizeNarration } from "./video-production/speech.mjs";
 import { createProductionJobTracker } from "./video-production/production-jobs.mjs";
-import { discoverShotAssets } from "./video-production/asset-discovery.mjs";
+import { discoverShotAssets, listSelectedSceneAssets } from "./video-production/asset-discovery.mjs";
+import { selectedMediaFingerprint } from "./video-production/render-scene-media.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -137,6 +138,14 @@ export function createDirectorProduction(deps={}){
   const loadModel=deps.readModel??resolveModelForTask;
   const searchEndpoint=deps.searchEndpoint??configuredSearchEndpoint;
   const searchAssets=deps.searchAssets??discoverShotAssets;
+  const listSelections=deps.listSelections??listSelectedSceneAssets;
+  async function sceneMediaIdentity(compiled,dossier){
+    const selected=await listSelections({projectId:dossier.id});
+    const relevant=new Set(compiled.shotMap.map(shot=>shot.shotId));
+    const fingerprint=selectedMediaFingerprint(selected,compiled.shotMap);
+    return {fingerprint,identityFingerprint:selected.selections.some(asset=>relevant.has(asset.shotId))?
+      fingerprint:undefined};
+  }
   const build=deps.build??(()=>run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024}));
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
@@ -428,7 +437,8 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,settings:{
+        const sceneMedia=await sceneMediaIdentity(compiled,input.dossier);
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -463,19 +473,49 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,settings:{
+        const sceneMedia=await sceneMediaIdentity(compiled,input.dossier);
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
+        if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
         }
+        // Reserve the local slot before the first asynchronous Jobs request.
+        // Otherwise two rapid clicks can both create/claim a persistent run.
+        busy=true;
         const runId=randomUUID(),out=join(outputRoot,"draft-"+runId),abort=new AbortController();
         // Real productions must acquire a persisted DAG before doing paid/network
         // work. Demo fixtures without a production ID retain their isolated mode.
         const tracker=input.productionId?newJobTracker():null;
         let trackedJobId=null;
-        if(tracker){
-          trackedJobId=await tracker.start({productionId:input.productionId,
-            revision:identity,runId});
+        // Cancellation must remain possible while the persistent Jobs DAG is
+        // being reserved; this operation may wait on the local Rust service.
+        controller=abort;
+        activeJobTracker=tracker;
+        try {
+          if(tracker){
+            trackedJobId=await tracker.start({productionId:input.productionId,
+              revision:identity,runId});
+          }
+          if(abort.signal.aborted){
+            // /cancel may have arrived before tracker.start acquired its ID.
+            // Re-issue cancellation now that the persisted job is addressable.
+            await tracker?.cancel();
+            status={...status,state:"cancelled",phase:"cancelled",
+              message:"Video draft cancelled before rendering.",jobId:trackedJobId};
+            checked=null;
+            controller=null;
+            activeJobTracker=null;
+            busy=false;
+            respond(res,409,{error:"Video draft cancelled before rendering."});
+            return;
+          }
+        } catch(error){
+          busy=false;
+          checked=null;
+          controller=null;
+          activeJobTracker=null;
+          throw error;
         }
         // The original run UUID lives in Rust's immutable Jobs node input.
         // After restart, a re-armed failed job can still find its verified
@@ -484,8 +524,6 @@ export function createDirectorProduction(deps={}){
         const reuseSpeechCacheFrom=interruptedRunId&&runIdPattern.test(interruptedRunId)?
           join(outputRoot,"draft-"+interruptedRunId):null;
         checked=null;
-        controller=abort;busy=true;
-        activeJobTracker=tracker;
         status={state:"rendering",phase:"starting",message:"Producing the local draft…",
           progress:null,report:status.report,runId,jobId:trackedJobId,
           productionId:input.productionId??null,mediaUrl:null,regeneration:null};
@@ -504,6 +542,8 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
+              sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
+              expectedSceneMediaFingerprint:sceneMedia.fingerprint,
               ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom}:{}),
               ...(searchFreeMedia?{prepareAssetSuggestions:async({signal})=>{
                 try{

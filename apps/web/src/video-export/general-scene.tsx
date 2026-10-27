@@ -135,6 +135,9 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
   const chapterFrames=chapter.endFrame-chapter.startFrame;
+  const stockMedia = state.visual.stockMedia;
+  const mediaTime = stockMedia?.assetType === "video"
+    ? (state.localFrame * plan.manifest.fps.den / plan.manifest.fps.num) % stockMedia.durationSeconds : 0;
   const authoredReveal=state.visual.motion?motionRevealState({frame:state.localFrame,frames:chapterFrames,
     itemCount:state.visual.items.length,intent:state.intent,motion:state.visual.motion}):null;
   const semanticMotion = sampleSemanticMotion({intent:state.intent,
@@ -183,31 +186,45 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    {!chartStory && state.visual.direction?.visualMechanic &&
+    {!stockMedia && !chartStory && state.visual.direction?.visualMechanic &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ? <SemanticMechanicScene mechanic={state.visual.direction.visualMechanic}
           phase={state.visual.direction.phase as "problem"|"mechanism"|"payoff"} motion={semanticMotion}
           localFrame={state.localFrame} durationFrames={chapterFrames} fps={plan.manifest.fps}/>
-      : !chartStory && state.visual.direction?.transformation &&
+      : !stockMedia && !chartStory && state.visual.direction?.transformation &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ?<TeachingStateScene state={diagramState} motion={semanticMotion}/>
-      :!chartStory && (state.intent==="general-flow"
+      :!stockMedia && !chartStory && (state.intent==="general-flow"
       ? <g transform={state.visual.motion?.camera
           ?`translate(${semanticMotion.cameraX} ${semanticMotion.cameraY}) translate(1420 565) scale(${semanticMotion.cameraScale}) translate(-1420 -565)`
           :undefined}><Diagram state={diagramState} fps={plan.manifest.fps}
           chapterFrames={chapter.endFrame - chapter.startFrame}/></g>
       : <SemanticDiagram state={diagramState} motion={semanticMotion} renderNode={Node}/>)}
-    {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
+    {!stockMedia && chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
       {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
         fontSize={disclosure.fontSize} fill={accent}>{line}</text>)}
       {source.lines.map((line, index) => <text data-general-chart-copy="source" key={`s-${index}`} x="1040" y={856 + disclosure.lines.length * 29 + index * 27}
         fontSize={source.fontSize} fill={muted}>{line}</text>)}
     </g>}
-    {transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
+    {!stockMedia&&transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
       fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
-  {chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
+  {stockMedia && <div data-contentgen-stock-frame="" role="img" aria-label={`Reviewed ${stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
+    style={{position:"absolute",left:1040,top:230,width:760,height:650,overflow:"hidden",borderRadius:28,
+      background:"#142431",border:"2px solid #526b73",boxShadow:"0 28px 95px #07131c80"}}>
+    {stockMedia.assetType === "photo"
+      ? <img data-contentgen-stock-photo="" src={stockMedia.url} alt="" decoding="async"
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          transform:`scale(${(1.03+0.065*state.progress).toFixed(5)}) translate3d(${(12-24*state.progress).toFixed(3)}px,${(6-12*state.progress).toFixed(3)}px,0)`,
+          transformOrigin:"50% 50%"}}/>
+      : <video data-contentgen-stock-video="" data-media-time={mediaTime.toFixed(6)}
+        src={stockMedia.url} preload="auto" muted playsInline aria-hidden="true"
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}} />}
+  </div>}
+  {!stockMedia && chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />
   </div>}
+  {stockMedia&&transitionOpacity>0&&<div data-scene-entry-fade="" aria-hidden="true"
+    style={{position:"absolute",inset:0,background:"#101D2D",opacity:transitionOpacity,pointerEvents:"none"}}/>}
   </div>;
 }

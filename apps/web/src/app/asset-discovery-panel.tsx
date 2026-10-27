@@ -108,7 +108,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
       await localAssets("select",{projectId,shotId:selectedShotId,provider:asset.provider,
         assetId:asset.assetId,sha256:asset.sha256});
       setSelected(await localAssets("selected?projectId="+encodeURIComponent(projectId)) as unknown as Selected);
-      setNotice("Scene reference saved. Imported media is not included in rendered video yet.");
+      setNotice("Saved. This photo or video will appear in the next draft render of this scene.");
     }catch(error){setNotice(error instanceof Error?error.message:"Could not select scene asset.");}
     finally{setBusy("");}
   }
@@ -201,12 +201,16 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
       </div>}
       {sceneApproved.length>0&&<div className="space-y-2 rounded-control border border-border p-3">
         <p className="text-xs font-semibold">Approved local assets for this scene</p>
-        {sceneApproved.map(asset=><div key={asset.provider+asset.assetType+asset.assetId+asset.sha256} className="space-y-1 border-t border-border pt-2 text-xs">
+        {sceneApproved.map(asset=>{
+          const renderable=asset.provider==="pexels"&&["photo","video"].includes(asset.assetType);
+          return <div key={asset.provider+asset.assetType+asset.assetId+asset.sha256} className="space-y-1 border-t border-border pt-2 text-xs">
           <p className="font-medium">{asset.title} · {asset.license} · {fmt(asset.sizeBytes)}</p>
           <p className="break-all text-muted-foreground">{asset.localPath}</p>
-          {sceneSelected?.sha256===asset.sha256?<span className="inline-flex items-center gap-1 text-emerald-500"><CheckCircle2 className="size-3"/>Scene reference saved</span>:
-            <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void choose(asset)}>Save as scene reference</Button>}
-        </div>)}
+          {sceneSelected?.sha256===asset.sha256?<span className="inline-flex items-center gap-1 text-emerald-500"><CheckCircle2 className="size-3"/>{renderable?"Included in the next draft video":"Saved, but this type is not renderable yet"}</span>:
+            <Button size="sm" variant="outline" disabled={!!busy||!renderable} onClick={()=>void choose(asset)}>
+              {renderable?"Use in next draft":"3D models are not yet rendered"}
+            </Button>}
+        </div>})}
       </div>}
       {sceneSelected&&<div className="flex items-center justify-between gap-3 rounded-control border border-primary/30 p-3 text-xs">
         <span>Selected: <strong>{sceneSelected.title}</strong> · {sceneSelected.assetType}</span>
@@ -216,8 +220,8 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
         The saved scene reference is missing or modified. Import the asset again to restore the reference.</p>}
       {results?.warnings?.map((warning,index)=><p className="text-xs text-muted-foreground" key={index}>{warning}</p>)}
       {notice&&<p role="status" className="rounded-control border border-border p-3 text-xs">{notice}</p>}
-      <p className="text-xs text-muted-foreground">Scene selections are saved by asset hash for the future Kumiki adapter.
-        The current generic video renderer does not automatically place imported footage, images or models yet.</p>
+      <p className="text-xs text-muted-foreground">Reviewed Pexels photos and compatible H.264 footage appear in the next draft video with Kumiki.
+        Existing videos are unchanged. Imported 3D models, textures and HDRIs are saved for future scene support.</p>
     </div>
   </Surface>;
 }

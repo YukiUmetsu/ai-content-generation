@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startLocalStageServer, fingerprintBuiltStage } from "./stage-server.mjs";
+import { createHash } from "node:crypto";
 
 test("loopback server returns validated plan and built stage with restrictive headers", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "contentgen-stage-test-"));
@@ -54,4 +55,34 @@ test("renderer identity changes with served scene JS/fonts but not an unrelated 
   assert.notEqual(second, first);
   await writeFile(join(root, "assets", "ignored.map"), "not-a-served-asset");
   assert.equal(await fingerprintBuiltStage(root), second);
+});
+
+test("capture host serves only frozen media with a valid SHA-256 and a safe content type", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-media-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "video-export.html"), "stage");
+  const source = join(root, "private-photo.jpg");
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8, 0xff, 0xd9]);
+  await writeFile(source, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const url = `/__video_media/${sha256}.jpg`;
+  const server = await startLocalStageServer({ distRoot: root, validatedPlan: { schemaVersion: 1 },
+    approvedMedia: [{ url, path: source, sha256, assetType: "photo" }] });
+  t.after(() => server.close());
+  const served = await fetch(new URL(url, server.url));
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get("content-type"), "image/jpeg");
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), bytes);
+  const partial = await fetch(new URL(url, server.url), { headers: { Range: "bytes=2-6" } });
+  assert.equal(partial.status, 206, "Chromium needs byte ranges to seek through reviewed MP4s");
+  assert.equal(partial.headers.get("content-range"), `bytes 2-6/${bytes.length}`);
+  assert.equal(partial.headers.get("accept-ranges"), "bytes");
+  assert.deepEqual(Buffer.from(await partial.arrayBuffer()), bytes.subarray(2, 7));
+  assert.equal((await fetch(new URL(url, server.url), { headers: { Range: "bytes=9999-" } })).status, 416);
+  assert.equal((await fetch(new URL("/__video_media/unknown.jpg", server.url))).status, 404);
+  await writeFile(source, "tampered media");
+  assert.equal((await fetch(new URL(url, server.url))).status, 404, "a changed frozen file must not reach Chromium");
+  await assert.rejects(startLocalStageServer({ distRoot: root, validatedPlan: {},
+    approvedMedia: [{ url: "/__video_media/../secret.jpg", path: source, sha256, assetType: "photo" }] }),
+  /invalid|media|path/i);
 });

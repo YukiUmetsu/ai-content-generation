@@ -83,6 +83,49 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(manifest.narration[0].sha256, hash(ctx.job.beats[0].narration));
 });
 
+test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
+  const ctx = await context(t);
+  const general = JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
+  ctx.job = { ...general, voice: ctx.job.voice };
+  const beatId = ctx.job.beats[0].id;
+  const photoHash = "e".repeat(64);
+  const media = { assetType: "photo", sha256: photoHash, url: `/__video_media/${photoHash}.jpg`,
+    provider: "pexels", assetId: "49", sourceUrl: "https://www.pexels.com/photo/roof-49/",
+    license: "Pexels License", licenseUrl: "https://www.pexels.com/license/", creator: "Photographer" };
+  const asset = { url: media.url, path: join(ctx.root, "frozen.jpg"), sha256: photoHash, assetType: "photo" };
+  const events = [];
+  ctx.injected.prepareApprovedSceneMedia = async input => {
+    events.push("asset-preflight");
+    assert.equal(input.projectId, "dossier-1");
+    assert.deepEqual(input.shotMap, [{ shotId: "scene-roof", beatId }]);
+    return { fingerprint: "c".repeat(64), bindings: { [beatId]: media }, assets: [asset] };
+  };
+  const speech = ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration = async (...args) => { events.push("narration"); return speech(...args); };
+  ctx.injected.startLocalStageServer = async ({ validatedPlan, approvedMedia }) => {
+    assert.equal(validatedPlan.kind, "general-explainer-visual-plan");
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.url, media.url);
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.sha256, photoHash);
+    assert.deepEqual(approvedMedia, [asset]);
+    return { url: "http://127.0.0.1:9876/video-export.html", buildHash: "b".repeat(64), close: async () => {} };
+  };
+  const result = await produceVideo(ctx.job, { ...ctx.opts, sceneAssetProjectId: "dossier-1",
+    sceneShotMap: [{ shotId: "scene-roof", beatId }], expectedSceneMediaFingerprint: "c".repeat(64) }, ctx.injected);
+  assert.deepEqual(events, ["asset-preflight", "narration"]);
+  const released = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
+  assert.equal(released.plan.chapters[0].visual.stockMedia.sha256, photoHash);
+  assert.equal(released.sceneMedia[0].sha256, photoHash);
+});
+
+test("a missing user-selected scene photo fails before any provider TTS or render call", async t => {
+  const ctx = await context(t);
+  ctx.injected.prepareApprovedSceneMedia = async () => { throw Error("Selected asset changed; choose another image"); };
+  await assert.rejects(produceVideo(ctx.job, { ...ctx.opts, sceneAssetProjectId: "dossier-1",
+    sceneShotMap: [{ shotId: "scene-roof", beatId: ctx.job.beats[0].id }] }, ctx.injected), /Selected asset changed/);
+  assert.equal(ctx.status().providerCalls, 0);
+  assert.equal(ctx.status().browserCalls, 0);
+});
+
 test("release manifest records approved sound identity, event, and measured cue sample without local paths",async t=>{
   const ctx=await context(t);
   const original=ctx.injected.renderMasterAudio;

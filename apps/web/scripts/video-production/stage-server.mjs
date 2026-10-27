@@ -1,7 +1,7 @@
 /** Private, ephemeral static host for the built Kumiki capture page and a validated plan. */
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
 const mime = {
@@ -54,12 +54,22 @@ export async function fingerprintBuiltStage(distRoot) {
  * @param {{distRoot:string,validatedPlan:object,host?:'127.0.0.1'}} options
  * @returns {Promise<{url:string,close:()=>Promise<void>}>}
  */
-export async function startLocalStageServer({ distRoot, validatedPlan, host = "127.0.0.1" }) {
+export async function startLocalStageServer({ distRoot, validatedPlan, approvedMedia = [], host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") throw new Error("Export stage must bind a loopback-only host.");
   if (typeof distRoot !== "string" || !distRoot.trim() || !validatedPlan || typeof validatedPlan !== "object") {
     throw new Error("A built page directory and validated plan are required.");
   }
   const root = await realpath(resolve(distRoot));
+  if (!Array.isArray(approvedMedia) || approvedMedia.length > 60) throw Error("Invalid approved scene media list.");
+  const media = new Map();
+  for (const asset of approvedMedia) {
+    const extension = asset?.assetType === "photo" ? "jpg" : asset?.assetType === "video" ? "mp4" : null;
+    if (!extension || !/^[a-f0-9]{64}$/u.test(asset?.sha256 ?? "") ||
+      asset.url !== `/__video_media/${asset.sha256}.${extension}` ||
+      typeof asset.path !== "string" || !asset.path.startsWith("/") || media.has(asset.url))
+      throw Error("Invalid or duplicate approved scene media path.");
+    media.set(asset.url, asset);
+  }
   const buildHash = await fingerprintBuiltStage(root);
   const entry = await stat(join(root, "video-export.html"));
   if (!entry.isFile()) throw new Error("Built video-export.html is required before starting capture.");
@@ -76,6 +86,38 @@ export async function startLocalStageServer({ distRoot, validatedPlan, host = "1
     catch { send(400, "Malformed path"); return; }
     if (pathname === "/__video_job") { send(200, json, mime[".json"]); return; }
     if (pathname === "/__video_build") { send(200, JSON.stringify({ sha256: buildHash }), mime[".json"]); return; }
+    if (pathname.startsWith("/__video_media/")) {
+      const asset = media.get(pathname);
+      if (!asset) { send(404); return; }
+      try {
+        const metadata = await lstat(asset.path);
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 12 ||
+          metadata.size > 80 * 1024 * 1024) { send(404); return; }
+        const bytes = await readFile(asset.path);
+        if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256) { send(404); return; }
+        const type = asset.assetType === "photo" ? "image/jpeg" : "video/mp4";
+        let start = 0, end = bytes.length - 1, code = 200;
+        if (request.headers.range !== undefined) {
+          const range = /^bytes=(\d+)-(\d*)$/u.exec(request.headers.range);
+          if (!range || !Number.isSafeInteger(Number(range[1])) ||
+            (range[2] && !Number.isSafeInteger(Number(range[2])))) {
+            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${bytes.length}` });
+            response.end(); return;
+          }
+          start = Number(range[1]); end = range[2] ? Number(range[2]) : end;
+          if (start > end || end >= bytes.length) {
+            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${bytes.length}` });
+            response.end(); return;
+          }
+          code = 206;
+        }
+        response.writeHead(code, { ...securityHeaders, "Content-Type": type, "Accept-Ranges": "bytes",
+          "Content-Length": end - start + 1,
+          ...(code === 206 ? { "Content-Range": `bytes ${start}-${end}/${bytes.length}` } : {}) });
+        response.end(bytes.subarray(start, end + 1));
+      } catch { send(404); }
+      return;
+    }
     if (!/^\/(?:assets\/[A-Za-z0-9._/-]+|video-export\.html)$/.test(pathname) || pathname.includes("..")) {
       send(404); return;
     }

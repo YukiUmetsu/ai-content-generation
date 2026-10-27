@@ -211,6 +211,8 @@ test("a normal UI sequence checks tools, renders a new MP4, reuses previous outp
   await invoke(server,"POST","/start",{...project,settings:config,confirmRender:true});
   for(let i=0;i<30&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
   assert.equal(performed.length,2);
+  assert.match(performed[0].expectedSceneMediaFingerprint,/^[a-f0-9]{64}$/,
+    "even no-selection drafts must freeze an empty media snapshot before synthesis");
   assert.equal(performed[1].reuseFrom,performed[0].out);
   assert.equal(server.status().state,"done");
 });
@@ -261,6 +263,95 @@ test("a restarted failed production locates its original narration cache from th
   for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
   assert.equal(server.status().state,"done");
   assert.equal(passedCache,join(dir,"draft-"+oldRun));
+});
+
+test("render identity tracks user-selected visual media and passes exact shot bindings to the renderer", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "director-selected-media-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const selected = { selections: [], invalidShots: [] };
+  const received = [];
+  const server = createDirectorProduction({ outputRoot: dir, findBrowser: async () => "/mock/chromium",
+    build: async () => {}, inspect: async () => ({ ready: true, findings: [] }),
+    listSelections: async () => selected,
+    produce: async (_job, opts) => {
+      received.push(opts);
+      const releaseDir = join(opts.out, "release");
+      await mkdir(releaseDir, { recursive: true });
+      await writeFile(join(releaseDir, "video.mp4"), "mock video");
+      return { releaseDir };
+    },
+  });
+  const data = { ...inputs(), settings: config };
+  assert.equal((await invoke(server, "POST", "/check", data)).status, 200);
+  const first = data.bundle.plan.shots[0];
+  selected.selections.push({ projectId: data.dossier.id, shotId: first.id, provider: "pexels",
+    assetType: "photo", assetId: "49", sha256: "a".repeat(64),
+    rightsStatus: "user-reviewed", sourceUrl: "https://www.pexels.com/photo/roof-49/",
+    license: "Pexels License", licenseUrl: "https://www.pexels.com/license/" });
+  const stale = await invoke(server, "POST", "/start", { ...data, confirmRender: true });
+  assert.equal(stale.status, 409, "selection edits require a fresh render snapshot");
+  assert.equal((await invoke(server, "POST", "/check", data)).status, 200);
+  assert.equal((await invoke(server, "POST", "/start", { ...data, confirmRender: true })).status, 202);
+  for (let i = 0; i < 30 && server.status().state === "rendering"; i++)
+    await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(received.length, 1);
+  assert.equal(received[0].sceneAssetProjectId, data.dossier.id);
+  assert.equal(received[0].sceneShotMap[0].shotId, first.id);
+  assert.match(received[0].expectedSceneMediaFingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("rapid start clicks reserve one render even while Jobs creation is still pending", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "director-start-single-flight-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  let acceptStart, calls = 0;
+  const pending = new Promise(resolve => { acceptStart = resolve; });
+  const server = createDirectorProduction({ outputRoot: dir, findBrowser: async () => "/mock/chromium",
+    build: async () => {}, inspect: async () => ({ ready: true, findings: [] }),
+    jobTracker: () => ({ start: async () => { calls++; await pending; return "single-job"; },
+      advance: async () => {}, complete: async () => {}, fail: async () => {}, cancel: async () => {} }),
+    produce: async (_job, opts) => {
+      const releaseDir = join(opts.out, "release");
+      await mkdir(releaseDir, { recursive: true });
+      await writeFile(join(releaseDir, "video.mp4"), "mock video");
+      return { releaseDir };
+    },
+  });
+  const data = { ...inputs(), settings: config, productionId: `production-${"a".repeat(24)}` };
+  assert.equal((await invoke(server, "POST", "/check", data)).status, 200);
+  const first = invoke(server, "POST", "/start", { ...data, confirmRender: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal((await invoke(server, "POST", "/start", { ...data, confirmRender: true })).status, 409);
+  acceptStart();
+  assert.equal((await first).status, 202);
+  assert.equal(calls, 1);
+  for (let i = 0; i < 40 && server.status().state === "rendering"; i++)
+    await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(server.status().state, "done");
+});
+
+test("cancel during a delayed Jobs reservation prevents any media production and cancels the reserved job", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "director-reservation-cancel-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  let accept, signalReservation, renders = 0, cancels = 0;
+  const reserved = new Promise(resolve => { accept = resolve; });
+  const reservationStarted = new Promise(resolve => { signalReservation = resolve; });
+  const server = createDirectorProduction({ outputRoot: dir, findBrowser: async () => "/mock/chromium",
+    build: async () => {}, inspect: async () => ({ ready: true, findings: [] }),
+    jobTracker: () => ({ start: async () => { signalReservation(); await reserved; return "reserved-job"; },
+      advance: async () => {}, complete: async () => {}, fail: async () => {}, cancel: async () => { cancels++; } }),
+    produce: async () => { renders++; throw Error("Must not synthesize media after cancellation"); },
+  });
+  const data = { ...inputs(), settings: config, productionId: `production-${"b".repeat(24)}` };
+  await invoke(server, "POST", "/check", data);
+  const start = invoke(server, "POST", "/start", { ...data, confirmRender: true });
+  await reservationStarted;
+  const cancelled = await invoke(server, "POST", "/cancel", { confirmed: true });
+  accept();
+  await start;
+  assert.equal(cancelled.status, 202);
+  assert.equal(cancels >= 1, true);
+  assert.equal(renders, 0);
+  assert.equal(server.status().state, "cancelled");
 });
 
 test("a failed scene render records an actionable step error without leaking provider diagnostics",async t=>{
