@@ -71,7 +71,7 @@ async function toolVersions() {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -135,7 +135,16 @@ export async function produceVideo(candidate, options, deps = {}) {
   const reusedSpeechIds = [];
   let stage;
   try {
-    options.onProgress?.({ phase: "narration", message: `Generating ${job.beats.length} authorized narration beats…` });
+    // Metadata search is optional, never a stock-media substitution or a
+    // publication license decision. This step executes after browser preflight
+    // and before external voice transmission, inside the tracked render job.
+    options.onProgress?.({phase:"asset-search",message:options.prepareAssetSuggestions?
+      "Finding optional scene media suggestions…":"Using Kumiki-generated scenes…"});
+    const assetSearch=options.prepareAssetSuggestions?
+      await options.prepareAssetSuggestions({signal:options.signal}):{status:"skipped"};
+    if(options.signal?.aborted)fail("cancelled during scene media discovery");
+    options.onProgress?.({ phase: "narration", assetSearchSummary:assetSearch,
+      message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
       reuseCacheRoot:previous?.cacheRoot,

@@ -862,7 +862,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">Finish the YouTube script to generate a playable draft. Other destinations can wait.</p>}
             <div className="mt-5 rounded-xl border border-primary/30 bg-primary/5 p-5">
               <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector} onClick={()=>void openDirector("draft")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4" aria-hidden /></button>
-              <p className="mt-3 text-xs text-muted-foreground">Your storyboard refreshes automatically. Voice setup is requested only when needed. Nothing is published.</p>
+              <p className="mt-3 text-xs text-muted-foreground">Your storyboard refreshes automatically. You can opt in to public free-media searches when generating the draft; stock suggestions are never downloaded without review. Voice setup is requested only when needed. Nothing is published.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
               <button type="button" className={secondaryButton} disabled={openingDirector} onClick={()=>void openDirector("visuals")}>Edit video scenes</button>

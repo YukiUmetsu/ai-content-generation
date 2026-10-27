@@ -23,12 +23,19 @@ import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 import { synthesizeNarration } from "./video-production/speech.mjs";
 import { createProductionJobTracker } from "./video-production/production-jobs.mjs";
+import { discoverShotAssets } from "./video-production/asset-discovery.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"};
 const productionIdPattern=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
 const runIdPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
+const MAX_SUGGESTIONS_BYTES=900_000;
+function mediaSearchChoice(input){
+  if(input.searchFreeMedia!==undefined&&typeof input.searchFreeMedia!=="boolean")
+    throw Error("Free media search preference must be true or false.");
+  return input.searchFreeMedia===true;
+}
 const sampleExcerpt=text=>{
   const compact=String(text??"").replace(/\s+/gu," ").trim();
   if(!compact)throw Error("The first scene has no narration to audition.");
@@ -114,6 +121,7 @@ export function createDirectorProduction(deps={}){
   const generateStory=deps.generateStory??generatePreproductionPlan;
   const loadModel=deps.readModel??resolveModelForTask;
   const searchEndpoint=deps.searchEndpoint??configuredSearchEndpoint;
+  const searchAssets=deps.searchAssets??discoverShotAssets;
   const build=deps.build??(()=>run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024}));
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
@@ -166,6 +174,36 @@ export function createDirectorProduction(deps={}){
       }
     }
     return assets;
+  }
+  async function latestMediaSuggestions(productionId){
+    const latest=(await readMediaIndex()).filter(item=>item.productionId===productionId).at(-1);
+    if(latest){
+      const {runId}=latest;
+      const path=join(outputRoot,"draft-"+runId,"asset-suggestions.json");
+      let info;
+      try{info=await stat(path);}catch(error){if(error?.code==="ENOENT")return {found:false};throw error;}
+      if(!info.isFile()||info.size<2||info.size>MAX_SUGGESTIONS_BYTES)
+        throw Error("Saved asset suggestions have an invalid size. Search again in Video Director.");
+      let data;
+      try{data=JSON.parse(await readFile(path,"utf8"));}
+      catch{throw Error("Saved asset suggestions are unreadable. Search again in Video Director.");}
+      if(data?.schemaVersion!==1||data.productionId!==productionId||
+        !Array.isArray(data.sourceShots)||data.sourceShots.length>60||
+        !Array.isArray(data.sourceSound)||data.sourceSound.length>60||
+        !Array.isArray(data.suggestions?.scenes)||data.suggestions.scenes.length>60||
+        !Array.isArray(data.suggestions?.warnings)||data.suggestions.warnings.length>24||
+        data.suggestions.warnings.some(value=>typeof value!=="string"||value.length>240)||
+        data.suggestions.scenes.some(scene=>typeof scene?.shotId!=="string"||
+          !Array.isArray(scene.candidates)||scene.candidates.length>12||
+          scene.candidates.some(candidate=>!(["pexels","polyhaven"].includes(candidate?.provider))||
+            typeof candidate.title!=="string"||typeof candidate.sourceUrl!=="string"||
+            typeof candidate.licenseUrl!=="string"||typeof candidate.previewUrl!=="string"||
+            !/^https:\/\//u.test(candidate.sourceUrl)||!/^https:\/\//u.test(candidate.licenseUrl)||
+            (candidate.previewUrl!==""&&!/^https:\/\//u.test(candidate.previewUrl)))))
+        throw Error("Saved asset suggestions are invalid. Search again in Video Director.");
+      return {found:true,...data};
+    }
+    return {found:false};
   }
   const env=deps.env??process.env;
   const newJobTracker=deps.jobTracker??(()=>createProductionJobTracker());
@@ -226,6 +264,11 @@ export function createDirectorProduction(deps={}){
         const id=route.slice("/assets/".length);
         if(!productionIdPattern.test(id)){respond(res,404,{error:"Unknown production."});return;}
         respond(res,200,{assets:await productionAssets(id)});return;
+      }
+      if(req.method==="GET"&&route.startsWith("/suggestions/")){
+        const id=route.slice("/suggestions/".length);
+        if(!/^production-[a-f0-9]{24}$/u.test(id)){respond(res,404,{error:"Unknown production."});return;}
+        respond(res,200,await latestMediaSuggestions(id));return;
       }
       if(req.method!=="POST"){respond(res,404,{error:"Unknown production action."});return;}
       if(route==="/narration-sample/cancel"){
@@ -354,6 +397,7 @@ export function createDirectorProduction(deps={}){
       }
       if(route==="/check"){
         const input=await readBody(req);
+        const searchFreeMedia=mediaSearchChoice(input)&&Boolean(input.productionId);
         if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
           throw Error("Invalid production identity.");
         if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
@@ -361,7 +405,7 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -388,6 +432,7 @@ export function createDirectorProduction(deps={}){
       }
       if(route==="/start"){
         const input=await readBody(req);
+        const searchFreeMedia=mediaSearchChoice(input)&&Boolean(input.productionId);
         if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
           throw Error("Invalid production identity.");
         if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
@@ -395,7 +440,7 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
@@ -418,6 +463,7 @@ export function createDirectorProduction(deps={}){
         respond(res,202,{started:true,runId,jobId:trackedJobId});
         void (async()=>{
           let journal=Promise.resolve(),journalError=null;
+          let assetSearchSummary=null;
           try{
             await mkdir(out,{recursive:true,mode:0o700});
             await writeFile(join(out,"render-job.json"),JSON.stringify(job,null,2)+"\n",{flag:"wx",mode:0o600});
@@ -429,9 +475,41 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
+              ...(searchFreeMedia?{prepareAssetSuggestions:async({signal})=>{
+                try{
+                  // The search is optional. A slow provider must not delay
+                  // voice and Kumiki rendering indefinitely, regardless of
+                  // how many distinct scene queries the plan contains.
+                  const deadline=AbortSignal.timeout(35000);
+                  const searchSignal=signal?AbortSignal.any([signal,deadline]):deadline;
+                  const suggestions=await searchAssets({bundle:input.bundle,destination:"landscape",
+                    providers:["polyhaven","pexels"],allowExternalSearch:true},
+                  {pexelsKey:env.PEXELS_API_KEY,signal:searchSignal});
+                  if(signal?.aborted)throw Error("Media search cancelled.");
+                  if(deadline.aborted)throw Error("Media search timed out; use scene search to retry.");
+                  if(suggestions?.kind!=="contentgen-scene-asset-suggestions"||
+                    !Array.isArray(suggestions.scenes)||!Array.isArray(suggestions.warnings))
+                    throw Error("Media search returned an invalid scene catalog.");
+                  const saved={schemaVersion:1,productionId:input.productionId??null,
+                    sourceShots:input.bundle.plan.shots,sourceSound:input.bundle.plan.sound??[],suggestions};
+                  const bytes=JSON.stringify(saved);
+                  if(Buffer.byteLength(bytes)>MAX_SUGGESTIONS_BYTES)
+                    throw Error("Media suggestions exceeded the local catalog size limit.");
+                  await writeFile(join(out,"asset-suggestions.json"),bytes,{flag:"wx",mode:0o600});
+                  assetSearchSummary={status:suggestions.warnings.length?"partial":"completed",
+                    scenes:suggestions.scenes.length,candidates:suggestions.scenes.reduce((sum,scene)=>sum+(scene.candidates?.length??0),0),
+                    warnings:suggestions.warnings.slice(0,8).map(item=>String(item).slice(0,160))};
+                }catch(error){
+                  if(signal?.aborted)throw error;
+                  assetSearchSummary={status:"fallback",scenes:0,candidates:0,
+                    warnings:[String(error?.message??"Media search unavailable.").slice(0,160)]};
+                }
+                return assetSearchSummary;
+              }}:{}),
               ...(lastOutput?{reuseFrom:lastOutput}:{}),onProgress:event=>{
                 progress(event);
-                if(tracker)journal=journal.then(()=>tracker.advance(event.phase)).catch(error=>{
+                if(tracker)journal=journal.then(()=>tracker.advance(event.phase,
+                  event.phase==="narration"&&event.assetSearchSummary?{assetSearch:event.assetSearchSummary}:undefined)).catch(error=>{
                   journalError=error;
                   abort.abort(error);
                 });
@@ -449,7 +527,9 @@ export function createDirectorProduction(deps={}){
               String(error?.message??"Index error").slice(0,140);}
             lastOutput=out;
             status={...status,state:"done",phase:"review",
-              message:"Draft MP4 rendered. Watch/listen and review claims and rights."+mediaWarning,
+              message:"Draft MP4 rendered. Watch/listen and review claims and rights."+
+                (assetSearchSummary?.candidates?` ${assetSearchSummary.candidates} media suggestions saved for scene review.`:"")+
+                (assetSearchSummary?.status==="fallback"?" Optional media search unavailable; use scene search to retry.":"")+mediaWarning,
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
               regeneration:result.regeneration??null};
           }catch(error){
@@ -457,7 +537,11 @@ export function createDirectorProduction(deps={}){
             // Journal failures also abort the renderer, but they are not user
             // cancellations. Try to persist a terminal failure if Jobs came
             // back before returning control to the editor.
-            const cancelled=abort.signal.aborted&&!journalError;
+            // A deliberate cancellation can race a pending Jobs transition.
+            // The scheduler may then reject that transition because the job
+            // is already CANCELLED; that is not a new renderer failure.
+            const cancelled=abort.signal.aborted&&(!journalError||
+              abort.signal.reason?.message==="Cancelled by editor.");
             if(tracker&&!cancelled){
               try{await tracker.fail("render_failed","Draft rendering failed. Inspect the local renderer log, then retry.");}
               catch(journalFailure){status={...status,message:"Jobs failed to record the renderer error: "+String(journalFailure?.message??"unknown")};}

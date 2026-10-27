@@ -241,6 +241,112 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   assert.deepEqual(events.map(e=>e[0]),["start","advance","advance","complete"]);
 });
 
+test("an opted-in draft saves scene-specific free media suggestions with Jobs provenance across restart",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-auto-assets-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"c".repeat(24),events=[],searchCalls=[];
+  const suggestion={kind:"contentgen-scene-asset-suggestions",schemaVersion:1,
+    scenes:[{shotId:inputs().bundle.plan.shots[0].id,query:"house",strategy:"search",reason:"Physical subject",
+      candidates:[{provider:"pexels",assetId:"42",title:"A house exterior",previewUrl:"",sourceUrl:"https://www.pexels.com/photo/house-42",
+        license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",rightsStatus:"needs-human-review"}]}],
+    warnings:["A provider returned no other usable alternatives."]};
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async(input,options)=>{searchCalls.push({input,options});return suggestion;},
+    jobTracker:()=>({start:async()=>"job-media-1",advance:async(...args)=>events.push(args),
+      complete:async()=>events.push(["complete"]),fail:async()=>events.push(["fail"]),cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      options.onProgress({phase:"browser-preflight"});
+      options.onProgress({phase:"asset-search"});
+      const summary=await options.prepareAssetSuggestions({signal:options.signal});
+      options.onProgress({phase:"narration",assetSearchSummary:summary});
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock video");
+      return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId,sourceRevision:"revision-1",searchFreeMedia:true};
+  assert.equal((await invoke(server,"POST","/check",payload)).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<60&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(searchCalls.length,1);
+  assert.equal(searchCalls[0].input.allowExternalSearch,true);
+  assert.equal(searchCalls[0].options.pexelsKey,undefined);
+  assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","narration","complete"]);
+  assert.equal(events[2][1].assetSearch.status,"partial");
+  assert.equal(events[2][1].assetSearch.candidates,1);
+  const restarted=createDirectorProduction({outputRoot:dir});
+  const saved=await invoke(restarted,"GET","/suggestions/"+productionId);
+  assert.equal(saved.status,200);assert.equal(saved.data.found,true);
+  assert.deepEqual(saved.data.sourceShots,payload.bundle.plan.shots);
+  assert.deepEqual(saved.data.sourceSound,payload.bundle.plan.sound);
+  assert.deepEqual(saved.data.suggestions,suggestion);
+  assert.equal((await invoke(restarted,"GET","/suggestions/production-"+"d".repeat(24))).data.found,false);
+  assert.equal((await invoke(restarted,"GET","/suggestions/../secrets")).status,404);
+});
+
+test("unavailable optional scene providers never block video or silently create a media match",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-search-fallback-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let summary,searchCalls=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async()=>{searchCalls++;throw Error("Provider timed out");},
+    jobTracker:()=>({start:async()=>"job-media-2",advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      if(options.prepareAssetSuggestions)summary=await options.prepareAssetSuggestions({signal:options.signal});
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"rendered without unrelated stock");
+      return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"f".repeat(24),searchFreeMedia:true};
+  await invoke(server,"POST","/check",payload);
+  await invoke(server,"POST","/start",{...payload,confirmRender:true});
+  for(let i=0;i<60&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(searchCalls,1);
+  assert.deepEqual(summary,{status:"fallback",scenes:0,candidates:0,warnings:["Provider timed out"]});
+  assert.equal((await invoke(server,"GET","/suggestions/"+payload.productionId)).data.found,false);
+  assert.equal((await invoke(server,"POST","/check",{...payload,searchFreeMedia:false})).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...payload,searchFreeMedia:true,confirmRender:true})).status,409,
+    "media-search consent is part of the preflight fingerprint");
+  assert.equal((await invoke(server,"POST","/check",{...payload,searchFreeMedia:"yes"})).status,422);
+});
+
+test("cancel during online scene search remains cancelled even if a Jobs transition races it",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-search-cancel-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let notifyStarted=()=>{},cancelled=false,voiceCalls=0;
+  const searchStarted=new Promise(resolve=>{notifyStarted=resolve;});
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async(_input,{signal})=>{
+      notifyStarted();
+      return await new Promise((_resolve,reject)=>{
+        signal.addEventListener("abort",()=>reject(signal.reason),{once:true});
+      });
+    },
+    jobTracker:()=>({start:async()=>"job-cancel",advance:async()=>{
+      await new Promise(resolve=>setTimeout(resolve,12));
+      if(cancelled)throw Error("Scheduler already cancelled this attempt.");
+    },complete:async()=>{},fail:async()=>{},cancel:async()=>{cancelled=true;}}),
+    produce:async(_job,options)=>{
+      options.onProgress({phase:"browser-preflight"});
+      options.onProgress({phase:"asset-search"});
+      await options.prepareAssetSuggestions({signal:options.signal});
+      voiceCalls++;
+      throw Error("Voice generation should never run after cancellation.");
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"d".repeat(24),searchFreeMedia:true};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  await searchStarted;
+  assert.equal((await invoke(server,"POST","/cancel",{confirmed:true})).status,202);
+  for(let i=0;i<60&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"cancelled");
+  assert.equal(voiceCalls,0);
+});
+
 test("production renderer refuses to run if the durable Jobs service is unavailable",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-no-jobs-test-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));

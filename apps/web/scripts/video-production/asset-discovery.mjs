@@ -62,7 +62,12 @@ async function readLimited(response,max){
   return Buffer.concat(pieces,size);
 }
 async function getJson(url,{fetchImpl=fetch,headers={},signal}={}){
-  const r=await fetchImpl(url,{headers,redirect:"error",signal:signal??AbortSignal.timeout(15000)});
+  // A caller's cancellation signal must not remove the provider timeout.
+  // Automatic production supplies a long-lived job signal; each individual
+  // provider request is still limited to 15 seconds.
+  const deadline=AbortSignal.timeout(15000);
+  const r=await fetchImpl(url,{headers,redirect:"error",signal:signal?
+    AbortSignal.any([signal,deadline]):deadline});
   try{return JSON.parse((await readLimited(r,MAX_JSON)).toString("utf8"));}
   catch(e){if(e instanceof SyntaxError)throw Error("Asset provider returned invalid JSON.");throw e;}
 }

@@ -553,7 +553,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
               </select>
             </label>
           </div>
-          <AssetDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}/>
+          <AssetDiscoveryPanel bundle={bundle} projectId={dossier.id} selectedShotId={shotId}
+            productionId={projectId?.startsWith("production-")?projectId:undefined}/>
         </section>}
         {stage==="sound"&&<section aria-label="Sound design" className="space-y-4">
           <div><h2 className="text-lg font-semibold">Make it sound intentional</h2>

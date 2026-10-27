@@ -159,9 +159,30 @@ test("production emits real stage transitions and forwards verified capture fram
   };
   await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
   const phases = events.map((event) => event.phase);
-  assert.deepEqual(phases, ["browser-preflight", "narration", "timeline", "audio", "rendering", "rendering", "mux", "qa", "review"]);
+  assert.deepEqual(phases, ["browser-preflight", "asset-search", "narration", "timeline", "audio", "rendering", "rendering", "mux", "qa", "review"]);
   assert.deepEqual(events.find((event) => event.completedFrames === 90),
     { phase: "rendering", completedFrames: 90, totalFrames: 90 });
+});
+
+test("media suggestions are prepared before narration and expose a bounded Jobs summary",async t=>{
+  const ctx=await context(t),events=[];
+  const originalNarration=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{events.push("voice");return originalNarration(...args);};
+  await produceVideo(ctx.job,{...ctx.opts,
+    prepareAssetSuggestions:async()=>{events.push("search");return{status:"partial",candidates:3,warnings:["Pexels unavailable"]};},
+    onProgress:event=>{if(event.phase==="narration")events.push(event.assetSearchSummary);}},ctx.injected);
+  assert.equal(events[0],"search");
+  assert.deepEqual(events[1],{status:"partial",candidates:3,warnings:["Pexels unavailable"]});
+  assert.equal(events[2],"voice");
+});
+
+test("cancelling media search prevents voice calls and leaves no completed release",async t=>{
+  const ctx=await context(t),abort=new AbortController();
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,signal:abort.signal,
+    prepareAssetSuggestions:async()=>{abort.abort(Error("Stopped by editor"));return{status:"cancelled"};}},ctx.injected),
+    /cancelled during scene media discovery/i);
+  assert.equal(ctx.status().providerCalls,0);
+  assert.equal((await readdir(ctx.opts.out)).includes("release"),false);
 });
 
 test("stage/render failure closes the local server and never publishes an incomplete release", async (t) => {

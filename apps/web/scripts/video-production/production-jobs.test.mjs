@@ -36,10 +36,13 @@ test("video production submits a real dependent DAG and advances stages in order
   assert.deepEqual(submission.nodes.map(x=>x.nodeKey),PRODUCTION_NODES);
   assert.ok(submission.nodes.every(node=>node.maxAttempts===1),"a failed monolithic render must not leave an unclaimed automatic retry");
   assert.deepEqual(submission.nodes[2].dependsOn,[PRODUCTION_NODES[1]]);
-  await tracker.advance("narration");
+  await tracker.advance("asset-search");
   assert.deepEqual(scheduler.nodes.slice(0,2).map(x=>x.state),["SUCCEEDED","SUCCEEDED"]);
+  await tracker.advance("narration",{assetSearch:{status:"partial",candidates:2,warnings:["provider unavailable"]}});
+  assert.equal(scheduler.nodes[2].state,"SUCCEEDED");
+  assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-2/succeed"))?.body.output.assetSearch.status,"partial");
   await tracker.advance("rendering");
-  assert.deepEqual(scheduler.nodes.slice(0,5).map(x=>x.state),Array(5).fill("SUCCEEDED"));
+  assert.deepEqual(scheduler.nodes.slice(0,6).map(x=>x.state),Array(6).fill("SUCCEEDED"));
   await tracker.complete();
   assert.ok(scheduler.nodes.every(x=>x.state==="SUCCEEDED"));
 });

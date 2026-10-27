@@ -156,6 +156,29 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
   expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
 });
 
+it("passes the optional online media-search choice to both readiness and render without a second action",async()=>{
+  const requests:Array<{path:string;body:Record<string,unknown>}>=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const path=String(input),body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
+    requests.push({path,body});
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true});
+    if(path.endsWith("/status"))return reply({state:"rendering",phase:"asset-search",message:"Finding scene media"});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration" productionId={"production-"+"a".repeat(24)}/>);
+  const consent=await screen.findByRole("checkbox",{name:"Search free scene media during rendering"});
+  expect(consent).not.toBeChecked();
+  await user.click(consent);
+  expect(localStorage.getItem("contentgen:production-free-media:v1")).toBe("enabled");
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  await waitFor(()=>expect(requests.some(x=>x.path.endsWith("/start"))).toBe(true));
+  expect(requests.filter(x=>x.path.endsWith("/check")||x.path.endsWith("/start"))
+    .every(x=>x.body.searchFreeMedia===true)).toBe(true);
+});
+
 it("automatically begins the saved production when invoked from Generate draft video",async()=>{
   const paths:string[]=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{

@@ -2,9 +2,9 @@
  * scheduler, queue, or database: SQLite remains the source of truth. */
 import {createHash} from "node:crypto";
 
-export const PRODUCTION_NODES=["scene-plan","visual-planning","narration","timeline",
+export const PRODUCTION_NODES=["scene-plan","visual-planning","asset-search","narration","timeline",
   "sound-mix","scene-render","final-mux","technical-qa","export-package"];
-const phases={"browser-preflight":"visual-planning",narration:"narration",timeline:"timeline",
+const phases={"browser-preflight":"visual-planning","asset-search":"asset-search",narration:"narration",timeline:"timeline",
   audio:"sound-mix",rendering:"scene-render",mux:"final-mux",qa:"technical-qa",review:"export-package"};
 
 export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787",
@@ -35,10 +35,10 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
     if(typeof data.attempt?.id!=="string")throw Error("Jobs service did not reserve a step attempt.");
     active=index;attemptId=data.attempt.id;
   }
-  async function succeed(){
+  async function succeed(output={completed:true}){
     const node=nodes[active];
     if(!node||!attemptId)throw Error("No production step is reserved.");
-    await request(`/api/jobs/${jobId}/nodes/${node.id}/succeed`,{attemptId,output:{completed:true}});
+    await request(`/api/jobs/${jobId}/nodes/${node.id}/succeed`,{attemptId,output});
     attemptId=null;
   }
   return {
@@ -76,12 +76,13 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       await begin(firstReady);
       return jobId;
     },
-    async advance(phase){
+    async advance(phase,completedStepOutput){
       if(terminal)throw Error(`Production job has ${terminal}.`);
       const target=PRODUCTION_NODES.indexOf(phases[phase]);
       if(target<0||target<=active)return;
       if(active<0)throw Error("Production job was not started.");
-      while(active<target){await succeed();await begin(active+1);}
+      while(active<target){await succeed(active===target-1&&completedStepOutput?
+        {completed:true,...completedStepOutput}:{completed:true});await begin(active+1);}
     },
     async complete(){
       if(terminal)throw Error(`Production job has ${terminal}.`);

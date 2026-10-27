@@ -31,6 +31,12 @@ const inputLabel="flex flex-col text-xs font-semibold text-muted-foreground";
 const defaults:Settings={provider:"local",voiceId:"",providerRevision:"",modelId:"",
   endpoint:"http://127.0.0.1:8765",apiKey:"",localVoiceAuthorized:false,voiceConsent:false,transmitText:false};
 const voiceProfileKey="contentgen:production-voice-profile:v1";
+const freeMediaKey="contentgen:production-free-media:v1";
+function savedFreeMediaPreference():boolean{
+  // Scene descriptions can reveal private research. Never contact public
+  // stock-media providers until the user explicitly enables the search.
+  try{return localStorage.getItem(freeMediaKey)==="enabled";}catch{return false;}
+}
 function savedVoiceSettings():Settings{
   try{
     const saved=JSON.parse(localStorage.getItem(voiceProfileKey)??"null") as Partial<Settings>|null;
@@ -60,6 +66,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void}){
   const [stage,setStage]=useState<Stage>(initialStage);
   const [settings,setSettings]=useState<Settings>(savedVoiceSettings);
+  const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
   useEffect(()=>{
     try{localStorage.setItem(voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
       providerRevision:settings.providerRevision,modelId:settings.modelId,endpoint:settings.endpoint}));}
@@ -113,6 +120,14 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     setSfxSummary(null);
     setState(current=>["rendering","done"].includes(current.state)?current:
       {state:"idle",phase:"idle",message:"",report:null});
+  };
+  const changeMediaSearch=(enabled:boolean)=>{
+    inputRevision.current++;
+    setSearchFreeMedia(enabled);setReady(false);
+    try{localStorage.setItem(freeMediaKey,enabled?"enabled":"disabled");}
+    catch{/* The choice still applies to this render when storage is unavailable. */}
+    setState(current=>["rendering","done"].includes(current.state)?current:
+      {state:"idle",phase:"idle",message:"Media search preference changed; check again before rendering."});
   };
   const payload={dossier,bundle};
   useEffect(()=>{
@@ -247,7 +262,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   async function check(){
     setWorking("check");setNotice("");setReady(false);
     try{
-      const response=await request("check",{...payload,settings,...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
@@ -270,7 +285,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         if(revision!==inputRevision.current)return;
         setPreview(result);
       }
-      const requestInput={...payload,settings,...(productionId?{productionId,sourceRevision}:{})};
+      const requestInput={...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
@@ -304,7 +319,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     if(!ready)return;
     setWorking("start");setNotice("");
     try{
-      const r=await request("start",{...payload,settings,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
+      const r=await request("start",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
       if(!r.started)throw Error("Studio did not confirm render startup.");
       setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
       setReady(false);
@@ -446,7 +461,13 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         </div>
         <div className="rounded-control border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div><h4 className="font-semibold">Generate your complete draft</h4>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">After voice setup, ContentGen checks the local tools and automatically renders the scenes, narration, sound and MP4. Nothing is uploaded.</p></div>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">After voice setup, ContentGen checks local tools and renders the scenes, narration, sound and MP4. Only authorized voice requests and optional media searches contact outside services.</p></div>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
+              checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
+              onChange={event=>changeMediaSearch(event.target.checked)}/>
+            Search free scene media while rendering (optional). Enabling this sends scene subjects to public Poly Haven and optional Pexels services; suggestions are saved locally, never downloaded or used without review.
+          </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}
           </Button>

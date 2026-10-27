@@ -5,7 +5,7 @@ import {Surface} from "@/components/ui/surface-card";
 
 type Shot={id:string;purpose?:string;visualChange?:string;onScreenText?:string;
   visualElements?:Array<{label:string;detail:string}>};
-type Bundle={plan:{shots:Shot[]}};
+type Bundle={plan:{shots:Shot[];sound?:Array<{shotId:string;narration?:string;sfxIntent?:string|null}>}};
 type Candidate={provider:"polyhaven"|"pexels";assetId:string;assetType:"model"|"texture"|"hdri"|"photo"|"video";
   title:string;sourceUrl:string;previewUrl:string;license:string;licenseUrl:string;creator:string;durationSeconds?:number;
   width?:number;height?:number;match?:{grade:"strong"|"review"|"weak";reasons:string[];score:number}};
@@ -29,7 +29,7 @@ const fmt=(bytes:number)=>bytes<1024*1024?`${Math.round(bytes/1024)} KB`:`${(byt
 const key=(asset:Candidate)=>`${asset.provider}:${asset.assetType}:${asset.assetId}`;
 
 /** Optional per-scene visual ingredients; does not alter the approved storyboard or renderer. */
-export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bundle;projectId:string;selectedShotId:string}){
+export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionId}:{bundle:Bundle;projectId:string;selectedShotId:string;productionId?:string}){
   const [destination,setDestination]=useState<"landscape"|"portrait">("landscape");
   const [search,setSearch]=useState<{bundle:Bundle;destination:"landscape"|"portrait";data:Results}|null>(null);
   const [approved,setApproved]=useState<Approved[]>([]);
@@ -38,6 +38,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const [savedSearchRefresh,setSavedSearchRefresh]=useState(0);
   const results=search?.bundle===bundle&&search.destination===destination?search.data:null;
   const review=pending?.bundle===bundle&&pending.shotId===selectedShotId?pending.asset:null;
   const scene=results?.scenes.find(x=>x.shotId===selectedShotId);
@@ -53,6 +54,31 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
     }).catch(error=>{if(active)setNotice(error instanceof Error?error.message:"Could not load scene assets.");});
     return()=>{active=false;};
   },[projectId]);
+  useEffect(()=>{
+    if(!productionId||!/^production-[a-f0-9]{24}$/u.test(productionId))return;
+    const controller=new AbortController();
+    void fetch("/api/contentgen-video/suggestions/"+encodeURIComponent(productionId),
+      {cache:"no-store",signal:controller.signal}).then(async response=>{
+      if(!response.ok)throw Error(`Saved media suggestions unavailable (HTTP ${response.status}).`);
+      return await response.json() as {found?:boolean;sourceShots?:unknown;sourceSound?:unknown;suggestions?:Results};
+    }).then(data=>{
+      if(controller.signal.aborted)return;
+      if(!data.found){
+        if(savedSearchRefresh>0)setNotice("No saved media suggestions yet. Generate a draft or search for this scene now.");
+        return;
+      }
+      if(!Array.isArray(data.sourceShots)||JSON.stringify(data.sourceShots)!==JSON.stringify(bundle.plan.shots)||
+        !Array.isArray(data.sourceSound)||JSON.stringify(data.sourceSound)!==JSON.stringify(bundle.plan.sound??[])){
+        setNotice("Saved media suggestions belong to an older scene plan. Search again for the updated scenes.");return;
+      }
+      if(!Array.isArray(data.suggestions?.scenes)||!Array.isArray(data.suggestions.warnings))
+        throw Error("Saved scene suggestions have an invalid format.");
+      setSearch(previous=>savedSearchRefresh===0&&previous?.bundle===bundle?previous:
+        {bundle,destination:"landscape",data:data.suggestions!});
+      setNotice("Draft media suggestions loaded. Compare the original sources and licenses before downloading anything.");
+    }).catch(error=>{if(!controller.signal.aborted)setNotice(error instanceof Error?error.message:"Could not read saved media suggestions.");});
+    return()=>controller.abort();
+  },[productionId,bundle,savedSearchRefresh]);
   async function discover(){
     setBusy("search");setNotice("");setPending(null);
     try{
@@ -99,7 +125,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
     <Search className="size-4"/>Scene asset discovery</h2>}>
     <div className="space-y-4 text-sm">
       <p className="text-muted-foreground">Find relevant video footage, photos, 3D models and materials for each storyboard scene.
-        Search uses public Poly Haven and optional <a href="https://www.pexels.com/" className="underline" target="_blank" rel="noopener noreferrer">Pexels</a> metadata; nothing is imported without your approval.</p>
+        Search powered by <a href="https://polyhaven.com/" className="underline" target="_blank" rel="noopener noreferrer">Poly Haven</a> and optional <a href="https://www.pexels.com/" className="underline" target="_blank" rel="noopener noreferrer">Pexels</a> metadata; nothing is imported without your approval.</p>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1" role="group" aria-label="Target video orientation">
           <Button variant={destination==="landscape"?"primary":"outline"} size="sm" disabled={!!busy}
@@ -110,6 +136,8 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId}:{bundle:Bu
         <Button variant="outline" disabled={!!busy} onClick={()=>void discover()}>
           <Search className="mr-2 size-4"/>{busy==="search"?"Searching public asset sites…":"Find assets for all scenes"}
         </Button>
+        {productionId&&<Button size="sm" variant="outline" disabled={!!busy}
+          onClick={()=>setSavedSearchRefresh(value=>value+1)}>Load draft suggestions</Button>}
         <p className="text-xs text-muted-foreground">Uses network on click · no local AI workload · Pexels needs PEXELS_API_KEY</p>
       </div>
       <div className="rounded-control border border-border bg-surface-subtle p-3">

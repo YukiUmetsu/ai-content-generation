@@ -45,6 +45,19 @@ test("discovery is opt-in, metadata-only, and does not download any assets", asy
   assert.equal(result.scenes[1].strategy, "kumiki");
 });
 
+test("job cancellation propagates into provider requests without removing per-request deadlines",async()=>{
+  const cancel=new AbortController();let requestSignal;
+  await discoverShotAssets({bundle,providers:["polyhaven"],allowExternalSearch:true},
+    {signal:cancel.signal,fetchImpl:async(_url,options)=>{
+      requestSignal=options.signal;return response(polyCatalog);
+    }});
+  assert.ok(requestSignal instanceof AbortSignal);
+  assert.notEqual(requestSignal,cancel.signal,"provider request includes its own timeout as well as job cancellation");
+  assert.equal(requestSignal.aborted,false);
+  cancel.abort(Error("The editor cancelled the render"));
+  assert.equal(requestSignal.aborted,true);
+});
+
 test("approved download re-resolves provider IDs, hashes bytes and writes private per-scene provenance", async t => {
   const root = await mkdtemp(join(tmpdir(), "contentgen-assets-test-"));
   t.after(() => rm(root, {recursive:true,force:true}));
