@@ -198,7 +198,7 @@ async function send(path: string, method = "GET", payload?: unknown, options?: {
 /** One explicit YouTube search; no saved watchlist or local AI request. */
 export async function searchMarketVideos(query: string, options?: {signal?: AbortSignal}): Promise<MarketVideo[]> {
   const value = query.trim();
-  if ([...value].length < 3 || [...value].length > 160 || /[\x00-\x1F\x7F]/.test(value)) {
+  if ([...value].length < 3 || [...value].length > 160 || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) {
     throw Error("YouTube search must be 3–160 safe characters.");
   }
   return parseVideos(await send("/explore", "POST", {query:value}, {signal:options?.signal, timeoutMs:50_000}));
