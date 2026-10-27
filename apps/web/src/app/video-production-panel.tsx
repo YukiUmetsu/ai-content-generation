@@ -363,6 +363,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         if(mounted)setState(next);
       }catch(error){if(mounted)setNotice(error instanceof Error?error.message:"Progress connection interrupted.");}
     };
+    void poll();
     const timer=window.setInterval(()=>void poll(),1800);
     return ()=>{mounted=false;window.clearInterval(timer);};
   },[state.state]);
@@ -542,7 +543,13 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         {state.state==="done"&&state.mediaUrl&&<div className="space-y-3 rounded-control border border-border p-3">
           <p className="font-semibold">Your test video is ready — watch it before publishing</p>
           <video key={state.mediaUrl} src={state.mediaUrl} controls playsInline className="aspect-video w-full rounded-control bg-black" aria-label="Rendered ContentGen draft video"/>
-          <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline" href={state.mediaUrl} download="contentgen-draft.mp4">Download MP4</a>
+          <div className="flex flex-wrap gap-2">
+            <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline" href={state.mediaUrl} download="contentgen-draft.mp4">Download MP4</a>
+            {/^\/api\/contentgen-video\/media\/[a-f0-9-]+\/video\.mp4$/u.test(state.mediaUrl)&&
+              <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline"
+                href={state.mediaUrl.replace(/\/video\.mp4$/u,"/captions.srt")}
+                download="contentgen-captions.srt">Download captions (SRT)</a>}
+          </div>
           {state.regeneration&&<p className="text-xs text-muted-foreground">Reused {state.regeneration.reusedSpeechBeatIds?.length??0} prior speech beats and {state.regeneration.reusedVideoSegments??0} verified video segments.</p>}
         </div>}
         <p className="text-xs text-muted-foreground">Rendering never publishes a video or automatically certifies facts, licensing or voice rights. The exported draft may use general diagrams where custom animations aren't yet supported.</p>

@@ -8,7 +8,7 @@ The **Generate draft video** action in a saved YouTube production now:
 4. Opens the actual production controls with an automatic-start intent. Preflight starts immediately. If a voice, consent, FFmpeg or Chromium requirement is missing, the corresponding setup stays visible with a retry action.
 5. Submits the real render's dependent stages to the Rust Jobs scheduler before starting TTS or media work. The renderer records state transitions through the local worker endpoints and can be cancelled. The same jobs appear in Jobs and their IDs are linked from Director.
 6. If **Search free scene media** is enabled, records an `asset-search` Jobs node after browser preflight. It sends bounded scene-subject searches to Poly Haven and configured Pexels, stores metadata-only ranked suggestions in the job-owned output folder, and shows them again in Director → Find the right visuals. Search errors fall back to Kumiki visuals without holding narration hostage. Downloads and stock placement still require separate review.
-7. Shows rendered-frame progress and, on success, the playable MP4. It never publishes automatically.
+7. Shows rendered-frame progress and, on success, the playable MP4 with direct MP4 and SRT caption downloads. It never publishes automatically.
 
 ## Runtime dependencies
 

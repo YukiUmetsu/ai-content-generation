@@ -104,7 +104,7 @@ it("keeps render progress when switching production steps",async()=>{
   await waitFor(()=>expect(screen.getByRole("button",{name:/Continue to export/i})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:/Continue to export/i}));
   await user.click(screen.getByRole("button",{name:/Render test MP4/i}));
-  expect(await screen.findByText(/Producing a real draft MP4/)).toBeInTheDocument();
+  expect(await screen.findByText(/Encoding scenes|Producing a real draft MP4/)).toBeInTheDocument();
   await user.click(screen.getByRole("tab",{name:/Narration/}));
   await user.click(screen.getByRole("tab",{name:/Export/}));
   expect(screen.getByRole("button",{name:/Cancel render/i})).toBeInTheDocument();
@@ -150,10 +150,28 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
   const user=userEvent.setup();render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
   await screen.findByRole("textbox",{name:"Production voice ID"});
   await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
-  expect(await screen.findByText(/Producing a real draft MP4/)).toBeInTheDocument();
+  expect(await screen.findByText(/Encoding|Producing a real draft MP4/)).toBeInTheDocument();
   expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
   expect(calls.filter(path=>path.endsWith("/check"))).toHaveLength(1);
   expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
+});
+
+it("offers captions alongside the playable MP4 after a successful render",async()=>{
+  const url="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4";
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true});
+    if(path.endsWith("/status"))return reply({state:"done",phase:"review",message:"Draft rendered",mediaUrl:url});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  expect(await screen.findByRole("link",{name:"Download MP4"})).toHaveAttribute("href",url);
+  expect(screen.getByRole("link",{name:"Download captions (SRT)"})).toHaveAttribute("href",
+    url.replace("/video.mp4","/captions.srt"));
 });
 
 it("passes the optional online media-search choice to both readiness and render without a second action",async()=>{
