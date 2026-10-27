@@ -1,4 +1,4 @@
-/** Converts an approved, source-linked script to an editable semantic storyboard outline.
+/** Converts completed script narration to an editable semantic storyboard outline.
  * This is a ContentGen authoring adapter, not a replacement for Kumiki's scene,
  * motion, camera, storyboard or export engines. Visual directions require review.
  */
@@ -17,8 +17,8 @@ const INTENTS:Record<ScriptRole,VisualIntent>={
 };
 
 export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEvidence[]):SemanticStoryboard {
-  if(script.status!=="approved"||!script.approvedAt||script.sections.some(section=>!section.text.trim())){
-    throw Error("Approve a complete script before creating its storyboard outline.");
+  if(script.input.platform!=="youtube"||!script.sections.length||script.sections.some(section=>!section.text.trim())){
+    throw Error("Finish the complete YouTube script before creating its storyboard outline.");
   }
   const evidenceByClaim=new Map(evidence.map(item=>[item.claimId,item]));
   const refsForSection=(section:ScriptDraft["sections"][number])=>scriptStoryboardClaimRefs(section,evidence);
@@ -62,7 +62,7 @@ export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEv
       {id:"script-answer-reveals",label:"Reveal the final answer",objectId:`script-concept-${script.sections[answerIndex].id}`},
     ],
     assumptions:[
-      `Approved script revision: ${script.updatedAt}.`,
+      `Script revision: ${script.updatedAt}.`,
       "This is an editable storyboard outline, not a generated or validated visual plan. Review and direct each scene in Kumiki.",
       "Captured source passages are not independent fact verification. Review each assertion before release.",
       ...evidence.map(item=>`Captured source ${item.sourceId}: ${item.sourceUrl}`),
@@ -71,4 +71,25 @@ export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEv
   const errors=validateStoryboard(board).filter(issue=>issue.severity==="error");
   if(errors.length)throw Error(`Generated storyboard outline is structurally invalid: ${errors.map(issue=>issue.code).join(", ")}`);
   return board;
+}
+
+/** Rebase a saved scene outline without losing unrelated visual edits. A scene
+ * whose narration changed is replanned; unchanged scenes keep their direction.
+ * Callers must back up the original before persisting the returned document. */
+export function syncScriptStoryboard(script:ScriptDraft,evidence:readonly ScriptEvidence[],
+  previous:SemanticStoryboard|null):SemanticStoryboard {
+  const fresh=scriptToStoryboard(script,evidence);
+  if(!previous||previous.id!==fresh.id)return fresh;
+  const prior=new Map(previous.beats.map(beat=>[beat.id,beat]));
+  const beats=fresh.beats.map(beat=>{
+    const saved=prior.get(beat.id);
+    if(!saved||saved.narration!==beat.narration)return beat;
+    return {...beat,onScreenText:saved.onScreenText,visualObjective:saved.visualObjective,
+      visualIntent:saved.visualIntent,staticFallback:saved.staticFallback,
+      durationFrames:saved.durationFrames};
+  });
+  const updated={...fresh,beats};
+  const errors=validateStoryboard(updated).filter(issue=>issue.severity==="error");
+  if(errors.length)throw Error(`Updated scene plan cannot be saved: ${errors.map(issue=>issue.code).join(", ")}`);
+  return updated;
 }

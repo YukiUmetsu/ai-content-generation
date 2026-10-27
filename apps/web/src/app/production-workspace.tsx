@@ -26,7 +26,7 @@ import { PlatformOptimization, type PlatformOptimizationInput } from "@/features
 import { loadPlatformOptimization } from "@/features/platform-optimization/storage";
 import { sourceSignature, type PlatformAsset } from "@/features/platform-optimization/model";
 import { resolveProjectAppearance, snapshotProjectAppearance } from "./project-brand-appearance";
-import { scriptToStoryboard } from "./script-storyboard-handoff";
+import { scriptToStoryboard, syncScriptStoryboard } from "./script-storyboard-handoff";
 
 import { scriptClaimSnapshot } from "./script-claim-evidence";
 import type { ClaimEvidenceSnapshot } from "./claim-evidence";
@@ -282,8 +282,8 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const videoScript=production&&platforms.includes("youtube")?
     loadScriptDraft(production.id,"youtube").draft:null;
   const boardScriptStale=Boolean(production&&board&&(
-    primaryScript?.status!=="approved"||
-    !board.assumptions.includes(`Approved script revision: ${primaryScript.updatedAt}.`)));
+    !primaryScript||![`Script revision: ${primaryScript.updatedAt}.`,
+      `Approved script revision: ${primaryScript.updatedAt}.`].some(note=>board.assumptions.includes(note))));
   const currentMediaPrefix=board&&videoScript?productionMediaSource(videoScript.updatedAt,board):null;
   const currentRenderAssets=currentMediaPrefix?renderAssets.filter(asset=>asset.sourceRevision?.startsWith(currentMediaPrefix)):[];
   const hasCurrentVideo=currentRenderAssets.some(asset=>asset.kind==="video");
@@ -445,8 +445,8 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     storyboardEditorialWarnings:repeatedScenes.length,optimizationReady,
     scriptActivity:step==="script"?scriptActivity:"idle",
     visualReady:hasCurrentVideo,audioReady:hasCurrentVideo,exportReady:hasCurrentVideo});
-  const canOpenDirector=Boolean(matchingDraft?.artifactId||
-    production&&videoScript?.status==="approved"&&scriptApproved&&board&&!boardScriptStale);
+  const canOpenDirector=Boolean(matchingDraft?.artifactId||production&&videoScript&&
+    videoScript.sections.length>0&&videoScript.sections.every(section=>section.text.trim()));
   const current=stages.find(item=>item.id===step)!;
   const stepperStates:StepperStates={
     "not-started":{label:statusLabel("not_started",ja)},
@@ -466,31 +466,45 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   }
   async function openDirector(stage:"visuals"|"audio"|"export"){
     if(openingDirector)return;
-    if(matchingDraft?.artifactId){
+    if(!production&&matchingDraft?.artifactId){
       (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(matchingDraft.artifactId,productionKey);
       return;
     }
-    if(!production||!videoScript||videoScript.status!=="approved"||!scriptApproved||!board||boardScriptStale){
-      setError("Approve the current YouTube script and update its storyboard before opening Director. Other formats cannot yet render in this local video exporter.");
+    if(!production||!videoScript||!videoScript.sections.length||videoScript.sections.some(section=>!section.text.trim())){
+      setError("Finish the YouTube script first. Other platform scripts can remain unfinished.");
       return;
     }
     setOpeningDirector(true);setError("");
     try{
+      const saved=loadProjectStoryboard(production.id);
+      if(saved.warning)throw Error(saved.warning);
+      const refreshed=syncScriptStoryboard(videoScript,currentIdea?.evidence??[],saved.board);
+      const changed=JSON.stringify(saved.board)!==JSON.stringify(refreshed);
+      if(changed){
+        // Back up before overwriting; a storage failure must not discard edits.
+        if(saved.board){
+          localStorage.setItem(storyboardBackupKey(production.id),JSON.stringify(saved.board));
+          setHasStoryboardBackup(true);
+        }
+        saveProjectStoryboard(production.id,refreshed);
+        setBoard(refreshed);
+        setConfirmStoryboardRefresh(false);
+      }
       const response=await fetch("/api/contentgen-director/compile-approved-script",{
         method:"POST",headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
         body:JSON.stringify({productionId:production.id,script:videoScript,
-          evidence:currentIdea?.evidence??[],sources:currentIdea?.sources??[],storyboard:board}),
+          evidence:currentIdea?.evidence??[],sources:currentIdea?.sources??[],storyboard:refreshed}),
         signal:AbortSignal.timeout(20000),
       });
       const result=await response.json() as Record<string,unknown>;
-      if(!response.ok)throw Error(String(result.error??"Cannot compile the approved script into a Director draft."));
+      if(!response.ok)throw Error(String(result.error??"Cannot create the draft scene plan."));
       if((result.dossier as {kind?:string}|undefined)?.kind!=="research-dossier"||
         (result.bundle as {kind?:string}|undefined)?.kind!=="preproduction-bundle")
         throw Error("The local Director returned an invalid draft.");
       sessionStorage.setItem("contentgen:director-approved-script:v1:"+production.id,JSON.stringify({
-        productionId:production.id,scriptRevision:videoScript.updatedAt,sourcePrefix:productionMediaSource(videoScript.updatedAt,board),...result}));
+        productionId:production.id,scriptRevision:videoScript.updatedAt,sourcePrefix:productionMediaSource(videoScript.updatedAt,refreshed),...result}));
       (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(undefined,production.id);
-    }catch(reason){setError(reason instanceof Error?reason.message:"Could not open approved script in Director.");}
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not open video production. Check local server and retry.");}
     finally{setOpeningDirector(false);}
   }
   function editScene(beatId:string){
@@ -547,7 +561,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     }catch(reason){setError(reason instanceof Error?reason.message:"Storyboard repair could not be saved.");}
   }
   function createStoryboardOutline(script:ScriptDraft){
-    if(board){setError("An editable storyboard already exists. Review it before importing a different script revision.");return;}
+    if(board){setError("A scene plan already exists. Use Update scenes to refresh it while keeping your edits.");return;}
     try{
       const next=scriptToStoryboard(script,currentIdea?.evidence??[]);
       saveProjectStoryboard(productionKey,next);
@@ -556,9 +570,9 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     }catch(reason){setError(reason instanceof Error?reason.message:"The script could not be mapped to a storyboard outline.");}
   }
   function refreshStoryboardOutline(){
-    if(!board||!primaryScript||primaryScript.status!=="approved"||!scriptApproved)return;
+    if(!board||!primaryScript)return;
     try{
-      const next=scriptToStoryboard(primaryScript,currentIdea?.evidence??[]);
+      const next=syncScriptStoryboard(primaryScript,currentIdea?.evidence??[],board);
       // Existing hand-edited scenes are recoverable; refuse to overwrite if
       // the backup cannot be persisted.
       localStorage.setItem(storyboardBackupKey(productionKey),JSON.stringify(board));
@@ -707,10 +721,11 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 selectStep("storyboard");
               }
             }}/>}
-            {!scriptApproved&&platforms.length>1&&<p className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm text-muted-foreground" role="status">
-              {tr("Approve each selected destination's script before moving to the storyboard. Completed destinations remain saved while you work on the others.",
-                "構成案へ進む前に、配信先ごとの台本を承認してください。承認済みの内容は保存されます。")}
-            </p>}
+            {platforms.includes("youtube")&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-primary/25 bg-primary/5 p-4">
+              <p className="text-sm text-muted-foreground">Your YouTube draft can be made independently of other scripts.</p>
+              <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector}
+                onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4"/></button>
+            </div>}
           </div>:<div className={contentCard}>
             <p className="text-sm text-muted-foreground">{tr("Choose a discovery idea to let AI draft the script.","アイデアを選択するとAIが台本を作成します。")}</p>
             <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select an idea","テーマを選択")}</button>
@@ -718,10 +733,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
           {step==="storyboard"&&<>
             <div className="rounded-surface border border-primary/20 bg-primary/5 p-5">
               <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Next · {board?"Check the scene plan":"Create the scene plan"}</p>
-              <h3 className="mt-1 font-serif text-xl font-semibold">{board?"Make sure every scene teaches something new":"Turn your approved script into a visual outline"}</h3>
+              <h3 className="mt-1 font-serif text-xl font-semibold">{board?"Make sure every scene teaches something new":"Turn your script into a visual outline"}</h3>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{board?
                 "The cards below are scenes in viewing order. Review the headline and visual idea for each one. Click Edit only if something needs changing—your work is saved.":
-                "ContentGen will turn the approved script into scenes automatically. Then you can check the order before building the video. No drawing is required here."}</p>
+                "ContentGen creates scenes from your script automatically. Review or edit anything before rendering."}</p>
               {board&&!boardScriptStale&&<button type="button" className={primaryButton+" mt-4 inline-flex items-center gap-2"}
                 onClick={()=>selectStep("produce")}>Looks good · Create video <ArrowRight className="size-4" aria-hidden /></button>}
             </div>
@@ -742,16 +757,16 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 </div>
               </div>
               {boardScriptStale&&<div role="status" className="mt-4 rounded-control border border-amber-400/40 bg-amber-400/10 p-3 text-sm">
-                <p>The approved script changed after this storyboard was created. Old narration and visuals are preserved, but this outline needs an explicit update before production.</p>
-                {primaryScript?.status==="approved"&&scriptApproved&&
+                <p>Your script changed. Generate draft video will update the scene plan automatically and keep unaffected edits.</p>
+                {primaryScript&&
                   (confirmStoryboardRefresh?<div className="mt-3 space-y-2">
-                    <p>Replace the current scene outline with the approved script? Existing scene edits will be saved as a restorable backup.</p>
+                    <p>Update the outline now? Existing scene edits will be backed up and unchanged scenes preserved.</p>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" className={primaryButton} onClick={refreshStoryboardOutline}>Save backup and update</button>
                       <button type="button" className={secondaryButton} onClick={()=>setConfirmStoryboardRefresh(false)}>Keep existing scenes</button>
                     </div>
                   </div>:<button type="button" className={secondaryButton+" mt-3"}
-                    onClick={()=>setConfirmStoryboardRefresh(true)}>Update from approved script</button>)}
+                    onClick={()=>setConfirmStoryboardRefresh(true)}>Update scenes now</button>)}
               </div>}
               {hasStoryboardBackup&&<button type="button" className={secondaryButton+" mt-3"}
                 onClick={restorePreviousStoryboard}>Restore previous storyboard outline</button>}
@@ -783,10 +798,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
               </ol>
             </div>:<div className={contentCard}>
               <h3 className="font-serif text-xl font-semibold">{tr("Create your storyboard","構成案を作成")}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{tr("Start with your approved script. Use the existing storyboard planner to arrange the scenes.","承認した台本からシーンを構成します。")}</p>
-              {production&&primaryScript?.status==="approved"&&<button type="button" className={primaryButton+" mt-4"}
-                onClick={()=>createStoryboardOutline(primaryScript)}>{tr("Create editable outline from approved script","承認済み台本から構成案を生成")}</button>}
-              {(!production||primaryScript?.status!=="approved")&&<button type="button" className={primaryButton+" mt-4"}
+              <p className="mt-2 text-sm text-muted-foreground">Your completed script is enough to plan scenes.</p>
+              {production&&primaryScript?.sections.every(section=>section.text.trim())&&<button type="button" className={primaryButton+" mt-4"}
+                onClick={()=>createStoryboardOutline(primaryScript)}>Create scene outline</button>}
+              {(!production||!primaryScript?.sections.every(section=>section.text.trim()))&&<button type="button" className={primaryButton+" mt-4"}
                 onClick={()=>selectStep("script")}>{tr("Review script first","先に台本を確認")}</button>}
             </div>}
             {board&&<ProductionClaimIssues issues={issues} draft={claimDraft} locale={locale}
@@ -804,10 +819,6 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Video draft</span>
             <h3 className="mt-2 font-serif text-2xl font-semibold">Turn your script into a video</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Choose a voice, then select <strong>Generate draft video</strong>. ContentGen prepares scenes, checks your local tools and makes a playable MP4. You can refine the scenes afterward.</p>
-            {!matchingDraft?.artifactId&&<p role="status" className="mt-4 rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm text-muted-foreground">
-              {tr("Approved YouTube scripts can become editable, source-linked Director drafts. Schematic animation requires further visual editing, and claims, media rights and playback still require review. Shorts, social videos and articles need dedicated exporters.",
-                "承認したYouTube台本を編集可能なディレクター下書きに変換できます。映像、引用、利用権の確認が必要です。")}
-            </p>}
             {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm" role="status">
               {mediaSnapshot.status==="loading"?"Checking saved local render files…":
                 mediaSnapshot.status==="error"?`Unable to read saved renders: ${mediaSnapshot.error}`:
@@ -818,15 +829,14 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 Refresh files
               </button>
             </div>}
-            {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">First, approve your YouTube script and make sure its scene outline is current. Then video generation becomes available.</p>}
+            {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">Finish the YouTube script to generate a playable draft. Other destinations can wait.</p>}
             <div className="mt-5 rounded-xl border border-primary/30 bg-primary/5 p-5">
-              <p className="text-xs font-semibold text-primary">START HERE</p>
-              <button type="button" className={primaryButton+" mt-3 inline-flex items-center gap-2"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing your draft…":"Set up voice & generate draft"}<ArrowRight className="size-4" aria-hidden /></button>
-              <p className="mt-3 text-xs text-muted-foreground">No upload or publishing. If your voice or renderer needs setup, you’ll see exactly what is missing.</p>
+              <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector} onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4" aria-hidden /></button>
+              <p className="mt-3 text-xs text-muted-foreground">Your storyboard refreshes automatically. Voice setup is requested only when needed. Nothing is published.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
-              <button type="button" className={secondaryButton} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("visuals")}>Edit video scenes</button>
-              <button type="button" className={secondaryButton} disabled={openingDirector||!canOpenDirector}
+              <button type="button" className={secondaryButton} disabled={openingDirector} onClick={()=>void openDirector("visuals")}>Edit video scenes</button>
+              <button type="button" className={secondaryButton} disabled={openingDirector}
                 onClick={()=>hasCurrentVideo?selectStep("export"):void openDirector("export")}>
                 {hasCurrentVideo?"Watch & export MP4":"Open render controls"}
               </button>

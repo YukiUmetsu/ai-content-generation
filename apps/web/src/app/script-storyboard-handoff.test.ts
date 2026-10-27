@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { approveScriptDraft, createScriptDraft, fillScriptSection, insertScriptSection, type ScriptEvidence } from "./script-review-model";
-import { scriptToStoryboard } from "./script-storyboard-handoff";
+import { scriptToStoryboard, syncScriptStoryboard } from "./script-storyboard-handoff";
 import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
 
 const evidence:ScriptEvidence[]=[{claimId:"claim_1",claimText:"Captured claim passage",sourceId:"source_1",
@@ -29,8 +29,10 @@ describe("script-to-storyboard editable handoff",()=>{
     expect(validateStoryboard(board).filter(issue=>issue.severity==="error")).toEqual([]);
   });
 
-  it("refuses to replace anything from an unapproved or empty script",()=>{
-    expect(()=>scriptToStoryboard({...approvedScript(),status:"draft",approvedAt:null},evidence)).toThrow(/approve a complete script/i);
+  it("accepts complete unapproved YouTube narration but rejects unfinished scripts",()=>{
+    const draft={...approvedScript(),status:"draft" as const,approvedAt:null};
+    expect(scriptToStoryboard(draft,evidence).beats).toHaveLength(draft.sections.length);
+    expect(()=>scriptToStoryboard({...draft,sections:draft.sections.map((s,i)=>i===2?{...s,text:""}:s)},evidence)).toThrow(/complete/i);
   });
   it("preserves an appended unsourced promotion as a separate unverified scene after the answer",()=>{
     const draft=insertScriptSection(approvedScript(),"closing","after",{heading:"FileQuell",role:"promotion",
@@ -43,6 +45,22 @@ describe("script-to-storyboard editable handoff",()=>{
     expect(validateStoryboard(board).filter(issue=>issue.severity==="error")).toEqual([]);
   });
 
+});
+
+it("refreshes stale narration and claims but preserves individually edited visuals for unchanged scenes",()=>{
+  const script=approvedScript();
+  const before=scriptToStoryboard(script,evidence);
+  before.beats[0].onScreenText="Custom opening visual";
+  before.beats[0].visualObjective="Use a custom camera movement";
+  const changed={...script,updatedAt:"2026-10-27T13:00:00.000Z",
+    sections:script.sections.map((section,i)=>i===1?{...section,text:section.text+" New information."}:section)};
+  const after=syncScriptStoryboard(changed,evidence,before);
+  expect(after.beats[0].onScreenText).toBe("Custom opening visual");
+  expect(after.beats[0].visualObjective).toBe("Use a custom camera movement");
+  expect(after.beats[1].narration).toBe(changed.sections[1].text);
+  expect(after.beats[1].onScreenText).toBe(changed.sections[1].heading);
+  expect(after.assumptions).toContain(`Script revision: ${changed.updatedAt}.`);
+  expect(validateStoryboard(after).filter(issue=>issue.severity==="error")).toEqual([]);
 });
 
 

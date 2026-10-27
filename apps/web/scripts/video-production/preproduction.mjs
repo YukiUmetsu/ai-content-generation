@@ -64,7 +64,9 @@ export function parseResearchDossier(dossier){
     if(!validSha(s.snapshotSha256))v.add("source-hash",p+".snapshotSha256","Actual captured SHA-256 is required.");
   });
   v.unique(sources,"evidence");
-  if(!sources.length)v.add("research-required","evidence","Every new cinematic video requires captured research.");
+  if(!sources.length)v.add("research-required","evidence",
+    "No captured research is available; verify all factual statements before publication.",
+    dossier.review?.status==="draft"?"warning":"error");
   const sourceIds=new Set(sources.filter(obj).map(x=>x.id));
   const claims=v.items(dossier.claims,"claims",80,(c,p)=>{
     if(!v.fields(c,p,["id","text","status","sourceRefs"]))return;

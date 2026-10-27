@@ -40,11 +40,19 @@ test("approved script preserves each section's narration through a valid rendera
   assert.equal(rendered.editorialStatus,"unverified-test-draft");
 });
 
-test("unsupported passages, provenance or approval never become a renderable research dossier",()=>{
-  assert.throws(()=>compileApprovedScriptDirector({productionId,script:{...script,status:"draft"},
-    evidence,sources}),/approved/i);
-  assert.throws(()=>compileApprovedScriptDirector({productionId,script,evidence:[],
-    sources}),/captured evidence/i);
+test("complete unapproved YouTube draft renders without captured research or an approved storyboard",()=>{
+  const work={...script,status:"draft",approvedAt:null};
+  const {dossier,bundle}=compileApprovedScriptDirector({productionId,script:work,evidence:[],sources:[]});
+  assert.equal(dossier.evidence.length,0);
+  assert.ok(dossier.claims.every(claim=>claim.status==="unverified"&&claim.sourceRefs.length===0));
+  assert.equal(bundle.plan.sound.map(item=>item.narration).join(" "),script.sections.map(item=>item.text).join(" "));
+  assert.equal(compilePreproductionRenderJob(dossier,bundle).job.beats.length,5);
+  assert.equal(bundle.status,"draft-needs-review");
+});
+
+test("unsupported passages and invalid provenance do not become trusted source citations",()=>{
+  assert.throws(()=>compileApprovedScriptDirector({productionId,script:{...script,sections:[{...script.sections[0],text:""}]},
+    evidence,sources}),/narration|section/i);
   assert.throws(()=>compileApprovedScriptDirector({productionId,script,evidence,
     sources:[{...sources[0],url:"http://localhost/private"}]}),/https|source/i);
   assert.throws(()=>compileApprovedScriptDirector({productionId,
