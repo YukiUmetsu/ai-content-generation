@@ -75,12 +75,28 @@ describe("Kumiki-generated publishing artwork", () => {
     expect(sourceSignature(input, "youtube")).toBe(sourceSignature(input, "youtube"));
   });
 
-  it("cannot generate covers or download article prose from unapproved or stale scripts", () => {
+  it("allows private draft covers and articles without script approval but requires actual text", () => {
     const unapproved = { ...input, approvedPlatforms: ["youtube"] };
-    expect(generatePlatformArtwork(unapproved, "blog", unapproved.title)).toHaveLength(0);
-    expect(generatedArtworkCatalog(unapproved).some((asset) => asset.platform === "blog")).toBe(false);
-    expect(() => generateBlogMarkdown(unapproved, unapproved.title, [])).toThrow(/Approve/);
-    expect(() => generateBlogHtml(unapproved, unapproved.title, "", "", [])).toThrow(/Approve/);
+    expect(generatePlatformArtwork(unapproved, "blog", unapproved.title)).toHaveLength(4);
+    expect(generatedArtworkCatalog(unapproved).some((asset) => asset.platform === "blog")).toBe(true);
+    expect(generateBlogMarkdown(unapproved, unapproved.title, [])).toContain("## The initial question");
+    expect(generateBlogHtml(unapproved, unapproved.title, "", "", [])).toContain("<article>");
+    const empty = {...unapproved, scriptSections:[],platformScripts:{blog:[]}};
+    expect(generatePlatformArtwork(empty,"blog",empty.title)).toHaveLength(0);
+    expect(() => generateBlogMarkdown(empty,empty.title,[])).toThrow(/section/i);
+  });
+
+  it("supports distinct colors and safe embedded user images in actual Kumiki PNG documents", () => {
+    const changed = {...input,brandColors:{...input.brandColors!,primary:"#192943",accent:"#FFCC44"}};
+    const photo="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nlr8AAAAASUVORK5CYII=";
+    const without=generatePlatformArtwork(changed,"youtube",changed.title);
+    const withPhoto=generatePlatformArtwork(changed,"youtube",changed.title,{imageDataUri:photo});
+    expect(withPhoto).toHaveLength(3);
+    expect(withPhoto[0].svg).toContain("data:image/png;base64,");
+    expect(withPhoto[0].media?.assets["cover-image"]?.uri).toBe(photo);
+    expect(withPhoto[0].svg).not.toBe(without[0].svg);
+    expect(without[0].svg).not.toBe(generatePlatformArtwork(input,"youtube",input.title)[0].svg);
+    expect(() => generatePlatformArtwork(changed,"youtube",changed.title,{imageDataUri:"data:image/svg+xml;base64,PHN2Zz4="})).toThrow(/image/i);
   });
 
   it("exports safe, fully inline HTML and links only the article's actual cited sources", () => {

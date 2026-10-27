@@ -86,8 +86,8 @@ describe("Video Director selected-shot workbench",()=>{
       throw Error("Unexpected request");
     });
     render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
-    expect(await screen.findByRole("heading",{name:"Preview & produce your draft"})).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/04 Preview & Export/})).toHaveAttribute("aria-current","step");
+    expect(await screen.findByRole("heading",{name:"Scene editor"})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/01 Storyboard/})).toHaveAttribute("aria-current","step");
     expect(screen.queryByRole("heading",{name:"Find the right visuals"})).not.toBeInTheDocument();
     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
   });
@@ -354,8 +354,8 @@ describe("saved research to Video Director handoff",()=>{
     });
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId} focusStage="visuals"/>);
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
-    expect(screen.getByRole("button",{name:/01 Storyboard/i})).not.toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).not.toHaveAttribute("aria-current","step");
   });
   it("resumes saved shot edits only for the matching snapshot",async()=>{
     const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
@@ -459,7 +459,7 @@ describe("approved script to Director handoff",()=>{
     });
     render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
     expect(await screen.findByText("Actual renewal factors")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
     expect(calls).not.toContain("/api/contentgen-director/compile-saved-research");
     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
   });

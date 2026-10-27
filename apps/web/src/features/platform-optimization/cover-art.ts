@@ -124,7 +124,7 @@ function upright(variant:number,w:number,h:number,title:string,heads:string[],p:
 }
 
 export function createCoverArtwork(title:string,sections:readonly PlatformScriptSection[],profile:OutputProfileId,
-  colors:PlatformBrandColors|undefined,target:string,filenameBase:string):GeneratedArtwork[]{
+  colors:PlatformBrandColors|undefined,target:string,filenameBase:string,imageDataUri?:string):GeneratedArtwork[]{
   if(!sections.length)return [];
   const {width,height}=getOutputProfile(profile);
   const p=palette(colors),portrait=height>=width;
@@ -132,7 +132,26 @@ export function createCoverArtwork(title:string,sections:readonly PlatformScript
   const ids=["","-tiles","-editorial"] as const;
   const labels=["Story layout","Tile layout","Editorial layout"] as const;
   return ids.map((suffix,index)=>{
-    const media=portrait?upright(index,width,height,clipText(title,110),heads,p):landscape(index,width,height,clipText(title,110),heads,p);
+    const base=portrait?upright(index,width,height,clipText(title,110),heads,p):landscape(index,width,height,clipText(title,110),heads,p);
+    // The replacement photo is an actual Kumiki media layer. Data URLs make
+    // both SVG previews and PNG exports self-contained and offline; the browser
+    // upload path separately enforces type/size bounds.
+    const frame=portrait?{x:width*.10,y:height*(index===0?.65:index===1?.72:.72),
+      width:width*.80,height:height*.20,z:2}:index===0?
+      {x:width*.67,y:height*.16,width:width*.27,height:height*.58,z:4}:
+      index===1?{x:width*.69,y:height*.09,width:width*.23,height:height*.35,z:2}:
+        {x:width*.72,y:height*.13,width:width*.25,height:height*.68,z:2};
+    const imageLayer:Layer|undefined=imageDataUri?{
+      ...geometry("cover-photo","User-selected cover image","media",frame.x,frame.y,frame.width,frame.height,frame.z),
+      kind:"media",media:{assetId:"cover-image",fit:"cover",focalPoint:{x:.5,y:.5},
+        mask:{kind:"rounded",radius:Math.min(width,height)*.025},alt:"Selected thumbnail image"}
+    }:undefined;
+    const media=imageLayer?normalizeDocument({...base,
+      assets:{...base.assets,"cover-image":{id:"cover-image",uri:imageDataUri!,mediaType:imageDataUri!.slice(5,imageDataUri!.indexOf(";")),
+        alt:"User-selected cover image",licenseId:"user-supplied-needs-review"}},
+      layers:[...base.layers.map(layer=>index===1&&!portrait&&layer.id==="headline"?
+        {...layer,transform:{...layer.transform,width:width*.54}}:layer),imageLayer],
+    }):base;
     const output=documentToSvg(media);
     if(output.diagnostics.some(d=>d.severity==="error"))return null;
     return {id:`cover-${target}${suffix}`,filename:`${filenameBase}-${target}${suffix||"-cover"}.png`,label:labels[index],

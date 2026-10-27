@@ -143,6 +143,7 @@ describe("Studio shell", () => {
     render(<App />);
     await user.click(screen.getByRole("link", {name:"Research"}));
     await user.click(screen.getByRole("tab", {name:"YouTube Intelligence"}));
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.click(await screen.findByRole("button", {name:"Use for video"}));
     const title = screen.getByRole("textbox", {name:"Working video title"});
     await user.clear(title);

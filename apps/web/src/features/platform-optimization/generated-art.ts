@@ -42,7 +42,22 @@ function sectionsFor(input: PlatformOptimizationInput, platform: PlatformTarget)
 }
 
 export function canExportPlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget): boolean {
-  return Boolean(input.approvedPlatforms?.some((platform) => normalizeTarget(platform) === target));
+  // This gate concerns private, local draft assets. Publication readiness is
+  // evaluated independently by reviewPlatformPackage; a draft need not be
+  // approved before its owner can preview or download it.
+  return sectionsFor(input,target).some(section=>section.text.trim().length>0);
+}
+
+export interface CoverArtOptions {imageDataUri?:string}
+function validateCoverImage(uri:string|undefined):void{
+  if(uri!==undefined && (uri.length>1_450_000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(uri)))
+    throw Error("Thumbnail image must be an embedded PNG, JPEG or WebP under 1 MB.");
+}
+function imageIdentity(uri:string|undefined):string{
+  if(!uri)return "none";
+  let hash=2166136261;
+  for(let i=0;i<uri.length;i++)hash=Math.imul(hash^uri.charCodeAt(i),16777619)>>>0;
+  return `${uri.length}:${hash.toString(16)}`;
 }
 
 function excerpt(text: string, limit: number): string {
@@ -95,9 +110,11 @@ function makeArtwork(label: string, filename: string, id: string, title: string,
 }
 
 /** Three distinct, downloadable non-blog covers; blog gets an article hero and up to three substantive diagrams. */
-export function generatePlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget, title: string): GeneratedArtwork[] {
+export function generatePlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget, title: string,
+  options:CoverArtOptions={}): GeneratedArtwork[] {
+  validateCoverImage(options.imageDataUri);
   if (!canExportPlatformArtwork(input, target)) return [];
-  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}`;
+  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}:${imageIdentity(options.imageDataUri)}`;
   const cached = artworkCache.get(key);
   if (cached) return cached;
   const sections = sectionsFor(input, target).filter((section) => section.text.trim());
@@ -106,7 +123,7 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
   // generated image follows the editable destination title.
   const safeName = platformSlug(input.title).slice(0, 58);
   if (target !== "blog") {
-    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName);
+    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName,options.imageDataUri);
     artworkCache.set(key, result);
     if (artworkCache.size > 16) artworkCache.delete(artworkCache.keys().next().value!);
     return result;
@@ -130,7 +147,7 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
 /** Blog-ready Markdown with image references and article prose; downloaded PNGs go beside it. */
 export function generateBlogMarkdown(input: PlatformOptimizationInput, title: string, artworks: readonly GeneratedArtwork[],
   summary = ""): string {
-  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Approve the current blog script before exporting an article.");
+  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Write a blog section before exporting an article draft.");
   const sections = sectionsFor(input, "blog").filter((section) => section.text.trim());
   const paragraphs = [`# ${title.trim()}`, summary.trim(), artworks[0] ? `![Article overview](${artworks[0].filename})` : ""];
   const diagrams = artworks.slice(1);
@@ -161,7 +178,7 @@ export function blogSources(input: PlatformOptimizationInput): {url: string; rev
 /** Offline, self-contained illustrated HTML. Escape everything originating in a script. */
 export function generateBlogHtml(input: PlatformOptimizationInput, title: string, summary: string,
   description: string, artworks: readonly GeneratedArtwork[]): string {
-  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Approve the current blog script before exporting an article.");
+  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Write a blog section before exporting an article draft.");
   const escape = (value: string) => value.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;").replace(/"/gu, "&quot;");
   const blocks = (value: string) => value.trim().split(/\n\s*\n/gu).filter(Boolean).map((block) => {
     const heading = block.match(/^#{2,4}\s+([^\n]+)$/u);

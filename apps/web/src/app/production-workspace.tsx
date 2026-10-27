@@ -877,17 +877,15 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             </div>
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">YouTube video drafts are supported here. Shorts and social video presets are still in development. Their captions and covers are available in Publish Kit.</p>
           </div>}
-          {step==="optimize"&&(production&&(platforms.every(platform=>platform==="blog")||
-            mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready")?
-            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>:<div className={contentCard}>
-            <p className="text-sm text-muted-foreground">{!production?
-              tr("Select an idea and create a production to prepare platform metadata.","制作するアイデアを選んでください。"):
-              mediaSnapshot?.status==="error"?
-                `The local renderer's saved-file catalog is unavailable: ${mediaSnapshot.error} Your existing metadata has not been changed.`:
-                "Checking local rendered assets before opening saved metadata. This prevents an incomplete file list from invalidating previous approvals."}</p>
-            {production?<button type="button" className={secondaryButton+" mt-4"} onClick={()=>setMediaRefresh(value=>value+1)}>
-              Retry rendered-file lookup</button>:
-              <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select idea","テーマを選択")}</button>}
+          {step==="optimize"&&(production?<>
+            {mediaSnapshot?.status==="error"&&<div className="mb-4 flex flex-wrap items-center gap-3 rounded-control border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-muted-foreground" role="status">
+              <span>Saved video files could not be checked. You can still edit covers and metadata; verify video attachments before publishing.</span>
+              <button type="button" className="font-semibold text-primary underline" onClick={()=>setMediaRefresh(value=>value+1)}>Retry file lookup</button>
+            </div>}
+            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>
+          </>:<div className={contentCard}>
+            <p className="text-sm text-muted-foreground">{tr("Select an idea and create a production to prepare platform metadata.","制作するアイデアを選んでください。")}</p>
+            <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select idea","テーマを選択")}</button>
           </div>)}
           {step==="export"&&<div className={contentCard}>
             <h3 className="font-serif text-xl font-semibold">{tr("Preview before exporting","書き出し前に確認")}</h3>

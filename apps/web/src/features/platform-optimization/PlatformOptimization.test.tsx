@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PlatformOptimization } from "./PlatformOptimization";
 import type { PlatformOptimizationInput } from "./model";
 
@@ -98,13 +98,12 @@ describe("PlatformOptimization", () => {
     expect(screen.getByText(/script, palette or assets changed/i)).toBeInTheDocument();
   });
 
-  it("never enables article download before the Blog script is approved", () => {
+  it("allows private illustrated blog exports without approval while publication stays gated", () => {
     render(<PlatformOptimization input={{ ...input, approvedPlatforms: ["youtube"] }} />);
     fireEvent.click(screen.getByRole("tab", { name: "Blog / Website" }));
-    expect(screen.getByText(/Approve your Blog script to unlock/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download illustrated HTML" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Download Markdown" })).toBeDisabled();
-    expect(screen.getByText(/Approve the current Blog \/ Website script in the Script stage/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download illustrated HTML" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Download Markdown" })).toBeEnabled();
+    expect(screen.getByText(/private illustrated article draft/i)).toBeInTheDocument();
   });
 
   it("lets a creator change the thumbnail headline and choose distinct layouts, saved per script revision", () => {
@@ -118,17 +117,41 @@ describe("PlatformOptimization", () => {
     const edited = cover.getAttribute("src");
     fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
     expect(cover.getAttribute("src")).not.toBe(edited);
+    const beforeColor=cover.getAttribute("src");
+    fireEvent.change(screen.getByLabelText("Thumbnail accent color"),{target:{value:"#ffcc44"}});
+    expect(cover.getAttribute("src")).not.toBe(beforeColor);
     expect(screen.getByRole("button",{name:"Download selected thumbnail"})).toBeEnabled();
     view.unmount();
     const reopened = render(<PlatformOptimization input={approved}/>);
     expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
     expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
+    expect(screen.getByLabelText("Thumbnail accent color")).toHaveValue("#ffcc44");
     reopened.rerender(<PlatformOptimization input={{...approved,assets:[
       ...(approved.assets ?? []),{id:"video-2",kind:"video",platform:"youtube",filename:"final.mp4"}],
       sourceEvidence:[{sourceId:"source-new",sourceUrl:"https://example.org/",reviewStatus:"verified"}],
       brandColors:{primary:"#145E58",secondary:"#164B49",accent:"#EDAA46",background:"#FFF7E8",text:"#182C2B"}}}/>);
     expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
     expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("accepts a local image replacement, preserves it, and rejects disguised nonimages",async()=>{
+    const view=render(<PlatformOptimization input={input}/>);
+    const preview=screen.getByRole("img",{name:"Selected thumbnail preview"});
+    const initial=preview.getAttribute("src");
+    const invalid=new File(["<script>not an image</script>"],"fake.png",{type:"image/png"});
+    fireEvent.change(screen.getByLabelText("Upload thumbnail image"),{target:{files:[invalid]}});
+    expect(await screen.findByText(/not a valid PNG/i)).toBeInTheDocument();
+    expect(preview.getAttribute("src")).toBe(initial);
+    const bytes=Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nlr8AAAAASUVORK5CYII="),c=>c.charCodeAt(0));
+    const valid=new File([bytes],"photo.png",{type:"image/png"});
+    fireEvent.change(screen.getByLabelText("Upload thumbnail image"),{target:{files:[valid]}});
+    await waitFor(()=>expect(preview.getAttribute("src")).not.toBe(initial));
+    expect(decodeURIComponent(preview.getAttribute("src")??"")).toContain("data:image/png;base64,");
+    view.unmount();
+    render(<PlatformOptimization input={input}/>);
+    expect(screen.getByRole("button",{name:"Remove image"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Remove image"}));
+    expect(screen.queryByRole("button",{name:"Remove image"})).not.toBeInTheDocument();
   });
 });
 

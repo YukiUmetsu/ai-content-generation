@@ -76,6 +76,23 @@ describe("Production eight-step workspace",()=>{
     expect(discover).toHaveAttribute("aria-current","step");
   });
 
+  it("keeps the private Publish Kit editor available when the local rendered-file lookup fails",async()=>{
+    const production={id:"production-"+"e".repeat(24),projectId:"project-demo",sessionId:"session-1",ideaId:"idea-1",
+      platforms:["youtube"],brief:{title:"The hidden cost of a home",topic:"Home cost",angle:"Explain costs",
+        description:"Private production",keywords:[],platforms:["youtube"]}};
+    localStorage.setItem("contentgen:production-flow:v2:project-demo",JSON.stringify({
+      platforms:["youtube"],sessionId:"session-1",production}));
+    vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL)=>{
+      if(String(input).includes("/api/contentgen-video/assets/"))return Response.json({message:"offline"},{status:503});
+      return Response.json({productions:[production],ideas:[],snapshot:null});
+    }));
+    render(<ProductionWorkspace {...props}/>);
+    fireEvent.click(stageButton("Publish Kit"));
+    expect(await screen.findByRole("heading",{name:"Thumbnail designer"})).toBeInTheDocument();
+    expect(await screen.findByText(/Saved video files could not be checked/)).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:"Retry file lookup"})).toBeEnabled();
+  });
+
   it("links an existing storyboard to the correct owner key and flags repeated scenes",()=>{
     const board=cloneStoryboard(HVAC_EXAMPLE);
     board.beats[2].onScreenText="Equipment is only part of the installed quote";

@@ -107,9 +107,10 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null)=>{
     setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");setSourceArtifactId(artifactId);
     setSourceStoryboardSha(storyboardSha);setSyncReport(null);
-    // Deep links open the actual preview/voice/render controls. Asset discovery
-    // and SFX selection remain optional adjacent tools, not the editor target.
-    setStage(source==="sample"||focusStage?"preview":"storyboard");
+    // "Edit video scenes" must open the editable shot controls. Voice and
+    // export deep links open rendering controls; the preview stays one click
+    // away without forcing an unnecessary render during editing.
+    setStage(source==="sample"||(focusStage&&focusStage!=="visuals")?"preview":"storyboard");
     setRecheckToken(0);
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));

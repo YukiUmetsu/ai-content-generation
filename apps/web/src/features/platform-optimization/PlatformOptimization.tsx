@@ -14,20 +14,33 @@ import { loadPlatformOptimization, savePlatformOptimization } from "./storage";
 import { artworkPng, canExportPlatformArtwork, generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog } from "./generated-art";
 
 type CoverLayout = "story" | "tiles" | "editorial";
-type CoverDraft = { key: string; headline: string; layout: CoverLayout };
+type CoverColors = {primary:string;background:string;accent:string};
+type CoverDraft = { key: string; headline: string; layout: CoverLayout; colors:CoverColors|null;imageDataUri?:string };
+const hex = (value:unknown):value is string => typeof value === "string" && /^#[a-f0-9]{6}$/iu.test(value);
+const coverPresets:{name:string;colors:CoverColors|null}[]=[
+  {name:"Brand colors",colors:null},
+  {name:"Midnight",colors:{primary:"#172C42",background:"#F7F2E9",accent:"#F8B951"}},
+  {name:"Forest",colors:{primary:"#163F35",background:"#F6F3E6",accent:"#E5B661"}},
+  {name:"Graphite",colors:{primary:"#20272F",background:"#F6F6F3",accent:"#FF8558"}},
+];
 const coverLayouts: readonly { id: CoverLayout; name: string; suffix: string }[] = [
   { id: "story", name: "Story layout", suffix: "" },
   { id: "tiles", name: "Tile layout", suffix: "-tiles" },
   { id: "editorial", name: "Editorial layout", suffix: "-editorial" },
 ];
 function loadCoverDraft(key: string, initialHeadline: string): CoverDraft {
-  const fallback: CoverDraft = { key, headline: initialHeadline, layout: "story" };
+  const fallback: CoverDraft = { key, headline: initialHeadline, layout: "story",colors:null };
   if (!key) return fallback;
   try {
     const stored = JSON.parse(localStorage.getItem(key) || "null") as Record<string, unknown> | null;
     if (!stored || typeof stored.headline !== "string" || stored.headline.length > 110 ||
       !coverLayouts.some((layout) => layout.id === stored.layout)) return fallback;
-    return { key, headline: stored.headline, layout: stored.layout as CoverLayout };
+    const colors=stored.colors&&typeof stored.colors==="object"&&
+      hex((stored.colors as Record<string,unknown>).primary)&&hex((stored.colors as Record<string,unknown>).background)&&
+      hex((stored.colors as Record<string,unknown>).accent)?stored.colors as CoverColors:null;
+    const imageDataUri=typeof stored.imageDataUri==="string"&&stored.imageDataUri.length<=1_450_000&&
+      /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(stored.imageDataUri)?stored.imageDataUri:undefined;
+    return { key, headline: stored.headline, layout: stored.layout as CoverLayout,colors,imageDataUri };
   } catch { return fallback; }
 }
 
@@ -251,11 +264,43 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
   const updateCover = (update: Partial<Omit<CoverDraft,"key">>) => {
     const next = {...activeCover,...update};
     setCoverDraft(next);
-    try {localStorage.setItem(coverKey,JSON.stringify({headline:next.headline,layout:next.layout}));}
+    try {localStorage.setItem(coverKey,JSON.stringify({headline:next.headline,layout:next.layout,
+      colors:next.colors,imageDataUri:next.imageDataUri}));}
     catch(error){setWarning(error instanceof Error?`Cover is not saved: ${error.message}`:"Cover could not be saved locally.");}
   };
-  const artwork = useMemo(() => platform ? generatePlatformArtwork(input,platform,
-    platform === "blog" ? input.title : activeCover.headline || input.title) : [], [input,platform,activeCover.headline]);
+  const coverInput=useMemo<PlatformOptimizationInput>(()=>activeCover.colors?{...input,brandColors:{
+    primary:activeCover.colors.primary,background:activeCover.colors.background,accent:activeCover.colors.accent,
+    secondary:input.brandColors?.secondary??"#4D807A",text:input.brandColors?.text??"#122A32"}}:input,
+  [input,activeCover.colors]);
+  const artwork = useMemo(() => platform ? generatePlatformArtwork(coverInput,platform,
+    platform === "blog" ? input.title : activeCover.headline || input.title,
+    platform === "blog"?{}:{imageDataUri:activeCover.imageDataUri}) : [],
+  [coverInput,platform,input.title,activeCover.headline,activeCover.imageDataUri]);
+  async function uploadCoverImage(file:File|undefined){
+    if(!file)return;
+    if(!["image/png","image/jpeg","image/webp"].includes(file.type)||file.size>1_000_000||file.size<1){
+      setWarning("Choose a PNG, JPEG or WebP image smaller than 1 MB.");return;
+    }
+    try{
+      const magic=new Uint8Array(await new Promise<ArrayBuffer>((resolve,reject)=>{
+        const reader=new FileReader();reader.onload=()=>resolve(reader.result as ArrayBuffer);
+        reader.onerror=()=>reject(Error("Could not read the image header."));reader.readAsArrayBuffer(file.slice(0,12));
+      }));
+      const png=magic.length>=8&&magic.slice(0,8).every((byte,i)=>byte===[137,80,78,71,13,10,26,10][i]);
+      const jpeg=magic.length>=3&&magic[0]===255&&magic[1]===216&&magic[2]===255;
+      const webp=magic.length>=12&&String.fromCharCode(...magic.slice(0,4))==="RIFF"&&
+        String.fromCharCode(...magic.slice(8,12))==="WEBP";
+      if((file.type==="image/png"&&!png)||(file.type==="image/jpeg"&&!jpeg)||
+        (file.type==="image/webp"&&!webp))throw Error("The selected file is not a valid PNG, JPEG or WebP image.");
+      const data=await new Promise<string>((resolve,reject)=>{
+        const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));
+        reader.onerror=()=>reject(Error("Could not read the selected image."));reader.readAsDataURL(file);
+      });
+      if(!/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(data)||data.length>1_450_000)
+        throw Error("The uploaded image is not a compatible raster image.");
+      setWarning(null);updateCover({imageDataUri:data});
+    }catch(error){setWarning(error instanceof Error?error.message:"Unable to add the selected image.");}
+  }
   const chosenCover = artwork.find((art) => art.id === `cover-${platform}${coverLayouts.find((option) => option.id === activeCover.layout)?.suffix ?? ""}`) ?? artwork[0];
   const artApproved = Boolean(platform && canExportPlatformArtwork(input, platform));
   const showUploadTitle = platform !== "instagram" && platform !== "tiktok";
@@ -439,7 +484,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
 
           <div className={`${cardClass} space-y-4`}>
             <SectionHeading note="Made locally with Kumiki">{isBlog(platform) ? "Article illustrations" : "Thumbnail designer"}</SectionHeading>
-            {artwork.length === 0 ? <p className="text-sm text-muted-foreground">Approve the current {PLATFORM_NAMES[platform]} script in the Script stage to generate download-ready artwork.</p> :
+            {artwork.length === 0 ? <p className="text-sm text-muted-foreground">Write a section for {PLATFORM_NAMES[platform]} to generate local draft artwork. Approval is only needed for publication.</p> :
               isBlog(platform) ? <div className="grid gap-3 sm:grid-cols-2">{artwork.map((art) => <div key={art.id} className="min-w-0 rounded-xl border border-border p-2.5">
                 <img src={art.preview} alt={`${art.label}: outline of the current script`} className="aspect-video w-full rounded-lg bg-muted object-contain" />
                 <div className="mt-2 flex items-center justify-between gap-2"><span className="truncate text-xs font-semibold">{art.label}</span>
@@ -451,6 +496,38 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                   <input className={`${inputClass} mt-1.5`} aria-label="Thumbnail headline" maxLength={110}
                     value={activeCover.headline} onChange={(event) => updateCover({headline:event.target.value})}/>
                 </label>
+                <div className="space-y-2">
+                  <span className="text-xs font-semibold text-foreground">Color direction</span>
+                  <div className="flex flex-wrap gap-2" role="group" aria-label="Thumbnail color presets">
+                    {coverPresets.map(preset=><button key={preset.name} type="button"
+                      aria-pressed={JSON.stringify(activeCover.colors)===JSON.stringify(preset.colors)}
+                      onClick={()=>updateCover({colors:preset.colors})}
+                      className="rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors duration-[var(--km-duration-short)] hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/10">
+                      {preset.name}</button>)}
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 rounded-xl border border-border bg-surface-subtle p-3">
+                    {([ ["primary","Thumbnail dark background","Dark"], ["background","Thumbnail light background","Light"], ["accent","Thumbnail accent color","Accent"] ] as const).map(([key,name,label])=><label key={key} className="flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
+                      <input type="color" aria-label={name} className="size-8 shrink-0 cursor-pointer rounded border border-border bg-transparent"
+                        value={(activeCover.colors?.[key]??(key==="primary"?input.brandColors?.primary:
+                          key==="background"?input.brandColors?.background:input.brandColors?.accent)??
+                          (key==="primary"?"#152d36":key==="background"?"#f8f4ec":"#f6bb57")).toLowerCase()}
+                        onChange={event=>updateCover({colors:{primary:activeCover.colors?.primary??input.brandColors?.primary??"#152D36",
+                          background:activeCover.colors?.background??input.brandColors?.background??"#F8F4EC",
+                          accent:activeCover.colors?.accent??input.brandColors?.accent??"#F6BB57",[key]:event.target.value}})}/>
+                      {label}
+                    </label>)}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors hover:bg-surface-subtle focus-within:ring-2 focus-within:ring-ring">
+                    <Image className="size-4" aria-hidden/>{activeCover.imageDataUri?"Replace image":"Add your image"}
+                    <input type="file" className="sr-only" aria-label="Upload thumbnail image" accept="image/png,image/jpeg,image/webp"
+                      onChange={event=>void uploadCoverImage(event.target.files?.[0])}/>
+                  </label>
+                  {activeCover.imageDataUri&&<button type="button" className="text-xs font-medium text-primary underline"
+                    onClick={()=>updateCover({imageDataUri:undefined})}>Remove image</button>}
+                  <span className="text-[11px] text-muted-foreground">PNG, JPEG or WebP · up to 1 MB · kept on this device</span>
+                </div>
                 {chosenCover && <img src={chosenCover.preview} alt="Selected thumbnail preview"
                   className="w-full rounded-xl border border-border bg-muted object-contain"/>}
                 <div className="grid grid-cols-3 gap-2" role="group" aria-label="Thumbnail layouts">
@@ -464,14 +541,17 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                     </button>;
                   })}
                 </div>
+                <button type="button" className="text-xs font-medium text-primary underline" onClick={()=>updateCover({
+                  layout:coverLayouts[(coverLayouts.findIndex(option=>option.id===activeCover.layout)+1)%coverLayouts.length].id
+                })}>Try another design</button>
                 <button type="button" disabled={!chosenCover||!!exportingArt} onClick={()=>chosenCover&&void downloadArt(chosenCover.id)}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
                   <Download className="size-4" aria-hidden /> {exportingArt ? "Rendering PNG…" : "Download selected thumbnail"}
                 </button>
-                <p className="text-xs text-muted-foreground">Three editable text-based layouts, no fabricated photos. Your headline and choice are saved for this script revision. Download the PNG to attach to your upload.</p>
+                <p className="text-xs text-muted-foreground">Your headline, palette, image and layout are saved per script revision. Check image rights before publishing.</p>
               </div>}
             {isBlog(platform) && <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
-              <p className="text-sm font-semibold">{artApproved ? "Your illustrated article is ready to export" : "Approve your Blog script to unlock the illustrated article"}</p>
+              <p className="text-sm font-semibold">{artApproved ? "Your private illustrated article draft is ready" : "Write a blog section to create an illustrated draft"}</p>
               <p className="text-xs text-muted-foreground">HTML includes the graphics inline. Markdown references the PNGs above—download those beside the article file.</p>
               <div className="flex flex-wrap gap-2"><button type="button" disabled={!artApproved} className={inputClass + " w-auto font-medium disabled:cursor-not-allowed disabled:opacity-40"} onClick={() => exportArticle("html")}>Download illustrated HTML</button>
                 <button type="button" disabled={!artApproved} className={inputClass + " w-auto font-medium disabled:cursor-not-allowed disabled:opacity-40"} onClick={() => exportArticle("markdown")}>Download Markdown</button></div>
