@@ -46,4 +46,32 @@ async fn production_worker_attempts_are_durable_and_authorized() {
     let (status,saved)=call(&restart,Method::GET,&format!("/api/jobs/{job}"),json!({}),false).await;
     assert_eq!(status,StatusCode::OK);
     assert_eq!(saved["progress"]["succeeded"],1);
+
+    let (status,second)=call(&restart,Method::POST,
+        &format!("/api/jobs/{job}/nodes/{render}/start"),json!({}),true).await;
+    assert_eq!(status,StatusCode::CREATED,"{second:?}");
+    let failed_attempt=second["attempt"]["id"].as_str().unwrap();
+    let (status,failed)=call(&restart,Method::POST,
+        &format!("/api/jobs/{job}/nodes/{render}/fail"),
+        json!({"attemptId":failed_attempt,"errorCode":"voice_unavailable","errorDetail":"Voice service stopped"}),true).await;
+    // The generic scheduler exposes bounded automatic retries when maxAttempts
+    // permits them. Exhaust the second and third attempts to exercise explicit
+    // production recovery and ensure earlier plan work remains succeeded.
+    assert_eq!(status,StatusCode::OK,"{failed:?}");
+    for _ in 0..2 {
+        let (_,next)=call(&restart,Method::POST,
+            &format!("/api/jobs/{job}/nodes/{render}/start"),json!({}),true).await;
+        let next_id=next["attempt"]["id"].as_str().unwrap();
+        let (code,_)=call(&restart,Method::POST,&format!("/api/jobs/{job}/nodes/{render}/fail"),
+            json!({"attemptId":next_id,"errorCode":"voice_unavailable"}),true).await;
+        assert_eq!(code,StatusCode::OK);
+    }
+    assert_eq!(call(&restart,Method::POST,&format!("/api/jobs/{job}/retry"),json!({}),false).await.0,
+        StatusCode::FORBIDDEN);
+    let (code,rearmed)=call(&restart,Method::POST,&format!("/api/jobs/{job}/retry"),json!({}),true).await;
+    assert_eq!(code,StatusCode::OK,"{rearmed:?}");
+    assert_eq!(rearmed["nodes"].as_array().unwrap().iter().filter(|n|n["state"]=="SUCCEEDED").count(),1);
+    assert_eq!(rearmed["progress"]["ready"],1);
+    assert_eq!(call(&restart,Method::POST,&format!("/api/jobs/{job}/retry"),json!({}),true).await.0,
+        StatusCode::CONFLICT,"only a terminal job can be retried");
 }

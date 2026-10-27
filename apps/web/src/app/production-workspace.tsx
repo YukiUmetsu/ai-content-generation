@@ -829,7 +829,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
           {step==="produce"&&!platforms.includes("youtube")&&<div className={contentCard+" space-y-4"}>
             <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Your next step</p>
             <h3 className="font-serif text-2xl font-semibold">Prepare your selected destinations</h3>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">The current Video Director exports YouTube-format videos. Your selected destinations still get their own approved scripts, platform captions and generated covers. Blog articles also receive illustrations and downloadable HTML.</p>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Video drafts use your YouTube script. Other destinations can be finished separately, including their titles, captions, covers and illustrated articles.</p>
             <button type="button" className={primaryButton+" inline-flex items-center gap-2"} onClick={()=>selectStep("optimize")}>Open Publish Kit <ArrowRight className="size-4" aria-hidden /></button>
           </div>}
           {step==="produce"&&platforms.includes("youtube")&&<div className={contentCard}>
@@ -895,7 +895,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
               {tr("Review playback, captions, source claims and rights. Download local renders and platform metadata here; no upload or publishing happens automatically.",
                 "再生、字幕、根拠と利用権を確認します。映像ファイルや投稿情報をダウンロードできますが、自動公開は行われません。")}
             </p>
-            {!canOpenDirector&&<p role="status" className="mt-3 text-sm text-muted-foreground">Approve a YouTube script and its storyboard to enable MP4 preview and export.</p>}
+            {!canOpenDirector&&<p role="status" className="mt-3 text-sm text-muted-foreground">Finish the YouTube script to preview or export its draft. Approval is not required.</p>}
             <button type="button" className={primaryButton+" mt-5"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("export")}>
               {tr("Open preview & export","確認と書き出しを開く")}</button>
             {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"&&

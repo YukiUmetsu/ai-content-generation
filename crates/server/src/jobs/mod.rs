@@ -28,6 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/jobs", get(list_jobs).post(create_job))
         .route("/api/jobs/{job_id}", get(get_job))
         .route("/api/jobs/{job_id}/cancel", axum::routing::post(cancel_job))
+        .route("/api/jobs/{job_id}/retry", axum::routing::post(retry_video_job))
         .route("/api/jobs/{job_id}/nodes/{node_id}/start", axum::routing::post(start_attempt))
         .route("/api/jobs/{job_id}/nodes/{node_id}/succeed", axum::routing::post(succeed_attempt))
         .route("/api/jobs/{job_id}/nodes/{node_id}/fail", axum::routing::post(fail_attempt))
@@ -177,6 +178,15 @@ async fn cancel_job(
     let mut connection = app_state.connect()?;
     let snapshot = scheduler::cancel_job(&mut connection, &job_id)?;
     Ok(Json(JobView::from_snapshot(snapshot)))
+}
+
+async fn retry_video_job(
+    State(app_state): State<AppState>, headers: HeaderMap,
+    Path(job_id): Path<String>,
+) -> Result<Json<JobView>, JobsError> {
+    require_worker(&headers)?;
+    let mut db = app_state.connect()?;
+    Ok(Json(JobView::from_snapshot(scheduler::retry_failed_video_job(&mut db, &job_id)?)))
 }
 
 /// The media worker runs in the same local installation, not in the browser.

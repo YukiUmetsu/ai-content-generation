@@ -266,7 +266,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       if(!preview){
         const result=await request("plan",payload) as unknown as Preview;
         if(!Array.isArray(result.job?.beats)||!result.job.beats.length)
-          throw Error("The approved script has no renderable narration scenes.");
+          throw Error("The script has no renderable narration scenes. Add text to your YouTube script and retry.");
         if(revision!==inputRevision.current)return;
         setPreview(result);
       }

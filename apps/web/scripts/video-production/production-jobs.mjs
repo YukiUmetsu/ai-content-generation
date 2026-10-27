@@ -48,20 +48,32 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!runId)
         throw Error("Production job requires a saved production, revision and run identity.");
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
-      const data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
+      let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
         nodes:PRODUCTION_NODES.map((nodeKey,index)=>({nodeKey,nodeKind:`video.${nodeKey}`,
           // The renderer is one synchronous execution. No worker exists to
           // claim an auto-retried attempt after it exits; mark failure terminal
           // instead of leaving a READY node and a permanently RUNNING job.
           maxAttempts:1,input:{productionId,revision},
           dependsOn:index?[PRODUCTION_NODES[index-1]]:[]}))});
-      if(data.created!==true)throw Error(data.job?.state==="SUCCEEDED"?
-        "A video for this revision already exists. Review its saved MP4 or edit the script to regenerate.":
-        "This video is already running or waiting in Jobs. Open Jobs to review or cancel it.");
+      if(data.created!==true){
+        if(["FAILED","CANCELLED"].includes(data.job?.state)&&typeof data.job.id==="string"){
+          // Explicit retry is one SQLite transaction. Only one worker can
+          // re-arm a terminal job; successful nodes remain intact.
+          data=await request(`/api/jobs/${data.job.id}/retry`,{});
+        }else throw Error(data.job?.state==="SUCCEEDED"?
+          "A video for this revision already exists. Review its saved MP4 or edit the script to regenerate.":
+          "This video is already running or waiting in Jobs. Open Jobs to review or cancel it.");
+      }
       if(typeof data.job?.id!=="string"||!Array.isArray(data.nodes)||data.nodes.length!==PRODUCTION_NODES.length)
         throw Error("Jobs service did not return the expected production steps.");
-      jobId=data.job.id;nodes=data.nodes;
-      await begin(0);
+      const byKey=new Map(data.nodes.map(node=>[node.nodeKey,node]));
+      if(byKey.size!==PRODUCTION_NODES.length||PRODUCTION_NODES.some(key=>typeof byKey.get(key)?.id!=="string"))
+        throw Error("Jobs service returned incomplete or duplicate production steps.");
+      jobId=data.job.id;nodes=PRODUCTION_NODES.map(key=>byKey.get(key));
+      const firstReady=nodes.findIndex(node=>node.state==="READY");
+      if(firstReady<0||nodes.slice(0,firstReady).some(node=>node.state!=="SUCCEEDED"))
+        throw Error("Jobs service did not return a resumable production step.");
+      await begin(firstReady);
       return jobId;
     },
     async advance(phase){

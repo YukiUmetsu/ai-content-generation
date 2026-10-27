@@ -165,22 +165,22 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     try{
       const raw=sessionStorage.getItem("contentgen:director-approved-script:v1:"+projectId);
       if(!raw)return;
-      if(raw.length>900000)throw Error("Approved script handoff exceeds the Director browser-session limit.");
+      if(raw.length>900000)throw Error("Script handoff exceeds the Director browser-session limit.");
       const handoff=JSON.parse(raw) as {productionId?:string;scriptRevision?:string;sourcePrefix?:string;dossier?:Dossier;bundle?:Bundle};
       if(handoff.productionId!==projectId||typeof handoff.scriptRevision!=="string"||
         handoff.dossier?.kind!=="research-dossier"||handoff.bundle?.kind!=="preproduction-bundle"||
         !handoff.dossier.id||handoff.bundle.researchId!==handoff.dossier.id||
         !handoff.bundle.researchSha256||!/^[a-f0-9]{64}$/u.test(handoff.bundle.planSha256??"")||
         !handoff.bundle.plan?.shots?.length)
-        throw Error("The approved script handoff is invalid. Return to Production and reopen the approved script.");
+        throw Error("The video draft could not be loaded. Return to Production and select Generate draft video again.");
       // Two storyboard edits can share one script revision. Scope resumes to
       // the exact compiled visual plan so old edits never mask new visuals.
       const sourceId=(handoff.sourcePrefix??"approved-script:"+handoff.scriptRevision+":")+handoff.bundle.planSha256;
       const resumed=readDirectorSession(projectId,sourceId,handoff.bundle);
       acceptProject(resumed?.dossier??handoff.dossier,resumed?.bundle??handoff.bundle,"topic",sourceId);
-      setStatus(resumed?"Resumed your saved edits from this approved script revision. Factual review and rights remain outstanding.":
-        "Imported approved script narration and captured citations. Visuals are schematic drafts; edit the scenes before previewing.");
-    }catch(reason){setLoadError(reason instanceof Error?reason.message:"Cannot open approved script in Director.");}
+      setStatus(resumed?"Restored your saved scene edits. Review facts and rights before publication.":
+        "Video scenes are ready. Preview them or adjust individual shots while your draft is being made.");
+    }catch(reason){setLoadError(reason instanceof Error?reason.message:"Cannot open this script in Director.");}
     });
     return ()=>{active=false;};
   },[researchArtifactId,projectId,acceptProject]);
@@ -366,7 +366,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         <div>
           <p className="text-xs font-medium text-muted-foreground">{sampleMode?"Interactive sample loaded":"Video project loaded"}</p>
           <p className="mt-1 text-base font-semibold">{dossier.topic.title}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{bundle.plan.shots.length} scenes · {sampleMode?"Synthetic demo · explore without voice setup":"Editable source-linked draft"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{bundle.plan.shots.length} scenes · {sampleMode?"Synthetic demo · explore without voice setup":"Editable video draft"}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" icon={<Download className="size-4"/>} disabled={dirty||busy}

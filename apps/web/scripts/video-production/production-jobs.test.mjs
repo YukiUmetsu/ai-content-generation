@@ -9,7 +9,7 @@ function fakeScheduler(){
   const fetcher=async (url,init)=>{
     const path=new URL(url).pathname;
     calls.push({path,method:init?.method,body:init?.body?JSON.parse(init.body):null});
-    if(path==="/api/jobs")return Response.json({created:true,job:{id:"job-test",state:"RUNNING"},nodes});
+    if(path==="/api/jobs")return Response.json({created:true,job:{id:"job-test",state:"RUNNING"},nodes:[...nodes].reverse()});
     if(path.endsWith("/start"))return Response.json({attempt:{id:`attempt-${active}`}});
     if(path.endsWith("/succeed")){
       nodes[active].state="SUCCEEDED";
@@ -29,6 +29,7 @@ test("video production submits a real dependent DAG and advances stages in order
   const tracker=createProductionJobTracker({fetcher:scheduler.fetcher,origin:"http://127.0.0.1:8787"});
   const jobId=await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:"run-1"});
   assert.equal(jobId,"job-test");
+  assert.equal(scheduler.calls[1].path,"/api/jobs/job-test/nodes/node-0/start");
   const submission=scheduler.calls[0].body;
   assert.equal(submission.jobKind,"video-production");
   assert.ok(!JSON.stringify(submission).includes("apiKey"));
@@ -57,4 +58,20 @@ test("duplicate active production jobs do not execute twice",async()=>{
   const fetcher=async()=>Response.json({created:false,job:{id:"existing",state:"RUNNING"},nodes:[]});
   const tracker=createProductionJobTracker({fetcher,origin:"http://127.0.0.1:8787"});
   await assert.rejects(tracker.start({productionId:"production-"+"a".repeat(24),revision:"a",runId:"b"}),/already running/i);
+});
+
+test("a failed production explicitly retries its failed node while retaining successful work",async()=>{
+  const nodes=PRODUCTION_NODES.map((nodeKey,i)=>({id:`node-${i}`,nodeKey,
+    state:i<2?"SUCCEEDED":i===2?"FAILED":"CANCELLED"}));
+  const calls=[];
+  const fetcher=async (url)=>{
+    const path=new URL(url).pathname;calls.push(path);
+    if(path==="/api/jobs")return Response.json({created:false,job:{id:"existing",state:"FAILED"},nodes});
+    if(path.endsWith("/retry")){nodes[2].state="READY";return Response.json({job:{id:"existing",state:"RUNNING"},nodes:[...nodes].reverse()});}
+    if(path.endsWith("/start"))return Response.json({attempt:{id:"attempt-2"}});
+    throw Error(`Unexpected ${path}`);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  assert.equal(await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:"second"}),"existing");
+  assert.deepEqual(calls,["/api/jobs","/api/jobs/existing/retry","/api/jobs/existing/nodes/node-2/start"]);
 });
