@@ -32,11 +32,41 @@ function config(input,{ambience=false}={}){
 async function read(root,projectId){
   let value;
   try{value=JSON.parse(await readFile(file(root,projectId),"utf8"));}
-  catch(error){if(error.code==="ENOENT")return {schemaVersion:1,kind:"contentgen-sound-design",layers:[],ambience:null};
+  catch(error){if(error.code==="ENOENT")return {schemaVersion:1,kind:"contentgen-sound-design",layers:[],ambience:null,ambienceMode:"auto"};
     fail("saved sound design is unreadable or invalid");}
   if(value?.schemaVersion!==1||value.kind!=="contentgen-sound-design"||!Array.isArray(value.layers)||
     value.layers.length>80||!(value.ambience===null||typeof value.ambience==="object"))fail("saved format");
+  // Existing projects with no saved mode preserve their historical editor
+  // intent: null meant off, and a selected ambience meant pinned.
+  if(value.ambienceMode===undefined)value.ambienceMode=value.ambience?"pin":"off";
+  if(!["auto","pin","off"].includes(value.ambienceMode)||
+    (value.ambienceMode==="pin")!==Boolean(value.ambience))fail("saved music mode");
   return value;
+}
+
+/** Deterministic, local-only matching; never pulls unreviewed Openverse media. */
+export function recommendReviewedMusic(bundle,library){
+  const sound=Array.isArray(bundle?.plan?.sound)?bundle.plan.sound:[];
+  const shots=Array.isArray(bundle?.plan?.shots)?bundle.plan.shots:[];
+  const narrative=[bundle?.plan?.story?.question,...sound.map(x=>x?.narration),
+    ...shots.map(x=>x?.onScreenText)].filter(x=>typeof x==="string").join(" ").toLowerCase();
+  const exploration=/\b(travel|journey|explor|adventur|world|geograph|planet|country|countries)\w*\b/u.test(narrative);
+  const serious=/\b(cost|tax|debt|risk|mortgage|expense|insurance|repair|budget|finance|money)\w*\b/u.test(narrative);
+  const hints=exploration?["gentle","ambient","uplifting","journey","hopeful","instrumental","background"]:
+    serious?["subtle","minimal","ambient","calm","gentle","instrumental","background"]:
+      ["calm","gentle","ambient","soft","minimal","instrumental","background"];
+  const candidates=library.filter(x=>x.assetType==="music"&&x.license==="cc0"&&
+    x.rightsStatus==="user-reviewed"&&typeof x.localPath==="string"&&
+    /^[a-f\d]{64}$/iu.test(x.sha256??""));
+  const ranking=candidates.map(asset=>{
+    const words=[asset.title,...(Array.isArray(asset.tags)?asset.tags:[])].filter(x=>typeof x==="string")
+      .join(" ").toLowerCase();
+    const count=hints.filter(keyword=>new RegExp(`\\b${keyword}\\b`,"u").test(words)).length;
+    const intrusive=/\b(heavy|aggressive|loud|epic|horror|metal|drums|hardcore)\b/u.test(words);
+    return {asset,score:count*3-(intrusive?9:0)};
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||
+    String(a.asset.assetId).localeCompare(String(b.asset.assetId)));
+  return ranking[0]?.asset??null;
 }
 
 async function approved(root,assetId,sha256,{ambience=false}={}){
@@ -70,10 +100,13 @@ export async function setSoundDesign(input,{root=DEFAULT_ROOT}={}){
     if(index<0)fail("unknown layer identifier");
     saved.layers.splice(index,1);result={...result,layerId};
   }else if(input.action==="ambience"){
-    if(input.assetId===null)saved.ambience=null;
+    if(input.assetId===null){saved.ambience=null;saved.ambienceMode="off";}
     else{const item=config(input,{ambience:true});await approved(root,item.assetId,item.sha256,{ambience:true});
-      saved.ambience=item;}
+      saved.ambience=item;saved.ambienceMode="pin";}
     result={...result,ambienceEnabled:saved.ambience!==null};
+  }else if(input.action==="auto-ambience"){
+    saved.ambience=null;saved.ambienceMode="auto";
+    result={...result,ambienceMode:"auto"};
   }else fail("unsupported sound action");
   const path=file(root,projectId),parent=dirname(path);
   await mkdir(parent,{recursive:true,mode:0o700});
@@ -87,7 +120,7 @@ export async function setSoundDesign(input,{root=DEFAULT_ROOT}={}){
 /** Strict resolution for both Check and Start, never trust stored file paths. */
 export async function resolveSoundDesign({projectId,bundle},{root=DEFAULT_ROOT}={}){
   const saved=await read(root,projectId);
-  if(!saved.layers.length&&!saved.ambience)return {layers:[],ambience:null};
+  if(!saved.layers.length&&saved.ambienceMode==="off")return {layers:[],ambience:null,ambienceMode:"off"};
   const shots=bundle?.plan?.shots;
   if(!Array.isArray(shots)||shots.length<1||shots.length>160||
     shots.some(x=>!ID.test(x?.id??""))||new Set(shots.map(x=>x.id)).size!==shots.length)
@@ -106,7 +139,12 @@ export async function resolveSoundDesign({projectId,bundle},{root=DEFAULT_ROOT}=
     if(counts.get(clip.shotId)>4)fail("maximum four layers per shot");
     return {layerId,...clip,...resolveAsset(clip)};
   });
-  const ambience=saved.ambience?(()=>{const setting=config(saved.ambience,{ambience:true});
+  const ambience=saved.ambienceMode==="auto"?(()=>{
+    const music=recommendReviewedMusic(bundle,library);
+    return music?{assetId:music.assetId,sha256:music.sha256,gainDb:-34,fadeInMs:1200,
+      fadeOutMs:1500,title:music.title,license:music.license,rightsStatus:music.rightsStatus,
+      localPath:music.localPath}:null;
+  })():saved.ambience?(()=>{const setting=config(saved.ambience,{ambience:true});
     return {...setting,...resolveAsset(setting,{ambience:true})};})():null;
-  return {layers,ambience};
+  return {layers,ambience,ambienceMode:saved.ambienceMode};
 }

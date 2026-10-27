@@ -22,8 +22,8 @@ type SoundMix={gainDb:number;fadeInMs:number;fadeOutMs:number};
 type SoundLayer=SoundMix&{layerId:string;shotId:string;assetId:string;sha256:string;
   title:string;trigger:Trigger;offsetMs:number};
 type SoundAmbience=SoundMix&{assetId:string;sha256:string;title:string};
-type SoundDesign={layers:SoundLayer[];ambience:SoundAmbience|null};
-const emptyDesign:SoundDesign={layers:[],ambience:null};
+type SoundDesign={layers:SoundLayer[];ambience:SoundAmbience|null;ambienceMode:"auto"|"pin"|"off"};
+const emptyDesign:SoundDesign={layers:[],ambience:null,ambienceMode:"auto"};
 type CueDraft=SoundMix&{assetId:string;trigger:Trigger;offsetMs:number};
 
 function SupplementaryLayerRow({layer,busy,unsupportedReveal,onSave,onRemove}:{layer:SoundLayer;busy:boolean;
@@ -114,7 +114,9 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
 
   function showDesign(raw:unknown){
     const value=raw as Partial<SoundDesign>|null;
-    const resolved={layers:Array.isArray(value?.layers)?value.layers:[],ambience:value?.ambience??null};
+    const resolved:SoundDesign={layers:Array.isArray(value?.layers)?value.layers:[],ambience:value?.ambience??null,
+      ambienceMode:["auto","pin","off"].includes(value?.ambienceMode??"")?value!.ambienceMode!:
+        value?.ambience?"pin":"off"};
     setDesign(resolved);
     setAmbientDraft({assetId:resolved.ambience?.assetId??"",gainDb:resolved.ambience?.gainDb??-33,
       fadeInMs:resolved.ambience?.fadeInMs??1000,fadeOutMs:resolved.ambience?.fadeOutMs??1500});
@@ -160,6 +162,13 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
         gainDb:ambientDraft.gainDb,fadeInMs:ambientDraft.fadeInMs,fadeOutMs:ambientDraft.fadeOutMs});
       await reload();setNotice(disable?"Ambience disabled.":"Ambience saved. Run Check again before rendering.");}
     catch(error){setNotice(error instanceof Error?error.message:"Could not save ambience.");}
+    finally{setBusy("");}
+  }
+  async function restoreAutomaticMusic(){
+    setBusy("design");setNotice("");
+    try{await localSfx("sound-design",{action:"auto-ambience",projectId});await reload();
+      setNotice("Automatic music restored. The next draft will use matching reviewed CC0 music, if available.");}
+    catch(error){setNotice(error instanceof Error?error.message:"Could not restore automatic music.");}
     finally{setBusy("");}
   }
   async function discover(){
@@ -242,7 +251,7 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
         </div>
         <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Scene strip</h3>
-          <p className="text-xs text-muted-foreground">{bundle.plan.shots.length} scenes · {design.layers.length} added cues · ambience {design.ambience?"on":"off"}</p>
+          <p className="text-xs text-muted-foreground">{bundle.plan.shots.length} scenes · {design.layers.length} added cues · music {design.ambienceMode==="auto"?design.ambience?"automatic":"available when matched":design.ambienceMode==="pin"?"selected":"off"}</p>
         </div>
         <nav aria-label="Sound scene selector" className="mt-2 flex snap-x gap-2 overflow-x-auto pb-1">
           {bundle.plan.shots.map((shot,i)=>{
@@ -479,10 +488,16 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
             ambience={design.ambience} library={library}/>
           <details className="space-y-3 rounded-surface border border-border bg-surface p-4">
             <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm font-semibold">
-              <span className="flex items-center gap-2"><Headphones className="size-4 text-primary"/>Background music / ambience · {design.ambience?"on":"off"}</span>
+              <span className="flex items-center gap-2"><Headphones className="size-4 text-primary"/>Background music / ambience · {design.ambienceMode==="auto"?"automatic":design.ambienceMode==="pin"?"selected":"off"}</span>
               <span className="rounded-full border border-border px-2 py-1 text-[11px] font-normal text-muted-foreground">Full video</span>
             </summary>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Select a reviewed CC0 track. It loops quietly beneath narration, with your fade and volume settings.</p>
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">New videos can choose a matching track from your reviewed CC0 library. You can pin another track or turn music off. Nothing is downloaded automatically.</p>
+            <p className="mt-2 rounded-control bg-surface-subtle px-3 py-2 text-xs text-muted-foreground" aria-live="polite">
+              {design.ambienceMode==="auto"?(design.ambience?<>Automatically selected: <strong className="text-foreground">{design.ambience.title}</strong> · quiet beneath narration</>:
+                "No matching reviewed music yet. Import a suitable CC0 track in Library, or leave the video without music."):
+                design.ambienceMode==="pin"?<>Your selected track: <strong className="text-foreground">{design.ambience?.title}</strong></>:
+                  "Music is off. Your choice will be preserved when you regenerate the video."}
+            </p>
             <label className="mt-3 block text-xs">Music or ambience asset
               <select aria-label="Music or ambience asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
                 disabled={!!busy} value={ambientDraft.assetId}
@@ -503,7 +518,8 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button size="sm" variant="outline" disabled={!!busy||!ambientDraft.assetId} onClick={()=>void saveAmbience()}>Save ambience</Button>
-              <Button size="sm" variant="subtle" disabled={!!busy||!design.ambience} onClick={()=>void saveAmbience(true)}>Disable ambience</Button>
+              <Button size="sm" variant="outline" disabled={!!busy||design.ambienceMode==="auto"} onClick={()=>void restoreAutomaticMusic()}>Use automatic music</Button>
+              <Button size="sm" variant="subtle" disabled={!!busy||design.ambienceMode==="off"} onClick={()=>void saveAmbience(true)}>Disable music</Button>
             </div>
             {design.ambience&&<p className="mt-2 text-xs text-muted-foreground">Active: {design.ambience.title} · {design.ambience.gainDb} dB</p>}
           </details>
