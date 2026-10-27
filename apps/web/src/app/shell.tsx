@@ -12,6 +12,7 @@ import { ResearchWorkspace, type ResearchIdeaHandoff } from "./research-workspac
 import { JobsWorkspace } from "./jobs-workspace";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
 import { ProductionWorkspace } from "./production-workspace";
+import { CharacterPackInspector } from "@/features/character-studio/CharacterPackInspector";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
 import type { EditorialDraft } from "./editorial-brief";
@@ -244,6 +245,12 @@ export function Shell() {
                   catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "")}/>
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} projects={catalog.projects} />
+          ) : activeSection === "characters" ? (
+            <main className="min-w-0 flex-1 overflow-y-auto px-5 pb-10 sm:px-8" aria-label="Character Studio workspace">
+              <div className="mx-auto max-w-6xl">
+                <CharacterPackInspector locale={locale} projectId={catalog.activeProjectId} />
+              </div>
+            </main>
           ) : (
             <CatalogWorkspace
               key={activeSection + ":" + catalog.activeProjectId}

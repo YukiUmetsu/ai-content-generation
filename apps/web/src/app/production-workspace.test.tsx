@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cloneStoryboard } from "@/features/storyboard-planner/model/types";
 import { HVAC_EXAMPLE } from "@/features/storyboard-planner/model/hvac-example";
-import { saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
+import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ProductionWorkspace } from "./production-workspace";
 import type { StudioCatalog } from "./catalog-model";
+import { loadScriptDraft } from "./script-review-model";
+import { productionMediaSource } from "./production-lineage";
 
 const catalog:StudioCatalog={version:1,activeProjectId:"project-demo",
   projects:[{id:"project-demo",name:"Margin Atlas",notes:"Explain housing costs",
@@ -13,15 +15,18 @@ const noop=()=>{};
 const props={locale:"en" as const,catalog,onSelectProject:noop,onOpenResearch:noop,
   onOpenStoryboard:noop,onOpenVisuals:noop,onOpenAudio:noop,onOpenExport:noop,
   onOpenNav:noop,onCreateStoryboard:()=>true,onUseVideo:()=>true};
+const stageButton=(label:string)=>within(screen.getByRole("navigation",{name:"Production stages"}))
+  .getByRole("button",{name:new RegExp(label,"i")});
 describe("Production eight-step workspace",()=>{
   afterEach(()=>{localStorage.clear();sessionStorage.clear();vi.unstubAllGlobals();});
 
   it("always exposes every stage, highlights the current one and starts with Project",()=>{
     render(<ProductionWorkspace {...props}/>);
     expect(screen.getByRole("navigation",{name:"Production stages"})).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:"Setup stage"})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("navigation",{name:"Production stages"})).toHaveAttribute("data-km-stepper");
+    expect(stageButton("Setup")).toHaveAttribute("aria-current","step");
     for(const name of ["Discover","Select Idea","Script","Plan Scenes","Create Video","Publish Kit","Export"]){
-      expect(screen.getByRole("button",{name:`${name} stage`})).toBeInTheDocument();
+      expect(stageButton(name)).toBeInTheDocument();
     }
     expect(screen.getByRole("combobox",{name:"Project / brand"})).toHaveValue("project-demo");
     expect(screen.getByRole("group",{name:"Target platforms"})).toBeInTheDocument();
@@ -48,8 +53,8 @@ describe("Production eight-step workspace",()=>{
       return new Response(JSON.stringify({productions:[],items:[]}),{status:200});
     }));
     render(<ProductionWorkspace {...props}/>);
-    expect(screen.getByRole("button",{name:"Select Idea stage"})).toHaveAttribute("aria-current","step");
-    await waitFor(()=>expect(within(screen.getByRole("button",{name:"Discover stage"}))
+    expect(stageButton("Select Idea")).toHaveAttribute("aria-current","step");
+    await waitFor(()=>expect(within(stageButton("Discover"))
       .getByText("Running")).toBeInTheDocument());
   });
 
@@ -57,10 +62,18 @@ describe("Production eight-step workspace",()=>{
     render(<ProductionWorkspace {...props}/>);
     fireEvent.click(screen.getByRole("button",{name:"TikTok"}));
     expect(screen.getByRole("button",{name:"TikTok"})).toHaveAttribute("aria-pressed","true");
-    fireEvent.click(screen.getByRole("button",{name:"Export stage"}));
-    expect(screen.getByRole("button",{name:"Export stage"})).toHaveAttribute("aria-current","step");
-    fireEvent.click(screen.getByRole("button",{name:"Setup stage"}));
+    fireEvent.click(stageButton("Export"));
+    expect(stageButton("Export")).toHaveAttribute("aria-current","step");
+    fireEvent.click(stageButton("Setup"));
     expect(screen.getByRole("button",{name:"TikTok"})).toHaveAttribute("aria-pressed","true");
+  });
+  it("presents failed stage status through the accessible Kumiki stepper",()=>{
+    render(<ProductionWorkspace {...props}/>);
+    const discover=stageButton("Discover");
+    expect(discover).toHaveAccessibleName(/Discover/);
+    expect(discover).not.toHaveAttribute("aria-current");
+    fireEvent.click(discover);
+    expect(discover).toHaveAttribute("aria-current","step");
   });
 
   it("links an existing storyboard to the correct owner key and flags repeated scenes",()=>{
@@ -70,7 +83,7 @@ describe("Production eight-step workspace",()=>{
     saveProjectStoryboard("project-demo",board);
     const open=vi.fn();
     render(<ProductionWorkspace {...props} onOpenStoryboard={open}/>);
-    fireEvent.click(screen.getByRole("button",{name:"Plan Scenes stage"}));
+    fireEvent.click(stageButton("Plan Scenes"));
     expect(screen.getByRole("heading",{name:"Review your scenes"})).toBeInTheDocument();
     expect(screen.getByText(/1 potentially repeated scene/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:"Edit scene 3"}));
@@ -88,8 +101,10 @@ describe("Production eight-step workspace",()=>{
     const sources=[{id:"source_1",title:"Insurance costs",url:evidence[0].sourceUrl,provider:"captured-web",observedAt:1792929600}];
     const calls:string[]=[];
     const generatedSections:string[]=[];
+    let registeredAssets:Array<Record<string,string>>=[];
     vi.stubGlobal("fetch",vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{
       const path=String(input);calls.push((init?.method??"GET")+" "+path);
+      if(path.includes("/api/contentgen-video/assets/"))return Response.json({assets:registeredAssets});
       if(path.includes("/production-evidence/"))return Response.json({snapshot:init?.method==="POST"?
         {version:1,productionId:production.id,projectId:production.projectId,ideaId:production.ideaId,evidence,sources,warnings:[]}:null});
       if(path.endsWith("/ideas"))return Response.json({ideas:[{id:"idea-1",sessionId:"session-1",runId:"run-1",title:production.brief.title,sources:[],evidence:[]}]});
@@ -111,8 +126,20 @@ describe("Production eight-step workspace",()=>{
     expect(screen.getByText(evidence[0].quote,{selector:"blockquote"})).toBeInTheDocument();
     fireEvent.click(reviewed);
     expect(screen.getByText("Reviewed locally")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button",{name:"Create Video stage"}));
-    expect(screen.getByRole("button",{name:"Open visual tools"})).toBeEnabled();
+    fireEvent.click(stageButton("Create Video"));
+    expect(screen.getByRole("button",{name:/Set up voice & generate draft/i})).toBeEnabled();
+    expect(screen.getByRole("button",{name:"Edit video scenes"})).toBeEnabled();
+    const approved=loadScriptDraft(production.id,"youtube").draft;
+    const outline=loadProjectStoryboard(production.id).board;
+    expect(approved?.updatedAt).toBeTruthy();
+    expect(outline).toBeTruthy();
+    registeredAssets=[{id:"video-current",kind:"video",platform:"youtube",filename:"saved-draft.mp4",
+      sourceRevision:productionMediaSource(approved!.updatedAt,outline!),
+      downloadUrl:"/api/contentgen-video/media/run-1/video.mp4"}];
+    fireEvent.click(await screen.findByRole("button",{name:"Refresh files"}));
+    expect(await screen.findByRole("button",{name:"Watch & export MP4"})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Watch & export MP4"}));
+    expect(screen.getByLabelText("Saved ContentGen video draft")).toHaveAttribute("src","/api/contentgen-video/media/run-1/video.mp4");
   });
 
 });

@@ -5,6 +5,7 @@
   "manifest": "registry.json",
   "items": [
     "button",
+    "stepper",
     "tabs",
     "surface-card",
     "sidebar",

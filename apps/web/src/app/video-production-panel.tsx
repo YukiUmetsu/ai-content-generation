@@ -41,8 +41,9 @@ async function request(path:string,payload?:unknown){
   if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
   return data;
 }
-export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;recheckToken?:number}){
-  const [stage,setStage]=useState<Stage>("preview");
+export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
+  initialStage="preview",autoOpenVisuals=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;recheckToken?:number}){
+  const [stage,setStage]=useState<Stage>(initialStage);
   const [settings,setSettings]=useState<Settings>(defaults);
   const [sampleStatus,setSampleStatus]=useState<SampleStatus>({state:"idle",message:""});
   const sampleRevision=useRef(0);
@@ -56,8 +57,11 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const lastBundle=useRef(bundle);
   const [animaticUrl,setAnimaticUrl]=useState("");
   const [ready,setReady]=useState(false);
-  const [working,setWorking]=useState("");
+  const [working,setWorking]=useState(initialStage!=="preview"||autoOpenVisuals?"opening":"");
   const [notice,setNotice]=useState("");
+  const autoBusy=useRef(false);
+  const inputRevision=useRef(0);
+  const initialEntry=useRef(false);
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
   const [sfxSummary,setSfxSummary]=useState<SfxSummary|null>(null);
   // Returning from scene/media/sound edits invalidates an old UI readiness approval,
@@ -77,8 +81,9 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         {state:"idle",phase:"idle",message:"",report:null});
     }
   }
-  useEffect(()=>{if(recheckToken!==0)sampleRevision.current++;},[recheckToken]);
+  useEffect(()=>{if(recheckToken!==0){sampleRevision.current++;inputRevision.current++;}},[recheckToken]);
   const change=(patch:Partial<Settings>)=>{
+    inputRevision.current++;
     sampleRevision.current++;
     setSampleStatus(current=>current.state==="generating"?{
       state:"generating",message:"An older sample is finishing. Cancel it or wait before auditioning the new voice."
@@ -90,8 +95,31 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   };
   const payload={dossier,bundle};
   useEffect(()=>{
+    if(initialEntry.current)return;
+    if(initialStage==="preview"&&!autoOpenVisuals)return;
+    let active=true;
+    const endpoint=initialStage==="preview"?"live-preview":"plan";
+    void request(endpoint,{dossier,bundle}).then(result=>{
+      if(!active)return;
+      if(initialStage==="preview"){
+        const live=result as unknown as LiveVisualPreviewData;
+        if(live.kind!=="live-renderer-preview/v1"||live.sourcePlanSha256?.length!==64)
+          throw Error("The visual editor received an invalid scene preview.");
+        setActualPreview(live);setPreviewFocus(selectedShotId);
+      }else{
+        const planned=result as unknown as Preview;
+        if(!Array.isArray(planned.job?.beats))throw Error("The scene plan has no renderable scenes.");
+        setPreview(planned);setStage(initialStage);
+      }
+      initialEntry.current=true;
+    }).catch(reason=>{if(active)setNotice(reason instanceof Error?reason.message:"Could not open the production tools.");})
+      .finally(()=>{if(active)setWorking("");});
+    return ()=>{active=false;};
+  },[initialStage,autoOpenVisuals,dossier,bundle,selectedShotId]);
+  useEffect(()=>{
     if(lastBundle.current===bundle)return;
     lastBundle.current=bundle;
+    inputRevision.current++;
     sampleRevision.current++;
     setSampleStatus(current=>current.state==="generating"?{
       state:"generating",message:"Scene changed during voice synthesis. Cancel or wait for this sample before retrying."
@@ -208,15 +236,48 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     }catch(error){setNotice(error instanceof Error?error.message:"Local readiness check failed.");}
     finally{setWorking("");}
   }
+  async function generateDraft(){
+    if(autoBusy.current||state.state==="rendering")return;
+    autoBusy.current=true;
+    const revision=inputRevision.current;
+    setWorking("auto");setNotice("Checking narration and local render requirements…");
+    try{
+      if(!preview){
+        const result=await request("plan",payload) as unknown as Preview;
+        if(!Array.isArray(result.job?.beats)||!result.job.beats.length)
+          throw Error("The approved script has no renderable narration scenes.");
+        if(revision!==inputRevision.current)return;
+        setPreview(result);
+      }
+      const requestInput={...payload,settings,...(productionId?{productionId,sourceRevision}:{})};
+      const response=await request("check",requestInput);
+      if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
+      const report=response.report as Report;
+      if(!report||typeof report.ready!=="boolean"||!Array.isArray(report.findings))
+        throw Error("The renderer returned an invalid readiness report.");
+      setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
+      setReady(report.ready);
+      setState({state:report.ready?"ready":"blocked",phase:"preflight",
+        message:report.ready?"Starting your video…":"Resolve these requirements and retry.",report});
+      if(!report.ready){setNotice("Your work is saved. Resolve the requirements below and retry.");return;}
+      const result=await request("start",{...requestInput,confirmRender:true});
+      if(result.started!==true)throw Error("The local renderer did not confirm startup.");
+      setStage("export");setReady(false);
+      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Keep the local Studio running.",report});
+      setNotice("Visuals, narration, sound and MP4 rendering are now running. This does not publish anything.");
+    }catch(reason){
+      setNotice(reason instanceof Error?reason.message:"Could not generate the draft video.");
+    }finally{autoBusy.current=false;setWorking("");}
+  }
   async function start(){
     if(!ready)return;
     setWorking("start");setNotice("");
     try{
       const r=await request("start",{...payload,settings,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
+      if(!r.started)throw Error("Studio did not confirm render startup.");
       setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
       setReady(false);
       setNotice("Render started. Only files in the new job-owned output folder will be written.");
-      if(!r.started)throw Error("Studio did not confirm render startup.");
     }catch(error){setNotice(error instanceof Error?error.message:"Unable to start render.");}
     finally{setWorking("");}
   }
@@ -351,6 +412,17 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
           </div>
           {sampleStatus.message&&<p role="status" className="text-xs text-muted-foreground">{sampleStatus.message}</p>}
           {sampleStatus.state==="done"&&sampleStatus.audioUrl&&<audio key={sampleStatus.audioUrl} aria-label="Voice sample" controls preload="none" src={sampleStatus.audioUrl} className="w-full"/>}
+        </div>
+        <div className="rounded-control border border-primary/30 bg-primary/5 p-4 space-y-3">
+          <div><h4 className="font-semibold">Generate your complete draft</h4>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">After voice setup, ContentGen checks the local tools and automatically renders the scenes, narration, sound and MP4. Nothing is uploaded.</p></div>
+          <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
+            <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}
+          </Button>
+          {state.state==="blocked"&&state.report&&<div role="alert" className="rounded-lg border border-status-warning/30 bg-surface p-3 text-xs">
+            <p className="font-semibold">Before the video can start</p>
+            {state.report.findings.map((finding,index)=><p key={index} className="mt-1">{finding.message}</p>)}
+          </div>}
         </div>
         <div className="flex items-center justify-between gap-2"><Button variant="outline" onClick={()=>void navigate("preview")}><ArrowLeft className="mr-2 size-4"/>Preview</Button>
           <Button onClick={()=>void navigate("review")}>Continue to final review <ArrowRight className="ml-2 size-4"/></Button></div>

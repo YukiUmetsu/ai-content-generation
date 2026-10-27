@@ -21,11 +21,13 @@ describe("Kumiki-generated publishing artwork", () => {
   it("produces real SVG previews for platform covers and long-form article illustrations", () => {
     for (const target of ["youtube", "youtube-shorts", "tiktok", "instagram", "facebook"] as const) {
       const artwork = generatePlatformArtwork(input, target, input.title);
-      expect(artwork).toHaveLength(1);
+      expect(artwork).toHaveLength(3);
       expect(artwork[0].svg).toContain("<svg");
       expect(artwork[0].svg).toContain("The initial question");
       expect(artwork[0].width).toBeGreaterThan(100);
       expect(artwork[0].height).toBeGreaterThan(100);
+      expect(new Set(artwork.map((art) => art.svg)).size).toBe(3);
+      expect(new Set(artwork.map((art) => art.filename)).size).toBe(3);
     }
     const blog = generatePlatformArtwork(input, "blog", input.title);
     expect(blog).toHaveLength(4);
@@ -63,6 +65,14 @@ describe("Kumiki-generated publishing artwork", () => {
     const malicious = { ...input, title: `A title <script>alert('x')</script>` };
     const art = generatePlatformArtwork(malicious, "youtube", malicious.title)[0];
     expect(art?.svg).not.toContain("<script>");
+  });
+
+  it("changes cover pixels when the editor writes a new headline without changing the approved source", () => {
+    const original = generatePlatformArtwork(input, "youtube", input.title);
+    const alternate = generatePlatformArtwork(input, "youtube", "The Hidden Paperwork Problem");
+    expect(alternate).toHaveLength(3);
+    expect(alternate.map((art) => art.svg)).not.toEqual(original.map((art) => art.svg));
+    expect(sourceSignature(input, "youtube")).toBe(sourceSignature(input, "youtube"));
   });
 
   it("cannot generate covers or download article prose from unapproved or stale scripts", () => {

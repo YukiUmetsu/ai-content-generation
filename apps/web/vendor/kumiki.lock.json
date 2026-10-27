@@ -4,6 +4,7 @@
   "commit": "e1f0d04e826c551a6e6c50c42ab4416cb51cf133",
   "items": [
     "button",
+    "stepper",
     "tabs",
     "surface-card",
     "sidebar",
@@ -55,6 +56,13 @@
       "target": "src/components/ui/button.tsx",
       "sha256": "9ba8839d2e6657cfb81d303d450dcc146dac85fa9ec1b9fd8f8bf6f4da2d8aae",
       "bytes": 5510
+    },
+    {
+      "item": "stepper",
+      "source": "registry/ui/stepper.tsx",
+      "target": "src/components/ui/stepper.tsx",
+      "sha256": "d21f2ee549d18b16b0ebd7e491278422cba6a654853e7416aebf314aafb8d72f",
+      "bytes": 36254
     },
     {
       "item": "tabs",

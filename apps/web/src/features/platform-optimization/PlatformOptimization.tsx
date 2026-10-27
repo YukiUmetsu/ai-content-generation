@@ -13,6 +13,32 @@ import {
 import { loadPlatformOptimization, savePlatformOptimization } from "./storage";
 import { artworkPng, canExportPlatformArtwork, generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog } from "./generated-art";
 
+type CoverLayout = "story" | "tiles" | "editorial";
+type CoverDraft = { key: string; headline: string; layout: CoverLayout };
+const coverLayouts: readonly { id: CoverLayout; name: string; suffix: string }[] = [
+  { id: "story", name: "Story layout", suffix: "" },
+  { id: "tiles", name: "Tile layout", suffix: "-tiles" },
+  { id: "editorial", name: "Editorial layout", suffix: "-editorial" },
+];
+function loadCoverDraft(key: string, initialHeadline: string): CoverDraft {
+  const fallback: CoverDraft = { key, headline: initialHeadline, layout: "story" };
+  if (!key) return fallback;
+  try {
+    const stored = JSON.parse(localStorage.getItem(key) || "null") as Record<string, unknown> | null;
+    if (!stored || typeof stored.headline !== "string" || stored.headline.length > 110 ||
+      !coverLayouts.some((layout) => layout.id === stored.layout)) return fallback;
+    return { key, headline: stored.headline, layout: stored.layout as CoverLayout };
+  } catch { return fallback; }
+}
+
+function coverScriptSignature(input: PlatformOptimizationInput, platform: PlatformTarget): string {
+  // Artwork copy follows this destination's script, not its download assets,
+  // citation review status, unrelated metadata, or the BrandKit palette.
+  return sourceSignature({...input,assets:[],sourceEvidence:[],sourceRevision:undefined,
+    summary:undefined,audience:undefined,primaryKeyword:undefined,brandColors:undefined,
+    approvedPlatforms:[platform]},platform);
+}
+
 interface PlatformOptimizationProps {
   input: PlatformOptimizationInput;
   onManifestChange?: (manifest: PlatformOptimizationManifest) => void;
@@ -214,10 +240,23 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
 
   const pkg = manifest.packages.find((item) => item.platform === selected) ?? manifest.packages[0];
   const platform = pkg?.platform;
-  // Covers are immutable derivatives of the approved production topic. An
-  // editable upload title must not silently mutate bytes behind the same asset
-  // identity; thumbnail copy can be edited as a separate future asset revision.
-  const artwork = useMemo(() => platform ? generatePlatformArtwork(input, platform, input.title) : [], [input, platform]);
+  // A cover is an independent, explicitly edited download. It never overwrites
+  // an approved script, upload title, or a saved media asset with the same ID.
+  // Rendered MP4/caption assets arrive asynchronously after a successful job.
+  // Their addition must not erase a manually chosen thumbnail design.
+  const coverKey = platform ? `contentgen:cover-draft:v1:${input.productionId}:${platform}:${coverScriptSignature(input,platform)}` : "";
+  const [coverDraft,setCoverDraft] = useState<CoverDraft>(() => loadCoverDraft(coverKey,input.title));
+  if (coverDraft.key !== coverKey) setCoverDraft(loadCoverDraft(coverKey,input.title));
+  const activeCover = coverDraft.key === coverKey ? coverDraft : loadCoverDraft(coverKey,input.title);
+  const updateCover = (update: Partial<Omit<CoverDraft,"key">>) => {
+    const next = {...activeCover,...update};
+    setCoverDraft(next);
+    try {localStorage.setItem(coverKey,JSON.stringify({headline:next.headline,layout:next.layout}));}
+    catch(error){setWarning(error instanceof Error?`Cover is not saved: ${error.message}`:"Cover could not be saved locally.");}
+  };
+  const artwork = useMemo(() => platform ? generatePlatformArtwork(input,platform,
+    platform === "blog" ? input.title : activeCover.headline || input.title) : [], [input,platform,activeCover.headline]);
+  const chosenCover = artwork.find((art) => art.id === `cover-${platform}${coverLayouts.find((option) => option.id === activeCover.layout)?.suffix ?? ""}`) ?? artwork[0];
   const artApproved = Boolean(platform && canExportPlatformArtwork(input, platform));
   const showUploadTitle = platform !== "instagram" && platform !== "tiktok";
   const review = useMemo(() => pkg ? reviewPlatformPackage(pkg, availableInput) : null, [pkg, availableInput]);
@@ -399,16 +438,38 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
           </div>
 
           <div className={`${cardClass} space-y-4`}>
-            <SectionHeading note="Made locally with the pinned Kumiki renderer">Ready-made visuals</SectionHeading>
-            <p className="text-xs leading-relaxed text-muted-foreground">The approved script and original project topic supply every label. Editing an upload title does not silently change this cover. These are outline graphics, not invented data or licensed photography.</p>
+            <SectionHeading note="Made locally with Kumiki">{isBlog(platform) ? "Article illustrations" : "Thumbnail designer"}</SectionHeading>
             {artwork.length === 0 ? <p className="text-sm text-muted-foreground">Approve the current {PLATFORM_NAMES[platform]} script in the Script stage to generate download-ready artwork.</p> :
-              <div className="grid gap-3 sm:grid-cols-2">{artwork.map((art) => <div key={art.id} className="min-w-0 rounded-xl border border-border p-2.5">
+              isBlog(platform) ? <div className="grid gap-3 sm:grid-cols-2">{artwork.map((art) => <div key={art.id} className="min-w-0 rounded-xl border border-border p-2.5">
                 <img src={art.preview} alt={`${art.label}: outline of the current script`} className="aspect-video w-full rounded-lg bg-muted object-contain" />
                 <div className="mt-2 flex items-center justify-between gap-2"><span className="truncate text-xs font-semibold">{art.label}</span>
                   <button type="button" className="shrink-0 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground disabled:opacity-50"
                     disabled={!!exportingArt} onClick={() => void downloadArt(art.id)}>{exportingArt === art.id ? "Rendering…" : "PNG ↓"}</button></div>
-                <p className="mt-1 text-[11px] text-muted-foreground">{art.width}×{art.height} · script-derived</p>
-              </div>)}</div>}
+              </div>)}</div> : <div className="space-y-4" aria-label="Thumbnail design tools">
+                <h4 className="font-serif text-xl font-semibold">Design your thumbnail</h4>
+                <label className="block text-xs font-medium text-muted-foreground">Thumbnail headline
+                  <input className={`${inputClass} mt-1.5`} aria-label="Thumbnail headline" maxLength={110}
+                    value={activeCover.headline} onChange={(event) => updateCover({headline:event.target.value})}/>
+                </label>
+                {chosenCover && <img src={chosenCover.preview} alt="Selected thumbnail preview"
+                  className="w-full rounded-xl border border-border bg-muted object-contain"/>}
+                <div className="grid grid-cols-3 gap-2" role="group" aria-label="Thumbnail layouts">
+                  {coverLayouts.map((option)=>{
+                    const image=artwork.find((entry) => entry.id===`cover-${platform}${option.suffix}`);
+                    return <button type="button" key={option.id} aria-label={option.name} aria-pressed={activeCover.layout===option.id}
+                      disabled={!image} onClick={()=>updateCover({layout:option.id})}
+                      className={`rounded-xl border p-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activeCover.layout===option.id ? "border-primary bg-primary/10" : "border-border hover:border-primary/50"}`}>
+                      {image && <img src={image.preview} alt="" className="aspect-video w-full rounded-md bg-muted object-contain"/>}
+                      <span className="mt-1.5 block text-xs font-semibold">{option.name.replace(" layout","")}</span>
+                    </button>;
+                  })}
+                </div>
+                <button type="button" disabled={!chosenCover||!!exportingArt} onClick={()=>chosenCover&&void downloadArt(chosenCover.id)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+                  <Download className="size-4" aria-hidden /> {exportingArt ? "Rendering PNG…" : "Download selected thumbnail"}
+                </button>
+                <p className="text-xs text-muted-foreground">Three editable text-based layouts, no fabricated photos. Your headline and choice are saved for this script revision. Download the PNG to attach to your upload.</p>
+              </div>}
             {isBlog(platform) && <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
               <p className="text-sm font-semibold">{artApproved ? "Your illustrated article is ready to export" : "Approve your Blog script to unlock the illustrated article"}</p>
               <p className="text-xs text-muted-foreground">HTML includes the graphics inline. Markdown references the PNGs above—download those beside the article file.</p>
@@ -455,7 +516,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
         <aside className="space-y-4 xl:sticky xl:top-4">
           <div className={`${cardClass} space-y-3`}>
             <SectionHeading note="Illustrative text preview">Destination preview</SectionHeading>
-            {artwork[0] ? <img className="w-full rounded-xl border border-border object-contain" src={artwork[0].preview} alt={`${PLATFORM_NAMES[platform]} generated cover preview`} /> :
+            {chosenCover ? <img className="w-full rounded-xl border border-border object-contain" src={chosenCover.preview} alt={`${PLATFORM_NAMES[platform]} generated cover preview`} /> :
               <ThumbnailPlaceholder filename={(availableInput.assets ?? []).find((asset) => asset.id === (isBlog(platform) ? pkg.assetIds.hero : pkg.assetIds.thumbnail))?.filename}
                 colors={input.brandColors} />}
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

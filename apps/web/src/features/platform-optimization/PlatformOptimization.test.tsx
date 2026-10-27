@@ -106,5 +106,29 @@ describe("PlatformOptimization", () => {
     expect(screen.getByRole("button", { name: "Download Markdown" })).toBeDisabled();
     expect(screen.getByText(/Approve the current Blog \/ Website script in the Script stage/)).toBeInTheDocument();
   });
+
+  it("lets a creator change the thumbnail headline and choose distinct layouts, saved per script revision", () => {
+    const approved = {...input, approvedPlatforms:["youtube"]};
+    const view = render(<PlatformOptimization input={approved}/>);
+    expect(screen.getByRole("heading",{name:"Design your thumbnail"})).toBeInTheDocument();
+    const cover = screen.getByRole("img",{name:"Selected thumbnail preview"});
+    const first = cover.getAttribute("src");
+    fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),{target:{value:"The Hidden Costs"}});
+    expect(cover.getAttribute("src")).not.toBe(first);
+    const edited = cover.getAttribute("src");
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    expect(cover.getAttribute("src")).not.toBe(edited);
+    expect(screen.getByRole("button",{name:"Download selected thumbnail"})).toBeEnabled();
+    view.unmount();
+    const reopened = render(<PlatformOptimization input={approved}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
+    expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
+    reopened.rerender(<PlatformOptimization input={{...approved,assets:[
+      ...(approved.assets ?? []),{id:"video-2",kind:"video",platform:"youtube",filename:"final.mp4"}],
+      sourceEvidence:[{sourceId:"source-new",sourceUrl:"https://example.org/",reviewStatus:"verified"}],
+      brandColors:{primary:"#145E58",secondary:"#164B49",accent:"#EDAA46",background:"#FFF7E8",text:"#182C2B"}}}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
+    expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
+  });
 });
 
