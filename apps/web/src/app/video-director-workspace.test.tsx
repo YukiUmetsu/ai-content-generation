@@ -70,6 +70,27 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("opens an approved script's visual shortcut at the rendered scene editor",async()=>{
+    const productionId="production-"+"b".repeat(24);
+    sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
+      productionId,scriptRevision:"2026-10-27T00:00:00Z",sourcePrefix:"approved-script:",
+      dossier,bundle:{...bundle,researchSha256:"a".repeat(64),planSha256:"b".repeat(64)}
+    }));
+    vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+      if(String(input).endsWith("/live-preview"))return new Response(JSON.stringify({
+        kind:"live-renderer-preview/v1",schemaVersion:1,sourcePlanSha256:"a".repeat(64),
+        renderPlanSha256:"b".repeat(64),plan:{kind:"general-explainer-visual-plan",schemaVersion:1,chapters:[],
+          manifest:{schemaVersion:1,id:"test",width:1920,height:1080,durationFrames:1,fps:{num:30,den:1},preset:"youtube"},events:{}},
+        shotMap:[],timing:{basis:"estimated-text-only",spokenWpm:145,measuredNarration:false,note:""},visualLimits:[]
+      }),{status:200});
+      throw Error("Unexpected request");
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
+    expect(await screen.findByRole("heading",{name:"Preview & produce your draft"})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/04 Preview & Export/})).toHaveAttribute("aria-current","step");
+    expect(screen.queryByRole("heading",{name:"Find the right visuals"})).not.toBeInTheDocument();
+    sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
+  });
   it("rejects a saved project without any editable shots instead of crashing the scene editor",async()=>{
     const emptyBundle={...bundle,plan:{...plan,shots:[]}};
     render(<VideoDirectorWorkspace locale="en"/>);
@@ -333,7 +354,7 @@ describe("saved research to Video Director handoff",()=>{
     });
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId} focusStage="visuals"/>);
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/02 Visual assets/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
     expect(screen.getByRole("button",{name:/01 Storyboard/i})).not.toHaveAttribute("aria-current","step");
   });
   it("resumes saved shot edits only for the matching snapshot",async()=>{
@@ -438,7 +459,7 @@ describe("approved script to Director handoff",()=>{
     });
     render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
     expect(await screen.findByText("Actual renewal factors")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/02 Visual assets/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
     expect(calls).not.toContain("/api/contentgen-director/compile-saved-research");
     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
   });

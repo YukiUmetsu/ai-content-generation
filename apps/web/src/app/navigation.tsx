@@ -11,6 +11,7 @@ import {
   Workflow,
   Search,
   Settings,
+  PawPrint,
 } from "lucide-react";
 import type { Locale } from "@/features/registry";
 
@@ -22,6 +23,7 @@ export type SectionId =
   | "video-director"
   | "content"
   | "assets"
+  | "characters"
   | "products"
   | "jobs-qa"
   | "insights"
@@ -35,6 +37,7 @@ export const SECTIONS: { id: SectionId; label: Record<Locale, string>; icon: Rea
   { id: "video-director", label: { en: "Video Director", ja: "動画ディレクター" }, icon: <Clapperboard aria-hidden className="size-5" /> },
   { id: "content", label: { en: "Content", ja: "コンテンツ" }, icon: <FileText aria-hidden className="size-5" /> },
   { id: "assets", label: { en: "Assets", ja: "アセット" }, icon: <Image aria-hidden className="size-5" /> },
+  { id: "characters", label: { en: "Character Studio", ja: "キャラクター制作" }, icon: <PawPrint aria-hidden className="size-5" /> },
   { id: "products", label: { en: "Products", ja: "プロダクト" }, icon: <Package aria-hidden className="size-5" /> },
   {
     id: "jobs-qa",

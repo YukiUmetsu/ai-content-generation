@@ -26,3 +26,4 @@ apps/web/.qa/
 *.jks
 *.keystore
 
+.superpowers/

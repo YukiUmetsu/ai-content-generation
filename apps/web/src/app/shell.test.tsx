@@ -46,6 +46,13 @@ describe("Studio shell", () => {
     expect(screen.getByRole("navigation", { name: "Production stages" })).toBeInTheDocument();
   });
 
+  it("opens a dedicated Character Studio directly from navigation", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("link", { name: "Character Studio" }));
+    expect(screen.getByRole("region", { name: "Character package inspector" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Character ZIP")).toBeInTheDocument();
+  });
+
   it("opens directly into a focused create workspace with a real preview and a tool guide", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("link", {name: "Create"}));

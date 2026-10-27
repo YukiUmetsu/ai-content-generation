@@ -107,7 +107,9 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null)=>{
     setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");setSourceArtifactId(artifactId);
     setSourceStoryboardSha(storyboardSha);setSyncReport(null);
-    setStage(source==="sample"?"preview":focusStage==="visuals"?"assets":focusStage==="audio"?"sound":focusStage==="export"?"preview":"storyboard");
+    // Deep links open the actual preview/voice/render controls. Asset discovery
+    // and SFX selection remain optional adjacent tools, not the editor target.
+    setStage(source==="sample"||focusStage?"preview":"storyboard");
     setRecheckToken(0);
     const first=b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
@@ -565,7 +567,9 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
             sourceRevision={sourceArtifactId??undefined} recheckToken={recheckToken}
             productionId={projectId?.startsWith("production-")?projectId:undefined}
             selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
-            onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}/>
+            onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}
+            initialStage={focusStage==="audio"?"narration":focusStage==="export"?"export":"preview"}
+            autoOpenVisuals={focusStage==="visuals"}/>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle px-4 py-4">
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">{stage==="preview"?

@@ -1,15 +1,19 @@
 # Guided Production workspace
 
-Production is the project-scoped entry point for making content. The persistent navigator exposes eight stages:
+Production is the project-scoped entry point for making content. The pinned Kumiki Stepper exposes eight stages, including stale and failed status:
 
 1. **Setup** — choose the project/brand and destinations.
 2. **Discover** — start or reopen a durable discovery session.
 3. **Select Idea** — compare preserved observations and prepare a production brief.
 4. **Script** — collect missing factual sources, generate sections with the configured local script model, review/edit/regenerate and approve each destination's draft.
 5. **Plan Scenes** — turn the approved script into editable scene cards, check the flow and move forward with one clear action. Previous edits are backed up when the script changes.
-6. **Create Video** — three tasks open the existing YouTube Director in visuals, audio or preview/export mode. Other formats are directed to the publishing kit with limitations explained.
-7. **Publish Kit** — prepare editable title/caption metadata, local graphic covers, illustrations and article exports by destination.
-8. **Export** — download actual local render files and metadata manifests.
+6. **Create Video** — **Set up voice & generate draft** opens narration controls; **Generate draft video** plans scenes, checks tools and starts the MP4 with one explicit action. Optional shortcuts open scene editing and watch/export.
+7. **Publish Kit** — edit title/caption metadata independently of the thumbnail headline; choose among three brand-colored Kumiki cover layouts and download the selected PNG. Articles retain their own illustration exports.
+8. **Export** — play a saved current MP4 in-page and download actual local render files and metadata manifests. Earlier releases remain labeled separately.
+
+**Automatic draft is local and user-triggered.** An approved current YouTube script creates a storyboard outline if none exists; an outdated hand-edited outline must first be synchronized explicitly. In Director, select an authorized local voice (model, voice ID, engine revision and speech service) or explicitly consent to Fish Audio voice/text use. **Generate draft video** remains clickable without configuration, showing missing requirements rather than silently disabling itself. Once ready, a click runs plan → readiness check → render. MP4 progress, cancellation, playback and download are in the export panel; nothing publishes automatically. Fish credentials are not stored in browser storage.
+
+The JS render adapter is still single-flight and in-memory, not a crash-resumable Rust Jobs workflow. Closing the local Studio during a render can interrupt it. The **Character Studio** sidebar entry houses ZIP import, saved drafts and rig calibration; saved rigs are not yet approved for video publishing.
 
 ## Script generation and source recovery
 
@@ -67,7 +71,7 @@ Blog output defaults to five source-linked sections with a longer editorial-writ
 
 The current script-to-Director path renders landscape YouTube video. Dedicated portrait video exporters remain unavailable. Other selected destinations now receive actual locally downloadable Kumiki-designed PNG cover images and metadata; blogs receive illustrated HTML and Markdown/article images. These graphics depict approved script wording and section order, not invented photographic scenes, measurements or externally sourced artwork. Cited source links are included in the exported blog for verification, and publication remains manual.
 
-The static-image producer uses the pinned Kumiki infographic layout/PNG export contract, so preview and download come from one deterministic visual model. The source revision is pinned and hashed; it is updated deliberately after local review, never fetched afresh during a video render. Real render assets take priority over generated covers. Deliberately cleared media choices stay cleared.
+The static-image producer uses the pinned Kumiki media-document exporter for high-contrast thumbnails and the Kumiki infographic layout/PNG exporter for article diagrams. Preview and download derive from the same deterministic source document. The source revision is pinned and hashed; it is updated deliberately after local review, never fetched afresh during a video render. The non-blog cover designer offers three different layouts, a separate editable headline and a live preview; its copy/layout choice persists locally per production, destination and script text revision, even when media files, evidence-review status or brand colors change. Downloading a customized thumbnail **does not silently replace the upload-package asset reference**: attach that PNG in the destination uploader. Real render assets take priority over generated covers. Deliberately cleared media choices stay cleared.
 
 The render index records the imported script/outline revision alongside each production's MP4 and captions. Produce and Export completion are derived from a real MP4 matching that revision. Older/untracked files remain downloadable with a revision label, and are excluded from automatically prepared current-output asset choices. A readiness check, a page visit, or an approved script is never a completed render.
 

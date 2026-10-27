@@ -1,12 +1,16 @@
 /**
  * Local, deterministic publishing artwork. Kumiki lays out and renders the same
- * semantic document used for both previews and downloads. We deliberately use
- * only words present in the approved script, rather than synthesizing factual
- * diagrams, stock photos, measurements or licensed imagery.
+ * document used for both previews and downloads. Diagrams use the approved
+ * script's language; thumbnails additionally show the user's edited headline.
+ * No guessed factual figures, stock photos or external licensed imagery.
  */
 import { buildInfographic } from "@/components/infographic/layout";
 import { layoutToPng, layoutToSvg } from "@/components/infographic/svg";
-import type { InfographicLayout, InfographicSource, OutputProfileId, ProcessStep } from "@/components/infographic/types";
+import { documentToPng } from "@/components/media/svg-export";
+import { loadExportFontCss } from "@/features/thumbnail-composer/model/export";
+import type { MediaDocument } from "@/components/media/document";
+import { createCoverArtwork } from "./cover-art";
+import type { InfographicLayout, InfographicSource, OutputProfileId, ProcessStep, TemplateId } from "@/components/infographic/types";
 import { normalizeTarget, platformSlug, sourceSignature,
   type PlatformAsset, type PlatformOptimizationInput, type PlatformScriptSection, type PlatformTarget } from "./model";
 
@@ -15,7 +19,8 @@ export interface GeneratedArtwork {
   filename: string;
   label: string;
   description: string;
-  layout: InfographicLayout;
+  layout?: InfographicLayout;
+  media?: MediaDocument;
   svg: string;
   width: number;
   height: number;
@@ -70,11 +75,12 @@ function sourceFor(title: string, sections: readonly PlatformScriptSection[], id
 
 function makeArtwork(label: string, filename: string, id: string, title: string,
   sections: readonly PlatformScriptSection[], language: string, profile: OutputProfileId,
-  colors: PlatformOptimizationInput["brandColors"], mode: "sequence" | "summary" = "sequence"): GeneratedArtwork | null {
+  colors: PlatformOptimizationInput["brandColors"], mode: "sequence" | "summary" = "sequence",
+  template?: TemplateId): GeneratedArtwork | null {
   if (!sections.length) return null;
   const source = sourceFor(title, sections, id, language, mode);
   const layout = buildInfographic(source, {
-    template: mode === "summary" ? "editorial-overview" : "process-journey", profile, artDirection: "editorial", density: "airy",
+    template: template ?? (mode === "summary" ? "editorial-overview" : "process-journey"), profile, artDirection: "editorial", density: "airy",
     styleOverride: colors ? { color: {
       canvas: colors.background, ink: colors.text, accent: colors.primary,
       accentStrong: colors.secondary, surface: colors.background,
@@ -88,7 +94,7 @@ function makeArtwork(label: string, filename: string, id: string, title: string,
     preview: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(output.svg)}` };
 }
 
-/** One format-specific cover, plus up to three substantive blog diagrams. */
+/** Three distinct, downloadable non-blog covers; blog gets an article hero and up to three substantive diagrams. */
 export function generatePlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget, title: string): GeneratedArtwork[] {
   if (!canExportPlatformArtwork(input, target)) return [];
   const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}`;
@@ -99,14 +105,14 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
   // Stable filename belongs to the production, while the headline in the
   // generated image follows the editable destination title.
   const safeName = platformSlug(input.title).slice(0, 58);
-  const cover = makeArtwork(target === "blog" ? "Article hero" : "Platform cover / thumbnail",
-    `${safeName}-${target}-cover.png`, `cover-${target}`, title, sections, input.language || "en", artProfile[target], input.brandColors);
   if (target !== "blog") {
-    const result = cover ? [cover] : [];
+    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName);
     artworkCache.set(key, result);
     if (artworkCache.size > 16) artworkCache.delete(artworkCache.keys().next().value!);
     return result;
   }
+  const cover = makeArtwork("Article hero",`${safeName}-${target}-cover.png`, `cover-${target}`,title,
+    sections,input.language || "en",artProfile[target],input.brandColors);
   // Visuals must explain the *existing* script, never hallucinate concepts or
   // introduce unsourced charts. Use overlapping groups to cover the full article.
   const groups = sections.length > 3 ? [sections.slice(0, 2), sections.slice(1, 4), sections.slice(-2)] : [sections];
@@ -173,7 +179,12 @@ export function generateBlogHtml(input: PlatformOptimizationInput, title: string
 
 /** Kumiki's optional browser adapter produces actual PNGs, not a JSON-only reference. */
 export async function artworkPng(art: GeneratedArtwork): Promise<Blob> {
-  return layoutToPng(art.layout, { pixelRatio: 1 });
+  if(art.media){
+    const fontCss=await loadExportFontCss();
+    return (await documentToPng(art.media,{pixelRatio:1,...(fontCss?{fontCss}:{})})).blob;
+  }
+  if(art.layout)return layoutToPng(art.layout,{pixelRatio:1});
+  throw Error("The selected artwork has no exportable layout.");
 }
 
 export function generatedArtworkCatalog(input: PlatformOptimizationInput): PlatformAsset[] {

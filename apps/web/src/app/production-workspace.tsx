@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Check, Circle, Loader2, Menu, RotateCcw, ArrowRight, ExternalLink } from "lucide-react";
+import { Loader2, Menu, ArrowRight, ExternalLink } from "lucide-react";
+import { Stepper } from "@/components/ui/stepper";
+import type { StepperStates, StepperStep } from "@/components/ui/stepper";
 import type { Locale } from "@/features/registry";
 import type { StudioCatalog } from "./catalog-model";
 import { loadProjectStoryboard, saveProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
@@ -127,13 +129,10 @@ function statusLabel(status:ProductionStageStatus,ja:boolean){
   };
   return labels[status];
 }
-function StatusIcon({status}:{status:ProductionStageStatus}){
-  if(status==="complete")return <Check className="size-4 text-emerald-600" aria-hidden/>;
-  if(status==="running")return <Loader2 className="size-4 animate-spin text-primary" aria-hidden/>;
-  if(status==="failed"||status==="needs_review")return <AlertCircle className="size-4 text-status-warning" aria-hidden/>;
-  if(status==="stale")return <RotateCcw className="size-4 text-status-warning" aria-hidden/>;
-  return <Circle className="size-4 text-muted-foreground" aria-hidden/>;
-}
+const statusToStepper:Record<ProductionStageStatus,string>={
+  not_started:"not-started",running:"started",complete:"complete",
+  needs_review:"needs-review",failed:"failed",stale:"stale",
+};
 export function ProductionWorkspace(props:Props){
   return <ProductionWorkspaceProject key={props.catalog.activeProjectId} {...props}/>;
 }
@@ -449,6 +448,18 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const canOpenDirector=Boolean(matchingDraft?.artifactId||
     production&&videoScript?.status==="approved"&&scriptApproved&&board&&!boardScriptStale);
   const current=stages.find(item=>item.id===step)!;
+  const stepperStates:StepperStates={
+    "not-started":{label:statusLabel("not_started",ja)},
+    started:{label:statusLabel("running",ja),tone:"info"},
+    complete:{label:statusLabel("complete",ja)},
+    "needs-review":{label:statusLabel("needs_review",ja),tone:"warning"},
+    failed:{label:statusLabel("failed",ja),tone:"danger"},
+    stale:{label:statusLabel("stale",ja),tone:"warning"},
+  };
+  const stepperSteps:StepperStep[]=stages.map(item=>({
+    id:item.id,label:ja?stageLabels[item.id].ja:stageLabels[item.id].en,
+    status:statusToStepper[item.status],hint:step===item.id?item.reason:undefined,
+  }));
   function selectStep(next:ProductionStageId){
     setStep(next);
     try{localStorage.setItem(stagesKey(productionKey),next);}catch{/* Navigation still works without local storage. */}
@@ -573,21 +584,14 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const secondaryButton="rounded-control border border-border px-4 py-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
   return <section id="workspace" aria-label={tr("Guided production","制作ガイド")}
     className="flex min-h-0 flex-1 flex-col overflow-hidden">
-    <nav aria-label={tr("Production stages","制作ステップ")}
-      className="z-10 flex shrink-0 gap-1 overflow-x-auto border-b border-border bg-surface-subtle px-3 py-2 lg:justify-between lg:gap-2 lg:px-5">
+    <div className="z-10 flex shrink-0 items-center border-b border-border bg-surface-subtle px-3 py-1 lg:px-5">
       <button type="button" onClick={onOpenNav} aria-label={tr("Open navigation","メニューを開く")}
         className="shrink-0 rounded-control p-2 hover:bg-muted lg:hidden"><Menu className="size-5"/></button>
-      {stages.map((item,index)=><button key={item.id} type="button" onClick={()=>selectStep(item.id)}
-        aria-current={step===item.id?"step":undefined}
-        aria-label={stageLabels[item.id].en+" stage"}
-        title={item.reason}
-        className={`flex min-w-[132px] flex-1 items-center gap-2 rounded-control px-3 py-2 text-left transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${step===item.id?"border border-primary/40 bg-surface text-foreground shadow-sm":"border border-transparent text-muted-foreground"}`}>
-        <span className={`flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${step===item.id?"bg-primary text-primary-foreground":"border border-border"}`}>{index+1}</span>
-        <span className="min-w-0 flex-1"><span className="block whitespace-nowrap text-xs font-semibold xl:text-sm">{ja?stageLabels[item.id].ja:stageLabels[item.id].en}</span>
-          <span className="block truncate text-[10px]">{statusLabel(item.status,ja)}</span></span>
-        {item.status==="complete"?<StatusIcon status={item.status}/>:null}
-      </button>)}
-    </nav>
+      <Stepper aria-label={tr("Production stages","制作ステップ")} className="min-w-0 flex-1"
+        steps={stepperSteps} states={stepperStates} currentStepId={step} size="sm"
+        showStateText arrowKeys connectors fillConnectors
+        onStepSelect={selected=>selectStep(selected.id as ProductionStageId)}/>
+    </div>
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8">
         <div className="mx-auto flex max-w-5xl flex-col gap-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -797,9 +801,9 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             <button type="button" className={primaryButton+" inline-flex items-center gap-2"} onClick={()=>selectStep("optimize")}>Open Publish Kit <ArrowRight className="size-4" aria-hidden /></button>
           </div>}
           {step==="produce"&&platforms.includes("youtube")&&<div className={contentCard}>
-            <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Your production checklist</span>
-            <h3 className="mt-2 font-serif text-2xl font-semibold">Build the video, one step at a time</h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Your approved YouTube narration and scene plan open together in the Kumiki-powered Video Director. Each task below opens the right workspace.</p>
+            <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Video draft</span>
+            <h3 className="mt-2 font-serif text-2xl font-semibold">Turn your script into a video</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Choose a voice, then select <strong>Generate draft video</strong>. ContentGen prepares scenes, checks your local tools and makes a playable MP4. You can refine the scenes afterward.</p>
             {!matchingDraft?.artifactId&&<p role="status" className="mt-4 rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm text-muted-foreground">
               {tr("Approved YouTube scripts can become editable, source-linked Director drafts. Schematic animation requires further visual editing, and claims, media rights and playback still require review. Shorts, social videos and articles need dedicated exporters.",
                 "承認したYouTube台本を編集可能なディレクター下書きに変換できます。映像、引用、利用権の確認が必要です。")}
@@ -814,33 +818,24 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 Refresh files
               </button>
             </div>}
-            {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">Approve the current YouTube script and update its storyboard to open the video tools. Other destinations currently support script and metadata preparation.</p>}
-            <ol className="mt-5 grid gap-3 sm:grid-cols-3">
-              <li className="flex flex-col rounded-xl border border-primary/30 bg-primary/5 p-4">
-                <span className="text-xs font-semibold text-primary">01 · VISUALS</span>
-                <h4 className="mt-2 text-base font-semibold">Build the scenes</h4>
-                <p className="mt-2 flex-1 text-xs leading-5 text-muted-foreground">Review motion, layout and explanations. Each scene stays editable.</p>
-                <button type="button" className={primaryButton+" mt-4"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("visuals")} aria-label="Open visual tools">
-                  {openingDirector?"Preparing…":"Open visual editor"}</button>
-              </li>
-              <li className="flex flex-col rounded-xl border border-border bg-surface-subtle p-4">
-                <span className="text-xs font-semibold text-muted-foreground">02 · SOUND</span>
-                <h4 className="mt-2 text-base font-semibold">Narration & sound</h4>
-                <p className="mt-2 flex-1 text-xs leading-5 text-muted-foreground">Add a voice, music and sound effects, then check the mix.</p>
-                <button type="button" className={secondaryButton+" mt-4"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("audio")}>Open audio editor</button>
-              </li>
-              <li className="flex flex-col rounded-xl border border-border bg-surface-subtle p-4">
-                <span className="text-xs font-semibold text-muted-foreground">03 · FINAL CUT</span>
-                <h4 className="mt-2 text-base font-semibold">Watch & export</h4>
-                <p className="mt-2 flex-1 text-xs leading-5 text-muted-foreground">Play the full cut and export the MP4 when it looks right.</p>
-                <button type="button" className={secondaryButton+" mt-4"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("export")}>Open preview & export</button>
-              </li>
-            </ol>
+            {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">First, approve your YouTube script and make sure its scene outline is current. Then video generation becomes available.</p>}
+            <div className="mt-5 rounded-xl border border-primary/30 bg-primary/5 p-5">
+              <p className="text-xs font-semibold text-primary">START HERE</p>
+              <button type="button" className={primaryButton+" mt-3 inline-flex items-center gap-2"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing your draft…":"Set up voice & generate draft"}<ArrowRight className="size-4" aria-hidden /></button>
+              <p className="mt-3 text-xs text-muted-foreground">No upload or publishing. If your voice or renderer needs setup, you’ll see exactly what is missing.</p>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button type="button" className={secondaryButton} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("visuals")}>Edit video scenes</button>
+              <button type="button" className={secondaryButton} disabled={openingDirector||!canOpenDirector}
+                onClick={()=>hasCurrentVideo?selectStep("export"):void openDirector("export")}>
+                {hasCurrentVideo?"Watch & export MP4":"Open render controls"}
+              </button>
+            </div>
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
               <button type="button" className={secondaryButton} onClick={()=>onOpenStoryboard(productionKey)}>Adjust scene plan</button>
               <button type="button" className={primaryButton+" inline-flex items-center gap-2"} onClick={()=>selectStep("optimize")}>Prepare publishing assets <ArrowRight className="size-4" aria-hidden /></button>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">The Director currently creates YouTube videos. Shorts and social video exports still need dedicated render presets; you can already prepare their captions and covers in Publish Kit. Blogs receive a complete illustrated article export there.</p>
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">YouTube video drafts are supported here. Shorts and social video presets are still in development. Their captions and covers are available in Publish Kit.</p>
           </div>}
           {step==="optimize"&&(production&&(platforms.every(platform=>platform==="blog")||
             mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready")?
@@ -866,6 +861,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"&&
               <div className="mt-5 space-y-2 border-t border-border pt-4">
                 <p className="text-sm font-semibold">Saved local render files</p>
+                {currentRenderAssets.find(asset=>asset.kind==="video"&&asset.downloadUrl)&&
+                  <video className="aspect-video w-full max-w-3xl rounded-xl bg-black" controls preload="metadata"
+                    playsInline aria-label="Saved ContentGen video draft"
+                    src={currentRenderAssets.find(asset=>asset.kind==="video"&&asset.downloadUrl)?.downloadUrl}/>}
                 {renderAssets.length?renderAssets.map(asset=><a key={asset.id} href={asset.downloadUrl}
                   download={asset.filename} className={secondaryButton+" mr-2 inline-flex items-center gap-2"}>
                   {asset.kind==="video"?"Download MP4":asset.kind==="captions"?"Download captions":`Download ${asset.kind}`}

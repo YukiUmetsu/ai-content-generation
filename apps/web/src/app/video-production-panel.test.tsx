@@ -1,5 +1,6 @@
 import {afterEach,expect,it,vi} from "vitest";
-import {render,screen,waitFor} from "@testing-library/react";
+import { StrictMode } from "react";
+import {fireEvent,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {ProductionPanel} from "./video-production-panel";
 
@@ -87,4 +88,107 @@ it("keeps render progress when switching production steps",async()=>{
   await user.click(screen.getByRole("tab",{name:/Narration/}));
   await user.click(screen.getByRole("tab",{name:/Export/}));
   expect(screen.getByRole("button",{name:/Cancel render/i})).toBeInTheDocument();
+});
+
+it("opens voice setup directly and prepares the approved scene plan automatically",async()=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    if(String(input).endsWith("/plan"))return reply(plan);
+    throw Error("Unexpected request: "+input);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(screen.getByRole("tab",{name:/Narration/})).toHaveAttribute("aria-selected","true");
+});
+
+it("opens voice setup when React remounts effects in Strict Mode",async()=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    if(String(input).endsWith("/plan"))return reply(plan);
+    throw Error("Unexpected request: "+input);
+  });
+  render(<StrictMode><ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/></StrictMode>);
+  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+});
+
+it("keeps voice controls usable when the local scene planner is unavailable",async()=>{
+  vi.spyOn(globalThis,"fetch").mockRejectedValue(Error("Local director is offline"));
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(await screen.findByText(/Local director is offline/)).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
+});
+
+it("runs preflight and starts the MP4 on one Generate draft video click",async()=>{
+  const calls:string[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);calls.push(path);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true});
+    if(path.endsWith("/status"))return reply({state:"rendering",phase:"production",message:"Encoding",progress:{completedFrames:5,totalFrames:10}});
+    throw Error("Unexpected request: "+path);
+  });
+  const user=userEvent.setup();render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  expect(await screen.findByText(/Producing a real draft MP4/)).toBeInTheDocument();
+  expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
+  expect(calls.filter(path=>path.endsWith("/check"))).toHaveLength(1);
+  expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
+});
+
+it("explains failed preflight without starting a render or disabling retry",async()=>{
+  const calls:string[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);calls.push(path);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:false,findings:[{severity:"error",code:"voice",message:"Install a local TTS voice first."}]}});
+    throw Error("Render should not start: "+path);
+  });
+  const user=userEvent.setup();render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  expect(await screen.findByText(/Install a local TTS voice first/)).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
+  expect(calls.some(path=>path.endsWith("/start"))).toBe(false);
+});
+
+it("never renders with an obsolete voice chosen while readiness is still running",async()=>{
+  let finishCheck:((response:Response)=>void)|undefined;
+  const inFlight=new Promise<Response>(resolve=>{finishCheck=resolve;});
+  const calls:string[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);calls.push(path);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return inFlight;
+    throw Error("Render should not start with stale voice settings: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  const voice=await screen.findByRole("textbox",{name:"Production voice ID"});
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  await waitFor(()=>expect(calls.some(path=>path.endsWith("/check"))).toBe(true));
+  await user.type(voice,"new-voice");
+  finishCheck?.(reply({report:{ready:true,findings:[]}}));
+  expect(await screen.findByText(/Voice or scene settings changed/)).toBeInTheDocument();
+  expect(calls.some(path=>path.endsWith("/start"))).toBe(false);
+});
+
+it("starts at most one preflight for repeated draft clicks",async()=>{
+  let completeCheck:((response:Response)=>void)|undefined;
+  const checking=new Promise<Response>(resolve=>{completeCheck=resolve;});
+  const calls:string[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);calls.push(path);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return checking;
+    throw Error("Unexpected render request: "+path);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await screen.findByRole("textbox",{name:"Production voice ID"});
+  const button=screen.getByRole("button",{name:/Generate draft video/i});
+  fireEvent.click(button);fireEvent.click(button);
+  await waitFor(()=>expect(calls.filter(path=>path.endsWith("/check"))).toHaveLength(1));
+  completeCheck?.(reply({report:{ready:false,findings:[{severity:"error",code:"setup",message:"Choose a voice"}]}}));
+  expect(await screen.findByText("Choose a voice")).toBeInTheDocument();
+  expect(calls.some(path=>path.endsWith("/start"))).toBe(false);
 });
