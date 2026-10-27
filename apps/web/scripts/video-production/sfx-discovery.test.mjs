@@ -220,6 +220,19 @@ test("an aborted audio import makes no further calls and does not write an appro
   assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
 });
 
+test("cancelling during audio conversion leaves no approved file and forwards the abort signal",async t=>{
+  const opts=await imported(t),controller=new AbortController();
+  let forwarded;
+  const transcode=async(_input,output,{signal}={})=>{
+    forwarded=signal;
+    await writeFile(output,wav());
+    controller.abort();
+  };
+  await assert.rejects(approveSfx(approval,{...opts,transcode,signal:controller.signal}),/cancelled/i);
+  assert.equal(forwarded,controller.signal);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
 test("real FFmpeg conversion accepts standard ancillary WAV chunks without losing PCM verification",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-sfx-ffmpeg-"));
   t.after(()=>rm(root,{recursive:true,force:true}));

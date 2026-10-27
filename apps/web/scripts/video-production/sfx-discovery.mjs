@@ -151,11 +151,12 @@ function wavVerified(bytes){
   }
   if(!format||!data)invalid();
 }
-async function transcodeWav(input,output,{ffmpeg="ffmpeg"}={}){
+function assertImportActive(signal){if(signal?.aborted)throw Error("Audio import cancelled.");}
+async function transcodeWav(input,output,{ffmpeg="ffmpeg",signal}={}){
   try{await exec(ffmpeg,["-hide_banner","-loglevel","error","-nostdin","-n",
     "-protocol_whitelist","file,pipe","-i",input,"-vn","-sn","-dn",
-    "-ar","48000","-ac","1","-c:a","pcm_s16le",output],{timeout:60_000,maxBuffer:400_000});}
-  catch{throw Error("FFmpeg could not decode the selected sound effect.");}
+    "-ar","48000","-ac","1","-c:a","pcm_s16le",output],{timeout:60_000,maxBuffer:400_000,signal});}
+  catch(error){assertImportActive(signal);throw Error("FFmpeg could not decode the selected sound effect.",{cause:error});}
 }
 async function downloadAudio(response){
   if(!response.ok)throw Error(`SFX download returned HTTP ${response.status}.`);
@@ -212,22 +213,27 @@ async function downloadReviewedAudio(url,{fetchImpl=fetch,signal}={}){
 export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transcode=transcodeWav,now=()=>new Date(),ffmpeg,signal}={}){
   if(input?.confirmDownload!==true||input?.confirmRights!==true)
     throw Error("SFX license review and download approval required.");
+  assertImportActive(signal);
   const assetId=validId(input.assetId,"sound identifier",UUID);
   const assetType=input.assetType??"sfx";
   if(!["sfx","music"].includes(assetType))throw Error("Unsupported approved audio kind.");
   const detailUrl=`https://api.openverse.org/v1/audio/${assetId}/`;
+  const metadataSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(12_000)]):AbortSignal.timeout(12_000);
   const item=soundMeta(await readJson(await fetchImpl(detailUrl,{redirect:"error",
-    headers:{Accept:"application/json","User-Agent":"ContentGen-SFX/1.0"},signal:AbortSignal.timeout(12_000)})),{assetType});
+    headers:{Accept:"application/json","User-Agent":"ContentGen-SFX/1.0"},signal:metadataSignal})),{assetType});
+  assertImportActive(signal);
   if(!item)throw Error("Sound license is not acceptable CC0 or URL host is untrusted.");
   const mediaUrl=safeMediaUrl(item.previewUrl);
   const bytes=await downloadReviewedAudio(mediaUrl,{fetchImpl,signal});
+  assertImportActive(signal);
   const base=resolve(root),bank=join(base,"bank");
   await mkdir(bank,{recursive:true,mode:0o700});
   const temp=await mkdtemp(join(bank,".sfx-import-"));
   try{
     const inputPath=join(temp,"source.bin"),outputPath=join(temp,"sfx.wav");
     await writeFile(inputPath,bytes,{mode:0o600,flag:"wx"});
-    await transcode(inputPath,outputPath,{ffmpeg});
+    await transcode(inputPath,outputPath,{ffmpeg,signal});
+    assertImportActive(signal);
     const normalized=await readFile(outputPath);
     if(normalized.length>MAX_AUDIO)throw Error("Normalized SFX exceeds 16 MB limit.");
     wavVerified(normalized);
@@ -241,6 +247,7 @@ export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transc
       originalSha256:originalSha,sha256:soundSha,sizeBytes:normalized.length};
     await writeFile(join(temp,"manifest.json"),JSON.stringify(manifest,null,2)+"\n",{flag:"wx",mode:0o600});
     await rm(inputPath);
+    assertImportActive(signal);
     try{await rename(temp,folder);}catch(error){
       if(error.code!=="EEXIST"&&error.code!=="ENOTEMPTY")throw error;
       const existing=JSON.parse(await readFile(join(folder,"manifest.json"),"utf8"));

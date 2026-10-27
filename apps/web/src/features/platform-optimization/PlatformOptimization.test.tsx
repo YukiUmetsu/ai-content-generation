@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PlatformOptimization } from "./PlatformOptimization";
-import type { PlatformOptimizationInput } from "./model";
+import { sourceSignature, type PlatformOptimizationInput } from "./model";
 
 const input: PlatformOptimizationInput = {
   productionId: "production-test",
@@ -132,6 +132,63 @@ describe("PlatformOptimization", () => {
       brandColors:{primary:"#145E58",secondary:"#164B49",accent:"#EDAA46",background:"#FFF7E8",text:"#182C2B"}}}/>);
     expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The Hidden Costs");
     expect(screen.getByRole("button",{name:"Tile layout"})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("retains a manually designed thumbnail when its source script is rewritten", () => {
+    const view=render(<PlatformOptimization input={input}/>);
+    fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),
+      {target:{value:"The hidden maintenance bill"}});
+    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
+    const updated={...input,title:"A completely rewritten video title",sourceRevision:"script-2",
+      scriptSections:[{id:"new-1",heading:"Replacement section",text:"A totally new script.",startSeconds:0}]};
+    view.rerender(<PlatformOptimization input={updated}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The hidden maintenance bill");
+    expect(screen.getByRole("button",{name:"Editorial layout"})).toHaveAttribute("aria-pressed","true");
+    view.unmount();
+    render(<PlatformOptimization input={updated}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The hidden maintenance bill");
+    expect(screen.getByRole("button",{name:"Editorial layout"})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("refreshes untouched cover copy when the script title changes", () => {
+    const view=render(<PlatformOptimization input={input}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue(input.title);
+    fireEvent.click(screen.getByRole("button",{name:"Forest"}));
+    view.rerender(<PlatformOptimization input={{...input,title:"Why roofs cost more than you think",
+      sourceRevision:"next-revision"}}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("Why roofs cost more than you think");
+    expect(screen.getByRole("button",{name:"Forest"})).toHaveAttribute("aria-pressed","true");
+  });
+
+  it("migrates an existing revision-specific thumbnail without deleting its backup", () => {
+    const signature=sourceSignature({...input,assets:[],sourceEvidence:[],sourceRevision:undefined,
+      summary:undefined,audience:undefined,primaryKeyword:undefined,brandColors:undefined,
+      approvedPlatforms:["youtube"]},"youtube");
+    const oldKey=`contentgen:cover-draft:v1:${input.productionId}:youtube:${signature}`;
+    entries.set(oldKey,JSON.stringify({headline:"My existing cover",layout:"tiles",
+      colors:{primary:"#172C42",background:"#F7F2E9",accent:"#F8B951"}}));
+    const view=render(<PlatformOptimization input={input}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("My existing cover");
+    expect(entries.has(`contentgen:cover-draft:v2:${input.productionId}:youtube`)).toBe(true);
+    view.unmount();
+    render(<PlatformOptimization input={{...input,title:"A new script",sourceRevision:"new"}}/>);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("My existing cover");
+    expect(entries.has(oldKey)).toBe(true);
+  });
+
+  it("never silently replaces a corrupt saved thumbnail without an explicit backup", () => {
+    const key=`contentgen:cover-draft:v2:${input.productionId}:youtube`;
+    entries.set(key,"{unreadable");
+    render(<PlatformOptimization input={input}/>);
+    expect(screen.getByRole("alert")).toHaveTextContent(/saved thumbnail.*unreadable/i);
+    expect(screen.getByRole("button",{name:"Forest"})).toBeDisabled();
+    expect(entries.get(key)).toBe("{unreadable");
+    fireEvent.click(screen.getByRole("button",{name:/back up.*start fresh/i}));
+    expect(screen.getByRole("button",{name:"Forest"})).toBeEnabled();
+    expect([...entries.values()]).toContain("{unreadable");
+    fireEvent.change(screen.getByRole("textbox",{name:"Thumbnail headline"}),
+      {target:{value:"New cover after recovery"}});
+    expect(entries.get(key)).toContain("New cover after recovery");
   });
 
   it("accepts a local image replacement, preserves it, and rejects disguised nonimages",async()=>{

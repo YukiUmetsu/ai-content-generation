@@ -15,7 +15,8 @@ import { artworkPng, canExportPlatformArtwork, generateBlogHtml, generateBlogMar
 
 type CoverLayout = "story" | "tiles" | "editorial";
 type CoverColors = {primary:string;background:string;accent:string};
-type CoverDraft = { key: string; headline: string; layout: CoverLayout; colors:CoverColors|null;imageDataUri?:string };
+type CoverDraft = { key: string; headline: string; headlineEdited:boolean; layout: CoverLayout; colors:CoverColors|null;
+  imageDataUri?:string; blocked:boolean };
 const hex = (value:unknown):value is string => typeof value === "string" && /^#[a-f0-9]{6}$/iu.test(value);
 const coverPresets:{name:string;colors:CoverColors|null}[]=[
   {name:"Brand colors",colors:null},
@@ -28,20 +29,30 @@ const coverLayouts: readonly { id: CoverLayout; name: string; suffix: string }[]
   { id: "tiles", name: "Tile layout", suffix: "-tiles" },
   { id: "editorial", name: "Editorial layout", suffix: "-editorial" },
 ];
-function loadCoverDraft(key: string, initialHeadline: string): CoverDraft {
-  const fallback: CoverDraft = { key, headline: initialHeadline, layout: "story",colors:null };
+function loadCoverDraft(key: string, initialHeadline: string, previousRevisionKey?:string): CoverDraft {
+  const fallback: CoverDraft = { key, headline: initialHeadline, headlineEdited:false, layout: "story",colors:null,blocked:false };
   if (!key) return fallback;
   try {
-    const stored = JSON.parse(localStorage.getItem(key) || "null") as Record<string, unknown> | null;
+    const saved=localStorage.getItem(key);
+    const legacy=saved===null&&previousRevisionKey?localStorage.getItem(previousRevisionKey):null;
+    let stored:Record<string,unknown>|null;
+    try{stored=JSON.parse(saved??legacy??"null") as Record<string,unknown>|null;}
+    catch{return {...fallback,blocked:saved!==null};}
     if (!stored || typeof stored.headline !== "string" || stored.headline.length > 110 ||
-      !coverLayouts.some((layout) => layout.id === stored.layout)) return fallback;
+      !coverLayouts.some((layout) => layout.id === stored.layout)) return {...fallback,blocked:saved!==null};
     const colors=stored.colors&&typeof stored.colors==="object"&&
       hex((stored.colors as Record<string,unknown>).primary)&&hex((stored.colors as Record<string,unknown>).background)&&
       hex((stored.colors as Record<string,unknown>).accent)?stored.colors as CoverColors:null;
     const imageDataUri=typeof stored.imageDataUri==="string"&&stored.imageDataUri.length<=1_450_000&&
       /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(stored.imageDataUri)?stored.imageDataUri:undefined;
-    return { key, headline: stored.headline, layout: stored.layout as CoverLayout,colors,imageDataUri };
-  } catch { return fallback; }
+    // Older revisions did not track manual copy. Conservatively keep their
+    // headline instead of replacing it with a rewritten script title.
+    const headlineEdited=stored.headlineEdited===false?false:true;
+    if(legacy!==null){
+      try{localStorage.setItem(key,legacy);}catch{/* Old draft remains intact for manual recovery. */}
+    }
+    return { key, headline: stored.headline, headlineEdited, layout: stored.layout as CoverLayout,colors,imageDataUri,blocked:false };
+  } catch { return {...fallback,blocked:true}; }
 }
 
 function coverScriptSignature(input: PlatformOptimizationInput, platform: PlatformTarget): string {
@@ -257,17 +268,34 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
   // an approved script, upload title, or a saved media asset with the same ID.
   // Rendered MP4/caption assets arrive asynchronously after a successful job.
   // Their addition must not erase a manually chosen thumbnail design.
-  const coverKey = platform ? `contentgen:cover-draft:v1:${input.productionId}:${platform}:${coverScriptSignature(input,platform)}` : "";
-  const [coverDraft,setCoverDraft] = useState<CoverDraft>(() => loadCoverDraft(coverKey,input.title));
-  if (coverDraft.key !== coverKey) setCoverDraft(loadCoverDraft(coverKey,input.title));
-  const activeCover = coverDraft.key === coverKey ? coverDraft : loadCoverDraft(coverKey,input.title);
+  const coverKey = platform ? `contentgen:cover-draft:v2:${input.productionId}:${platform}` : "";
+  const legacyCoverKey = platform ? `contentgen:cover-draft:v1:${input.productionId}:${platform}:${coverScriptSignature(input,platform)}` : "";
+  const restoreCover=()=>loadCoverDraft(coverKey,input.title,legacyCoverKey);
+  const [coverDraft,setCoverDraft] = useState<CoverDraft>(restoreCover);
+  if (coverDraft.key !== coverKey) setCoverDraft(restoreCover());
+  const storedCover = coverDraft.key === coverKey ? coverDraft : restoreCover();
+  const activeCover = storedCover.headlineEdited ? storedCover : {...storedCover,headline:input.title};
   const updateCover = (update: Partial<Omit<CoverDraft,"key">>) => {
-    const next = {...activeCover,...update};
+    if(activeCover.blocked){setWarning("Recover the previous thumbnail before editing.");return;}
+    const next = {...activeCover,...update,headlineEdited:update.headline===undefined?activeCover.headlineEdited:true};
     setCoverDraft(next);
     try {localStorage.setItem(coverKey,JSON.stringify({headline:next.headline,layout:next.layout,
-      colors:next.colors,imageDataUri:next.imageDataUri}));}
+      colors:next.colors,imageDataUri:next.imageDataUri,headlineEdited:next.headlineEdited}));}
     catch(error){setWarning(error instanceof Error?`Cover is not saved: ${error.message}`:"Cover could not be saved locally.");}
   };
+  function recoverCover(){
+    try{
+      const saved=localStorage.getItem(coverKey);
+      if(saved!==null){
+        const backupKey=`${coverKey}:recovery:${Date.now()}`;
+        if(localStorage.getItem(backupKey)!==null)throw Error("An existing recovery backup would be overwritten. Retry in a moment.");
+        localStorage.setItem(backupKey,saved);
+      }
+      const fresh:CoverDraft={key:coverKey,headline:input.title,headlineEdited:false,layout:"story",colors:null,blocked:false};
+      localStorage.setItem(coverKey,JSON.stringify(fresh));
+      setCoverDraft(fresh);setWarning(null);
+    }catch(error){setWarning(error instanceof Error?error.message:"Could not back up the previous thumbnail.");}
+  }
   const coverInput=useMemo<PlatformOptimizationInput>(()=>activeCover.colors?{...input,brandColors:{
     primary:activeCover.colors.primary,background:activeCover.colors.background,accent:activeCover.colors.accent,
     secondary:input.brandColors?.secondary??"#4D807A",text:input.brandColors?.text??"#122A32"}}:input,
@@ -492,6 +520,13 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                     disabled={!!exportingArt} onClick={() => void downloadArt(art.id)}>{exportingArt === art.id ? "Rendering…" : "PNG ↓"}</button></div>
               </div>)}</div> : <div className="space-y-4" aria-label="Thumbnail design tools">
                 <h4 className="font-serif text-xl font-semibold">Design your thumbnail</h4>
+                {activeCover.blocked&&<div role="alert" className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3 text-xs">
+                  <p>Your saved thumbnail is unreadable or browser storage is unavailable. It has not been overwritten.</p>
+                  <button type="button" onClick={recoverCover} className="rounded-lg border border-border px-3 py-2 font-semibold hover:border-primary/60 focus-visible:ring-2 focus-visible:ring-ring">
+                    Back up old thumbnail and start fresh
+                  </button>
+                </div>}
+                <fieldset disabled={activeCover.blocked} className="space-y-4">
                 <label className="block text-xs font-medium text-muted-foreground">Thumbnail headline
                   <input className={`${inputClass} mt-1.5`} aria-label="Thumbnail headline" maxLength={110}
                     value={activeCover.headline} onChange={(event) => updateCover({headline:event.target.value})}/>
@@ -548,7 +583,8 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
                   <Download className="size-4" aria-hidden /> {exportingArt ? "Rendering PNG…" : "Download selected thumbnail"}
                 </button>
-                <p className="text-xs text-muted-foreground">Your headline, palette, image and layout are saved per script revision. Check image rights before publishing.</p>
+                <p className="text-xs text-muted-foreground">Your thumbnail design stays with this production when the script changes. Check image rights before publishing.</p>
+                </fieldset>
               </div>}
             {isBlog(platform) && <div className="space-y-2 rounded-xl border border-primary/20 bg-primary/5 p-3">
               <p className="text-sm font-semibold">{artApproved ? "Your private illustrated article draft is ready" : "Write a blog section to create an illustrated draft"}</p>
