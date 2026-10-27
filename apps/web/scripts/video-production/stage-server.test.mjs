@@ -78,6 +78,12 @@ test("capture host serves only frozen media with a valid SHA-256 and a safe cont
   assert.equal(partial.headers.get("content-range"), `bytes 2-6/${bytes.length}`);
   assert.equal(partial.headers.get("accept-ranges"), "bytes");
   assert.deepEqual(Buffer.from(await partial.arrayBuffer()), bytes.subarray(2, 7));
+  const lastFour = await fetch(new URL(url, server.url), { headers: { Range: "bytes=-4" } });
+  assert.equal(lastFour.status, 206, "Chromium may request the tail of an MP4 to inspect its index");
+  assert.deepEqual(Buffer.from(await lastFour.arrayBuffer()), bytes.subarray(-4));
+  const beyondEnd = await fetch(new URL(url, server.url), { headers: { Range: "bytes=5-50000" } });
+  assert.equal(beyondEnd.status, 206, "a byte-range end beyond EOF should clamp to the last byte");
+  assert.deepEqual(Buffer.from(await beyondEnd.arrayBuffer()), bytes.subarray(5));
   assert.equal((await fetch(new URL(url, server.url), { headers: { Range: "bytes=9999-" } })).status, 416);
   assert.equal((await fetch(new URL("/__video_media/unknown.jpg", server.url))).status, 404);
   await writeFile(source, "tampered media");

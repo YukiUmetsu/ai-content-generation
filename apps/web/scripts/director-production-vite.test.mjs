@@ -337,6 +337,7 @@ test("cancel during a delayed Jobs reservation prevents any media production and
   const reservationStarted = new Promise(resolve => { signalReservation = resolve; });
   const server = createDirectorProduction({ outputRoot: dir, findBrowser: async () => "/mock/chromium",
     build: async () => {}, inspect: async () => ({ ready: true, findings: [] }),
+    listSelections: async () => ({ selections: [], invalidShots: [] }),
     jobTracker: () => ({ start: async () => { signalReservation(); await reserved; return "reserved-job"; },
       advance: async () => {}, complete: async () => {}, fail: async () => {}, cancel: async () => { cancels++; } }),
     produce: async () => { renders++; throw Error("Must not synthesize media after cancellation"); },
@@ -344,7 +345,13 @@ test("cancel during a delayed Jobs reservation prevents any media production and
   const data = { ...inputs(), settings: config, productionId: `production-${"b".repeat(24)}` };
   await invoke(server, "POST", "/check", data);
   const start = invoke(server, "POST", "/start", { ...data, confirmRender: true });
-  await reservationStarted;
+  let reservationTimeout;
+  try {
+    await Promise.race([reservationStarted,
+      start.then(result => { throw Error(`Render stopped before reserving a Jobs attempt (HTTP ${result.status}).`); }),
+      new Promise((_, reject) => { reservationTimeout = setTimeout(() => reject(Error("Jobs reservation was never requested.")), 8000); }),
+    ]);
+  } finally { clearTimeout(reservationTimeout); }
   const cancelled = await invoke(server, "POST", "/cancel", { confirmed: true });
   accept();
   await start;

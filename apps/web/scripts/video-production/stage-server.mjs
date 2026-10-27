@@ -1,5 +1,6 @@
 /** Private, ephemeral static host for the built Kumiki capture page and a validated plan. */
 import { createServer } from "node:http";
+import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
@@ -68,7 +69,7 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
       asset.url !== `/__video_media/${asset.sha256}.${extension}` ||
       typeof asset.path !== "string" || !asset.path.startsWith("/") || media.has(asset.url))
       throw Error("Invalid or duplicate approved scene media path.");
-    media.set(asset.url, asset);
+    media.set(asset.url, { ...asset, verifiedKey: null });
   }
   const buildHash = await fingerprintBuiltStage(root);
   const entry = await stat(join(root, "video-export.html"));
@@ -90,31 +91,45 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
       const asset = media.get(pathname);
       if (!asset) { send(404); return; }
       try {
-        const metadata = await lstat(asset.path);
-        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 12 ||
-          metadata.size > 80 * 1024 * 1024) { send(404); return; }
-        const bytes = await readFile(asset.path);
-        if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256) { send(404); return; }
+        const metadata = await lstat(asset.path, { bigint: true });
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 12n ||
+          metadata.size > 80n * 1024n * 1024n) { send(404); return; }
+        const key = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+        if (key !== asset.verifiedKey) {
+          // Frozen files are immutable during capture. Recheck their checksum
+          // only if inode, size or nanosecond modification/change time moves;
+          // hashing an 80 MB MP4 for every 30-fps frame is prohibitively slow.
+          const contents = await readFile(asset.path);
+          if (createHash("sha256").update(contents).digest("hex") !== asset.sha256) { send(404); return; }
+          asset.verifiedKey = key;
+        }
+        const size = Number(metadata.size);
         const type = asset.assetType === "photo" ? "image/jpeg" : "video/mp4";
-        let start = 0, end = bytes.length - 1, code = 200;
+        let start = 0, end = size - 1, code = 200;
         if (request.headers.range !== undefined) {
           const range = /^bytes=(\d+)-(\d*)$/u.exec(request.headers.range);
-          if (!range || !Number.isSafeInteger(Number(range[1])) ||
-            (range[2] && !Number.isSafeInteger(Number(range[2])))) {
-            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${bytes.length}` });
+          const suffix = /^bytes=-(\d+)$/u.exec(request.headers.range);
+          if ((!range && !suffix) || (range && (!Number.isSafeInteger(Number(range[1])) ||
+            (range[2] && !Number.isSafeInteger(Number(range[2]))))) ||
+            (suffix && (!Number.isSafeInteger(Number(suffix[1])) || Number(suffix[1]) < 1))) {
+            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${size}` });
             response.end(); return;
           }
-          start = Number(range[1]); end = range[2] ? Number(range[2]) : end;
-          if (start > end || end >= bytes.length) {
-            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${bytes.length}` });
+          if (suffix) start = Math.max(0, size - Number(suffix[1]));
+          else { start = Number(range[1]); end = range[2] ? Math.min(size - 1, Number(range[2])) : end; }
+          if (start > end) {
+            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${size}` });
             response.end(); return;
           }
           code = 206;
         }
         response.writeHead(code, { ...securityHeaders, "Content-Type": type, "Accept-Ranges": "bytes",
           "Content-Length": end - start + 1,
-          ...(code === 206 ? { "Content-Range": `bytes ${start}-${end}/${bytes.length}` } : {}) });
-        response.end(bytes.subarray(start, end + 1));
+          ...(code === 206 ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}) });
+        // Stream just the requested portion rather than copying the whole MP4
+        // into every response. Errors abort capture instead of serving a
+        // truncated, apparently successful video asset.
+        createReadStream(asset.path, { start, end }).on("error", () => response.destroy()).pipe(response);
       } catch { send(404); }
       return;
     }
