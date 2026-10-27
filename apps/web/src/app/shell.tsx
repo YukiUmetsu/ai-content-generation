@@ -31,7 +31,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function Shell() {
   const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("production");
-  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"export"}|null>(null);
+  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"draft"|"export"}|null>(null);
   const [storyboardOwnerId,setStoryboardOwnerId] = useState<string|null>(null);
   const selectSection = (next:SectionId) => {
     if(next==="video-director")setDirectorEntry(null);
@@ -213,9 +213,11 @@ export function Shell() {
               onOpenNav={() => setMobileNavOpen(true)}
               onOpenProjects={() => setActiveSection("projects")}
               onOpenResearch={() => setActiveSection("research")}
+              onOpenJobs={() => setActiveSection("jobs-qa")}
               onOpenStoryboard={(productionId) => {setStoryboardOwnerId(productionId??catalog.activeProjectId);setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
               onOpenVisuals={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
               onOpenAudio={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
+              onOpenDraft={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"draft"});setActiveSection("video-director");}}
               onOpenExport={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
               onCreateStoryboard={startEditorialStoryboard}
               onUseVideo={saveVideoIdea}
@@ -236,7 +238,7 @@ export function Shell() {
               key={(directorEntry?.projectId??catalog.activeProjectId)+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
               locale={locale} projectId={directorEntry?.projectId??catalog.activeProjectId}
               researchArtifactId={directorEntry?.artifactId}
-              focusStage={directorEntry?.stage}/>
+              focusStage={directorEntry?.stage} onOpenJobs={()=>selectSection("jobs-qa")}/>
           ) : activeSection === "research" ? (
             <ResearchWorkspace key={catalog.activeProjectId+":"+(researchHandoff?.title??"")} locale={locale}
               handoff={researchHandoff} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}

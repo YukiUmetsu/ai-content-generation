@@ -4,7 +4,7 @@ import {fireEvent,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {ProductionPanel} from "./video-production-panel";
 
-afterEach(()=>vi.restoreAllMocks());
+afterEach(()=>{localStorage.clear();vi.restoreAllMocks();});
 
 const dossier={id:"research",topic:{title:"Why repairs cost more",audience:"Homeowners"}};
 const bundle={kind:"preproduction-bundle",researchId:"research",plan:{
@@ -41,6 +41,26 @@ it("guides the user from narration to final review and keeps voice settings when
   await user.click(screen.getByRole("tab",{name:/Narration/}));
   expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("licensed-voice");
   expect(calls.filter(x=>x.endsWith("/check"))).toHaveLength(1);
+});
+
+it("remembers only nonsecret narrator preferences, never provider credentials or consent",async()=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    if(String(input).endsWith("/plan"))return reply(plan);
+    throw Error("Unexpected request: "+input);
+  });
+  const user=userEvent.setup();
+  const first=render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await user.selectOptions(screen.getByRole("combobox",{name:"Production voice provider"}),"fish");
+  await user.type(screen.getByRole("textbox",{name:"Production voice ID"}),"authorized-voice");
+  await user.type(screen.getByLabelText("Fish Audio key"),"secret-api-key");
+  const saved=localStorage.getItem("contentgen:production-voice-profile:v1")??"";
+  expect(saved).toContain("authorized-voice");
+  expect(saved).not.toContain("secret-api-key");
+  expect(saved).not.toContain("voiceConsent");
+  first.unmount();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("authorized-voice");
+  expect(screen.getByLabelText("Fish Audio key")).toHaveValue("");
 });
 
 it("auditions a voice only on request and hides stale audio when provider settings change",async()=>{
@@ -134,6 +154,23 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
   expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
   expect(calls.filter(path=>path.endsWith("/check"))).toHaveLength(1);
   expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
+});
+
+it("automatically begins the saved production when invoked from Generate draft video",async()=>{
+  const paths:string[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);paths.push(path);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true,jobId:"job-production-1"});
+    if(path.endsWith("/status"))return reply({state:"rendering",phase:"rendering",message:"Encoding",jobId:"job-production-1"});
+    throw Error("Unexpected automatic production request: "+path);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} productionId={"production-"+"a".repeat(24)}
+    autoStartDraft onOpenJobs={vi.fn()}/>);
+  await waitFor(()=>expect(paths.filter(path=>path.endsWith("/start"))).toHaveLength(1));
+  expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
+  expect(screen.getByRole("button",{name:"View in Jobs"})).toBeEnabled();
 });
 
 it("explains failed preflight without starting a render or disabling retry",async()=>{

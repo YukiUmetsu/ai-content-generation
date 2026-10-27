@@ -13,7 +13,7 @@ const catalog:StudioCatalog={version:1,activeProjectId:"project-demo",
     createdAt:"2026-10-24T00:00:00Z"}],content:[],assets:[],products:[]};
 const noop=()=>{};
 const props={locale:"en" as const,catalog,onSelectProject:noop,onOpenResearch:noop,
-  onOpenStoryboard:noop,onOpenVisuals:noop,onOpenAudio:noop,onOpenExport:noop,
+  onOpenStoryboard:noop,onOpenVisuals:noop,onOpenAudio:noop,onOpenDraft:noop,onOpenExport:noop,
   onOpenNav:noop,onCreateStoryboard:()=>true,onUseVideo:()=>true};
 const stageButton=(label:string)=>within(screen.getByRole("navigation",{name:"Production stages"}))
   .getByRole("button",{name:new RegExp(label,"i")});
@@ -127,7 +127,7 @@ describe("Production eight-step workspace",()=>{
     fireEvent.click(reviewed);
     expect(screen.getByText("Reviewed locally")).toBeInTheDocument();
     fireEvent.click(stageButton("Create Video"));
-    expect(screen.getByRole("button",{name:/Set up voice & generate draft/i})).toBeEnabled();
+    expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
     expect(screen.getByRole("button",{name:"Edit video scenes"})).toBeEnabled();
     const approved=loadScriptDraft(production.id,"youtube").draft;
     const outline=loadProjectStoryboard(production.id).board;

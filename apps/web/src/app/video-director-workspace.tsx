@@ -76,11 +76,11 @@ function shotDraft(bundle:Bundle,id:string){
     sfxIntent:audio?.sfxIntent??"",
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
 }
-type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"export"};
+type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void};
 export function VideoDirectorWorkspace(props:DirectorWorkspaceProps){
   return <VideoDirectorWorkspaceContent key={`${props.projectId??""}:${props.researchArtifactId??""}`} {...props}/>;
 }
-function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focusStage}:DirectorWorkspaceProps){
+function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focusStage,onOpenJobs}:DirectorWorkspaceProps){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
@@ -564,11 +564,13 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
           {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
           <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
+            onOpenJobs={onOpenJobs}
             sourceRevision={sourceArtifactId??undefined} recheckToken={recheckToken}
             productionId={projectId?.startsWith("production-")?projectId:undefined}
             selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
             onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}
             initialStage={focusStage==="audio"?"narration":focusStage==="export"?"export":"preview"}
+            autoStartDraft={focusStage==="draft"}
             autoOpenVisuals={focusStage==="visuals"}/>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle px-4 py-4">

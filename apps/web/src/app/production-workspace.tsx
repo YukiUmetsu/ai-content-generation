@@ -55,9 +55,11 @@ interface Props {
   catalog: StudioCatalog;
   onSelectProject: (projectId:string)=>void;
   onOpenResearch: ()=>void;
+  onOpenJobs?: ()=>void;
   onOpenStoryboard: (productionId?:string)=>void;
   onOpenVisuals: (artifactId?:string,productionId?:string)=>void;
   onOpenAudio: (artifactId?:string,productionId?:string)=>void;
+  onOpenDraft: (artifactId?:string,productionId?:string)=>void;
   onOpenExport: (artifactId?:string,productionId?:string)=>void;
   onOpenNav: ()=>void;
   onOpenProjects?: ()=>void;
@@ -136,8 +138,8 @@ const statusToStepper:Record<ProductionStageStatus,string>={
 export function ProductionWorkspace(props:Props){
   return <ProductionWorkspaceProject key={props.catalog.activeProjectId} {...props}/>;
 }
-function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenStoryboard,
-  onOpenVisuals,onOpenAudio,onOpenExport,onOpenNav}:Props){
+function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenJobs,onOpenStoryboard,
+  onOpenVisuals,onOpenAudio,onOpenDraft,onOpenExport,onOpenNav}:Props){
   const ja=locale==="ja";
   const tr=(en:string,jp:string)=>ja?jp:en;
   const projectId=catalog.activeProjectId;
@@ -248,6 +250,19 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const video=catalog.content.filter(item=>item.projectId===projectId&&item.kind==="video").at(-1);
   const topic=production?.brief?.title??video?.name??"";
   const [step,setStep]=useState<ProductionStageId>(()=>previousStep(productionKey));
+  const [activeRender,setActiveRender]=useState<{productionId?:string|null;state:string;phase?:string;
+    message?:string;jobId?:string|null;progress?:{completedFrames?:number;totalFrames?:number}|null}|null>(null);
+  useEffect(()=>{
+    if(!production||step!=="produce")return;
+    let active=true;
+    const controller=new AbortController();
+    const poll=()=>{void fetch("/api/contentgen-video/status",{signal:controller.signal,cache:"no-store"})
+      .then(response=>response.ok?response.json():null)
+      .then(data=>{if(active&&data?.productionId===production.id)setActiveRender(data);})
+      .catch(()=>{/* Jobs remain accessible when the Director worker is offline. */});};
+    poll();const timer=window.setInterval(poll,2500);
+    return ()=>{active=false;controller.abort();window.clearInterval(timer);};
+  },[production,step]);
   const [board,setBoard]=useState(()=>loadProjectStoryboard(productionKey).board);
   const [boardError,setBoardError]=useState<string|null>(()=>loadProjectStoryboard(productionKey).warning);
   const [jobId,setJobId]=useState<string|null>(()=>storedForTopic(lastJobKey,topic,"jobId"));
@@ -436,8 +451,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
   const activeDiscovery=sessionDiscovery?.sessionId===sessionId?sessionDiscovery:null;
+  const youtubeReady=Boolean(videoScript?.sections.length&&videoScript.sections.every(section=>section.text.trim()));
   const stages=getProductionStages({setupReady:Boolean(project&&platforms.length),sessionId,
-    ideaId:production?.ideaId,scriptReady:scriptApproved,scriptStale,discoveryReady:Boolean(production?.ideaId),
+    ideaId:production?.ideaId,scriptReady:platforms.includes("youtube")?youtubeReady:scriptApproved,
+    scriptStale:platforms.includes("youtube")&&youtubeReady?false:scriptStale,discoveryReady:Boolean(production?.ideaId),
     discoveryArtifactId:sessionId?null:artifactId,discoveryJob:sessionId?null:job,
     discoverySessionRun:activeDiscovery?.run,discoveryIdeaCount:activeDiscovery?.ideaCount,
     storyboardReady:Boolean(board),storyboardScriptStale:boardScriptStale,
@@ -464,10 +481,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     setStep(next);
     try{localStorage.setItem(stagesKey(productionKey),next);}catch{/* Navigation still works without local storage. */}
   }
-  async function openDirector(stage:"visuals"|"audio"|"export"){
+  async function openDirector(stage:"visuals"|"audio"|"draft"|"export"){
     if(openingDirector)return;
     if(!production&&matchingDraft?.artifactId){
-      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(matchingDraft.artifactId,productionKey);
+      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:stage==="draft"?onOpenDraft:onOpenExport)(matchingDraft.artifactId,productionKey);
       return;
     }
     if(!production||!videoScript||!videoScript.sections.length||videoScript.sections.some(section=>!section.text.trim())){
@@ -503,7 +520,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
         throw Error("The local Director returned an invalid draft.");
       sessionStorage.setItem("contentgen:director-approved-script:v1:"+production.id,JSON.stringify({
         productionId:production.id,scriptRevision:videoScript.updatedAt,sourcePrefix:productionMediaSource(videoScript.updatedAt,refreshed),...result}));
-      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(undefined,production.id);
+      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:stage==="draft"?onOpenDraft:onOpenExport)(undefined,production.id);
     }catch(reason){setError(reason instanceof Error?reason.message:"Could not open video production. Check local server and retry.");}
     finally{setOpeningDirector(false);}
   }
@@ -724,7 +741,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             {platforms.includes("youtube")&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-primary/25 bg-primary/5 p-4">
               <p className="text-sm text-muted-foreground">Your YouTube draft can be made independently of other scripts.</p>
               <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector}
-                onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4"/></button>
+                onClick={()=>void openDirector("draft")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4"/></button>
             </div>}
           </div>:<div className={contentCard}>
             <p className="text-sm text-muted-foreground">{tr("Choose a discovery idea to let AI draft the script.","アイデアを選択するとAIが台本を作成します。")}</p>
@@ -819,6 +836,19 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Video draft</span>
             <h3 className="mt-2 font-serif text-2xl font-semibold">Turn your script into a video</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Choose a voice, then select <strong>Generate draft video</strong>. ContentGen prepares scenes, checks your local tools and makes a playable MP4. You can refine the scenes afterward.</p>
+            {activeRender&&activeRender.productionId===production?.id&&activeRender.state!=="idle"&&
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-control border border-primary/25 bg-primary/5 p-4" role="status">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{activeRender.state==="rendering"?"Creating your video":
+                    activeRender.state==="done"?"Draft video ready":activeRender.state==="failed"?"Video needs attention":
+                    activeRender.state==="cancelled"?"Video cancelled":"Production status"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{activeRender.message??activeRender.phase}</p>
+                  {activeRender.progress?.totalFrames&&activeRender.progress.completedFrames!==undefined&&
+                    <progress aria-label="Video frames rendered" className="mt-2 h-2 w-full" max={activeRender.progress.totalFrames}
+                      value={activeRender.progress.completedFrames}/>}
+                </div>
+                {onOpenJobs&&activeRender.jobId&&<button className={secondaryButton} type="button" onClick={onOpenJobs}>View in Jobs</button>}
+              </div>}
             {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm" role="status">
               {mediaSnapshot.status==="loading"?"Checking saved local render files…":
                 mediaSnapshot.status==="error"?`Unable to read saved renders: ${mediaSnapshot.error}`:
@@ -831,7 +861,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             </div>}
             {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">Finish the YouTube script to generate a playable draft. Other destinations can wait.</p>}
             <div className="mt-5 rounded-xl border border-primary/30 bg-primary/5 p-5">
-              <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector} onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4" aria-hidden /></button>
+              <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector} onClick={()=>void openDirector("draft")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4" aria-hidden /></button>
               <p className="mt-3 text-xs text-muted-foreground">Your storyboard refreshes automatically. Voice setup is requested only when needed. Nothing is published.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">

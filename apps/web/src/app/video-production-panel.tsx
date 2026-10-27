@@ -12,6 +12,7 @@ type Preview = {schemaVersion:number;kind:string;job:{beats:Array<{id:string;nar
   warnings:string[];editorialStatus:string};
 type Report = {ready:boolean;findings:Array<{severity:string;code:string;message:string}>};
 type Status = {state:string;phase:string;message:string;report?:Report|null;
+  jobId?:string|null;
   progress?:{phase:string;completedFrames?:number;totalFrames?:number}|null;
   mediaUrl?:string|null;regeneration?:{reusedSpeechBeatIds:string[];reusedVideoSegments:number;newlyEncodedVideoSegments:number|null}|null};
 type Settings = {provider:"local"|"fish";voiceId:string;providerRevision:string;modelId:string;endpoint:string;
@@ -29,6 +30,20 @@ const field="mt-1.5 w-full min-w-0 rounded-control border border-input bg-surfac
 const inputLabel="flex flex-col text-xs font-semibold text-muted-foreground";
 const defaults:Settings={provider:"local",voiceId:"",providerRevision:"",modelId:"",
   endpoint:"http://127.0.0.1:8765",apiKey:"",localVoiceAuthorized:false,voiceConsent:false,transmitText:false};
+const voiceProfileKey="contentgen:production-voice-profile:v1";
+function savedVoiceSettings():Settings{
+  try{
+    const saved=JSON.parse(localStorage.getItem(voiceProfileKey)??"null") as Partial<Settings>|null;
+    if(!saved||!(["local","fish"] as string[]).includes(saved.provider??""))return {...defaults};
+    const profile={...defaults,provider:saved.provider as Settings["provider"]};
+    for(const key of ["voiceId","providerRevision","modelId","endpoint"] as const){
+      if(typeof saved[key]==="string"&&saved[key]!.length<=256)profile[key]=saved[key]!;
+    }
+    // Authorization, permission to transmit, and API credentials never persist
+    // in browser storage; each session must independently authorize requests.
+    return profile;
+  }catch{return {...defaults};}
+}
 async function request(path:string,payload?:unknown){
   const isPost=payload!==undefined;
   const response=await fetch("/api/contentgen-video/"+path,{
@@ -42,9 +57,14 @@ async function request(path:string,payload?:unknown){
   return data;
 }
 export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
-  initialStage="preview",autoOpenVisuals=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;recheckToken?:number}){
+  initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void}){
   const [stage,setStage]=useState<Stage>(initialStage);
-  const [settings,setSettings]=useState<Settings>(defaults);
+  const [settings,setSettings]=useState<Settings>(savedVoiceSettings);
+  useEffect(()=>{
+    try{localStorage.setItem(voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
+      providerRevision:settings.providerRevision,modelId:settings.modelId,endpoint:settings.endpoint}));}
+    catch{/* Private mode must not block production. */}
+  },[settings.provider,settings.voiceId,settings.providerRevision,settings.modelId,settings.endpoint]);
   const [sampleStatus,setSampleStatus]=useState<SampleStatus>({state:"idle",message:""});
   const sampleRevision=useRef(0);
   const activeSampleRevision=useRef(0);
@@ -62,6 +82,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const autoBusy=useRef(false);
   const inputRevision=useRef(0);
   const initialEntry=useRef(false);
+  const startedAutomaticDraft=useRef(false);
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
   const [sfxSummary,setSfxSummary]=useState<SfxSummary|null>(null);
   // Returning from scene/media/sound edits invalidates an old UI readiness approval,
@@ -263,12 +284,22 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       const result=await request("start",{...requestInput,confirmRender:true});
       if(result.started!==true)throw Error("The local renderer did not confirm startup.");
       setStage("export");setReady(false);
-      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Keep the local Studio running.",report});
+      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Keep the local Studio running.",report,
+        jobId:typeof result.jobId==="string"?result.jobId:null});
       setNotice("Visuals, narration, sound and MP4 rendering are now running. This does not publish anything.");
     }catch(reason){
       setNotice(reason instanceof Error?reason.message:"Could not generate the draft video.");
     }finally{autoBusy.current=false;setWorking("");}
   }
+  useEffect(()=>{
+    if(!autoStartDraft||startedAutomaticDraft.current)return;
+    startedAutomaticDraft.current=true;
+    setStage("narration");
+    void generateDraft();
+    // This is deliberately a one-shot navigation intent. Changes to voice or
+    // scene settings need an explicit user retry after their first preflight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoStartDraft]);
   async function start(){
     if(!ready)return;
     setWorking("start");setNotice("");
@@ -481,6 +512,10 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         {(state.state==="rendering"||state.state==="failed"||state.state==="done"||state.state==="cancelled")&&<div className="rounded-control border border-border p-3" role="status">
           <p className="font-medium">{state.message}</p>
           <p className="mt-1 text-xs text-muted-foreground">{state.phase} {pct!==null?"· "+pct+"% frames complete":""}</p>
+          {state.jobId&&<div className="mt-2 flex flex-wrap items-center gap-3">
+            <span className="text-xs text-muted-foreground">Tracked in Jobs · {state.jobId.slice(0,18)}…</span>
+            {onOpenJobs&&<Button size="sm" variant="outline" onClick={onOpenJobs}>View in Jobs</Button>}
+          </div>}
           {pct!==null&&<progress aria-label="Render progress" className="mt-3 h-2 w-full" max={100} value={pct}/>}
         </div>}
         {state.state==="done"&&state.mediaUrl&&<div className="space-y-3 rounded-control border border-border p-3">

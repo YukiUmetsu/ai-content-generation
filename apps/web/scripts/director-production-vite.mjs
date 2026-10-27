@@ -22,6 +22,7 @@ import { compilePreproductionBundle } from "./video-production/preproduction.mjs
 import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 import { synthesizeNarration } from "./video-production/speech.mjs";
+import { createProductionJobTracker } from "./video-production/production-jobs.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -167,12 +168,14 @@ export function createDirectorProduction(deps={}){
     return assets;
   }
   const env=deps.env??process.env;
+  const newJobTracker=deps.jobTracker??(()=>createProductionJobTracker());
   let busy=false,checked=null,controller=null,lastOutput=null,preview=null;
+  let activeJobTracker=null;
   let sample=null,sampleController=null;
   let sampleStatus={state:"idle",message:"No voice sample generated.",audioUrl:null};
   const results=new Map();
   let status={state:"idle",phase:"idle",message:"Review the renderable storyboard before creating media.",
-    progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
+    progress:null,report:null,runId:null,jobId:null,mediaUrl:null,regeneration:null};
   const progress=event=>{
     status={...status,phase:event.phase,progress:event,
       message:event.message||event.phase.replaceAll("-"," ")};
@@ -237,6 +240,10 @@ export function createDirectorProduction(deps={}){
       if(route==="/cancel"){
         if(!busy||!controller){respond(res,409,{error:"No active render."});return;}
         controller.abort(Error("Cancelled by editor."));
+        if(activeJobTracker){
+          try{await activeJobTracker.cancel();}
+          catch(error){respond(res,503,{error:"Render cancellation requested, but Jobs could not confirm it. "+String(error?.message??"").slice(0,160)});return;}
+        }
         respond(res,202,{cancelRequested:true});return;
       }
       if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
@@ -393,13 +400,24 @@ export function createDirectorProduction(deps={}){
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
         }
-        checked=null;
         const runId=randomUUID(),out=join(outputRoot,"draft-"+runId),abort=new AbortController();
+        // Real productions must acquire a persisted DAG before doing paid/network
+        // work. Demo fixtures without a production ID retain their isolated mode.
+        const tracker=input.productionId?newJobTracker():null;
+        let trackedJobId=null;
+        if(tracker){
+          trackedJobId=await tracker.start({productionId:input.productionId,
+            revision:identity,runId});
+        }
+        checked=null;
         controller=abort;busy=true;
+        activeJobTracker=tracker;
         status={state:"rendering",phase:"starting",message:"Producing the local draft…",
-          progress:null,report:status.report,runId,mediaUrl:null,regeneration:null};
-        respond(res,202,{started:true,runId});
+          progress:null,report:status.report,runId,jobId:trackedJobId,
+          productionId:input.productionId??null,mediaUrl:null,regeneration:null};
+        respond(res,202,{started:true,runId,jobId:trackedJobId});
         void (async()=>{
+          let journal=Promise.resolve(),journalError=null;
           try{
             await mkdir(out,{recursive:true,mode:0o700});
             await writeFile(join(out,"render-job.json"),JSON.stringify(job,null,2)+"\n",{flag:"wx",mode:0o600});
@@ -411,9 +429,18 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
-              ...(lastOutput?{reuseFrom:lastOutput}:{}),onProgress:progress
+              ...(lastOutput?{reuseFrom:lastOutput}:{}),onProgress:event=>{
+                progress(event);
+                if(tracker)journal=journal.then(()=>tracker.advance(event.phase)).catch(error=>{
+                  journalError=error;
+                  abort.abort(error);
+                });
+              }
             });
+            await journal;
+            if(journalError)throw journalError;
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
+            if(tracker)await tracker.complete();
             results.set(runId,result.releaseDir);
             if(results.size>5)results.delete(results.keys().next().value);
             let mediaWarning="";
@@ -426,11 +453,19 @@ export function createDirectorProduction(deps={}){
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
               regeneration:result.regeneration??null};
           }catch(error){
-            const cancelled=abort.signal.aborted;
+            await journal;
+            // Journal failures also abort the renderer, but they are not user
+            // cancellations. Try to persist a terminal failure if Jobs came
+            // back before returning control to the editor.
+            const cancelled=abort.signal.aborted&&!journalError;
+            if(tracker&&!cancelled){
+              try{await tracker.fail("render_failed","Draft rendering failed. Inspect the local renderer log, then retry.");}
+              catch(journalFailure){status={...status,message:"Jobs failed to record the renderer error: "+String(journalFailure?.message??"unknown")};}
+            }
             status={...status,state:cancelled?"cancelled":"failed",phase:"production",
               message:cancelled?"Render cancelled; no completed release published.":
                 "Render failed: "+String(error?.message||error).slice(0,240)};
-          }finally{busy=false;controller=null;}
+          }finally{busy=false;controller=null;activeJobTracker=null;}
         })();
         return;
       }

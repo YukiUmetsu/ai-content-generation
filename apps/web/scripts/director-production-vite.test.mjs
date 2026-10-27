@@ -215,11 +215,53 @@ test("a normal UI sequence checks tools, renders a new MP4, reuses previous outp
   assert.equal(server.status().state,"done");
 });
 
+test("saved production starts a durable Jobs DAG before rendering and reports its ID",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-tracked-test-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const events=[];
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async input=>{events.push(["start",input.productionId]);return "job-persisted";},
+      advance:async phase=>events.push(["advance",phase]),
+      complete:async()=>events.push(["complete"]),fail:async()=>events.push(["fail"]),
+      cancel:async()=>events.push(["cancel"])}),
+    produce:async (_job,opts)=>{
+      const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock media");
+      opts.onProgress({phase:"narration"});opts.onProgress({phase:"rendering",completedFrames:12,totalFrames:12});
+      return {releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24),sourceRevision:"r1"};
+  assert.equal((await invoke(server,"POST","/check",payload)).status,200);
+  const started=await invoke(server,"POST","/start",{...payload,confirmRender:true});
+  assert.equal(started.status,202);assert.equal(started.data.jobId,"job-persisted");
+  for(let i=0;i<30&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(server.status().jobId,"job-persisted");
+  assert.deepEqual(events.map(e=>e[0]),["start","advance","advance","complete"]);
+});
+
+test("production renderer refuses to run if the durable Jobs service is unavailable",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-no-jobs-test-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let renders=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>{throw Error("Start the local Rust ContentGen server");}}),
+    produce:async()=>{renders++;}});
+  const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  const result=await invoke(server,"POST","/start",{...payload,confirmRender:true});
+  assert.equal(result.status,422);assert.match(result.data.error,/Rust ContentGen server/);
+  assert.equal(renders,0);
+});
+
 test("completed renders are discoverable by production across server restarts, never by another production",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-assets-test-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const productionId="production-"+"a".repeat(24),otherId="production-"+"b".repeat(24);
   const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    jobTracker:()=>({start:async()=>"test-job",advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
     build:async()=>{},inspect:async()=>({ready:true,findings:[],tools:{}}),
     produce:async(_job,opts)=>{
       const releaseDir=join(opts.out,"release");
