@@ -544,7 +544,8 @@ export function createDirectorProduction(deps={}){
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
               expectedSceneMediaFingerprint:sceneMedia.fingerprint,
-              ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom}:{}),
+              ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom,
+                reuseRenderSegmentsFrom:reuseSpeechCacheFrom}:{}),
               ...(searchFreeMedia?{prepareAssetSuggestions:async({signal})=>{
                 try{
                   if(signal?.aborted)throw Error("Media search cancelled.");

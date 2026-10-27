@@ -243,6 +243,50 @@ test("retrying an interrupted draft uses only its existing verified speech-cache
   assert.equal(missingCache,null,"a missing interrupted cache must safely regenerate narration");
 });
 
+test("a failed draft persists its exact Kumiki plan so retry can reuse verified scene segments",async t=>{
+  const first=await context(t);
+  first.injected.renderVideoSegments=async options=>{
+    await mkdir(join(options.outDir,"segments"),{recursive:true});
+    throw Error("capture stopped midway");
+  };
+  await assert.rejects(produceVideo(first.job,first.opts,first.injected),/capture stopped midway/);
+  const sourcePath=join(first.opts.out,".render","render-source-plan.json");
+  const saved=JSON.parse(await readFile(sourcePath,"utf8"));
+  assert.equal(saved.schemaVersion,1);
+  assert.equal(saved.buildHash,"b".repeat(64));
+  assert.equal(saved.planHash,hash(JSON.stringify(saved.plan)));
+  assert.equal(saved.plan.chapters.length,first.job.beats.length);
+  assert.equal((await readdir(first.opts.out)).includes("release"),false);
+  const second=await context(t);
+  const original=second.injected.renderVideoSegments;
+  second.injected.renderVideoSegments=async options=>{
+    assert.deepEqual(options.reuseFrom?.sourcePlan,saved.plan);
+    assert.equal(options.reuseFrom?.buildHash,"b".repeat(64));
+    assert.equal(options.reuseFrom?.segmentsDir,join(first.opts.out,".render","segments"));
+    return original(options);
+  };
+  await produceVideo(second.job,{...second.opts,reuseRenderSegmentsFrom:first.opts.out},second.injected);
+});
+
+test("tampered interrupted scene plan is ignored without trusting its segment cache",async t=>{
+  const first=await context(t);
+  first.injected.renderVideoSegments=async options=>{
+    await mkdir(join(options.outDir,"segments"),{recursive:true});
+    throw Error("browser interrupted");
+  };
+  await assert.rejects(produceVideo(first.job,first.opts,first.injected),/browser interrupted/);
+  const path=join(first.opts.out,".render","render-source-plan.json");
+  const saved=JSON.parse(await readFile(path,"utf8"));
+  await writeFile(path,JSON.stringify({...saved,planHash:"0".repeat(64)}));
+  const second=await context(t);
+  const original=second.injected.renderVideoSegments;
+  second.injected.renderVideoSegments=async options=>{
+    assert.equal(options.reuseFrom,undefined,"a changed plan cannot be used for scene reuse");
+    return original(options);
+  };
+  await produceVideo(second.job,{...second.opts,reuseRenderSegmentsFrom:first.opts.out},second.injected);
+});
+
 test("cancelling media search prevents voice calls and leaves no completed release",async t=>{
   const ctx=await context(t),abort=new AbortController();
   await assert.rejects(produceVideo(ctx.job,{...ctx.opts,signal:abort.signal,

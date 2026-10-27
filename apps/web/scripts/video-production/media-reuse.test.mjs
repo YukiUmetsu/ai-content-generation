@@ -98,7 +98,7 @@ test("retimed and globally altered scene must render all frames, not reuse unsaf
   assert.equal(reusableChapter(old,durationChange,0,"b".repeat(64)),false);
   assert.equal(reusableChapter(old,old,0,"c".repeat(64)),true); // same SHA-format; caller separately checks matching built scene
 });
-test("tampered prior scene video is rejected before copy",async t=>{
+test("tampered prior scene video is redrawn without copying corrupted bytes",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-tamper-scene-"));
   t.after(()=>rm(root,{recursive:true,force:true}));
   const old=plan(),from=join(root,"old");
@@ -106,7 +106,9 @@ test("tampered prior scene video is rejected before copy",async t=>{
   await writeFile(join(from,"segments","segment-00000.mp4"),"unexpected bytes");
   const revised=structuredClone(old);revised.chapters[1].visual.headline="Edit only later chapter";
   const next=mocks();
-  await assert.rejects(renderVideoSegments({...config(join(root,"new"),revised),
-    reuseFrom:{sourcePlan:old,buildHash:"b".repeat(64),segmentsDir:join(from,"segments")}},next.api),/hash mismatch/);
-  assert.equal(next.touched.length,0);
+  const result=await renderVideoSegments({...config(join(root,"new"),revised),
+    reuseFrom:{sourcePlan:old,buildHash:"b".repeat(64),segmentsDir:join(from,"segments")}},next.api);
+  assert.equal(result.reusedSegmentCount,0);
+  assert.equal(next.touched.length,180);
+  assert.notEqual((await readFile(join(root,"new","segments","segment-00000.mp4"),"utf8")),"unexpected bytes");
 });

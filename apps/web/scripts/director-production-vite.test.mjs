@@ -247,13 +247,14 @@ test("a restarted failed production locates its original narration cache from th
   const dir=await mkdtemp(join(tmpdir(),"director-retry-cache-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const oldRun="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-  let passedCache;
+  let passedCache,passedRenderCache;
   const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
     build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
     jobTracker:()=>({priorRunId:oldRun,start:async()=>"job-retried",
       advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
     produce:async(_job,options)=>{
       passedCache=options.reuseSpeechCacheFrom;
+      passedRenderCache=options.reuseRenderSegmentsFrom;
       const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
       await writeFile(join(releaseDir,"video.mp4"),"mock retry video");return{releaseDir};
     }});
@@ -263,6 +264,7 @@ test("a restarted failed production locates its original narration cache from th
   for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
   assert.equal(server.status().state,"done");
   assert.equal(passedCache,join(dir,"draft-"+oldRun));
+  assert.equal(passedRenderCache,join(dir,"draft-"+oldRun),"retry can use verified segments from the failed run");
 });
 
 test("render identity tracks user-selected visual media and passes exact shot bindings to the renderer", async t => {

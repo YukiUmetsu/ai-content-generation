@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { access, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { listRenderChunks, reusableChapter } from "./media-reuse.mjs";
 import { constants } from "node:fs";
 import { join, parse, resolve } from "node:path";
@@ -205,22 +205,34 @@ export async function renderVideoSegments(options, dependencies = {}) {
           reusableChapter(prior.sourcePlan,options.visualPlan,chapterIndex,options.buildHash)){
         const oldFile = join(prior.segmentsDir,name);
         const oldMetaFile = oldFile + ".json";
-        let oldMeta;
-        try { oldMeta=JSON.parse(await readFile(oldMetaFile,"utf8")); }
-        catch(error){ if(error.code!=="ENOENT")fail("invalid previous segment metadata "+name); }
-        if(oldMeta && oldMeta.startFrame===startFrame && oldMeta.frameCount===frameCount){
-          if(oldMeta.fingerprint!==priorFingerprint)
-            fail("previous segment fingerprint mismatch for "+name);
-          const bytes=await readFile(oldFile);
-          if(sha256(bytes)!==oldMeta.sha256)
-            fail("previous segment hash mismatch for "+name);
-          if(!matchProbe(await probe(oldFile),manifest,frameCount))
-            fail("previous segment measured video mismatch for "+name);
-          await copyFile(oldFile,path,0);
+        let reusableBytes=null,oldHash=null;
+        try {
+          const [videoInfo,metaInfo]=await Promise.all([lstat(oldFile),lstat(oldMetaFile)]);
+          if(videoInfo.isFile()&&!videoInfo.isSymbolicLink()&&videoInfo.size>0&&videoInfo.size<=256*1024*1024&&
+            metaInfo.isFile()&&!metaInfo.isSymbolicLink()&&metaInfo.size>16&&metaInfo.size<8192){
+            const oldMeta=JSON.parse(await readFile(oldMetaFile,"utf8"));
+            if(oldMeta.fingerprint===priorFingerprint&&oldMeta.startFrame===startFrame&&
+              oldMeta.frameCount===frameCount&&/^[a-f0-9]{64}$/u.test(oldMeta.sha256??"")){
+              const bytes=await readFile(oldFile);
+              if(sha256(bytes)===oldMeta.sha256&&matchProbe(await probe(oldFile),manifest,frameCount)){
+                reusableBytes=bytes;oldHash=oldMeta.sha256;
+              }
+            }
+          }
+        }catch(error){
+          // A previous attempt is an optional cache, never a release. Damaged
+          // or missing bytes are regenerated, not converted into new failures.
+          if(options.signal?.aborted)throw error;
+        }
+        if(reusableBytes){
+          if(options.signal?.aborted)fail("video capture cancelled");
+          // Write the already-verified exact bytes; copying from the old path
+          // here would reopen a TOCTOU window after the checksum check.
+          await writeFile(path,reusableBytes,{flag:"wx",mode:0o600});
           await writeFile(metadataPath,JSON.stringify({
-            fingerprint,name,startFrame,frameCount,sha256:oldMeta.sha256
+            fingerprint,name,startFrame,frameCount,sha256:oldHash
           },null,2),{flag:"wx"});
-          segmentHash=oldMeta.sha256;
+          segmentHash=oldHash;
           completed=true;
           reusedSegmentCount++;
           options.onProgress?.({phase:"segment-reused",startFrame,frameCount,chapterIndex});

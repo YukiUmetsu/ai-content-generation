@@ -121,6 +121,23 @@ test("same narrative plan with changed built scene cannot reuse stale H264 segme
   await assert.rejects(renderVideoSegments({ ...config(dir, 151), buildHash: "c".repeat(64) }, dependencies), /stale|fingerprint|resume|build/i);
 });
 
+test("damaged segments in a failed previous attempt are redrawn, never reused or made fatal",async t=>{
+  const {dir,dependencies,stats}=await harness(t);
+  const first=join(dir,"interrupted"),retry=join(dir,"retry");
+  const manifest=config(first,151).manifest;
+  const visualPlan={kind:"test-explainer",manifest,
+    chapters:[{id:"scene-1",startFrame:0,endFrame:151,visual:{headline:"Roof costs"}}]};
+  const planHash=createHash("sha256").update(JSON.stringify(visualPlan)).digest("hex");
+  await renderVideoSegments({...config(first,151),planHash,visualPlan},dependencies);
+  await writeFile(join(first,"segments","segment-00000.mp4"),"changed-media");
+  const previouslyCaptured=stats().captured.length;
+  const result=await renderVideoSegments({...config(retry,151),planHash,visualPlan,
+    reuseFrom:{sourcePlan:visualPlan,buildHash:"b".repeat(64),segmentsDir:join(first,"segments")}},dependencies);
+  assert.equal(result.reusedSegmentCount,1,"the separately verified second chunk is still reusable");
+  assert.equal(stats().captured.length-previouslyCaptured,150,"only the damaged first chunk is redrawn");
+  assert.equal(result.segmentHashes.length,2);
+});
+
 test("capture abort leaves verified segments but never publishes an incomplete MP4", async (t) => {
   const { dir, dependencies } = await harness(t);
   let closed = false;

@@ -70,9 +70,41 @@ async function toolVersions() {
   return records;
 }
 
+// A crashed render has no published release, but may have committed complete
+// SHA-verified H.264 segments. Read only its own non-symlinked render ledger;
+// damaged or older plans are hints to discard, never reasons to block a retry.
+async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
+  const dir = resolve(priorRoot);
+  if (dir === currentOutput || [parse(dir).root, homedir(), process.cwd(), "/tmp", "/workspace"].includes(dir))
+    fail("interrupted video cache must be a distinct, narrow job-owned directory");
+  const renderRoot = join(dir, ".render");
+  const planFile = join(renderRoot, "render-source-plan.json");
+  const segmentsDir = join(renderRoot, "segments");
+  try {
+    const [parent, folder, file, segments] = await Promise.all([
+      lstat(dir), lstat(renderRoot), lstat(planFile), lstat(segmentsDir),
+    ]);
+    if (!parent.isDirectory() || parent.isSymbolicLink() ||
+      !folder.isDirectory() || folder.isSymbolicLink() ||
+      !segments.isDirectory() || segments.isSymbolicLink() ||
+      !file.isFile() || file.isSymbolicLink() || file.size < 32 || file.size > 2 * 1024 * 1024)
+      return null;
+    const saved = JSON.parse(await readFile(planFile, "utf8"));
+    if (saved.schemaVersion !== 1 || saved.buildHash !== buildHash ||
+      !/^[a-f0-9]{64}$/u.test(saved.planHash ?? "") ||
+      !saved.plan?.manifest || !Array.isArray(saved.plan.chapters) ||
+      sha256(JSON.stringify(saved.plan)) !== saved.planHash)
+      return null;
+    return { sourcePlan: saved.plan, buildHash, segmentsDir };
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,expectedSceneMediaFingerprint?:string}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,expectedSceneMediaFingerprint?:string}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -145,6 +177,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       interruptedCache=cachePath;
     }catch(error){if(error?.code!=="ENOENT")throw error;}
   }
+  const interruptedVisual = options.reuseRenderSegmentsFrom && !previous ?
+    await interruptedRenderCache(options.reuseRenderSegmentsFrom, out, preflight.buildHash) : null;
   const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
@@ -215,6 +249,13 @@ export async function produceVideo(candidate, options, deps = {}) {
     const reviewFrames = [...new Set([0, Math.floor(frames / 2), afterPayoff, frames - 1])].sort((a, b) => a - b);
     const sourcePlan = JSON.stringify(plan);
     const planHash = sha256(sourcePlan);
+    const renderRoot = join(out, ".render");
+    await mkdir(renderRoot, { recursive: true, mode: 0o700 });
+    // Persist the exact plan before Chromium begins. Failed runs never publish
+    // their release, yet a later Jobs retry can prove which frames were done.
+    await writeFile(join(renderRoot, "render-source-plan.json"), JSON.stringify({
+      schemaVersion: 1, buildHash: preflight.buildHash, planHash, plan,
+    }), { flag: "wx", mode: 0o600 });
     const sfx = job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
     }));
@@ -233,9 +274,7 @@ export async function produceVideo(candidate, options, deps = {}) {
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable, onProgress: options.onProgress,
         maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
-        visualPlan:plan,reuseFrom:previous?{
-          sourcePlan:previous.sourcePlan,buildHash:previous.buildHash,segmentsDir:previous.segmentsDir
-        }:undefined,
+        visualPlan:plan,reuseFrom:previous??interruptedVisual??undefined,
       });
     } finally { await stage.close(); stage = null; }
 
@@ -288,6 +327,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       commercialRightsVerified: beat.commercialRightsVerified === true,
     }));
     const regeneration = { previousOutputUsed: !!previous,
+      interruptedSegmentCacheFound: !!interruptedVisual,
       reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
       reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
