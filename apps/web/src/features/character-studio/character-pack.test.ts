@@ -56,6 +56,30 @@ const makeZip = (overrides?: { def?: unknown; layers?: Entry[]; extra?: Entry[];
     ...(overrides?.layers ?? [{ name: "layers/torso.png", bytes: png, compressed: overrides?.compressed }]),
     ...(overrides?.extra ?? [])]);
 
+const speakingPack = () => {
+  const base = definition();
+  return {
+    ...base,
+    channels: [...base.channels, "head"],
+    assets: {
+      ...base.assets,
+      head: { ...base.assets.torso, uri: "layers/head.png" },
+      cleanHead: { ...base.assets.torso, uri: "layers/clean-head.png" },
+      beak: { ...base.assets.torso, uri: "layers/beak.png" },
+    },
+    parts: [
+      ...base.parts,
+      { id: "head", channel: "head", asset: "head", variants: { clean: "cleanHead" }, pivot: { x: 4, y: 4 }, z: 1 },
+      { id: "beak", parent: "head", channel: "head", asset: "beak", variants: { closed: "beak", open: "beak" }, pivot: { x: 4, y: 4 }, z: 2 },
+    ],
+    speech: {
+      mouthPart: "beak", rest: "closed", visemes: { A: "open" }, approximateCycle: ["closed", "open"],
+      approximateStepFrames: 3, transitionFrames: 0, activeVariants: { head: "clean" },
+    },
+  };
+};
+const speakingLayers: Entry[] = ["torso", "head", "clean-head", "beak"].map(name => ({ name: `layers/${name}.png`, bytes: png }));
+
 describe("character ZIP package inspector", () => {
   it("reads stored and deflated portable packs with stable asset references", async () => {
     for (const compressed of [false, true]) {
@@ -65,6 +89,32 @@ describe("character ZIP package inspector", () => {
       expect(inspected.images.get("layers/torso.png")?.type).toBe("image/png");
       expect(inspected.issues).toEqual([]);
     }
+  });
+
+  it("accepts a clean-head companion swap needed for a single opening owl beak", async () => {
+    const inspected = await inspectCharacterZip(makeZip({ def: speakingPack(), layers: speakingLayers }));
+    expect(inspected.definition.speech).toMatchObject({ activeVariants: { head: "clean" }, mouthPart: "beak" });
+    expect(inspected.images.size).toBe(4);
+  });
+
+  it("rejects broken speech mouth, viseme, cycle, and companion references", async () => {
+    const base = speakingPack();
+    const invalid: unknown[] = [
+      { ...base, speech: { ...base.speech, mouthPart: "missing" } },
+      { ...base, speech: { ...base.speech, visemes: { A: "missing" } } },
+      { ...base, speech: { ...base.speech, approximateCycle: ["missing"] } },
+      { ...base, speech: { ...base.speech, activeVariants: { head: "missing" } } },
+      { ...base, speech: { ...base.speech, activeVariants: { beak: "open" } } },
+      { ...base, speech: { ...base.speech, activeVariants: { constructor: "clean" } } },
+    ];
+    for (const manifest of invalid) {
+      await expect(inspectCharacterZip(makeZip({ def: manifest, layers: speakingLayers }))).rejects.toThrow(/speech|viseme|mouth|companion/i);
+    }
+  });
+
+  it("explains how to import a standalone rig kit safely", async () => {
+    const standalone = zip([{ name: "doctor-quill.rig.json", bytes: utf8.encode("{}") }]);
+    await expect(inspectCharacterZip(standalone)).rejects.toThrow(/standalone rig kit.*character\.json/i);
   });
 
   it("rejects archive traversal, duplicate files, symlinks and encrypted archives", async () => {

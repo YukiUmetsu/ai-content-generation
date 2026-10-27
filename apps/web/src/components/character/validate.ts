@@ -150,6 +150,11 @@ export function validateCharacterDefinition(definition: CharacterDefinition): Ch
     for (const variant of needed) {
       if (!mouth?.variants?.[variant]) error("speech-variant", `Mouth variant "${variant}" is not defined on "${speech.mouthPart}".`, { partId: speech.mouthPart });
     }
+    if (Object.keys(speech.activeVariants ?? {}).length > 16) error("speech-companions", "Speech may change at most 16 companion parts.");
+    for (const [id, variant] of Object.entries(speech.activeVariants ?? {})) {
+      if (id === speech.mouthPart) error("speech-companion", `Mouth part "${id}" is controlled by visemes, not activeVariants.`, { partId: id });
+      else if (!partById.get(id)?.variants?.[variant]) error("speech-companion", `Speech companion "${id}" does not define variant "${variant}".`, { partId: id });
+    }
     if (speech.approximateStepFrames < 1) error("speech-timing", "approximateStepFrames must be ≥ 1.");
   }
   if (definition.gaze) {

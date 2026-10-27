@@ -189,6 +189,10 @@ export interface CharacterExpression {
 export interface CharacterSpeechSpec {
   /** Part whose variant is the mouth shape. */
   mouthPart: string;
+  /** Other parts that must swap while a speech/viseme cue is active (e.g. a beakless
+   * head plate behind a separate animated beak). Overrides expression/blink art
+   * only during speech; silence restores the normal expression hierarchy. */
+  activeVariants?: Record<string, string>;
   /** Variant used at rest and during silence. Closing the mouth on pauses is required. */
   rest: string;
   /** Viseme id → mouth variant. Unknown visemes map to `rest` with a warning. */

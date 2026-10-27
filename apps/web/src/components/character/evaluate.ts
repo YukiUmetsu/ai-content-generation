@@ -631,6 +631,14 @@ export function evaluateCharacter(
       if (context.partById.get(id)?.variants?.[definition.blink.variant]) variants.set(id, definition.blink.variant);
     }
   }
+  // A speaking mouth may require a coordinated clean head/background plate.
+  // Apply after full-head blinks/expressions so an old painted mouth never
+  // reappears behind the independently animated mouth during speech.
+  if (definition.speech && speaking) {
+    for (const [id, variant] of Object.entries(definition.speech.activeVariants ?? {})) {
+      if (id !== definition.speech.mouthPart && context.partById.get(id)?.variants?.[variant]) variants.set(id, variant);
+    }
+  }
 
   // 8. Per-instance editor corrections are applied on top of authored motion,
   // before local safety limits. Seeking does not accumulate any corrections.
