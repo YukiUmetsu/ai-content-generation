@@ -304,6 +304,41 @@ function validateManifest(value: unknown): CharacterPackDefinition {
       for (const name of Object.keys(sets)) safeKey(name, "expression key");
     }
   }
+  // A talking beak can require an alternate clean head while speech is active.
+  // Validate its cross-part references before passing the manifest to Kumiki;
+  // the inspector otherwise retains unknown animation fields without checking them.
+  if (doc.speech !== undefined) {
+    const speech = object(doc.speech);
+    const mouthId = safeKey(speech.mouthPart, "speech mouth part");
+    const mouth = parts.get(mouthId) ?? reject(`Speech refers to unknown mouth part ${mouthId}.`);
+    const rest = safeKey(speech.rest, "speech resting mouth variant");
+    // The resting pose may use the part's default image, without a named variant.
+    const visemes = object(speech.visemes);
+    if (Object.keys(visemes).length > 64) reject("Speech declares too many visemes (64 max).");
+    for (const [key, value] of Object.entries(visemes)) {
+      safeKey(key, "viseme key");
+      const variant = safeKey(value, `viseme ${key}`);
+      if (variant !== rest && !owns(mouth.variants ?? {}, variant)) reject(`Speech viseme ${key} refers to missing variant ${variant} on ${mouthId}.`);
+    }
+    if (!Array.isArray(speech.approximateCycle) || speech.approximateCycle.length > 64) reject("Speech approximateCycle must contain at most 64 mouth variants.");
+    for (const value of speech.approximateCycle as unknown[]) {
+      const variant = safeKey(value, "speech cycle variant");
+      if (variant !== rest && !owns(mouth.variants ?? {}, variant)) reject(`Speech cycle refers to missing variant ${variant} on ${mouthId}.`);
+    }
+    finite(speech.approximateStepFrames, "speech approximateStepFrames", 1, 120);
+    if (speech.transitionFrames !== undefined) finite(speech.transitionFrames, "speech transitionFrames", 0, 120);
+    if (speech.activeVariants !== undefined) {
+      const companions = object(speech.activeVariants);
+      if (Object.keys(companions).length > 16) reject("Speech may switch at most 16 companion parts.");
+      for (const [id, value] of Object.entries(companions)) {
+        safeKey(id, "speech companion part");
+        const variant = safeKey(value, `speech companion ${id} variant`);
+        if (id === mouthId) reject("Speech companion variants cannot override the mouth part.");
+        const part = parts.get(id);
+        if (!part || !owns(part.variants ?? {}, variant)) reject(`Speech companion ${id} refers to missing part or variant ${variant}.`);
+      }
+    }
+  }
   object(doc.palette);
   const caps = doc.capabilities;
   if (!Array.isArray(caps)) reject("capabilities must be an array.");
@@ -325,7 +360,11 @@ const sniffImage = (data: Uint8Array, asset: CharacterPackAsset, name: string) =
 export async function inspectCharacterZip(source: ArrayBuffer): Promise<InspectedCharacterPack> {
   const bytes = new Uint8Array(source), entries = zipEntries(bytes);
   const byName = new Map(entries.map(entry => [entry.name, entry]));
-  const manifest = byName.get("character.json") ?? reject("Missing character.json at the ZIP root.");
+  const manifest = byName.get("character.json") ?? reject(
+    entries.some(entry => entry.name.endsWith(".rig.json"))
+      ? "This is a standalone rig kit. ContentGen requires a portable ZIP with character.json at the root and PNG/WebP images under layers/."
+      : "Missing character.json at the ZIP root.",
+  );
   if (manifest.expandedSize > CHARACTER_PACK_LIMITS.manifestBytes) reject("character.json exceeds the 1 MB limit.");
   let document: unknown;
   try { document = JSON.parse(decoder.decode(await inflateEntry(bytes, manifest))); }

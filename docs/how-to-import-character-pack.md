@@ -140,6 +140,37 @@ points to another part ID; cycles or missing parents are invalid. `z` controls
 front-to-back ordering. A character's `characterId` stays stable; changing
 the rig or art creates a new explicit `revision`.
 
+### Talking characters with a separate mouth or beak
+
+If the default head image already contains a closed mouth, **do not draw a second mouth
+on top of it** while talking. Add a clean head image (without its painted mouth) as a
+variant of the `head` part, and put registered closed/open mouth sprites on a separate
+child `mouth` or `beak` part. Keep each sprite in the same pixel coordinate frame so
+only the mouth shape changes, not the head's size or position. The speech definition
+can switch both parts together:
+
+```json
+"speech": {
+  "mouthPart": "beak",
+  "rest": "hidden",
+  "activeVariants": { "head": "beakless" },
+  "visemes": { "closed": "closed", "open": "open_3", "wide": "open_6" },
+  "approximateCycle": ["closed", "open_3", "open_6"],
+  "transitionFrames": 0,
+  "approximateStepFrames": 3
+}
+```
+
+Here `head` must declare a `beakless` variant, `beak` must declare the named
+viseme variants, and `hidden` may be an actual transparent variant. The normal
+head/expression artwork returns when speech ends. During speech, the clean head
+takes priority over the painted head and blink sprites. The inspector rejects
+missing companion parts, mouth stages and invalid references.
+
+A ZIP containing only a standalone `*.rig.json` and a collection of art/scripts
+is **not** the portable importer format. Convert it into root `character.json`
+plus referenced `layers/` images first; imported scripts are never executed.
+
 ## Safety and package rules
 
 | Rule | Current limit |
