@@ -356,7 +356,9 @@ export async function produceVideo(candidate, options, deps = {}) {
       ...(fadeInMs!==undefined?{fadeInMs}:{}),...(fadeOutMs!==undefined?{fadeOutMs}:{})
     }));
     const mediaProvenance=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({beatId,...media}));
-    const manifestBytes=JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, sceneMedia:mediaProvenance, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2);
+    const manifestBytes=JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects,
+      soundDucking:audio.ducking??null,sceneMedia:mediaProvenance, segmentHashes: render.segmentHashes,
+      reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2);
     await writeFile(manifestPath,manifestBytes,{flag:"wx"});
     const manifestHash=sha256(manifestBytes);
     await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });

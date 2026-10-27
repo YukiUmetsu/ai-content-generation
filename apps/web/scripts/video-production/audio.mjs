@@ -9,6 +9,7 @@ import { writeSrt } from "./timeline.mjs";
 
 const run = promisify(execFile);
 const SAMPLE_RATE = 48000;
+const NARRATION_DUCKING = Object.freeze({threshold:0.018,ratio:8,attackMs:70,releaseMs:350});
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const fail = (message) => { throw new Error(`Audio mastering failed: ${message}`); };
 
@@ -135,6 +136,8 @@ export async function renderMasterAudio(input, config) {
   if (!timeline || timeline.sampleRate !== SAMPLE_RATE || !Array.isArray(timeline.beats) || !Number.isSafeInteger(timeline.totalSamples)) fail("48 kHz measured speech timeline is required");
   if (!Array.isArray(beats) || beats.length !== timeline.beats.length) fail("narrated WAV beat count must match the timeline");
   if (!Array.isArray(sfx) || sfx.length > 200) fail("SFX declarations are required and must be bounded");
+  const ambienceCount=sfx.filter(effect=>effect?.kind==="ambience").length;
+  if(ambienceCount>4)fail("maximum four sustained ambience beds per video");
   if (music) fail("standalone music input is unsupported; select a reviewed music bed through Sound Studio's looping ambience track");
   if (!config?.outputDir) fail("an explicit output directory is required");
   const dir = resolve(config.outputDir);
@@ -199,7 +202,12 @@ export async function renderMasterAudio(input, config) {
   const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i", voiceStemPath];
   for (const path of inputPaths) args.push("-i", path);
   const filters = [];
-  const lanes = ["[0:a]"];
+  // Duck only sustained beds. Keep the voice untouched, and give each bed a
+  // separate sidechain copy so SFX transient hits remain as authored.
+  if(ambienceCount)filters.push(`[0:a]asplit=${ambienceCount+1}[voice]${Array.from(
+    {length:ambienceCount},(_,i)=>`[voice-side-${i}]`).join("")}`);
+  const lanes = [ambienceCount?"[voice]":"[0:a]"];
+  let ambienceIndex=0;
   for (const [index, effect] of sfx.entries()) {
     const start=sfxCueSamples[effect.id],ambience=effect.kind==="ambience";
     const usable=ambience?timeline.totalSamples:Math.min(clipSamples[index],timeline.totalSamples-start);
@@ -214,12 +222,22 @@ export async function renderMasterAudio(input, config) {
     if(fadeIn>0)filtersForClip.push(`afade=t=in:st=0:d=${fadeIn}`);
     if(fadeOut>0)filtersForClip.push(`afade=t=out:st=${Math.max(0,clipDuration-fadeOut)}:d=${fadeOut}`);
     // FFmpeg's S suffix means exact audio samples, not milliseconds.
-    filtersForClip.push(`adelay=${start}S[s${index}]`);
+    filtersForClip.push(`adelay=${start}S${ambience?",asetpts=N/SR/TB":""}`+
+      `[${ambience?`bed-${index}`:`s${index}`}]`);
     filters.push(`[${index+1}:a]${filtersForClip.join(",")}`);
+    if(ambience){
+      // The real voice waveform (not an estimated section boundary) drives
+      // smooth, short attenuation. It releases during genuine speech pauses.
+      filters.push(`[bed-${index}][voice-side-${ambienceIndex++}]`+
+        `sidechaincompress=threshold=${NARRATION_DUCKING.threshold}:ratio=${NARRATION_DUCKING.ratio}`+
+        `:attack=${NARRATION_DUCKING.attackMs}:release=${NARRATION_DUCKING.releaseMs}:mix=1[s${index}]`);
+    }
     lanes.push(`[s${index}]`);
   }
   const mixed = lanes.length === 1 ? lanes[0] : `${lanes.join("")}amix=inputs=${lanes.length}:duration=longest:normalize=0`;
-  filters.push(`${mixed}${lanes.length === 1 ? "" : ","}atrim=end_sample=${timeline.totalSamples},alimiter=limit=0.84:latency=1,loudnorm=I=-16:TP=-1.5:LRA=11:linear=false,aresample=48000,atrim=end_sample=${timeline.totalSamples},asetpts=N/SR/TB[m]`);
+  // Sidechain and loudness filters may negotiate internally at 192 kHz.
+  // Convert back to the measured 48 kHz sample domain *before* sample trims.
+  filters.push(`${mixed}${lanes.length === 1 ? "" : ","}aresample=48000,atrim=end_sample=${timeline.totalSamples},alimiter=limit=0.84:latency=1,loudnorm=I=-16:TP=-1.5:LRA=11:linear=false,aresample=48000,atrim=end_sample=${timeline.totalSamples},asetpts=N/SR/TB[m]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[m]", "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", wavPath);
   await mediaExec(ffmpeg, args, { signal: config.signal });
   const measured = await probeNormalizedWav(wavPath, { ffprobe, signal: config.signal });
@@ -228,6 +246,7 @@ export async function renderMasterAudio(input, config) {
   return {
     wavPath, voiceStemPath, srtPath, srtText,
     samples: measured.samples, loudness, sfxCueSamples: { ...sfxCueSamples },
+    ducking:ambienceCount?{mode:"voice-sidechain",beds:ambienceCount,...NARRATION_DUCKING}:null,
     stems: { voice: voiceStemPath, effects: inputPaths }, findings: rightsFindings,
   };
 }

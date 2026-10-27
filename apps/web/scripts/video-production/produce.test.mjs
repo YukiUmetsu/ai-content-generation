@@ -81,6 +81,7 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(manifest.narration.length, ctx.job.beats.length);
   assert.equal(manifest.narration[0].providerRevision, "bridge-1");
   assert.equal(manifest.narration[0].sha256, hash(ctx.job.beats[0].narration));
+  assert.equal(manifest.soundDucking,null,"drafts without background beds must not claim voice-triggered ducking");
 });
 
 test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
@@ -146,6 +147,15 @@ test("release manifest records approved sound identity, event, and measured cue 
   assert.deepEqual(manifest.soundEffects,[{id:sample.id,eventId:sample.eventId,
     eventSample:124800,licenseStatus:"verified",assetSha256:"a".repeat(64)}]);
   assert.ok(!JSON.stringify(manifest).includes("/approved/local/asset.wav"));
+});
+
+test("release manifest records actual voice-sidechain sound settings",async t=>{
+  const ctx=await context(t),original=ctx.injected.renderMasterAudio;
+  const ducking={mode:"voice-sidechain",beds:1,threshold:0.018,ratio:8,attackMs:70,releaseMs:350};
+  ctx.injected.renderMasterAudio=async(...args)=>({...await original(...args),ducking});
+  const result=await produceVideo(ctx.job,ctx.opts,ctx.injected);
+  const manifest=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.deepEqual(manifest.soundDucking,ducking);
 });
 
 test("release manifest records effective offsets and ambience settings without revealing sound paths",async t=>{

@@ -64,6 +64,7 @@ test("intentional no-SFX mix remains playable without inserting sounds", { skip:
   assert.equal(result.samples, timeline.totalSamples);
   assert.deepEqual(result.sfxCueSamples, {});
   assert.equal(result.findings.length, 0);
+  assert.equal(result.ducking,null,"silence-only or narration-only mixes must not claim music processing");
 });
 
 test("reviewed SFX is mixed at the exact event sample only when the imported WAV hash still matches", { skip: !enabled }, async t=>{
@@ -117,6 +118,52 @@ test("a short ambience sample loops across the full measured film and respects s
     {outputDir:join(dir,"too-loud")}),/gain|range|bound/i);
   await assert.rejects(renderMasterAudio({beats,timeline:fullTimeline,sfx:[{...ambience,offsetMs:500}]},
     {outputDir:join(dir,"bad-ambient-offset")}),/offset|ambien/i);
+});
+
+test("music bed audibly ducks under narration and rises during a long measured pause",{skip:!enabled},async t=>{
+  const {dir,beats}=await fixture(t);
+  beats[0].pauseAfterMs=1500;
+  const timeline=buildSampleTimeline(beats,{fps:{num:30,den:1},
+    events:[{id:"lifetime-total-reveal",beatId:"payoff"}]});
+  const withStart={...timeline,eventSamples:{...timeline.eventSamples,"film-start":0}};
+  const bytes=toneWav(4800,10000,48000,1000),assetPath=join(dir,"music.wav");
+  await writeFile(assetPath,bytes);
+  const music={id:"music",kind:"ambience",eventId:"film-start",assetRef:assetPath,
+    assetPath,assetSha256:sha256(bytes),licenseStatus:"verified",gainDb:-20,fadeInMs:100,fadeOutMs:100};
+  const result=await renderMasterAudio({beats,timeline:withStart,sfx:[music]},
+    {outputDir:join(dir,"narration-ducked")});
+  const master=await readFile(result.wavPath);
+  const speaking=strengthAt(master,24000,4800,1000),pause=strengthAt(master,96000,4800,1000);
+  assert.ok(speaking>1,"music must remain audible under the voice rather than being hard-muted");
+  assert.ok(pause>speaking*1.6,
+    `music should rise in real narration pauses (${pause.toFixed(1)} vs ${speaking.toFixed(1)} 1 kHz strength)`);
+  assert.equal(result.samples,timeline.totalSamples);
+  assert.deepEqual(result.ducking,{mode:"voice-sidechain",beds:1,threshold:0.018,ratio:8,attackMs:70,releaseMs:350});
+  assert.ok(result.loudness.truePeakDbtp<=-1.45);
+});
+
+test("multiple sustained beds duck independently without suppressing event-timed effects",{skip:!enabled},async t=>{
+  const {dir,beats,timeline,sfx}=await fixture(t);
+  const withStart={...timeline,eventSamples:{...timeline.eventSamples,"film-start":0}};
+  const beds=[];
+  for(const [index,hz] of [1000,1400].entries()){
+    const bytes=toneWav(4800,5000,48000,hz),assetPath=join(dir,`bed-${index}.wav`);
+    await writeFile(assetPath,bytes);
+    beds.push({id:`music-${index}`,kind:"ambience",eventId:"film-start",assetRef:assetPath,
+      assetPath,assetSha256:sha256(bytes),licenseStatus:"verified",gainDb:-25,
+      fadeInMs:100,fadeOutMs:100});
+  }
+  const musicOnly=await renderMasterAudio({beats,timeline:withStart,sfx:beds},
+    {outputDir:join(dir,"two-beds")});
+  const withEffect=await renderMasterAudio({beats,timeline:withStart,sfx:[...beds,...sfx]},
+    {outputDir:join(dir,"two-beds-and-cue"),allowTestAssets:true});
+  assert.equal(withEffect.samples,timeline.totalSamples);
+  assert.equal(withEffect.sfxCueSamples.reveal,60000);
+  assert.notEqual(sha256(await readFile(musicOnly.wavPath)),sha256(await readFile(withEffect.wavPath)));
+  assert.ok(withEffect.loudness.truePeakDbtp<=-1.45);
+  await assert.rejects(renderMasterAudio({beats,timeline:withStart,sfx:[...beds,...beds.map(
+    (bed,index)=>({...bed,id:`additional-${index}`})),{...beds[0],id:"fifth"}]},
+  {outputDir:join(dir,"too-many-beds")}),/four sustained ambience beds/);
 });
 
 test("manual cue offsets that start outside the finished timeline fail without publishing a master",{skip:!enabled},async t=>{
