@@ -65,7 +65,7 @@ async function localSfx(path:string,body?:unknown){
   const response=await fetch("/api/contentgen-sfx/"+path,{method:body===undefined?"GET":"POST",
     cache:"no-store",...(body===undefined?{}:{headers:{"Content-Type":"application/json",
       "X-Contentgen-Director":"local-only"},body:JSON.stringify(body)}),
-    signal:AbortSignal.timeout(body===undefined?12000:90000)});
+    signal:AbortSignal.timeout(body===undefined?12000:path==="approve"?120000:90000)});
   const result=await response.json() as Record<string,unknown>;
   if(!response.ok)throw Error(String(result.error??"Local sound library unavailable."));
   return result;

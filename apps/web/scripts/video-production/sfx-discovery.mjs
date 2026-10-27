@@ -8,6 +8,7 @@ import {dirname,join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
+import {setTimeout as pause} from "node:timers/promises";
 
 const exec=promisify(execFile);
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-sfx",import.meta.url));
@@ -158,7 +159,10 @@ async function transcodeWav(input,output,{ffmpeg="ffmpeg"}={}){
 }
 async function downloadAudio(response){
   if(!response.ok)throw Error(`SFX download returned HTTP ${response.status}.`);
-  const declared=Number(response.headers.get("content-length")??"0");
+  const rawLength=response.headers.get("content-length");
+  if(rawLength!==null&&(!/^\d+$/u.test(rawLength)||!Number.isSafeInteger(Number(rawLength))))
+    throw Error("Audio provider returned an invalid file length.");
+  const declared=Number(rawLength??"0");
   if(declared>MAX_AUDIO)throw Error("SFX file exceeds 16 MB limit.");
   const chunks=[];let size=0;
   for await(const chunk of response.body??[]){size+=chunk.length;
@@ -167,8 +171,45 @@ async function downloadAudio(response){
   return Buffer.concat(chunks,size);
 }
 
+/** A reviewed media URL is retried only for transient, idempotent GET failures.
+ * All attempts share a deadline, and no file is committed before validation.
+ */
+async function downloadReviewedAudio(url,{fetchImpl=fetch,signal}={}){
+  const deadline=AbortSignal.timeout(45_000);
+  const combined=signal?AbortSignal.any([signal,deadline]):deadline;
+  for(let attempt=0;attempt<3;attempt++){
+    if(combined.aborted)throw Error("Audio download cancelled or timed out.");
+    try{
+      const response=await fetchImpl(url,{redirect:"error",signal:combined});
+      if(response.status===429){
+        try{await response.body?.cancel?.();}catch{/* The error below is authoritative. */}
+        throw Error("Audio provider rate limit reached. Retry later.");
+      }
+      if([408,500,502,503,504].includes(response.status)){
+        try{await response.body?.cancel?.();}catch{/* The server failure below is authoritative. */}
+        const error=Error("Audio provider temporarily unavailable.");error.retryable=true;throw error;
+      }
+      if(!response.ok){
+        try{await response.body?.cancel?.();}catch{/* Preserve the original HTTP rejection. */}
+        throw Error(`SFX download returned HTTP ${response.status}.`);
+      }
+      const bytes=await downloadAudio(response);
+      const declared=Number(response.headers.get("content-length")??"0");
+      if(declared&&declared!==bytes.length){
+        const error=Error("Incomplete audio download.");error.retryable=true;throw error;
+      }
+      return bytes;
+    }catch(error){
+      if(combined.aborted)throw Error("Audio download cancelled or timed out.",{cause:error});
+      if(!(error.retryable||error instanceof TypeError))throw error;
+      if(attempt===2)throw Error("Audio download failed after three attempts. Check the source and retry import.",{cause:error});
+      await pause(250*2**attempt,undefined,{signal:combined});
+    }
+  }
+}
+
 /** First-time, explicit human approval; client cannot submit download URL or file path. */
-export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transcode=transcodeWav,now=()=>new Date(),ffmpeg}={}){
+export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transcode=transcodeWav,now=()=>new Date(),ffmpeg,signal}={}){
   if(input?.confirmDownload!==true||input?.confirmRights!==true)
     throw Error("SFX license review and download approval required.");
   const assetId=validId(input.assetId,"sound identifier",UUID);
@@ -179,7 +220,7 @@ export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transc
     headers:{Accept:"application/json","User-Agent":"ContentGen-SFX/1.0"},signal:AbortSignal.timeout(12_000)})),{assetType});
   if(!item)throw Error("Sound license is not acceptable CC0 or URL host is untrusted.");
   const mediaUrl=safeMediaUrl(item.previewUrl);
-  const bytes=await downloadAudio(await fetchImpl(mediaUrl,{redirect:"error",signal:AbortSignal.timeout(45_000)}));
+  const bytes=await downloadReviewedAudio(mediaUrl,{fetchImpl,signal});
   const base=resolve(root),bank=join(base,"bank");
   await mkdir(bank,{recursive:true,mode:0o700});
   const temp=await mkdtemp(join(bank,".sfx-import-"));

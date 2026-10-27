@@ -1,12 +1,17 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { copyFor } from "./i18n";
 import { ThumbnailComposer } from "./index";
 import { HVAC_EXAMPLE, HVAC_EXAMPLE_JA } from "./model/fixtures";
+import { thumbnailDocumentKey } from "./model/storage";
+
+beforeEach(() => {
+  localStorage.removeItem(thumbnailDocumentKey("test-project"));
+});
 
 function Harness({ locale = "en" as "en" | "ja" }) {
   const [preview, setPreview] = useState<ReactNode | null>(null);
@@ -83,6 +88,36 @@ describe("ThumbnailComposer", () => {
     expect((screen.getByLabelText(copy.headlineLabel) as HTMLInputElement).value).toBe("Price shock edit");
     await user.click(screen.getByRole("radio", { name: /hidden complexity/i }));
     expect((screen.getByLabelText(copy.headlineLabel) as HTMLInputElement).value).toBe("Hidden edit");
+  });
+
+  it("preserves selected concept and user copy across navigation without touching another production",async()=>{
+    const user=userEvent.setup(),copy=copyFor("en");
+    const first=render(<ThumbnailComposer projectId="test-project" locale="en"/>);
+    await user.click(screen.getByRole("radio",{name:/hidden complexity/i}));
+    fireEvent.change(screen.getByLabelText(copy.headlineLabel),{target:{value:"Keep this original headline"}});
+    first.unmount();
+    const reopened=render(<ThumbnailComposer projectId="test-project" locale="en"/>);
+    expect(screen.getByRole("radio",{name:/hidden complexity/i})).toBeChecked();
+    expect(screen.getByLabelText(copy.headlineLabel)).toHaveValue("Keep this original headline");
+    expect(localStorage.getItem(thumbnailDocumentKey("test-project"))).toContain("Keep this original headline");
+    reopened.unmount();
+    render(<ThumbnailComposer projectId="another-production" locale="en"/>);
+    expect(screen.getByRole("radio",{name:/price shock/i})).toBeChecked();
+    expect(screen.getByLabelText(copy.headlineLabel)).toHaveValue("Same house. A new system. A new price.");
+  });
+
+  it("does not overwrite unreadable saved work until its recovery copy is explicitly made",async()=>{
+    const bad="{invalid saved document";
+    localStorage.setItem(thumbnailDocumentKey("test-project"),bad);
+    const user=userEvent.setup();
+    render(<ThumbnailComposer projectId="test-project" locale="en"/>);
+    expect(screen.getByRole("alert")).toHaveTextContent(/has not been overwritten/i);
+    expect(localStorage.getItem(thumbnailDocumentKey("test-project"))).toBe(bad);
+    await user.click(screen.getByRole("button",{name:/Back up old data and start a fresh design/i}));
+    expect(localStorage.getItem(thumbnailDocumentKey("test-project"))).not.toBe(bad);
+    const copyKey=Object.keys(localStorage).find(key=>key.startsWith(thumbnailDocumentKey("test-project")+":recovery:"));
+    expect(copyKey).toBeTruthy();
+    expect(localStorage.getItem(copyKey!)).toBe(bad);
   });
 
   it("warns about long copy without blocking the render", () => {

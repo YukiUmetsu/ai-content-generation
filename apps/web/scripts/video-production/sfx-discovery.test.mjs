@@ -164,6 +164,62 @@ test("reviewed music import cannot be relabeled as a sound effect or silently us
     assetId:soundId,sha256:saved.sha256},{root:opts.root}),/approved|verified/i);
 });
 
+test("approved audio import retries temporary HTTP 503 and incomplete declared transfer before committing",async t=>{
+  const opts=await imported(t);
+  let mediaCalls=0;
+  const raw=Buffer.from("OggS-audio-source-bytes");
+  const fetchImpl=async url=>{
+    if(String(url).includes("/v1/audio/"))return json(sound(soundId,"Wind gust"));
+    mediaCalls++;
+    if(mediaCalls===1)return new Response("Service unavailable",{status:503});
+    if(mediaCalls===2)return new Response(raw,{headers:{"content-length":String(raw.length+8)}});
+    return new Response(raw);
+  };
+  const importedAsset=await approveSfx(approval,{...opts,fetchImpl});
+  assert.equal(mediaCalls,3);
+  assert.equal(importedAsset.originalSha256,
+    (await listApprovedSfx({root:opts.root}))[0].originalSha256);
+  assert.equal((await listApprovedSfx({root:opts.root})).length,1);
+});
+
+test("audio import never retries 429, invalid headers or a rights-rejected source",async t=>{
+  const opts=await imported(t);
+  let calls=0;
+  const fetchImpl=async url=>{
+    if(String(url).includes("/v1/audio/"))return json(sound(soundId,"Wind gust"));
+    calls++;return new Response("Rate limited",{status:429});
+  };
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl}),/rate limit/i);
+  assert.equal(calls,1);
+  const badHeader=async url=>String(url).includes("/v1/audio/")?json(sound(soundId,"Wind gust")):
+    (calls++,new Response(Buffer.from("OggS-source-bytes"),{headers:{"content-length":"invalid"}}));
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl:badHeader}),/invalid file length/i);
+  assert.equal(calls,2);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
+test("three audio-provider failures leave no approved library item",async t=>{
+  const opts=await imported(t);
+  let calls=0;
+  const fetchImpl=async url=>String(url).includes("/v1/audio/")?json(sound(soundId,"Wind gust")):
+    (calls++,new Response("Temporary failure",{status:503}));
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl}),/three attempts/i);
+  assert.equal(calls,3);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
+test("an aborted audio import makes no further calls and does not write an approved item",async t=>{
+  const opts=await imported(t),controller=new AbortController();
+  let calls=0;
+  const fetchImpl=async url=>{
+    if(String(url).includes("/v1/audio/"))return json(sound(soundId,"Wind gust"));
+    calls++;controller.abort();throw new TypeError("transport interrupted");
+  };
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl,signal:controller.signal}),/cancelled/i);
+  assert.equal(calls,1);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
 test("real FFmpeg conversion accepts standard ancillary WAV chunks without losing PCM verification",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-sfx-ffmpeg-"));
   t.after(()=>rm(root,{recursive:true,force:true}));
