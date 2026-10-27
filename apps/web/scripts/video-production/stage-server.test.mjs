@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startLocalStageServer, fingerprintBuiltStage } from "./stage-server.mjs";
 import { createHash } from "node:crypto";
+import { get } from "node:http";
 
 test("loopback server returns validated plan and built stage with restrictive headers", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "contentgen-stage-test-"));
@@ -91,4 +92,31 @@ test("capture host serves only frozen media with a valid SHA-256 and a safe cont
   await assert.rejects(startLocalStageServer({ distRoot: root, validatedPlan: {},
     approvedMedia: [{ url: "/__video_media/../secret.jpg", path: source, sha256, assetType: "photo" }] }),
   /invalid|media|path/i);
+});
+
+test("abandoning a long MP4 request does not delay stage shutdown", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-abort-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "video-export.html"), "stage");
+  const content = Buffer.alloc(1024 * 1024, 0x42);
+  const source = join(root, "footage.mp4");
+  await writeFile(source, content);
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const url = `/__video_media/${sha256}.mp4`;
+  const server = await startLocalStageServer({ distRoot: root, validatedPlan: {},
+    approvedMedia: [{ url, path: source, sha256, assetType: "video" }] });
+  t.after(() => server.close().catch(() => {}));
+  await new Promise((resolve, reject) => {
+    const request = get(new URL(url, server.url), response => {
+      response.once("data", () => { response.destroy(); resolve(); });
+      response.once("error", reject);
+    });
+    request.once("error", reject);
+  });
+  let timeout;
+  try {
+    await Promise.race([server.close(), new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(Error("Aborted media stream prevented stage shutdown")), 2000);
+    })]);
+  } finally { clearTimeout(timeout); }
 });

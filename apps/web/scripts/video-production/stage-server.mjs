@@ -129,7 +129,11 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
         // Stream just the requested portion rather than copying the whole MP4
         // into every response. Errors abort capture instead of serving a
         // truncated, apparently successful video asset.
-        createReadStream(asset.path, { start, end }).on("error", () => response.destroy()).pipe(response);
+        const stream = createReadStream(asset.path, { start, end });
+        // Chromium can abandon a long-running MP4 range when seeking elsewhere
+        // or when the editor cancels capture. Stop reading from disk at once.
+        response.once("close", () => stream.destroy());
+        stream.on("error", () => response.destroy()).pipe(response);
       } catch { send(404); }
       return;
     }
