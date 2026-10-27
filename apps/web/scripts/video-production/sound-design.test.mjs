@@ -56,6 +56,19 @@ test("ambience is a separate optional reviewed loop with conservative gain",asyn
   assert.equal(resolved.ambience,null);
 });
 
+test("reviewed music can become the video bed but cannot be added as a one-shot effect",async t=>{
+  const {root,sha256}=await setup(t);
+  const path=join(root,"bank","asset_"+"a".repeat(24),"manifest.json");
+  const manifest=JSON.parse(await readFile(path,"utf8"));
+  await writeFile(path,JSON.stringify({...manifest,assetType:"music"}));
+  await assert.rejects(setSoundDesign(cue(sha256),{root}),/approved|missing|damaged/i);
+  await setSoundDesign({action:"ambience",projectId:"p1",assetId,sha256,
+    gainDb:-32,fadeInMs:1100,fadeOutMs:1500},{root});
+  const sound=await resolveSoundDesign({projectId:"p1",bundle},{root});
+  assert.equal(sound.ambience.title,"Quiet wind");
+  assert.equal(sound.ambience.gainDb,-32);
+});
+
 test("invalid rights, bad IDs, out-of-bounds envelope and full shot fail without touching saved data",async t=>{
   const {root,sha256,localPath}=await setup(t);
   const cases=[cue(sha256,{gainDb:3}),cue(sha256,{fadeOutMs:-2}),cue(sha256,{offsetMs:10001}),

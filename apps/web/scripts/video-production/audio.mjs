@@ -135,7 +135,7 @@ export async function renderMasterAudio(input, config) {
   if (!timeline || timeline.sampleRate !== SAMPLE_RATE || !Array.isArray(timeline.beats) || !Number.isSafeInteger(timeline.totalSamples)) fail("48 kHz measured speech timeline is required");
   if (!Array.isArray(beats) || beats.length !== timeline.beats.length) fail("narrated WAV beat count must match the timeline");
   if (!Array.isArray(sfx) || sfx.length > 200) fail("SFX declarations are required and must be bounded");
-  if (music) fail("music has not been implemented; do not silently omit a requested music bed");
+  if (music) fail("standalone music input is unsupported; select a reviewed music bed through Sound Studio's looping ambience track");
   if (!config?.outputDir) fail("an explicit output directory is required");
   const dir = resolve(config.outputDir);
   if (dir === parse(dir).root) fail("filesystem root is not a safe mastering output directory");

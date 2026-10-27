@@ -6,6 +6,7 @@ export const PRODUCTION_NODES=["scene-plan","visual-planning","asset-search","na
   "sound-mix","scene-render","final-mux","technical-qa","export-package"];
 const phases={"browser-preflight":"visual-planning","asset-search":"asset-search",narration:"narration",timeline:"timeline",
   audio:"sound-mix",rendering:"scene-render",mux:"final-mux",qa:"technical-qa",review:"export-package"};
+const RUN_ID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
 
 export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787",
   fetcher=globalThis.fetch}={}){
@@ -13,7 +14,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
   if(!["localhost","127.0.0.1"].includes(server.hostname)||server.protocol!=="http:"||
     server.username||server.password||server.pathname!=="/"||server.search||server.hash)
     throw Error("Production jobs require the local Rust server. Set CONTENTGEN_JOBS_ORIGIN to a loopback address.");
-  let jobId=null,nodes=[],active=-1,attemptId=null,terminal=null;
+  let jobId=null,nodes=[],active=-1,attemptId=null,terminal=null,priorRunId=null;
   async function request(path,body){
     let response;
     try{
@@ -43,9 +44,10 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
   }
   return {
     get jobId(){return jobId;},
+    get priorRunId(){return priorRunId;},
     async start({productionId,revision,runId}){
       if(jobId)throw Error("Production job already started.");
-      if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!runId)
+      if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!RUN_ID.test(runId))
         throw Error("Production job requires a saved production, revision and run identity.");
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
       let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
@@ -53,7 +55,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
           // The renderer is one synchronous execution. No worker exists to
           // claim an auto-retried attempt after it exits; mark failure terminal
           // instead of leaving a READY node and a permanently RUNNING job.
-          maxAttempts:1,input:{productionId,revision},
+          maxAttempts:1,input:{productionId,revision,runId},
           dependsOn:index?[PRODUCTION_NODES[index-1]]:[]}))});
       if(data.created!==true){
         if(["FAILED","CANCELLED"].includes(data.job?.state)&&typeof data.job.id==="string"){
@@ -69,6 +71,10 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       const byKey=new Map(data.nodes.map(node=>[node.nodeKey,node]));
       if(byKey.size!==PRODUCTION_NODES.length||PRODUCTION_NODES.some(key=>typeof byKey.get(key)?.id!=="string"))
         throw Error("Jobs service returned incomplete or duplicate production steps.");
+      const firstInput=byKey.get(PRODUCTION_NODES[0])?.input;
+      if(data.created!==true&&firstInput?.productionId===productionId&&firstInput.revision===revision&&
+        typeof firstInput.runId==="string"&&RUN_ID.test(firstInput.runId)&&firstInput.runId!==runId)
+        priorRunId=firstInput.runId;
       jobId=data.job.id;nodes=PRODUCTION_NODES.map(key=>byKey.get(key));
       const firstReady=nodes.findIndex(node=>node.state==="READY");
       if(firstReady<0||nodes.slice(0,firstReady).some(node=>node.state!=="SUCCEEDED"))

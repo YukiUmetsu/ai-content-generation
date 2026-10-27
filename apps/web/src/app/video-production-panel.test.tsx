@@ -174,6 +174,28 @@ it("offers captions alongside the playable MP4 after a successful render",async(
     url.replace("/video.mp4","/captions.srt"));
 });
 
+it("shows one recovery action that rechecks and retries a failed draft without losing narration setup",async()=>{
+  let checks=0,starts=0;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check")){checks++;return reply({report:{ready:true,findings:[]}});}
+    if(path.endsWith("/start")){starts++;return reply({started:true});}
+    if(path.endsWith("/status"))return reply(starts===1?
+      {state:"failed",phase:"production",message:"Scene rendering failed. Check Chromium and visual assets, then retry the draft."}:
+      {state:"rendering",phase:"rendering",message:"Retrying scene render"});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  const retry=await screen.findByRole("button",{name:"Retry draft video"});
+  expect(retry).toBeEnabled();
+  await user.click(retry);
+  await waitFor(()=>expect(starts).toBe(2));
+  expect(checks).toBe(2); // Retry must recheck current settings, never reuse stale readiness.
+});
+
 it("passes the optional online media-search choice to both readiness and render without a second action",async()=>{
   const requests:Array<{path:string;body:Record<string,unknown>}>=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{

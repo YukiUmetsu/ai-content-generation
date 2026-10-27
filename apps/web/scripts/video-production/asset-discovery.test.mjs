@@ -91,6 +91,61 @@ test("approved download re-resolves provider IDs, hashes bytes and writes privat
     "modified media can no longer count as an approved local asset");
 });
 
+test("approved downloads retry a temporary provider outage without duplicating imported media",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"contentgen-download-retry-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  let fileRequests=0;
+  const fetchImpl=async url=>{
+    if(url==="https://api.polyhaven.com/assets")return response(polyCatalog);
+    if(String(url).startsWith("https://api.polyhaven.com/files/"))return response({
+      diffuse:{"1k":{jpg:{url:"https://dl.polyhaven.org/retry.jpg",size:7}}}});
+    if(url==="https://dl.polyhaven.org/retry.jpg"){
+      fileRequests++;
+      return fileRequests===1?new Response("unavailable",{status:503}):new Response("image!!");
+    }
+    throw Error("Unexpected URL "+url);
+  };
+  const saved=await approveAsset({projectId:"project-1",shotId:"shot-house",provider:"polyhaven",
+    assetId:"roof_tiles",assetType:"texture",confirmDownload:true,confirmRights:true},{root,fetchImpl});
+  assert.equal(fileRequests,2);
+  assert.equal((await readFile(saved.localPath,"utf8")),"image!!");
+  assert.equal((await listApprovedAssets({projectId:"project-1"},{root})).length,1);
+});
+
+test("downloads stop on rate limits and cancellation without partial approved assets",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"contentgen-download-stop-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const input={projectId:"project-1",shotId:"shot-house",provider:"polyhaven",
+    assetId:"roof_tiles",assetType:"texture",confirmDownload:true,confirmRights:true};
+  const controller=new AbortController();let requests=0;
+  const fetchImpl=async url=>{
+    if(url==="https://api.polyhaven.com/assets")return response(polyCatalog);
+    if(String(url).startsWith("https://api.polyhaven.com/files/"))return response({
+      diffuse:{"1k":{jpg:{url:"https://dl.polyhaven.org/limit.jpg",size:7}}}});
+    requests++;return new Response("rate limited",{status:429});
+  };
+  await assert.rejects(approveAsset(input,{root,fetchImpl}),/rate.limit/i);
+  assert.equal(requests,1);
+  await assert.rejects(approveAsset(input,{root,signal:controller.signal,fetchImpl:async url=>{
+    if(url==="https://api.polyhaven.com/assets")return response(polyCatalog);
+    if(String(url).startsWith("https://api.polyhaven.com/files/"))return response({
+      diffuse:{"1k":{jpg:{url:"https://dl.polyhaven.org/limit.jpg",size:7}}}});
+    requests++;controller.abort(Error("Editor cancelled download"));
+    return new Response("unavailable",{status:503});
+  }}),/Editor cancelled download/);
+  assert.equal(requests,2,"a cancelled transfer must not retry");
+  assert.deepEqual(await listApprovedAssets({projectId:"project-1"},{root}),[]);
+  let exhausted=0;
+  await assert.rejects(approveAsset(input,{root,fetchImpl:async url=>{
+    if(url==="https://api.polyhaven.com/assets")return response(polyCatalog);
+    if(String(url).startsWith("https://api.polyhaven.com/files/"))return response({
+      diffuse:{"1k":{jpg:{url:"https://dl.polyhaven.org/limit.jpg",size:7}}}});
+    exhausted++;return new Response("unavailable",{status:503});
+  }}),/three attempts/i);
+  assert.equal(exhausted,3,"retries must be bounded and observable to the importer");
+  assert.deepEqual(await listApprovedAssets({projectId:"project-1"},{root}),[]);
+});
+
 test("small glTF models keep their nested texture dependencies without accepting path traversal",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-model-test-"));
   t.after(()=>rm(root,{recursive:true,force:true}));

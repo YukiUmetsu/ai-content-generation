@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,7 +71,7 @@ async function toolVersions() {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -129,6 +129,21 @@ export async function produceVideo(candidate, options, deps = {}) {
       cacheRoot:join(priorDir,".cache")
     };
   }
+  // A failed render has no immutable release manifest, but completed speech
+  // beats were written to a content-addressed, hash-verified cache. Retrying
+  // may reuse those beats without claiming the aborted video was successful.
+  let interruptedCache=null;
+  if(options.reuseSpeechCacheFrom){
+    const priorDir=resolve(options.reuseSpeechCacheFrom);
+    if(priorDir===out||[parse(priorDir).root,homedir(),process.cwd(),"/tmp","/workspace"].includes(priorDir))
+      fail("interrupted production must be a distinct, narrow job-owned directory");
+    try{
+      const parent=await lstat(priorDir),cachePath=join(priorDir,".cache"),cache=await lstat(cachePath);
+      if(!parent.isDirectory()||parent.isSymbolicLink()||!cache.isDirectory()||cache.isSymbolicLink())
+        fail("interrupted narration cache must be an owned directory, not a link");
+      interruptedCache=cachePath;
+    }catch(error){if(error?.code!=="ENOENT")throw error;}
+  }
   const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
@@ -147,7 +162,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
-      reuseCacheRoot:previous?.cacheRoot,
+      reuseCacheRoot:previous?.cacheRoot??interruptedCache,
+      skipInvalidPriorCache:!!interruptedCache&&!previous,
       onReuse:event=>{
         reusedSpeechIds.push(event.beatId);
         options.onProgress?.({phase:"speech-reused",...event});
@@ -214,6 +230,12 @@ export async function produceVideo(candidate, options, deps = {}) {
       await copyFile(source, join(working, "stills", filename));
       publishedStills.push({ frame, file: `stills/${filename}`, sha256: still.sha256 });
     }
+    // Export a genuine, renderer-captured first-frame image as the draft cover.
+    // This is an editable starting still, not a claim that a designed thumbnail
+    // or platform artwork was generated. The existing Kumiki composer handles design.
+    const firstStill=publishedStills[0];
+    if(!firstStill||firstStill.frame!==0)fail("draft cover requires a verified first-frame still");
+    await copyFile(join(working,firstStill.file),join(working,"cover-still.png"));
 
     options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…" });
     const video = join(working, "video.mp4");
@@ -230,6 +252,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       video: sha256(await readFile(video)), master: sha256(await readFile(master)),
       voice: sha256(await readFile(voice)),
       captions: sha256(await readFile(captions)),
+      coverStill:sha256(await readFile(join(working,"cover-still.png"))),
     };
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
     options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…" });

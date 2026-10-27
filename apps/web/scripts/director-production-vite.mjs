@@ -31,6 +31,21 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Re
 const productionIdPattern=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
 const runIdPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
 const MAX_SUGGESTIONS_BYTES=900_000;
+const failureRecovery={
+  "browser-preflight":["renderer_unavailable","Renderer setup failed. Check Chromium and the local build, then retry."],
+  "asset-search":["asset_search_failed","Media discovery stopped unexpectedly. Disable online search or retry the draft."],
+  narration:["narration_failed","Narration failed. Check the authorized voice provider and retry; verified completed speech can be reused."],
+  timeline:["timeline_failed","Scene timing failed. Reopen the visual editor, check the affected scenes and retry."],
+  audio:["audio_mix_failed","Audio mixing failed. Review selected sounds and FFmpeg, then retry."],
+  rendering:["scene_render_failed","Scene rendering failed. Check Chromium and visual assets, then retry the draft."],
+  mux:["video_mux_failed","MP4 assembly failed. Check FFmpeg and available disk space, then retry."],
+  qa:["technical_qa_failed","Video quality checks failed. Review the media and audio requirements, then retry."],
+  review:["export_failed","Final export failed. Check the local output directory and retry."],
+};
+function renderFailure(phase){
+  const [code,message]=failureRecovery[phase]??["render_failed","Draft production failed. Open Jobs for the failed step, check local tools and retry."];
+  return{code,message};
+}
 function mediaSearchChoice(input){
   if(input.searchFreeMedia!==undefined&&typeof input.searchFreeMedia!=="boolean")
     throw Error("Free media search preference must be true or false.");
@@ -164,7 +179,7 @@ export function createDirectorProduction(deps={}){
     const assets=[];
     for(const {runId,sourceRevision} of records){
       const releaseDir=join(outputRoot,"draft-"+runId,"release");
-      for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"]]){
+      for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"],["cover-still.png","thumbnail"]]){
         try{
           const info=await stat(join(releaseDir,file));
           if(!info.isFile()||info.size===0)continue;
@@ -248,14 +263,15 @@ export function createDirectorProduction(deps={}){
         res.end(preview.html);return;
       }
       if(req.method==="GET"&&route.startsWith("/media/")){
-        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt)$/u.exec(route);
+        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt|cover-still\.png)$/u.exec(route);
         if(!match||!runIdPattern.test(match[1])){respond(res,404,{error:"Media is unavailable."});return;}
         const releaseDir=await releaseForRun(match[1]);
         if(!releaseDir){respond(res,404,{error:"Media is unavailable."});return;}
         if(match[2]==="video.mp4")await deliverVideo(req,res,releaseDir);
         else {
-          const bytes=await readFile(join(releaseDir,"captions.srt"));
-          res.writeHead(200,{...headers,"Content-Type":"text/plain; charset=utf-8","Content-Length":bytes.length});
+          const bytes=await readFile(join(releaseDir,match[2]));
+          res.writeHead(200,{...headers,"Content-Type":match[2]==="cover-still.png"?"image/png":"text/plain; charset=utf-8",
+            "Content-Length":bytes.length,"Content-Disposition":`attachment; filename="${match[2]}"`});
           res.end(bytes);
         }
         return;
@@ -454,6 +470,12 @@ export function createDirectorProduction(deps={}){
           trackedJobId=await tracker.start({productionId:input.productionId,
             revision:identity,runId});
         }
+        // The original run UUID lives in Rust's immutable Jobs node input.
+        // After restart, a re-armed failed job can still find its verified
+        // speech cache without adding a parallel retry database or worker.
+        const interruptedRunId=tracker?.priorRunId;
+        const reuseSpeechCacheFrom=interruptedRunId&&runIdPattern.test(interruptedRunId)?
+          join(outputRoot,"draft-"+interruptedRunId):null;
         checked=null;
         controller=abort;busy=true;
         activeJobTracker=tracker;
@@ -475,6 +497,7 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
+              ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom}:{}),
               ...(searchFreeMedia?{prepareAssetSuggestions:async({signal})=>{
                 try{
                   // The search is optional. A slow provider must not delay
@@ -532,7 +555,7 @@ export function createDirectorProduction(deps={}){
                 (assetSearchSummary?.status==="fallback"?" Optional media search unavailable; use scene search to retry.":"")+mediaWarning,
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
               regeneration:result.regeneration??null};
-          }catch(error){
+          }catch{
             await journal;
             // Journal failures also abort the renderer, but they are not user
             // cancellations. Try to persist a terminal failure if Jobs came
@@ -542,13 +565,16 @@ export function createDirectorProduction(deps={}){
             // is already CANCELLED; that is not a new renderer failure.
             const cancelled=abort.signal.aborted&&(!journalError||
               abort.signal.reason?.message==="Cancelled by editor.");
+            const failure=journalError?{code:"jobs_unavailable",
+              message:"Jobs tracking stopped responding. Restart the local Rust server, then retry the draft."}:
+              renderFailure(status.phase);
             if(tracker&&!cancelled){
-              try{await tracker.fail("render_failed","Draft rendering failed. Inspect the local renderer log, then retry.");}
+              try{await tracker.fail(failure.code,failure.message);}
               catch(journalFailure){status={...status,message:"Jobs failed to record the renderer error: "+String(journalFailure?.message??"unknown")};}
             }
             status={...status,state:cancelled?"cancelled":"failed",phase:"production",
               message:cancelled?"Render cancelled; no completed release published.":
-                "Render failed: "+String(error?.message||error).slice(0,240)};
+                failure.message};
           }finally{busy=false;controller=null;activeJobTracker=null;}
         })();
         return;

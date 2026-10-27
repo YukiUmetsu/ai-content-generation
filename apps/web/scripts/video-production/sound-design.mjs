@@ -39,10 +39,10 @@ async function read(root,projectId){
   return value;
 }
 
-async function approved(root,assetId,sha256){
+async function approved(root,assetId,sha256,{ambience=false}={}){
   const bank=await listApprovedSfx({root});
   const asset=bank.find(x=>x.assetId===assetId&&x.sha256===sha256&&
-    x.rightsStatus==="user-reviewed"&&x.license==="cc0");
+    (ambience||x.assetType!=="music")&&x.rightsStatus==="user-reviewed"&&x.license==="cc0");
   if(!asset)fail("approved audio is missing, damaged or revoked; reselect a CC0 sound");
   return asset;
 }
@@ -71,7 +71,7 @@ export async function setSoundDesign(input,{root=DEFAULT_ROOT}={}){
     saved.layers.splice(index,1);result={...result,layerId};
   }else if(input.action==="ambience"){
     if(input.assetId===null)saved.ambience=null;
-    else{const item=config(input,{ambience:true});await approved(root,item.assetId,item.sha256);
+    else{const item=config(input,{ambience:true});await approved(root,item.assetId,item.sha256,{ambience:true});
       saved.ambience=item;}
     result={...result,ambienceEnabled:saved.ambience!==null};
   }else fail("unsupported sound action");
@@ -93,8 +93,8 @@ export async function resolveSoundDesign({projectId,bundle},{root=DEFAULT_ROOT}=
     shots.some(x=>!ID.test(x?.id??""))||new Set(shots.map(x=>x.id)).size!==shots.length)
     fail("unknown storyboard shots");
   const known=new Set(shots.map(x=>x.id)),seen=new Set(),counts=new Map(),library=await listApprovedSfx({root});
-  function resolveAsset(item){const asset=library.find(x=>x.assetId===item.assetId&&x.sha256===item.sha256&&
-    x.license==="cc0"&&x.rightsStatus==="user-reviewed");
+  function resolveAsset(item,{ambience=false}={}){const asset=library.find(x=>x.assetId===item.assetId&&x.sha256===item.sha256&&
+    (ambience||x.assetType!=="music")&&x.license==="cc0"&&x.rightsStatus==="user-reviewed");
     if(!asset)fail("approved audio is missing, damaged or revoked; reselect a CC0 sound");
     return {title:asset.title,license:asset.license,rightsStatus:asset.rightsStatus,localPath:asset.localPath};}
   const layers=saved.layers.map(item=>{
@@ -107,6 +107,6 @@ export async function resolveSoundDesign({projectId,bundle},{root=DEFAULT_ROOT}=
     return {layerId,...clip,...resolveAsset(clip)};
   });
   const ambience=saved.ambience?(()=>{const setting=config(saved.ambience,{ambience:true});
-    return {...setting,...resolveAsset(setting)};})():null;
+    return {...setting,...resolveAsset(setting,{ambience:true})};})():null;
   return {layers,ambience};
 }

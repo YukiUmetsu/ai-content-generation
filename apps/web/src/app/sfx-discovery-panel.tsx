@@ -10,9 +10,9 @@ type Bundle={plan:{shots:Array<{id:string;purpose?:string;family?:string;sceneRe
     phases:Array<{shotId:string;kind:string}>}>}};
 type Candidate={provider:"openverse";assetId:string;title:string;creator:string;durationSeconds:number;
   sourceUrl:string;previewUrl:string;license:"cc0";licenseUrl:string;source:string;matchCount:number;
-  rightsStatus:"needs-human-review";tags:string[]};
+  rightsStatus:"needs-human-review";assetType:"sfx"|"music";tags:string[]};
 type SearchResult={scenes:Array<{shotId:string;intent:string;query:string;candidates:Candidate[]}>;warnings:string[]};
-type Approved={assetId:string;title:string;creator:string;sha256:string;license:"cc0";
+type Approved={assetId:string;title:string;creator:string;sha256:string;license:"cc0";assetType?:"sfx"|"music";
   sourceUrl:string;rightsStatus:"user-reviewed";localPath:string;durationSeconds:number};
 type Choice={shotId:string;mode:"auto"|"pin"|"mute";assetId:string|null;title:string|null;
   sha256:string|null;localPath:string|null;reason:string;
@@ -75,6 +75,8 @@ async function localSfx(path:string,body?:unknown){
 export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}:{projectId:string;bundle:Bundle;
   selectedShotId:string;onSelectShot?:(shotId:string)=>void}){
   const [search,setSearch]=useState<{bundle:Bundle;data:SearchResult}|null>(null);
+  const [musicQuery,setMusicQuery]=useState("gentle instrumental ambient");
+  const [musicResults,setMusicResults]=useState<Candidate[]>([]);
   const [library,setLibrary]=useState<Approved[]>([]);
   const [choices,setChoices]=useState<Choice[]>([]);
   const [design,setDesign]=useState<SoundDesign>(emptyDesign);
@@ -149,8 +151,8 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
     catch(error){setNotice(error instanceof Error?error.message:"Could not remove the sound cue.");}
     finally{setBusy("");}
   }
-  async function saveAmbience(disable=false){
-    const asset=library.find(x=>x.assetId===ambientDraft.assetId);
+  async function saveAmbience(disable=false,selected?:Approved){
+    const asset=selected??library.find(x=>x.assetId===ambientDraft.assetId);
     if(!disable&&!asset){setNotice("Choose a reviewed ambience sound first.");return;}
     setBusy("design");setNotice("");
     try{await localSfx("sound-design",disable?{action:"ambience",projectId,assetId:null}:
@@ -169,11 +171,21 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
     }catch(error){setNotice(error instanceof Error?error.message:"SFX search failed.");}
     finally{setBusy("");}
   }
+  async function discoverMusic(){
+    setView("library");setBusy("music");setNotice("");setPending(null);setMusicResults([]);
+    try{
+      const result=await localSfx("suggest-music",{query:musicQuery,allowExternalSearch:true}) as
+        {candidates:Candidate[]};
+      setMusicResults(Array.isArray(result.candidates)?result.candidates:[]);
+      setNotice("Review each track's original source and CC0 rights before importing. No music was downloaded.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Music search failed. Try again.");}
+    finally{setBusy("");}
+  }
   async function approve(){
     if(!review||!acknowledged)return;
     setBusy("approve");setNotice("");
     try{
-      await localSfx("approve",{assetId:review.assetId,confirmRights:true,confirmDownload:true});
+      await localSfx("approve",{assetId:review.assetId,assetType:review.assetType,confirmRights:true,confirmDownload:true});
       await reload();setPending(null);setAcknowledged(false);
       setNotice("Sound saved to your reviewed local library. It can now be reused automatically in matching shots.");
     }catch(error){setNotice(error instanceof Error?error.message:"Could not import sound.");}
@@ -363,6 +375,17 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
               <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void discover()}>
                 <Search className="mr-1.5 size-3.5"/>{busy==="search"?"Searching…":"Find CC0 sound effects"}</Button>
             </div>
+            <form className="flex flex-wrap items-end gap-2 rounded-control border border-border bg-surface-subtle p-3"
+              onSubmit={event=>{event.preventDefault();if(!busy)void discoverMusic();}}>
+              <label className="min-w-40 flex-1 text-xs font-medium">Search CC0 music by mood or instrument
+                <input type="search" aria-label="Music search" maxLength={90} value={musicQuery}
+                  onChange={event=>setMusicQuery(event.target.value)}
+                  placeholder="e.g. gentle piano, ambient strings" className="mt-1 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm"/>
+              </label>
+              <Button type="submit" size="sm" variant="outline" disabled={!!busy||musicQuery.trim().length<3}>
+                <Search className="mr-1.5 size-3.5"/>{busy==="music"?"Finding music…":"Find background music"}
+              </Button>
+            </form>
             <label className="block text-xs font-medium">Filter approved sounds
               <input className="mt-1 w-full rounded-control border border-border bg-surface px-3 py-2 text-sm"
                 type="search" aria-label="Filter approved sounds" placeholder="Search your local sounds…"
@@ -376,12 +399,15 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0"><p className="truncate font-semibold">{asset.title}</p>
                     <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-                      <CheckCircle2 className="size-3 text-emerald-500"/>{asset.durationSeconds.toFixed(1)}s · reviewed CC0</p></div>
+                      <CheckCircle2 className="size-3 text-emerald-500"/>{asset.durationSeconds.toFixed(1)}s · reviewed CC0 · {asset.assetType==="music"?"music":"SFX"}</p></div>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" disabled={!!busy}
-                      onClick={()=>void choose("pin",asset).then(saved=>{if(saved)setView("arrange");})}>Use as main</Button>
-                    <Button size="sm" disabled={!!busy||shotLayers.length>=4}
-                      onClick={()=>void saveLayer({...cueDraft,assetId:asset.assetId}).then(saved=>{if(saved)setView("arrange");})}>Add to shot</Button>
+                    {asset.assetType==="music"?<Button size="sm" variant="outline" disabled={!!busy}
+                      onClick={()=>void saveAmbience(false,asset)}>Use as background</Button>:<>
+                      <Button size="sm" variant="outline" disabled={!!busy}
+                        onClick={()=>void choose("pin",asset).then(saved=>{if(saved)setView("arrange");})}>Use as main</Button>
+                      <Button size="sm" disabled={!!busy||shotLayers.length>=4}
+                        onClick={()=>void saveLayer({...cueDraft,assetId:asset.assetId}).then(saved=>{if(saved)setView("arrange");})}>Add to shot</Button>
+                    </>}
                   </div>
                 </div>
                 <audio className="mt-2 w-full" controls preload="none"
@@ -411,6 +437,25 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
               </div>
               {scene.candidates.length===0&&<p className="text-xs text-muted-foreground">No suitable CC0 sounds found. Try a more specific sound intent.</p>}
             </div>}
+            {musicResults.length>0&&<section aria-label="Music candidates" className="space-y-3 border-t border-border pt-4">
+              <h4 className="font-semibold">Music candidates · {musicResults.length}</h4>
+              <div className="grid gap-3 md:grid-cols-2">{musicResults.map(asset=>{
+                const saved=library.find(x=>x.assetId===asset.assetId&&x.assetType==="music");
+                return <div key={asset.assetId} className="space-y-2 rounded-control border border-border p-3">
+                  <p className="font-medium">{asset.title}</p>
+                  <p className="text-xs text-muted-foreground">{asset.durationSeconds.toFixed(0)}s · {asset.creator||"Creator not listed"} · CC0 claim</p>
+                  <audio controls preload="none" className="w-full" src={saved?`/api/contentgen-sfx/preview/${saved.sha256}`:asset.previewUrl}
+                    aria-label={`Preview music ${asset.title}`}/>
+                  <div className="flex flex-wrap gap-3 text-xs">
+                    <a href={asset.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">Original source</a>
+                    <a href={asset.licenseUrl} target="_blank" rel="noopener noreferrer" className="underline">CC0 license</a>
+                  </div>
+                  {saved?<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void saveAmbience(false,saved)}>Use as background</Button>:
+                    <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>{
+                      setPending({shotId:selectedShotId,asset});setAcknowledged(false);}}>Review and import</Button>}
+                </div>;
+              })}</div>
+            </section>}
             {review&&<div className="space-y-3 rounded-control border border-primary/50 bg-primary/5 p-4">
               <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4"/>Review rights before import</p>
               <p>{review.title} · {review.creator||"Creator not listed"}</p>
@@ -434,16 +479,16 @@ export function SfxDiscoveryPanel({projectId,bundle,selectedShotId,onSelectShot}
             ambience={design.ambience} library={library}/>
           <details className="space-y-3 rounded-surface border border-border bg-surface p-4">
             <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm font-semibold">
-              <span className="flex items-center gap-2"><Headphones className="size-4 text-primary"/>Background ambience · {design.ambience?"on":"off"}</span>
+              <span className="flex items-center gap-2"><Headphones className="size-4 text-primary"/>Background music / ambience · {design.ambience?"on":"off"}</span>
               <span className="rounded-full border border-border px-2 py-1 text-[11px] font-normal text-muted-foreground">Full video</span>
             </summary>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Add one quiet, continuously looping CC0 recording beneath the entire video.</p>
-            <label className="mt-3 block text-xs">Ambience asset
-              <select aria-label="Ambience asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">Select a reviewed CC0 track. It loops quietly beneath narration, with your fade and volume settings.</p>
+            <label className="mt-3 block text-xs">Music or ambience asset
+              <select aria-label="Music or ambience asset" className="mt-1 w-full rounded-control border border-border bg-surface p-2"
                 disabled={!!busy} value={ambientDraft.assetId}
                 onChange={e=>setAmbientDraft(x=>({...x,assetId:e.target.value}))}>
                 <option value="">No ambience selected</option>
-                {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.title}</option>)}
+                {library.map(asset=><option key={asset.assetId+asset.sha256} value={asset.assetId}>{asset.assetType==="music"?"♪ ":""}{asset.title}</option>)}
               </select></label>
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <label>Gain (dB)<input aria-label="Ambience gain (dB)" className="mt-1 w-full rounded-control border border-border bg-surface p-2"

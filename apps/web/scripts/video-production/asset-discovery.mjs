@@ -6,6 +6,7 @@ import {createHash} from "node:crypto";
 import {mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile} from "node:fs/promises";
 import {basename, dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {setTimeout as pause} from "node:timers/promises";
 import {rankShotCandidates} from "./asset-matching.mjs";
 
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-assets",import.meta.url));
@@ -243,14 +244,37 @@ async function downloadFile(file,{fetchImpl=fetch,signal,provider}={}){
     provider==="pexels"?(file.name==="video.mp4"?VIDEO_HOSTS:["images.pexels.com"]):[];
   const url=providerUrl(file.url,hosts);
   if(!Number.isSafeInteger(file.size)||file.size<0||file.size>MAX_FILE)throw Error("Provider asset exceeds download limit.");
-  const response=await fetchImpl(url,{redirect:"error",signal:signal??AbortSignal.timeout(60000),headers:{"User-Agent":UA}});
-  const bytes=await readLimited(response,MAX_FILE);
-  if(file.name==="video.mp4"&&(bytes.length<12||bytes.toString("ascii",4,8)!=="ftyp"))
-    throw Error("Provider did not return a compatible MP4 video file.");
-  if(file.size&&bytes.length!==file.size)throw Error("Incomplete or modified provider download.");
-  if(file.md5&&createHash("md5").update(bytes).digest("hex")!==file.md5)
-    throw Error("Downloaded asset failed provider integrity check.");
-  return bytes;
+  // Provider GETs are idempotent. Retry *only* transient transport/server
+  // failures, before any artifact is committed. Never retry malformed media,
+  // untrusted hosts, rights denials, 429 or oversized responses.
+  for(let attempt=0;attempt<3;attempt++){
+    if(signal?.aborted)throw signal.reason??Error("Asset download cancelled.");
+    const deadline=AbortSignal.timeout(60000);
+    const requestSignal=signal?AbortSignal.any([signal,deadline]):deadline;
+    try{
+      const response=await fetchImpl(url,{redirect:"error",signal:requestSignal,headers:{"User-Agent":UA}});
+      if(response.status===429)throw Error("Asset provider rate-limited downloads. Retry later.");
+      if([408,500,502,503,504].includes(response.status)){
+        await response.body?.cancel?.().catch(()=>{});
+        const error=Error(`Asset provider temporarily unavailable (HTTP ${response.status}).`);
+        error.retryable=true;throw error;
+      }
+      const bytes=await readLimited(response,MAX_FILE);
+      if(file.name==="video.mp4"&&(bytes.length<12||bytes.toString("ascii",4,8)!=="ftyp"))
+        throw Error("Provider did not return a compatible MP4 video file.");
+      if(file.size&&bytes.length!==file.size){
+        const error=Error("Incomplete provider download.");error.retryable=true;throw error;
+      }
+      if(file.md5&&createHash("md5").update(bytes).digest("hex")!==file.md5)
+        throw Error("Downloaded asset failed provider integrity check.");
+      return bytes;
+    }catch(error){
+      if(signal?.aborted)throw signal.reason??error;
+      if(!(error.retryable||error instanceof TypeError||deadline.aborted))throw error;
+      if(attempt===2)throw Error("Asset download failed after three attempts. Check your connection and retry the import.",{cause:error});
+      await pause(250*2**attempt,undefined,{signal});
+    }
+  }
 }
 async function resolveAssetFiles(input,opts){
   if(input.provider==="polyhaven"){

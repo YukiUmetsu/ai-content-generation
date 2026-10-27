@@ -67,13 +67,15 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(result.qa.commercialReady, false);
   assert.ok(result.qa.findings.some(({ code, severity }) => code === "caption-reading-speed" && severity === "warning"));
   assert.match(await readFile(join(result.releaseDir, "video.mp4"), "utf8"), /muxed-film/);
-  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "master.wav", "qa-report.json", "render-manifest.json", "stills", "video.mp4", "voice.wav"]);
+  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "cover-still.png", "master.wav", "qa-report.json", "render-manifest.json", "stills", "video.mp4", "voice.wav"]);
   assert.equal(result.qa.reviewStills.length >= 2, true);
   for (const still of result.qa.reviewStills) {
     const bytes = await readFile(join(result.releaseDir, still.file));
     assert.equal(hash(bytes), still.sha256);
   }
   const manifest = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
+  assert.equal(manifest.artifacts.coverStill,hash(await readFile(join(result.releaseDir,"cover-still.png"))));
+  assert.equal(manifest.artifacts.coverStill,manifest.reviewStills[0].sha256);
   assert.equal(manifest.buildHash, "b".repeat(64));
   assert.equal(manifest.artifacts.voice, hash(await readFile(join(result.releaseDir, "voice.wav"))));
   assert.equal(manifest.narration.length, ctx.job.beats.length);
@@ -174,6 +176,28 @@ test("media suggestions are prepared before narration and expose a bounded Jobs 
   assert.equal(events[0],"search");
   assert.deepEqual(events[1],{status:"partial",candidates:3,warnings:["Pexels unavailable"]});
   assert.equal(events[2],"voice");
+});
+
+test("retrying an interrupted draft uses only its existing verified speech-cache directory",async t=>{
+  const ctx=await context(t),prior=join(ctx.root,"draft-prior"),cache=join(prior,".cache");
+  await mkdir(cache,{recursive:true});
+  let actualCache;
+  const normal=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(job,options)=>{
+    actualCache=options.reuseCacheRoot;
+    assert.equal(options.skipInvalidPriorCache,true);
+    return normal(job,options);
+  };
+  await produceVideo(ctx.job,{...ctx.opts,reuseSpeechCacheFrom:prior},ctx.injected);
+  assert.equal(actualCache,cache);
+  const next=await context(t);
+  let missingCache;
+  const nextSpeech=next.injected.synthesizeNarration;
+  next.injected.synthesizeNarration=async(job,options)=>{
+    missingCache=options.reuseCacheRoot;return nextSpeech(job,options);
+  };
+  await produceVideo(next.job,{...next.opts,reuseSpeechCacheFrom:join(next.root,"missing-prior")},next.injected);
+  assert.equal(missingCache,null,"a missing interrupted cache must safely regenerate narration");
 });
 
 test("cancelling media search prevents voice calls and leaves no completed release",async t=>{

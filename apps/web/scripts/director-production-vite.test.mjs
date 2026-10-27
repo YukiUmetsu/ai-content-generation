@@ -241,6 +241,50 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   assert.deepEqual(events.map(e=>e[0]),["start","advance","advance","complete"]);
 });
 
+test("a restarted failed production locates its original narration cache from the durable Jobs input",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-retry-cache-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const oldRun="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  let passedCache;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({priorRunId:oldRun,start:async()=>"job-retried",
+      advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      passedCache=options.reuseSpeechCacheFrom;
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock retry video");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(passedCache,join(dir,"draft-"+oldRun));
+});
+
+test("a failed scene render records an actionable step error without leaking provider diagnostics",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-failure-recovery-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let failed;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-render-failure",advance:async()=>{},complete:async()=>{},
+      fail:async(...args)=>{failed=args;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      options.onProgress({phase:"rendering",message:"Rendering scene 3"});
+      throw Error("Internal provider detail: private-token-value");
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"f".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(failed?.[0],"scene_render_failed");
+  assert.match(failed?.[1],/visual assets.*retry/i);
+  assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private-token-value/);
+});
+
 test("an opted-in draft saves scene-specific free media suggestions with Jobs provenance across restart",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-auto-assets-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
@@ -374,6 +418,7 @@ test("completed renders are discoverable by production across server restarts, n
       await mkdir(releaseDir,{recursive:true});
       await writeFile(join(releaseDir,"video.mp4"),"mock video media");
       await writeFile(join(releaseDir,"captions.srt"),"1\n00:00:00,000 --> 00:00:01,000\nTest");
+      await writeFile(join(releaseDir,"cover-still.png"),"mock reviewed frame");
       return {releaseDir};
     }});
   const params={...inputs(),settings:config,productionId,sourceRevision:"approved-script:revision-one:board-one:plan-one"};
@@ -385,10 +430,16 @@ test("completed renders are discoverable by production across server restarts, n
   const restarted=createDirectorProduction({outputRoot:dir});
   const own=await invoke(restarted,"GET",`/assets/${productionId}`);
   assert.equal(own.status,200);
-  assert.deepEqual(own.data.assets.map(asset=>asset.kind).sort(),["captions","video"]);
+  assert.deepEqual(own.data.assets.map(asset=>asset.kind).sort(),["captions","thumbnail","video"]);
   assert.ok(own.data.assets.every(asset=>asset.platform==="youtube"));
   assert.ok(own.data.assets.every(asset=>asset.sourceRevision===params.sourceRevision));
   assert.match(own.data.assets[0].downloadUrl,/^\/api\/contentgen-video\/media\//);
+  const cover=own.data.assets.find(asset=>asset.kind==="thumbnail");
+  const served=await audioResponse(restarted,cover.downloadUrl.replace("/api/contentgen-video",""));
+  assert.equal(served.status,200);
+  assert.equal(served.headers["Content-Type"],"image/png");
+  assert.equal(served.headers["Content-Disposition"],'attachment; filename="cover-still.png"');
+  assert.equal(served.bytes.toString(),"mock reviewed frame");
   assert.deepEqual((await invoke(restarted,"GET",`/assets/${otherId}`)).data.assets,[]);
   assert.equal((await invoke(restarted,"GET","/assets/../production-other")).status,404);
 });

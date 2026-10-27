@@ -139,4 +139,9 @@ test("prior narration with corrupted hash refuses reuse; missing prior beat may 
   assert.equal(calls,2);
   await assert.rejects(synthesizeNarration(job,{...options,cacheRoot:targetRoot,
     reuseCacheRoot:sourceRoot,localVoiceAuthorized:false}),/authoriz/);
+  const recovered=await synthesizeNarration(job,{...options,cacheRoot:targetRoot,
+    reuseCacheRoot:sourceRoot,skipInvalidPriorCache:true});
+  assert.equal(calls,3,"a retry resynthesizes only the corrupted beat after fresh authorization");
+  assert.deepEqual(await readFile(recovered[1].wavPath),await readFile(source[1].wavPath),
+    "untouched narration still reuses its verified source");
 });

@@ -1,5 +1,5 @@
 /** Same-origin, local-only Studio bridge for third-party CC0 SFX. */
-import {approveSfx,discoverSfx,listApprovedSfx,resolveSceneSfxChoices,setSceneSfxChoice}
+import {approveSfx,discoverMusic,discoverSfx,listApprovedSfx,resolveSceneSfxChoices,setSceneSfxChoice}
   from "./video-production/sfx-discovery.mjs";
 import {setSoundDesign,resolveSoundDesign} from "./video-production/sound-design.mjs";
 import {readFile} from "node:fs/promises";
@@ -39,6 +39,10 @@ export async function handleSfxDiscoveryRequest(req,res,deps={}){
       const payload=await jsonBody(req);
       if(payload?.allowExternalSearch!==true)throw Error("Explicit SFX search approval required.");
       send(res,200,await (deps.search??discoverSfx)(payload,opts));
+    }else if(req.method==="POST"&&pathname==="/suggest-music"){
+      const payload=await jsonBody(req);
+      if(payload?.allowExternalSearch!==true)throw Error("Explicit music search approval required.");
+      send(res,200,await (deps.searchMusic??discoverMusic)(payload,opts));
     }else if(req.method==="POST"&&pathname==="/approve"){
       const payload=await jsonBody(req);
       if(payload?.confirmRights!==true||payload?.confirmDownload!==true)

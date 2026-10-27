@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {mkdtemp,readFile,writeFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {planSfxNeeds,discoverSfx,recommendApprovedSfx,approveSfx,listApprovedSfx,
+import {planSfxNeeds,discoverSfx,discoverMusic,recommendApprovedSfx,approveSfx,listApprovedSfx,
   setSceneSfxChoice,resolveSceneSfxChoices,exportSfxForTimeline} from "./sfx-discovery.mjs";
 
 const bundle={plan:{shots:[
@@ -57,6 +57,27 @@ test("Openverse CC0 Freesound preview paths are supported without accepting arbi
   const result=await discoverSfx({bundle,allowExternalSearch:true},{fetchImpl});
   assert.equal(result.scenes[0].candidates.length,1);
   assert.equal(result.scenes[0].candidates[0].previewUrl,valid.url);
+});
+
+test("CC0 music search is opt-in, category-scoped, bounded and never downloads media",async()=>{
+  const music={...sound("1e4e06ce-cab2-4871-a8c2-123456789abc","Gentle ambient piano"),
+    category:"music",duration:65000,tags:[{name:"ambient"},{name:"piano"}]};
+  const calls=[];
+  const fetchImpl=async(url,options)=>{calls.push({url:String(url),options});return json({results:[music,
+    {...music,id:"2e4e06ce-cab2-4871-a8c2-123456789abc",category:"sound_effect"},
+    {...music,id:"3e4e06ce-cab2-4871-a8c2-123456789abc",license:"by-nc"},
+    {...music,id:"4e4e06ce-cab2-4871-a8c2-123456789abc",duration:155000}]});};
+  await assert.rejects(discoverMusic({query:"ambient piano",allowExternalSearch:false},{fetchImpl}),/approval/i);
+  await assert.rejects(discoverMusic({query:"  ",allowExternalSearch:true},{fetchImpl}),/meaningful/i);
+  assert.equal(calls.length,0);
+  const found=await discoverMusic({query:"ambient piano",allowExternalSearch:true},{fetchImpl});
+  assert.equal(found.candidates.length,1);
+  assert.equal(found.candidates[0].assetType,"music");
+  assert.equal(found.candidates[0].durationSeconds,65);
+  assert.equal(calls.length,1);
+  assert.match(calls[0].url,/category=music/);
+  assert.match(calls[0].url,/license=cc0/);
+  assert.equal(calls[0].options.redirect,"error");
 });
 
 test("approved library automatically suggests matching sounds, never weak or unapproved files",()=>{
@@ -127,6 +148,20 @@ test("first download requires review, re-resolves a CC0 source and stores verifi
   assert.equal((await listApprovedSfx({root:opts.root})).length,0);
   await assert.rejects(approveSfx(approval,opts),/conflict|damaged|invalid|tamper/i,
     "a repeated approval cannot claim a tampered existing import succeeded");
+});
+
+test("reviewed music import cannot be relabeled as a sound effect or silently used for cues",async t=>{
+  const opts=await imported(t);
+  const clip={...sound(soundId,"Calm instrumental"),category:"music",duration:55000};
+  const fetchImpl=async url=>String(url).includes("/v1/audio/")?json(clip):new Response("OggS-music-bytes");
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl}),/license|CC0/i);
+  const saved=await approveSfx({...approval,assetType:"music"},{...opts,fetchImpl});
+  assert.equal(saved.assetType,"music");
+  const bank=await listApprovedSfx({root:opts.root});
+  assert.equal(bank[0].assetType,"music");
+  assert.equal(recommendApprovedSfx(bundle,bank).every(x=>x.assetId===null),true);
+  await assert.rejects(setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",mode:"pin",
+    assetId:soundId,sha256:saved.sha256},{root:opts.root}),/approved|verified/i);
 });
 
 test("real FFmpeg conversion accepts standard ancillary WAV chunks without losing PCM verification",async t=>{

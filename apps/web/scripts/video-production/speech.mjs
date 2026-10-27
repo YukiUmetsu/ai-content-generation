@@ -60,7 +60,7 @@ function validateProbe(probe) {
 
 /**
  * @param {object} job validated video-production-job v1
- * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,paidUsageApproved?:boolean,budgetUsd?:number,direction?:object}} options
+ * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,paidUsageApproved?:boolean,budgetUsd?:number,direction?:object,skipInvalidPriorCache?:boolean}} options
  */
 export async function synthesizeNarration(job, options) {
   const voice = job?.voice;
@@ -142,7 +142,12 @@ export async function synthesizeNarration(job, options) {
           fail("previous narration cache samples mismatch for beat " + beat.id);
         earlier = {meta, wavBytes};
       } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
+        const invalidPrior=error instanceof SyntaxError ||
+          /^Narration preparation failed: previous narration cache /u.test(error?.message??"");
+        if(error?.code!=="ENOENT"&&!(options.skipInvalidPriorCache===true&&invalidPrior&&!options.signal?.aborted))throw error;
+        // A draft retry may discard a corrupt, untrusted cache entry and
+        // synthesize again under fresh voice consent. A trusted released
+        // cache still fails closed on mismatched provenance by default.
       }
       if (earlier) {
         await mkdir(keyDir, { recursive:true });

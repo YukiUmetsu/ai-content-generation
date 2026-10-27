@@ -16,14 +16,21 @@ async function request(method,url,data,deps={},headers={}){
 }
 
 test("sound API blocks cross-site access and denies unapproved network or download",async()=>{
-  let searches=0,downloads=0;
+  let searches=0,musicSearches=0,downloads=0;
   const deps={search:async()=>{searches++;return {scenes:[]};},
+    searchMusic:async()=>{musicSearches++;return {candidates:[]};},
     approve:async()=>{downloads++;return {approved:true};}};
   assert.equal((await request("POST","/suggest",{allowExternalSearch:false},deps)).status,422);
   assert.equal((await request("POST","/suggest",{allowExternalSearch:true},deps,{origin:"http://evil.test"})).status,403);
   assert.equal(searches,0);
   assert.equal((await request("POST","/suggest",{allowExternalSearch:true},deps)).status,200);
   assert.equal(searches,1);
+  assert.equal((await request("POST","/suggest-music",{query:"piano",allowExternalSearch:false},deps)).status,422);
+  assert.equal((await request("POST","/suggest-music",{query:"piano",allowExternalSearch:true},deps,
+    {origin:"http://evil.test"})).status,403);
+  assert.equal(musicSearches,0);
+  assert.equal((await request("POST","/suggest-music",{query:"piano",allowExternalSearch:true},deps)).status,200);
+  assert.equal(musicSearches,1);
   assert.equal((await request("POST","/approve",{confirmRights:false,confirmDownload:true},deps)).status,422);
   assert.equal(downloads,0);
   assert.equal((await request("POST","/approve",{confirmRights:true,confirmDownload:true},deps)).status,200);

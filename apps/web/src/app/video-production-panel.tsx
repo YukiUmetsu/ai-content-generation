@@ -520,15 +520,19 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       {stage==="export"&&<>
         <div className="space-y-1"><h3 className="text-base font-semibold">Render and watch your video</h3>
           <p className="text-muted-foreground">The MP4 uses the verified export pipeline with the selected narrator and reviewed sounds. Rendering may take several minutes.</p></div>
-        {!ready&&state.state!=="rendering"&&<div className="rounded-control border border-border bg-surface-subtle p-3">
+        {!ready&&!(["rendering","failed","cancelled"].includes(state.state))&&<div className="rounded-control border border-border bg-surface-subtle p-3">
           <p className="font-medium">A fresh readiness check is required</p>
           <p className="mt-1 text-xs text-muted-foreground">Changed scene, sound or voice settings need a new check before another render.</p>
           <div className="mt-3"><Button size="sm" variant="outline" onClick={()=>void navigate("review")}>Go to final review</Button></div>
         </div>}
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!ready||!!working||state.state==="rendering"} onClick={()=>void start()}>
-            <Film className="mr-2 size-4"/>Render test MP4
-          </Button>
+          {["failed","cancelled"].includes(state.state)?
+            <Button disabled={!!working} onClick={()=>void generateDraft()}>
+              <RefreshCw className="mr-2 size-4"/>{working==="auto"?"Checking recovery…":"Retry draft video"}
+            </Button>:
+            <Button disabled={!ready||!!working||state.state==="rendering"} onClick={()=>void start()}>
+              <Film className="mr-2 size-4"/>Render test MP4
+            </Button>}
           {state.state==="rendering"&&<Button variant="outline" onClick={()=>void cancel()}><Square className="mr-2 size-4"/>Cancel render</Button>}
         </div>
         {(state.state==="rendering"||state.state==="failed"||state.state==="done"||state.state==="cancelled")&&<div className="rounded-control border border-border p-3" role="status">
