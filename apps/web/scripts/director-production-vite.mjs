@@ -600,7 +600,9 @@ export function createDirectorProduction(deps={}){
               ...(lastOutput?{reuseFrom:lastOutput}:{}),onProgress:event=>{
                 progress(event);
                 if(tracker)journal=journal.then(()=>tracker.advance(event.phase,
-                  event.phase==="narration"&&event.assetSearchSummary?{assetSearch:event.assetSearchSummary}:undefined)).catch(error=>{
+                  event.artifactLedger||event.phase==="narration"&&event.assetSearchSummary?
+                    {...(event.phase==="narration"&&event.assetSearchSummary?{assetSearch:event.assetSearchSummary}:{}),
+                      ...(event.artifactLedger?{artifactLedger:event.artifactLedger}:{})}:undefined)).catch(error=>{
                   journalError=error;
                   abort.abort(error);
                 });
@@ -609,7 +611,11 @@ export function createDirectorProduction(deps={}){
             await journal;
             if(journalError)throw journalError;
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
-            if(tracker)await tracker.complete();
+            if(tracker)await tracker.complete(result.manifestHash&&result.artifactHashes?.video?
+              {artifactLedger:{kind:"export-package",manifestHash:result.manifestHash,
+                artifacts:{video:result.artifactHashes.video,
+                  ...(result.artifactHashes.captions?{captions:result.artifactHashes.captions}:{}),
+                  ...(result.artifactHashes.coverStill?{coverStill:result.artifactHashes.coverStill}:{})}}}:undefined);
             results.set(runId,result.releaseDir);
             if(results.size>5)results.delete(results.keys().next().value);
             let mediaWarning="";

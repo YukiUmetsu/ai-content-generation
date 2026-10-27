@@ -40,13 +40,54 @@ test("video production submits a real dependent DAG and advances stages in order
   assert.deepEqual(submission.nodes[2].dependsOn,[PRODUCTION_NODES[1]]);
   await tracker.advance("asset-search");
   assert.deepEqual(scheduler.nodes.slice(0,2).map(x=>x.state),["SUCCEEDED","SUCCEEDED"]);
-  await tracker.advance("narration",{assetSearch:{status:"partial",candidates:2,warnings:["provider unavailable"]}});
+  await tracker.advance("narration",{assetSearch:{status:"partial",candidates:2,warnings:["provider unavailable"]},
+    artifactLedger:{kind:"asset-search",fingerprint:"a".repeat(64),selected:[
+      {beatId:"opening",assetType:"photo",sha256:"b".repeat(64),path:"/private/photo.jpg"}]}});
   assert.equal(scheduler.nodes[2].state,"SUCCEEDED");
   assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-2/succeed"))?.body.output.assetSearch.status,"partial");
+  assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-2/succeed"))?.body.output.artifactLedger.selected[0].sha256,
+    "b".repeat(64));
+  assert.ok(!JSON.stringify(scheduler.calls.find(x=>x.path.endsWith("/node-2/succeed"))).includes("/private"));
+  assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-2/succeed"))?.body.output.assetSearch.warnings,undefined,
+    "third-party warning strings must not enter the durable Jobs database");
+  await tracker.advance("timeline",{artifactLedger:{kind:"narration",beats:[{id:"opening",sha256:"a".repeat(64),samples:48000}]}});
+  assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-3/succeed"))?.body.output.artifactLedger.beats[0].sha256,
+    "a".repeat(64));
   await tracker.advance("rendering");
   assert.deepEqual(scheduler.nodes.slice(0,6).map(x=>x.state),Array(6).fill("SUCCEEDED"));
-  await tracker.complete();
+  await tracker.advance("mux",{artifactLedger:{kind:"scene-render",planHash:"b".repeat(64),
+    segments:[{sha256:"c".repeat(64),startFrame:0,frameCount:150}]}});
+  await tracker.advance("qa",{artifactLedger:{kind:"final-mux",artifacts:{video:"d".repeat(64)}}});
+  await tracker.advance("review",{artifactLedger:{kind:"technical-qa",technicalPass:true,manifestHash:"e".repeat(64)}});
+  await tracker.complete({artifactLedger:{kind:"export-package",manifestHash:"e".repeat(64),
+    artifacts:{video:"d".repeat(64)}}});
+  assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-6/succeed"))?.body.output.artifactLedger.segments[0].startFrame,0);
+  assert.equal(scheduler.calls.find(x=>x.path.endsWith("/node-9/succeed"))?.body.output.artifactLedger.manifestHash,"e".repeat(64));
   assert.ok(scheduler.nodes.every(x=>x.state==="SUCCEEDED"));
+});
+
+test("Jobs refuses malformed or wrong-stage ledgers before marking steps successful",async()=>{
+  const scheduler=fakeScheduler();
+  const tracker=createProductionJobTracker({fetcher:scheduler.fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:FIRST_RUN});
+  const count=()=>scheduler.calls.filter(x=>x.path.endsWith("/succeed")).length;
+  const attempts=[
+    {kind:"narration",beats:[{id:"scene",sha256:"/home/user/key.json",samples:48000}]},
+    {kind:"scene-render",planHash:"a".repeat(64),segments:[]},
+    {kind:"narration",beats:[{id:"../../secret",sha256:"b".repeat(64),samples:48000}]},
+  ];
+  for(const ledger of attempts){
+    await assert.rejects(tracker.advance("timeline",{artifactLedger:ledger}),/Jobs (artifact|narration|video)/);
+    assert.equal(count(),0,"invalid result cannot mark even preceding steps as completed");
+  }
+  await tracker.advance("timeline",{artifactLedger:{kind:"narration",beats:[{
+    id:"opening",sha256:"c".repeat(64),samples:48000,localPath:"/home/private.mp3"}],
+    absolutePath:"/home/private.mp3"},internalSecret:"private-key"});
+  const output=scheduler.calls.find(x=>x.path.endsWith("/node-3/succeed")).body.output;
+  assert.equal(JSON.stringify(output).includes("private"),false);
+  assert.deepEqual(output.artifactLedger.beats[0],{id:"opening",sha256:"c".repeat(64),samples:48000});
+  await assert.rejects(tracker.complete({artifactLedger:{kind:"export-package",manifestHash:"/tmp/master"}}),/Jobs artifact hash/);
+  assert.equal(scheduler.nodes[9].state,"PENDING","invalid export output must not complete the remaining DAG");
 });
 
 test("durable job update errors fail closed before a renderer can claim success",async()=>{

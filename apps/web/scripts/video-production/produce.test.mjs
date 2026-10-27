@@ -93,7 +93,7 @@ test("selected scene photo reaches the actual general Kumiki plan and stage befo
     provider: "pexels", assetId: "49", sourceUrl: "https://www.pexels.com/photo/roof-49/",
     license: "Pexels License", licenseUrl: "https://www.pexels.com/license/", creator: "Photographer" };
   const asset = { url: media.url, path: join(ctx.root, "frozen.jpg"), sha256: photoHash, assetType: "photo" };
-  const events = [];
+  const events = [],progress=[];
   ctx.injected.prepareApprovedSceneMedia = async input => {
     events.push("asset-preflight");
     assert.equal(input.projectId, "dossier-1");
@@ -110,8 +110,13 @@ test("selected scene photo reaches the actual general Kumiki plan and stage befo
     return { url: "http://127.0.0.1:9876/video-export.html", buildHash: "b".repeat(64), close: async () => {} };
   };
   const result = await produceVideo(ctx.job, { ...ctx.opts, sceneAssetProjectId: "dossier-1",
-    sceneShotMap: [{ shotId: "scene-roof", beatId }], expectedSceneMediaFingerprint: "c".repeat(64) }, ctx.injected);
+    sceneShotMap: [{ shotId: "scene-roof", beatId }], expectedSceneMediaFingerprint: "c".repeat(64),
+    onProgress:event=>progress.push(event) }, ctx.injected);
   assert.deepEqual(events, ["asset-preflight", "narration"]);
+  assert.deepEqual(progress.find(event=>event.phase==="narration")?.artifactLedger,
+    {kind:"asset-search",fingerprint:"c".repeat(64),
+      selected:[{beatId,assetType:"photo",sha256:photoHash}]});
+  assert.ok(!JSON.stringify(progress).includes(asset.path));
   const released = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
   assert.equal(released.plan.chapters[0].visual.stockMedia.sha256, photoHash);
   assert.equal(released.sceneMedia[0].sha256, photoHash);
@@ -202,11 +207,30 @@ test("production emits real stage transitions and forwards verified capture fram
     options.onProgress?.({ phase: "rendering", completedFrames: 90, totalFrames: 90 });
     return originalRender(options);
   };
-  await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
+  const result=await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
   const phases = events.map((event) => event.phase);
   assert.deepEqual(phases, ["browser-preflight", "asset-search", "narration", "timeline", "audio", "rendering", "rendering", "mux", "qa", "review"]);
   assert.deepEqual(events.find((event) => event.completedFrames === 90),
     { phase: "rendering", completedFrames: 90, totalFrames: 90 });
+  const narration=events.find(event=>event.phase==="timeline")?.artifactLedger;
+  assert.equal(narration?.kind,"narration");
+  assert.equal(narration?.beats.length,ctx.job.beats.length);
+  assert.match(narration?.beats[0].sha256,/^[a-f0-9]{64}$/);
+  const visual=events.find(event=>event.phase==="mux")?.artifactLedger;
+  assert.equal(visual?.kind,"scene-render");
+  assert.match(visual?.planHash,/^[a-f0-9]{64}$/);
+  const release=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.deepEqual(visual?.segments,release.segmentHashes);
+  const mux=events.find(event=>event.phase==="qa")?.artifactLedger;
+  assert.equal(mux?.kind,"final-mux");
+  assert.equal(mux?.artifacts.video,hash("muxed-film"));
+  assert.equal(mux?.artifacts.captions,hash("1\n00:00:00,000 --> 00:00:01,000\nSample"));
+  const technical=events.find(event=>event.phase==="review")?.artifactLedger;
+  assert.equal(technical?.kind,"technical-qa");
+  assert.equal(technical?.technicalPass,true);
+  assert.match(technical?.manifestHash,/^[a-f0-9]{64}$/);
+  assert.equal(result.artifactHashes?.coverStill,hash("captured-frame-0"));
+  assert.ok(!JSON.stringify(events).includes(ctx.opts.out),"durable job data must never disclose local paths");
 });
 
 test("media suggestions are prepared before narration and expose a bounded Jobs summary",async t=>{

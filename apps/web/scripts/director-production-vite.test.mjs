@@ -224,14 +224,15 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
     build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
     jobTracker:()=>({start:async input=>{events.push(["start",input.productionId]);return "job-persisted";},
-      advance:async phase=>events.push(["advance",phase]),
-      complete:async()=>events.push(["complete"]),fail:async()=>events.push(["fail"]),
+      advance:async(phase,payload)=>events.push(["advance",phase,payload]),
+      complete:async payload=>events.push(["complete",payload]),fail:async()=>events.push(["fail"]),
       cancel:async()=>events.push(["cancel"])}),
     produce:async (_job,opts)=>{
       const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
       await writeFile(join(releaseDir,"video.mp4"),"mock media");
-      opts.onProgress({phase:"narration"});opts.onProgress({phase:"rendering",completedFrames:12,totalFrames:12});
-      return {releaseDir};
+      opts.onProgress({phase:"narration"});opts.onProgress({phase:"rendering",completedFrames:12,totalFrames:12,
+        artifactLedger:{kind:"sound-mix",masterSha256:"a".repeat(64),samples:96000}});
+      return {releaseDir,manifestHash:"b".repeat(64),artifactHashes:{video:"c".repeat(64),captions:"d".repeat(64)}};
     }});
   const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24),sourceRevision:"r1"};
   assert.equal((await invoke(server,"POST","/check",payload)).status,200);
@@ -241,6 +242,9 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   assert.equal(server.status().state,"done");
   assert.equal(server.status().jobId,"job-persisted");
   assert.deepEqual(events.map(e=>e[0]),["start","advance","advance","complete"]);
+  assert.equal(events[2][2].artifactLedger.masterSha256,"a".repeat(64));
+  assert.deepEqual(events[3][1],{artifactLedger:{kind:"export-package",manifestHash:"b".repeat(64),
+    artifacts:{video:"c".repeat(64),captions:"d".repeat(64)}}});
 });
 
 test("a restarted failed production locates its original narration cache from the durable Jobs input",async t=>{
@@ -403,7 +407,9 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
       options.onProgress({phase:"browser-preflight"});
       options.onProgress({phase:"asset-search"});
       const summary=await options.prepareAssetSuggestions({signal:options.signal});
-      options.onProgress({phase:"narration",assetSearchSummary:summary});
+      options.onProgress({phase:"narration",assetSearchSummary:summary,
+        artifactLedger:{kind:"asset-search",fingerprint:"a".repeat(64),selected:[
+          {beatId:"beat-01",assetType:"photo",sha256:"b".repeat(64)}]}});
       const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
       await writeFile(join(releaseDir,"video.mp4"),"mock video");
       return{releaseDir};
@@ -419,6 +425,7 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","narration","complete"]);
   assert.equal(events[2][1].assetSearch.status,"partial");
   assert.equal(events[2][1].assetSearch.candidates,1);
+  assert.equal(events[2][1].artifactLedger.selected[0].sha256,"b".repeat(64));
   const restarted=createDirectorProduction({outputRoot:dir});
   const saved=await invoke(restarted,"GET","/suggestions/"+productionId);
   assert.equal(saved.status,200);assert.equal(saved.data.found,true);
