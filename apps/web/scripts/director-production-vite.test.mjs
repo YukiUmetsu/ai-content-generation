@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -327,6 +327,133 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.deepEqual(saved.data.suggestions,suggestion);
   assert.equal((await invoke(restarted,"GET","/suggestions/production-"+"d".repeat(24))).data.found,false);
   assert.equal((await invoke(restarted,"GET","/suggestions/../secrets")).status,404);
+});
+
+test("retry reuses the interrupted run's intact scene catalog without another provider request",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-assets-retry-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const oldRun="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+  const productionId="production-"+"c".repeat(24),bundle=inputs().bundle;
+  const suggestions={kind:"contentgen-scene-asset-suggestions",schemaVersion:1,warnings:[],scenes:[
+    {shotId:bundle.plan.shots[0].id,candidates:[{provider:"pexels",title:"House exterior",
+      sourceUrl:"https://www.pexels.com/photo/house-42",previewUrl:"",licenseUrl:"https://www.pexels.com/license/"}]}]};
+  const previous={schemaVersion:1,productionId,sourceShots:bundle.plan.shots,
+    sourceSound:bundle.plan.sound??[],suggestions};
+  const oldPath=join(dir,"draft-"+oldRun);await mkdir(oldPath);
+  await writeFile(join(oldPath,"asset-suggestions.json"),JSON.stringify(previous));
+  let searches=0,summary;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async()=>{searches++;throw Error("unnecessary provider call");},
+    jobTracker:()=>({priorRunId:oldRun,start:async()=>"job-resumed",advance:async()=>{},
+      complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      summary=await options.prepareAssetSuggestions({signal:options.signal});
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"retry film");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId,sourceRevision:"r1",searchFreeMedia:true};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<70&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(searches,0);
+  assert.equal(summary.status,"completed");
+  assert.equal(summary.reused,true);
+  assert.match(server.status().message,/reused 1 saved media suggestion/i);
+  const saved=await invoke(server,"GET","/suggestions/"+productionId);
+  assert.deepEqual(saved.data.suggestions,suggestions);
+  assert.deepEqual(JSON.parse(await readFile(join(dir,"draft-"+oldRun,"asset-suggestions.json"),"utf8")),previous,
+    "the original catalog remains unchanged");
+});
+
+test("retry refuses a symlinked catalog and searches again",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-assets-stale-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const oldRun="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",bundle=inputs().bundle;
+  const stale={schemaVersion:1,productionId:"production-"+"f".repeat(24),
+    sourceShots:[{id:"old-shot"}],sourceSound:[],suggestions:{kind:"contentgen-scene-asset-suggestions",scenes:[],warnings:[]}};
+  const oldPath=join(dir,"draft-"+oldRun);await mkdir(oldPath);
+  const outside=join(dir,"not-a-catalog.json");await writeFile(outside,JSON.stringify(stale));
+  await symlink(outside,join(oldPath,"asset-suggestions.json"));
+  const fresh={kind:"contentgen-scene-asset-suggestions",schemaVersion:1,
+    scenes:bundle.plan.shots.map(shot=>({shotId:shot.id,candidates:[]})),warnings:[]};
+  let searches=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async()=>{searches++;return fresh;},
+    jobTracker:()=>({priorRunId:oldRun,start:async()=>"job-resumed",advance:async()=>{},
+      complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      await options.prepareAssetSuggestions({signal:options.signal});
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"fresh film");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"f".repeat(24),searchFreeMedia:true};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<70&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(searches,1);
+  assert.deepEqual((await invoke(server,"GET","/suggestions/"+payload.productionId)).data.suggestions,fresh);
+});
+
+test("retry searches again when the saved catalog belongs to an older scene plan",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-assets-new-plan-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const oldRun="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",productionId="production-"+"a".repeat(24);
+  const bundle=inputs().bundle,oldPath=join(dir,"draft-"+oldRun);
+  await mkdir(oldPath);
+  await writeFile(join(oldPath,"asset-suggestions.json"),JSON.stringify({schemaVersion:1,productionId,
+    sourceShots:[{id:"old-scene"}],sourceSound:bundle.plan.sound??[],
+    suggestions:{kind:"contentgen-scene-asset-suggestions",schemaVersion:1,scenes:[],warnings:[]}}));
+  let calls=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async()=>{calls++;return{kind:"contentgen-scene-asset-suggestions",schemaVersion:1,
+      scenes:[],warnings:[]};},
+    jobTracker:()=>({priorRunId:oldRun,start:async()=>"job-retried",advance:async()=>{},
+      complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      const summary=await options.prepareAssetSuggestions({signal:options.signal});
+      assert.equal(summary.reused,undefined);
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"updated scene film");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId,searchFreeMedia:true};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<70&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(calls,1);
+});
+
+test("retry never reads media catalogs from a non-UUID worker run path",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-assets-run-id-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"b".repeat(24),bundle=inputs().bundle;
+  const stray=join(dir,"not-an-owned-run");await mkdir(stray);
+  await writeFile(join(stray,"asset-suggestions.json"),JSON.stringify({schemaVersion:1,productionId,
+    sourceShots:bundle.plan.shots,sourceSound:bundle.plan.sound??[],
+    suggestions:{kind:"contentgen-scene-asset-suggestions",schemaVersion:1,scenes:[],warnings:[]}}));
+  let searches=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async()=>{searches++;return{kind:"contentgen-scene-asset-suggestions",schemaVersion:1,
+      scenes:[],warnings:[]};},
+    jobTracker:()=>({priorRunId:"x/../not-an-owned-run",start:async()=>"job-malformed",advance:async()=>{},
+      complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      await options.prepareAssetSuggestions({signal:options.signal});
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"new file");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId,searchFreeMedia:true};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<70&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"done");
+  assert.equal(searches,1);
 });
 
 test("unavailable optional scene providers never block video or silently create a media match",async t=>{

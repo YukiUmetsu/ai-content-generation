@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createReadStream, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -190,21 +190,25 @@ export function createDirectorProduction(deps={}){
     }
     return assets;
   }
-  async function latestMediaSuggestions(productionId){
-    const latest=(await readMediaIndex()).filter(item=>item.productionId===productionId).at(-1);
-    if(latest){
-      const {runId}=latest;
-      const path=join(outputRoot,"draft-"+runId,"asset-suggestions.json");
-      let info;
-      try{info=await stat(path);}catch(error){if(error?.code==="ENOENT")return {found:false};throw error;}
-      if(!info.isFile()||info.size<2||info.size>MAX_SUGGESTIONS_BYTES)
-        throw Error("Saved asset suggestions have an invalid size. Search again in Video Director.");
+  async function runMediaSuggestions(runId,productionId){
+      if(!runIdPattern.test(runId))return {found:false};
+      // An interrupted render has no release/index entry, but its successfully
+      // collected catalog remains in the UUID-owned run directory. Reject
+      // symlinks and cross-production manifests before considering reuse.
+      const runDir=join(outputRoot,"draft-"+runId),path=join(runDir,"asset-suggestions.json");
+      let dirInfo,info;
+      try{[dirInfo,info]=await Promise.all([lstat(runDir),lstat(path)]);}
+      catch(error){if(error?.code==="ENOENT")return {found:false};throw error;}
+      if(!dirInfo.isDirectory()||dirInfo.isSymbolicLink()||!info.isFile()||info.isSymbolicLink()||
+        info.size<2||info.size>MAX_SUGGESTIONS_BYTES)
+        throw Error("Saved asset suggestions have an invalid size or file type. Search again in Video Director.");
       let data;
       try{data=JSON.parse(await readFile(path,"utf8"));}
       catch{throw Error("Saved asset suggestions are unreadable. Search again in Video Director.");}
       if(data?.schemaVersion!==1||data.productionId!==productionId||
         !Array.isArray(data.sourceShots)||data.sourceShots.length>60||
         !Array.isArray(data.sourceSound)||data.sourceSound.length>60||
+        data.suggestions?.kind!=="contentgen-scene-asset-suggestions"||data.suggestions?.schemaVersion!==1||
         !Array.isArray(data.suggestions?.scenes)||data.suggestions.scenes.length>60||
         !Array.isArray(data.suggestions?.warnings)||data.suggestions.warnings.length>24||
         data.suggestions.warnings.some(value=>typeof value!=="string"||value.length>240)||
@@ -217,7 +221,10 @@ export function createDirectorProduction(deps={}){
             (candidate.previewUrl!==""&&!/^https:\/\//u.test(candidate.previewUrl)))))
         throw Error("Saved asset suggestions are invalid. Search again in Video Director.");
       return {found:true,...data};
-    }
+  }
+  async function latestMediaSuggestions(productionId){
+    const latest=(await readMediaIndex()).filter(item=>item.productionId===productionId).at(-1);
+    if(latest)return runMediaSuggestions(latest.runId,productionId);
     return {found:false};
   }
   const env=deps.env??process.env;
@@ -500,6 +507,26 @@ export function createDirectorProduction(deps={}){
               ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom}:{}),
               ...(searchFreeMedia?{prepareAssetSuggestions:async({signal})=>{
                 try{
+                  if(signal?.aborted)throw Error("Media search cancelled.");
+                  if(interruptedRunId&&input.productionId){
+                    // Completed asset-search work can survive failed narration,
+                    // rendering, or app restart. Reuse only if the exact plan
+                    // still matches and the owned saved catalog passes review.
+                    let prior=null;
+                    try{prior=await runMediaSuggestions(interruptedRunId,input.productionId);}catch{/* Search afresh if the old catalog is damaged. */}
+                    if(prior?.found&&sha(prior.sourceShots)===sha(input.bundle.plan.shots)&&
+                      sha(prior.sourceSound)===sha(input.bundle.plan.sound??[])){
+                      if(signal?.aborted)throw Error("Media search cancelled.");
+                      await writeFile(join(out,"asset-suggestions.json"),JSON.stringify({
+                        schemaVersion:1,productionId:input.productionId,sourceShots:prior.sourceShots,
+                        sourceSound:prior.sourceSound,suggestions:prior.suggestions}),{flag:"wx",mode:0o600});
+                      assetSearchSummary={status:prior.suggestions.warnings.length?"partial":"completed",
+                        reused:true,scenes:prior.suggestions.scenes.length,
+                        candidates:prior.suggestions.scenes.reduce((sum,scene)=>sum+scene.candidates.length,0),
+                        warnings:prior.suggestions.warnings.slice(0,8)};
+                      return assetSearchSummary;
+                    }
+                  }
                   // The search is optional. A slow provider must not delay
                   // voice and Kumiki rendering indefinitely, regardless of
                   // how many distinct scene queries the plan contains.
@@ -551,7 +578,8 @@ export function createDirectorProduction(deps={}){
             lastOutput=out;
             status={...status,state:"done",phase:"review",
               message:"Draft MP4 rendered. Watch/listen and review claims and rights."+
-                (assetSearchSummary?.candidates?` ${assetSearchSummary.candidates} media suggestions saved for scene review.`:"")+
+                (assetSearchSummary?.reused?` Reused ${assetSearchSummary.candidates} saved media suggestions.`:
+                  assetSearchSummary?.candidates?` ${assetSearchSummary.candidates} media suggestions saved for scene review.`:"")+
                 (assetSearchSummary?.status==="fallback"?" Optional media search unavailable; use scene search to retry.":"")+mediaWarning,
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
               regeneration:result.regeneration??null};
