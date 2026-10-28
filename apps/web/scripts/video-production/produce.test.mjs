@@ -88,12 +88,21 @@ test("one command connects synthetic adapter outputs into atomically published r
   const manifest = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
   assert.equal(manifest.artifacts.coverStill,hash(await readFile(join(result.releaseDir,"cover-still.png"))));
   assert.equal(manifest.artifacts.coverStill,manifest.reviewStills[0].sha256);
+  assert.equal(manifest.artifacts.qaReport,hash(await readFile(join(result.releaseDir,"qa-report.json"))));
   assert.equal(manifest.buildHash, "b".repeat(64));
   assert.equal(manifest.artifacts.voice, hash(await readFile(join(result.releaseDir, "voice.wav"))));
   assert.equal(manifest.narration.length, ctx.job.beats.length);
   assert.equal(manifest.narration[0].providerRevision, "bridge-1");
   assert.equal(manifest.narration[0].sha256, hash(ctx.job.beats[0].narration));
   assert.equal(manifest.soundDucking,null,"drafts without background beds must not claim voice-triggered ducking");
+  assert.equal(manifest.visualCoverage.sceneCount,ctx.job.beats.length);
+  assert.equal(result.qa.visualCoverage.sceneCount,ctx.job.beats.length);
+  assert.deepEqual(manifest.visualCoverage.mediaDeclarationCounts,{stockVideo:0,stockPhoto:0,kumikiOnly:ctx.job.beats.length});
+  for(const scene of manifest.visualCoverage.scenes){
+    assert.ok(scene.reviewStill.frame>=manifest.plan.chapters.find(chapter=>chapter.id===scene.id).startFrame);
+    assert.ok(scene.reviewStill.frame<manifest.plan.chapters.find(chapter=>chapter.id===scene.id).endFrame);
+    assert.equal(hash(await readFile(join(result.releaseDir,scene.reviewStill.file))),scene.reviewStill.sha256);
+  }
 });
 
 test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
@@ -133,6 +142,9 @@ test("selected scene photo reaches the actual general Kumiki plan and stage befo
   const released = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
   assert.equal(released.plan.chapters[0].visual.stockMedia.sha256, photoHash);
   assert.equal(released.sceneMedia[0].sha256, photoHash);
+  assert.equal(released.visualCoverage.mediaDeclarationCounts.stockPhoto,1);
+  assert.equal(released.visualCoverage.scenes.find(scene=>scene.id===beatId)?.sourceType,"stock-photo");
+  assert.ok(released.visualCoverage.scenesWithoutStockVideo.includes(beatId));
 });
 
 test("a missing user-selected scene photo fails before any provider TTS or render call", async t => {

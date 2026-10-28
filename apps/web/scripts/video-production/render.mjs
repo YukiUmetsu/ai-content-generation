@@ -1,10 +1,11 @@
-/** Bounded browser frame capture: verified H.264 segments, safe resume, no PNG hoarding. */
+/** Bounded browser frame capture: verified H.264 segments, safe resume, capped review stills. */
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { listRenderChunks, reusableChapter } from "./media-reuse.mjs";
+import { assertReviewStillBudget, MAX_SCENE_REVIEW_STILLS } from "./scene-review-coverage.mjs";
 import { constants } from "node:fs";
 import { basename, join, parse, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -105,11 +106,11 @@ function validateOptions(options) {
   const limit = options.maxBatchFrames ?? 150;
   if (!integer(limit, 1) || limit > 150) fail("maximum capture batch size is 150 frames");
   const reviewFrames = options.reviewFrames ?? [];
-  if (!Array.isArray(reviewFrames) || reviewFrames.length > 5 ||
+  if (!Array.isArray(reviewFrames) || reviewFrames.length > MAX_SCENE_REVIEW_STILLS ||
     reviewFrames.some((frame) => !integer(frame, 0) || frame >= options.manifest.durationFrames) ||
     new Set(reviewFrames).size !== reviewFrames.length ||
     reviewFrames.some((frame, i) => i > 0 && frame <= reviewFrames[i - 1])) {
-    fail("review frames must be at most five unique ascending in-range integer frame indices");
+    fail(`review frames must be at most ${MAX_SCENE_REVIEW_STILLS} unique ascending in-range integer frame indices`);
   }
   return { dir, limit, reviewFrames };
 }
@@ -364,6 +365,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
       }
     }
     if (reviewFrames.length) await safeRenderDirectory(join(dir, "stills"));
+    let reviewStillBytes=0;
     for (const frame of reviewFrames) {
       if (options.signal?.aborted) fail("review still capture cancelled");
       const path = join(dir, "stills", `frame-${String(frame).padStart(6, "0")}.png`);
@@ -406,6 +408,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
           await writeFile(metadataPath, JSON.stringify({ fingerprint, frame, sha256: digest }, null, 2), { flag: "wx" });
         } finally { await rm(temporary, { force: true }); }
       }
+      reviewStillBytes=assertReviewStillBudget(reviewStillBytes,(await lstat(path)).size);
       reviewStills.push({ frame, path, sha256: digest });
     }
   } finally { if (capture) await capture.close(); }

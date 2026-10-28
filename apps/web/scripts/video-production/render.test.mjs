@@ -406,6 +406,6 @@ test("invalid review frame requests fail before allocating media resources", asy
   const { dir, dependencies, stats } = await harness(t);
   await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: [151] }, dependencies), /review frame/i);
   await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: [0, 0] }, dependencies), /review frame/i);
-  await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: Array.from({ length: 6 }, (_, i) => i) }, dependencies), /review frame/i);
+  await assert.rejects(renderVideoSegments({ ...config(dir, 151), reviewFrames: Array.from({ length: 65 }, (_, i) => i) }, dependencies), /review frame/i);
   assert.equal(stats().opened, 0);
 });

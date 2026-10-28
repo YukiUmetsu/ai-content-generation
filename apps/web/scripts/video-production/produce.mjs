@@ -10,12 +10,13 @@ import { fileURLToPath } from "node:url";
 import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
-import { buildSampleTimeline, toFrame } from "./timeline.mjs";
+import { buildSampleTimeline } from "./timeline.mjs";
 import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
+import { assertReviewStillBudget, assertSceneReviewCapacity, selectSceneReviewFrames, summarizeSceneReviewCoverage } from "./scene-review-coverage.mjs";
 import { startLocalStageServer } from "./stage-server.mjs";
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
@@ -118,6 +119,7 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
 export async function produceVideo(candidate, options, deps = {}) {
   const parsed = parseVideoProductionJob(candidate);
   if (!parsed.ok) fail(`invalid job: ${parsed.findings.filter((f) => f.severity === "error").map((f) => f.code).join(", ")}`);
+  assertSceneReviewCapacity(parsed.job.beats.length); // Fail before TTS/provider work, not after capturing a long film.
   if (!options?.out || !options.providerRevision) fail("explicit output and provider/engine revision are required");
   if (options.provider !== parsed.job.voice.provider) fail("provider substitution is forbidden; change the job voice configuration first");
   if (!Number.isFinite(options.budgetUsd ?? 0) || (options.budgetUsd ?? 0) < 0 ||
@@ -291,9 +293,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       })) };
     }
     const frames = plan.manifest.durationFrames;
-    const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
-    const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));
-    const reviewFrames = [...new Set([0, Math.floor(frames / 2), afterPayoff, frames - 1])].sort((a, b) => a - b);
+    const reviewFrames = selectSceneReviewFrames(plan);
     const sourcePlan = JSON.stringify(plan);
     const planHash = sha256(sourcePlan);
     const renderRoot = join(out, ".render");
@@ -335,6 +335,7 @@ export async function produceVideo(candidate, options, deps = {}) {
 
     if (!Array.isArray(render.reviewStills) || render.reviewStills.length !== reviewFrames.length) fail("review stills are missing or incomplete");
     const publishedStills = [];
+    let publishedStillBytes = 0;
     await mkdir(join(working, "stills"));
     for (let i = 0; i < reviewFrames.length; i++) {
       const still = render.reviewStills[i], frame = reviewFrames[i];
@@ -343,9 +344,11 @@ export async function produceVideo(candidate, options, deps = {}) {
       if (still?.frame !== frame || resolve(still.path) !== source || !/^[a-f0-9]{64}$/i.test(still.sha256 ?? "")) fail("review still has an invalid frame, path or SHA-256 hash");
       const bytes = await readFile(source);
       if (sha256(bytes) !== still.sha256) fail("review still hash changed after browser capture");
+      publishedStillBytes = assertReviewStillBudget(publishedStillBytes, bytes.length);
       await copyFile(source, join(working, "stills", filename));
       publishedStills.push({ frame, file: `stills/${filename}`, sha256: still.sha256 });
     }
+    const visualCoverage = summarizeSceneReviewCoverage(plan, publishedStills);
     // Export a genuine, renderer-captured first-frame image as the draft cover.
     // This is an editable starting still, not a claim that a designed thumbnail
     // or platform artwork was generated. The existing Kumiki composer handles design.
@@ -396,7 +399,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       artifactLedger:{kind:"final-mux",artifacts:{video:artifactHashes.video,captions:artifactHashes.captions,
         master:artifactHashes.master,coverStill:artifactHashes.coverStill}} });
     const versions = deps.toolVersions ?? await toolVersions();
-    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability });
+    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability, visualCoverage });
+    const qaBytes = JSON.stringify(qa, null, 2);
     const manifestPath = join(working, "render-manifest.json");
     const narration = speech.map((beat) => ({
       id: beat.id, sha256: beat.sha256, samples: beat.samples,
@@ -418,10 +422,10 @@ export async function produceVideo(candidate, options, deps = {}) {
     const mediaProvenance=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({beatId,...media}));
     const manifestBytes=JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects,
       soundDucking:audio.ducking??null,sceneMedia:mediaProvenance,thumbnails,segmentHashes: render.segmentHashes,
-      reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2);
+      reviewStills: publishedStills, visualCoverage, artifacts: { ...artifactHashes, qaReport: sha256(qaBytes) }, regeneration }, null, 2);
     await writeFile(manifestPath,manifestBytes,{flag:"wx"});
     const manifestHash=sha256(manifestBytes);
-    await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
+    await writeFile(join(working, "qa-report.json"), qaBytes, { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.
     if (await exists(releaseDir)) fail("release appeared concurrently; refusing to overwrite");
