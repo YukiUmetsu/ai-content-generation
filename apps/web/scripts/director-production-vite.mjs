@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createReadStream, readFileSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -162,6 +162,7 @@ export function createDirectorProduction(deps={}){
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
   const mediaIndexPath=join(outputRoot,"production-media-index-v1.json");
+  const mediaRecordsRoot=join(outputRoot,"production-media-records-v1");
   const latestProductionJob=deps.latestProductionJob??(async productionId=>{
     const origin=new URL((deps.env??process.env).CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787");
     if(origin.protocol!=="http:"||!["localhost","127.0.0.1"].includes(origin.hostname)||
@@ -175,27 +176,71 @@ export function createDirectorProduction(deps={}){
   async function readMediaIndex(){
     let raw;
     try{raw=await readFile(mediaIndexPath,"utf8");}
-    catch(error){if(error?.code==="ENOENT")return [];throw error;}
-    if(raw.length>30000)throw Error("Saved media index exceeds its size limit.");
-    let data;
-    try{data=JSON.parse(raw);}catch{throw Error("Saved media index is invalid; no entries were overwritten.");}
-    if(data?.version!==1||!Array.isArray(data.records)||data.records.length>100||
-      data.records.some(item=>!runIdPattern.test(item.runId)||
-        (item.productionId!==null&&!productionIdPattern.test(item.productionId))||
-        !Number.isSafeInteger(item.createdAt)))
-      throw Error("Saved media index is invalid; no entries were overwritten.");
-    return data.records;
+    catch(error){if(error?.code!=="ENOENT")throw error;}
+    let previous=[];
+    if(raw!==undefined){
+      if(raw.length>30000)throw Error("Saved media index exceeds its size limit.");
+      let data;
+      try{data=JSON.parse(raw);}catch{throw Error("Saved media index is invalid; no entries were overwritten.");}
+      if(data?.version!==1||!Array.isArray(data.records)||data.records.length>100||
+        data.records.some(item=>!runIdPattern.test(item.runId)||
+          (item.productionId!==null&&!productionIdPattern.test(item.productionId))||
+          !Number.isSafeInteger(item.createdAt)))
+        throw Error("Saved media index is invalid; no entries were overwritten.");
+      previous=data.records;
+    }
+    // New releases use independent, immutable UUID records. Two workers can
+    // commit different releases simultaneously without either rewriting a
+    // shared JSON document or losing the other's finished output.
+    let recordDirectory;
+    try{recordDirectory=await lstat(mediaRecordsRoot);}
+    catch(error){if(error?.code==="ENOENT")return previous;throw error;}
+    if(!recordDirectory.isDirectory()||recordDirectory.isSymbolicLink())
+      throw Error("Saved media record directory is not an owned directory.");
+    let entries;
+    try{entries=await readdir(mediaRecordsRoot,{withFileTypes:true});}
+    catch(error){if(error?.code==="ENOENT")return previous;throw error;}
+    if(entries.length>10000)throw Error("Saved media record directory exceeds its size limit.");
+    const records=[];
+    for(const entry of entries){
+      const match=/^([a-f0-9-]{36})\.json$/u.exec(entry.name);
+      if(!match||!runIdPattern.test(match[1]))continue;
+      if(!entry.isFile()||entry.isSymbolicLink())
+        throw Error("Saved media record is not an ordinary file.");
+      const path=join(mediaRecordsRoot,entry.name),info=await lstat(path);
+      if(!info.isFile()||info.isSymbolicLink()||info.size<40||info.size>1200)
+        throw Error("Saved media record is malformed.");
+      let document;
+      try{document=JSON.parse(await readFile(path,"utf8"));}
+      catch{throw Error("Saved media record is unreadable; original output was not overwritten.");}
+      const record=document?.record;
+      if(document?.version!==1||record?.runId!==match[1]||
+        (record.productionId!==null&&!productionIdPattern.test(record.productionId))||
+        !Number.isSafeInteger(record.createdAt)||
+        (record.sourceRevision!==null&&(typeof record.sourceRevision!=="string"||
+          record.sourceRevision.length>300||/[\u0000-\u001f]/u.test(record.sourceRevision))))
+        throw Error("Saved media record is invalid; original output was not overwritten.");
+      records.push(record);
+    }
+    const byRun=new Map(previous.map(item=>[item.runId,item]));
+    for(const item of records)byRun.set(item.runId,item);
+    return [...byRun.values()].sort((a,b)=>a.createdAt-b.createdAt||a.runId.localeCompare(b.runId)).slice(-100);
   }
   async function recordMedia(runId,productionId,sourceRevision){
-    const previous=await readMediaIndex();
-    const records=[...previous.filter(item=>item.runId!==runId),
-      {runId,productionId,sourceRevision,createdAt:Date.now()}].slice(-100);
+    await readMediaIndex(); // Preserve invalid historical data; never overwrite it.
     await mkdir(outputRoot,{recursive:true,mode:0o700});
-    const temporary=join(outputRoot,".production-media-index-"+randomUUID()+".json");
+    await mkdir(mediaRecordsRoot,{recursive:true,mode:0o700});
+    const info=await lstat(mediaRecordsRoot);
+    if(!info.isDirectory()||info.isSymbolicLink())
+      throw Error("Production media records must be stored in an owned directory.");
+    const temporary=join(mediaRecordsRoot,"."+randomUUID()+".tmp");
     try{
-      await writeFile(temporary,JSON.stringify({version:1,records})+"\n",{flag:"wx",mode:0o600});
-      await rename(temporary,mediaIndexPath);
-    }catch(error){await rm(temporary,{force:true}).catch(()=>{});throw error;}
+      const record={runId,productionId,sourceRevision,createdAt:Date.now()};
+      await writeFile(temporary,JSON.stringify({version:1,record})+"\n",{flag:"wx",mode:0o600});
+      // Hard-link creation is atomic and refuses to overwrite an existing
+      // UUID record, unlike rename. A crash leaves only an ignorable temp.
+      await link(temporary,join(mediaRecordsRoot,runId+".json"));
+    }finally{await rm(temporary,{force:true}).catch(()=>{});}
   }
   async function releaseForRun(runId){
     if(!results.has(runId)){

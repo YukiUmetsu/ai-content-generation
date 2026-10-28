@@ -150,13 +150,30 @@ describe("Production eight-step workspace",()=>{
     const outline=loadProjectStoryboard(production.id).board;
     expect(approved?.updatedAt).toBeTruthy();
     expect(outline).toBeTruthy();
+    const sourceRevision=productionMediaSource(approved!.updatedAt,outline!);
+    const mediaBase="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/";
     registeredAssets=[{id:"video-current",kind:"video",platform:"youtube",filename:"saved-draft.mp4",
-      sourceRevision:productionMediaSource(approved!.updatedAt,outline!),
-      downloadUrl:"/api/contentgen-video/media/run-1/video.mp4"}];
+      sourceRevision,downloadUrl:mediaBase+"video.mp4"},
+      ...[1,2,3].map(i=>({id:`thumbnail-current-${i}`,kind:"thumbnail",platform:"youtube",
+        filename:`thumbnail-${i}.png`,sourceRevision,downloadUrl:mediaBase+`thumbnail-${i}.png`})),
+      {id:"first-frame",kind:"thumbnail",platform:"youtube",filename:"cover-still.png",
+        sourceRevision,downloadUrl:mediaBase+"cover-still.png"},
+      {id:"thumbnail-old",kind:"thumbnail",platform:"youtube",filename:"thumbnail-1.png",
+        sourceRevision:"old-script",downloadUrl:mediaBase+"thumbnail-1.png"}];
     fireEvent.click(await screen.findByRole("button",{name:"Refresh files"}));
     expect(await screen.findByRole("button",{name:"Watch & export MP4"})).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button",{name:"Watch & export MP4"}));
-    expect(screen.getByLabelText("Saved ContentGen video draft")).toHaveAttribute("src","/api/contentgen-video/media/run-1/video.mp4");
+    expect(screen.getByLabelText("Saved ContentGen video draft")).toHaveAttribute("src",mediaBase+"video.mp4");
+    fireEvent.click(stageButton("Publish Kit"));
+    expect(await screen.findByRole("heading",{name:"Ready-to-use thumbnails from your video"})).toBeInTheDocument();
+    // Older-script thumbnails must never enter the current publishing package.
+    expect(screen.getAllByRole("img",{name:/Rendered thumbnail concept [123]/})).toHaveLength(3);
+    expect(screen.getByRole("combobox",{name:"Thumbnail / cover"})).toHaveValue("thumbnail-current-1");
+    fireEvent.click(screen.getByRole("button",{name:"Use rendered thumbnail concept 2"}));
+    expect(screen.getByRole("combobox",{name:"Thumbnail / cover"})).toHaveValue("thumbnail-current-2");
+    fireEvent.click(stageButton("Export"));
+    fireEvent.click(stageButton("Publish Kit"));
+    expect(screen.getByRole("combobox",{name:"Thumbnail / cover"})).toHaveValue("thumbnail-current-2");
   });
 
 });

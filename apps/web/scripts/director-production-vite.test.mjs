@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
@@ -538,6 +538,57 @@ test("saved media links never follow a symlinked release folder or thumbnail",as
   await symlink(join(outside,"thumbnail-1.png"),join(owned,"release","thumbnail-1.png"));
   assert.equal((await invoke(server,"GET",`/media/${runId}/thumbnail-1.png`)).status,404);
   assert.deepEqual((await invoke(server,"GET","/assets/"+productionId)).data.assets,[]);
+});
+
+test("simultaneous independent producers never erase each other's completed release records",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-media-race-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let releaseCount=0,releaseBoth;
+  const ready=new Promise(resolve=>{releaseBoth=resolve;});
+  const server=()=>createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-running",advance:async()=>{},complete:async()=>{},
+      fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"independent film");
+      if(++releaseCount===2)releaseBoth();
+      await ready;return{releaseDir};
+    }});
+  const first=server(),second=server();
+  const a={...inputs(),settings:config,productionId:"production-"+"a".repeat(24),sourceRevision:"a1"};
+  const b={...inputs(),settings:config,productionId:"production-"+"b".repeat(24),sourceRevision:"b1"};
+  assert.equal((await invoke(first,"POST","/check",a)).status,200);
+  assert.equal((await invoke(second,"POST","/check",b)).status,200);
+  const starts=await Promise.all([invoke(first,"POST","/start",{...a,confirmRender:true}),
+    invoke(second,"POST","/start",{...b,confirmRender:true})]);
+  assert.deepEqual(starts.map(result=>result.status),[202,202]);
+  for(let i=0;i<90&&[first,second].some(instance=>instance.status().state==="rendering");i++)
+    await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(first.status().state,"done");assert.equal(second.status().state,"done");
+  const records=await readdir(join(dir,"production-media-records-v1"));
+  assert.equal(records.filter(name=>name.endsWith(".json")).length,2);
+  const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  for(const payload of [a,b]){
+    const files=await invoke(restarted,"GET","/assets/"+payload.productionId);
+    assert.equal(files.data.assets.filter(asset=>asset.kind==="video").length,1);
+    assert.equal((await invoke(restarted,"GET",`/status/${payload.productionId}?sourceRevision=${payload.sourceRevision}`)).data.state,"done");
+  }
+});
+
+test("legacy production-media-index entries remain readable and untouched after the record migration",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-media-index-compat-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const runId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",productionId="production-"+"f".repeat(24);
+  const release=join(dir,"draft-"+runId,"release");await mkdir(release,{recursive:true});
+  await writeFile(join(release,"video.mp4"),"previous version's film");
+  const legacy=JSON.stringify({version:1,records:[{runId,productionId,sourceRevision:"old-script",
+    createdAt:Date.now()}]})+"\n";
+  const path=join(dir,"production-media-index-v1.json");await writeFile(path,legacy);
+  const server=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  assert.equal((await invoke(server,"GET","/assets/"+productionId)).data.assets[0].kind,"video");
+  assert.equal((await invoke(server,"GET",`/status/${productionId}?sourceRevision=old-script`)).data.state,"done");
+  assert.equal(await readFile(path,"utf8"),legacy);
 });
 
 test("an opted-in draft saves scene-specific free media suggestions with Jobs provenance across restart",async t=>{
