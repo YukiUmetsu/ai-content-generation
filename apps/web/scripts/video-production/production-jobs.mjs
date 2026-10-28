@@ -180,17 +180,19 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
   return {
     get jobId(){return jobId;},
     get priorRunId(){return priorRunId;},
-    async start({productionId,revision,runId,workerAbortController}){
+    async start({productionId,revision,runId,sourceRevision=null,workerAbortController}){
       if(jobId)throw Error("Production job already started.");
       abortController=workerAbortController??null;
       if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!RUN_ID.test(runId))
         throw Error("Production job requires a saved production, revision and run identity.");
+      if(sourceRevision!==null&&(typeof sourceRevision!=="string"||sourceRevision.length>300||/[\u0000-\u001f]/u.test(sourceRevision)))
+        throw Error("Production Jobs source revision is invalid.");
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
       let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
         nodes:PRODUCTION_NODES.map((nodeKey,index)=>({nodeKey,nodeKind:`video.${nodeKey}`,
           // A restarted worker reclaims a READY attempt; committed work and
           // immutable content-addressed media can be reused after recovery.
-          maxAttempts:3,input:{productionId,revision,runId},
+          maxAttempts:3,input:{productionId,revision,runId,sourceRevision},
           dependsOn:index?[PRODUCTION_NODES[index-1]]:[]}))});
       if(data.created!==true&&data.job?.state==="RUNNING"&&
         data.nodes?.some(node=>node.state==="RUNNING")){

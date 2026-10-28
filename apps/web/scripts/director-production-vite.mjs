@@ -118,8 +118,8 @@ async function readBody(req){
   return JSON.parse(Buffer.concat(parts).toString("utf8"));
 }
 async function deliverVideo(req,res,releaseDir){
-  const path=join(releaseDir,"video.mp4"),info=await stat(path);
-  if(!info.isFile()||info.size===0)throw Error("Video output is missing.");
+  const path=join(releaseDir,"video.mp4"),info=await lstat(path);
+  if(!info.isFile()||info.isSymbolicLink()||info.size===0)throw Error("Video output is missing.");
   let start=0,end=info.size-1,code=200;
   if(req.headers.range){
     const match=/^bytes=(\d+)-(\d*)$/u.exec(req.headers.range);
@@ -162,6 +162,16 @@ export function createDirectorProduction(deps={}){
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
   const mediaIndexPath=join(outputRoot,"production-media-index-v1.json");
+  const latestProductionJob=deps.latestProductionJob??(async productionId=>{
+    const origin=new URL((deps.env??process.env).CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787");
+    if(origin.protocol!=="http:"||!["localhost","127.0.0.1"].includes(origin.hostname)||
+      origin.username||origin.password||origin.pathname!=="/"||origin.search||origin.hash)
+      throw Error("Jobs requires a local server address.");
+    const response=await fetch(new URL(`/api/jobs/production/${productionId}/latest`,origin),{
+      signal:AbortSignal.timeout(4000),redirect:"error",headers:{"Accept":"application/json"}});
+    if(!response.ok)throw Error("Jobs could not load the last production.");
+    return response.json();
+  });
   async function readMediaIndex(){
     let raw;
     try{raw=await readFile(mediaIndexPath,"utf8");}
@@ -188,12 +198,18 @@ export function createDirectorProduction(deps={}){
     }catch(error){await rm(temporary,{force:true}).catch(()=>{});throw error;}
   }
   async function releaseForRun(runId){
-    if(results.has(runId))return results.get(runId);
-    const records=await readMediaIndex();
-    if(!records.some(item=>item.runId===runId))return null;
+    if(!results.has(runId)){
+      const records=await readMediaIndex();
+      if(!records.some(item=>item.runId===runId))return null;
+    }
     // Never trust a path from persisted JSON; every target is derived from the
     // validated UUID within the application's owned output directory.
-    return join(outputRoot,"draft-"+runId,"release");
+    const owned=join(outputRoot,"draft-"+runId),release=join(owned,"release");
+    try{
+      const [directory,releaseInfo]=await Promise.all([lstat(owned),lstat(release)]);
+      return directory.isDirectory()&&!directory.isSymbolicLink()&&
+        releaseInfo.isDirectory()&&!releaseInfo.isSymbolicLink()?release:null;
+    }catch(error){if(error?.code==="ENOENT")return null;throw error;}
   }
   async function previousProductionRoot(productionId){
     if(!productionId)return null;
@@ -219,14 +235,29 @@ export function createDirectorProduction(deps={}){
         ["thumbnail-1.png","thumbnail"],["thumbnail-2.png","thumbnail"],
         ["thumbnail-3.png","thumbnail"],["cover-still.png","thumbnail"]]){
         try{
-          const info=await stat(join(releaseDir,file));
-          if(!info.isFile()||info.size===0)continue;
+          const info=await lstat(join(releaseDir,file));
+          if(!info.isFile()||info.isSymbolicLink()||info.size===0)continue;
         }catch(error){if(error?.code==="ENOENT")continue;throw error;}
         assets.push({id:kind+"-"+runId+(file==="cover-still.png"||kind!=="thumbnail"?"":"-"+file),kind,platform:"youtube",filename:file,sourceRevision,
           downloadUrl:"/api/contentgen-video/media/"+runId+"/"+file});
       }
     }
     return assets;
+  }
+  async function savedReleaseForProduction(productionId,sourceRevision){
+    const records=(await readMediaIndex()).filter(item=>item.productionId===productionId&&
+      item.sourceRevision===sourceRevision);
+    for(const record of records.reverse()){
+      const base=join(outputRoot,"draft-"+record.runId);
+      try{
+        const [owned,release,video]=await Promise.all([
+          lstat(base),lstat(join(base,"release")),lstat(join(base,"release","video.mp4"))]);
+        if(owned.isDirectory()&&!owned.isSymbolicLink()&&release.isDirectory()&&
+          !release.isSymbolicLink()&&video.isFile()&&!video.isSymbolicLink()&&video.size>0)
+          return record;
+      }catch(error){if(error?.code!=="ENOENT")throw error;}
+    }
+    return null;
   }
   async function runMediaSuggestions(runId,productionId){
       if(!runIdPattern.test(runId))return {found:false};
@@ -289,6 +320,45 @@ export function createDirectorProduction(deps={}){
           note:"Synthetic example only. No factual claims are verified."});return;
       }
       if(req.method==="GET"&&route==="/status"){respond(res,200,status);return;}
+      if(req.method==="GET"&&route.startsWith("/status/")){
+        const productionId=route.slice("/status/".length);
+        if(!/^production-[a-f0-9]{24}$/u.test(productionId)){
+          respond(res,404,{error:"Unknown production."});return;
+        }
+        const params=new URL(req.url,"http://localhost").searchParams;
+        const sourceRevision=params.get("sourceRevision");
+        if(sourceRevision!==null&&(sourceRevision.length>300||/[\u0000-\u001f]/u.test(sourceRevision))){
+          respond(res,422,{error:"Invalid source revision."});return;
+        }
+        if(status.productionId===productionId&&status.sourceRevision===sourceRevision&&
+          status.state!=="idle"){
+          respond(res,200,status);return;
+        }
+        const saved=await savedReleaseForProduction(productionId,sourceRevision);
+        if(saved){
+          respond(res,200,{state:"done",phase:"review",
+            message:"Your saved draft is ready to review. Reopen it or export the publishing assets.",
+            progress:null,report:null,runId:saved.runId,mediaUrl:
+              `/api/contentgen-video/media/${saved.runId}/video.mp4`,regeneration:null});return;
+        }
+        // The Rust DAG is authoritative for interrupted work. This endpoint
+        // never reclaims a live attempt, calls a provider, or stores credentials.
+        let persisted=null;
+        try{persisted=await latestProductionJob(productionId);}catch{/* Jobs may still be starting. */}
+        const scenePlan=persisted?.nodes?.find(node=>node.nodeKey==="scene-plan");
+        if(persisted?.job?.jobKind!=="video-production"||
+          scenePlan?.input?.sourceRevision!==sourceRevision){
+          respond(res,200,{...status,state:"idle"});return;
+        }
+        const state=persisted.job.state;
+        const recovery=state==="CANCELLED"?{
+          state:"cancelled",message:"The previous draft was cancelled. Generate a new draft to continue."}:
+          state==="SUCCEEDED"?{
+            state:"failed",message:"The last draft finished, but its saved video could not be found. Check your local output folder in Jobs."}:
+          {state:"failed",message:"A previous draft was interrupted or is still in progress elsewhere. Check Jobs, then retry to reuse completed scenes."};
+        respond(res,200,{...recovery,phase:"production",progress:null,report:null,
+          jobId:persisted.job.id,mediaUrl:null,regeneration:null});return;
+      }
       if(req.method==="GET"&&route==="/narration-sample/status"){
         respond(res,200,sampleStatus);return;
       }
@@ -314,7 +384,12 @@ export function createDirectorProduction(deps={}){
         if(!releaseDir){respond(res,404,{error:"Media is unavailable."});return;}
         if(match[2]==="video.mp4")await deliverVideo(req,res,releaseDir);
         else {
-          const bytes=await readFile(join(releaseDir,match[2]));
+          const mediaPath=join(releaseDir,match[2]);
+          const info=await lstat(mediaPath);
+          if(!info.isFile()||info.isSymbolicLink()||info.size===0){
+            respond(res,404,{error:"Media is unavailable."});return;
+          }
+          const bytes=await readFile(mediaPath);
           res.writeHead(200,{...headers,"Content-Type":match[2].endsWith(".png")?"image/png":
             match[2].endsWith(".svg")?"image/svg+xml":"text/plain; charset=utf-8",
             ...(match[2].endsWith(".svg")?{"Content-Security-Policy":"default-src 'none'; sandbox"}:{}),
@@ -539,7 +614,8 @@ export function createDirectorProduction(deps={}){
         try {
           if(tracker){
             trackedJobId=await tracker.start({productionId:input.productionId,
-              revision:identity,runId,workerAbortController:abort});
+              revision:identity,runId,sourceRevision:input.sourceRevision??null,
+              workerAbortController:abort});
           }
           if(abort.signal.aborted){
             // /cancel may have arrived before tracker.start acquired its ID.
@@ -572,7 +648,8 @@ export function createDirectorProduction(deps={}){
         checked=null;
         status={state:"rendering",phase:"starting",message:"Producing the local draft…",
           progress:null,report:status.report,runId,jobId:trackedJobId,
-          productionId:input.productionId??null,mediaUrl:null,regeneration:null};
+          productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,
+          mediaUrl:null,regeneration:null};
         respond(res,202,{started:true,runId,jobId:trackedJobId});
         void (async()=>{
           let journal=Promise.resolve(),journalError=null;
@@ -671,6 +748,14 @@ export function createDirectorProduction(deps={}){
             await journal;
             if(journalError)throw journalError;
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
+            let mediaWarning="";
+            try{await recordMedia(runId,input.productionId??null,input.sourceRevision??null);}
+            catch(error){mediaWarning=" Media index was not saved; keep your local release folder. "+
+              String(error?.message??"Index error").slice(0,140);}
+            // Publish the recoverable release pointer before committing the
+            // durable Jobs success. A process exit between these two writes
+            // must not produce a SUCCEEDED job whose media cannot be found.
+            if(tracker&&mediaWarning)throw Error("Could not persist the media index before completing Jobs.");
             if(tracker)await tracker.complete(result.manifestHash&&result.artifactHashes?.video?
               {artifactLedger:{kind:"export-package",manifestHash:result.manifestHash,
                 artifacts:{video:result.artifactHashes.video,
@@ -678,10 +763,6 @@ export function createDirectorProduction(deps={}){
                   ...(result.artifactHashes.coverStill?{coverStill:result.artifactHashes.coverStill}:{})}}}:undefined);
             results.set(runId,result.releaseDir);
             if(results.size>5)results.delete(results.keys().next().value);
-            let mediaWarning="";
-            try{await recordMedia(runId,input.productionId??null,input.sourceRevision??null);}
-            catch(error){mediaWarning=" Media index was not saved; keep your local release folder. "+
-              String(error?.message??"Index error").slice(0,140);}
             lastOutput=out;
             status={...status,state:"done",phase:"review",
               message:"Draft MP4 rendered. Watch/listen and review claims and rights."+

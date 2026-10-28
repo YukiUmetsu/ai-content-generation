@@ -106,6 +106,19 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const startedAutomaticDraft=useRef(false);
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
   const [sfxSummary,setSfxSummary]=useState<SfxSummary|null>(null);
+  useEffect(()=>{
+    if(!productionId)return;
+    let active=true;
+    const source=sourceRevision===undefined?"":`?sourceRevision=${encodeURIComponent(sourceRevision)}`;
+    void request(`status/${encodeURIComponent(productionId)}${source}`).then(result=>{
+      if(!active||!result||!["done","failed","cancelled"].includes(String(result.state))||
+        typeof result.message!=="string")return;
+      // A delayed recovery request must never overwrite a render, readiness
+      // check or newer user action started after the panel mounted.
+      setState(current=>current.state==="idle"?result as Status:current);
+    }).catch(()=>{/* The normal renderer and Jobs checks remain available. */});
+    return ()=>{active=false;};
+  },[productionId,sourceRevision]);
   // Returning from scene/media/sound edits invalidates an old UI readiness approval,
   // without discarding voice settings, previews or an already running/completed render.
   const [handledRecheckToken,setHandledRecheckToken]=useState(recheckToken);
@@ -400,6 +413,14 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     <Surface header={<div className="space-y-1"><h2 className="flex items-center gap-2 text-lg font-semibold"><Film className="size-5"/>Preview & Export</h2>
       <p className="text-xs font-normal text-muted-foreground">From working scenes to a playable test video, one step at a time.</p></div>}>
     <div className="space-y-5 text-sm">
+      {state.state==="done"&&stage!=="export"&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
+        <p className="text-sm font-medium">Your saved draft video is available.</p>
+        <Button variant="outline" size="sm" onClick={()=>setStage("export")}>Review saved video</Button>
+      </div>}
+      {["failed","cancelled"].includes(state.state)&&stage!=="export"&&state.jobId&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
+        <p className="text-sm font-medium">An earlier draft needs attention.</p>
+        <Button variant="outline" size="sm" onClick={()=>setStage("export")}>View draft status</Button>
+      </div>}
       <div role="tablist" aria-label="Preview and export steps" className="grid gap-2 sm:grid-cols-4">
         {steps.map((step,index)=><button key={step.id} type="button" role="tab" id={"production-step-"+step.id}
           aria-selected={stage===step.id} aria-controls="production-step-content" disabled={!!working}

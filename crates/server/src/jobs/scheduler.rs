@@ -166,6 +166,31 @@ pub fn list(conn: &Connection, state: Option<JobState>) -> Result<Vec<Job>, Jobs
     Ok(jobs)
 }
 
+/// The immutable scene-plan input links a production to its persisted parent
+/// DAG. Query it in SQLite rather than fetching every job and its children.
+/// Child asset/narration/thumbnail attempts are intentionally excluded.
+pub fn latest_video_for_production(
+    conn: &Connection,
+    production_id: &str,
+) -> Result<Option<JobSnapshot>, JobsError> {
+    let id: Option<String> = conn
+        .query_row(
+            "SELECT jobs.id FROM jobs
+             WHERE jobs.job_kind = 'video-production'
+               AND EXISTS (
+                 SELECT 1 FROM job_nodes
+                 WHERE job_nodes.job_id = jobs.id
+                   AND job_nodes.node_key = 'scene-plan'
+                   AND json_extract(job_nodes.input_json, '$.productionId') = ?1
+               )
+             ORDER BY jobs.created_at DESC, jobs.rowid DESC LIMIT 1",
+            [production_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    id.map(|value| snapshot(conn, &value)).transpose()
+}
+
 pub fn ready_nodes(conn: &Connection, job_id: &str) -> Result<Vec<JobNode>, JobsError> {
     let mut statement = conn.prepare(
         "SELECT id, schema_version, job_id, node_key, node_kind, state, attempt_count,

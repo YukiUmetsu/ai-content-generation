@@ -31,6 +31,88 @@ async fn call(
 }
 
 #[tokio::test]
+async fn latest_production_job_route_restores_durable_work_without_listing_unrelated_jobs() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("data.sqlite");
+    let mut connection = db::open(&path).unwrap();
+    db::migrate(&mut connection).unwrap();
+    let app = build_router(AppState::new(path.clone()));
+    let production = format!("production-{}", "a".repeat(24));
+    let other = format!("production-{}", "b".repeat(24));
+    let build = |id: &str, key: &str| {
+        json!({"jobKind":"video-production","idempotencyKey":key,
+        "nodes":[{"nodeKey":"scene-plan","nodeKind":"video.scene-plan","maxAttempts":3,
+            "input":{"productionId":id,"sourceRevision":"revision-9","runId":"test-run"},
+            "dependsOn":[]}]})
+    };
+    let (code, earlier) = call(
+        &app,
+        Method::POST,
+        "/api/jobs",
+        build(&production, "earlier"),
+        true,
+    )
+    .await;
+    assert_eq!(code, StatusCode::CREATED);
+    call(
+        &app,
+        Method::POST,
+        "/api/jobs",
+        build(&other, "unrelated"),
+        true,
+    )
+    .await;
+    let (code, latest) = call(
+        &app,
+        Method::POST,
+        "/api/jobs",
+        build(&production, "later"),
+        true,
+    )
+    .await;
+    assert_eq!(code, StatusCode::CREATED);
+    assert_ne!(earlier["job"]["id"], latest["job"]["id"]);
+    let restarted = build_router(AppState::new(path));
+    let (code, restored) = call(
+        &restarted,
+        Method::GET,
+        &format!("/api/jobs/production/{production}/latest"),
+        json!({}),
+        false,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(restored["job"]["id"], latest["job"]["id"]);
+    assert_eq!(
+        restored["nodes"][0]["input"]["sourceRevision"],
+        "revision-9"
+    );
+    assert_eq!(
+        call(
+            &restarted,
+            Method::GET,
+            &format!("/api/jobs/production/production-{}/latest", "c".repeat(24)),
+            json!({}),
+            false
+        )
+        .await,
+        (StatusCode::OK, Value::Null)
+    );
+    assert_eq!(
+        call(
+            &restarted,
+            Method::GET,
+            "/api/jobs/production/production-invalid/latest",
+            json!({}),
+            false
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
 async fn production_worker_attempts_are_durable_and_authorized() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("data.sqlite");

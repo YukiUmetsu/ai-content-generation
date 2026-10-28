@@ -28,7 +28,8 @@ function fakeScheduler(){
 test("video production submits a real dependent DAG and advances stages in order",async()=>{
   const scheduler=fakeScheduler();
   const tracker=createProductionJobTracker({fetcher:scheduler.fetcher,origin:"http://127.0.0.1:8787"});
-  const jobId=await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:FIRST_RUN});
+  const jobId=await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",
+    sourceRevision:"script-42",runId:FIRST_RUN});
   assert.equal(jobId,"job-test");
   assert.equal(scheduler.calls[1].path,"/api/jobs/job-test/nodes/node-0/start");
   const submission=scheduler.calls[0].body;
@@ -36,6 +37,8 @@ test("video production submits a real dependent DAG and advances stages in order
   assert.ok(!JSON.stringify(submission).includes("apiKey"));
   assert.deepEqual(submission.nodes.map(x=>x.nodeKey),PRODUCTION_NODES);
   assert.ok(submission.nodes.every(node=>node.input.runId===FIRST_RUN),"original attempt must be recoverable after restart");
+  assert.ok(submission.nodes.every(node=>node.input.sourceRevision==="script-42"),
+    "the recovered run must remain linked to the script revision without persisting secrets");
   assert.ok(submission.nodes.every(node=>node.maxAttempts===3),"each stage must support bounded retry after a worker restart");
   assert.deepEqual(submission.nodes[2].dependsOn,[PRODUCTION_NODES[1]]);
   await tracker.advance("asset-search");

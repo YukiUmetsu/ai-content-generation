@@ -438,6 +438,108 @@ test("lost worker ownership is a retryable failure, never a user cancellation",a
   assert.doesNotMatch(server.status().message,/claim|worker ownership/i);
 });
 
+test("finished media becomes restart-discoverable before Jobs commits success",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-commit-recovery-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"b".repeat(24);
+  let confirmCompletion,completionStarted,completed=0;
+  const inCompletion=new Promise(resolve=>{completionStarted=resolve;});
+  const commitGate=new Promise(resolve=>{confirmCompletion=resolve;});
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-commit-recovery",advance:async()=>{},
+      complete:async()=>{completionStarted();await commitGate;completed++;},
+      fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"committed film");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId,sourceRevision:"revision-1"};
+  assert.equal((await invoke(server,"POST","/check",payload)).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  let timer;
+  try{await Promise.race([inCompletion,new Promise((_,reject)=>{
+    timer=setTimeout(()=>reject(Error("Jobs success was never reached")),8000);
+  })]);}finally{clearTimeout(timer);}
+  assert.equal(completed,0,"Jobs success is deliberately held before SQLite commit");
+  const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  const saved=await invoke(restarted,"GET","/assets/"+productionId);
+  assert.equal(saved.status,200);
+  assert.equal(saved.data.assets.find(asset=>asset.kind==="video")?.sourceRevision,"revision-1",
+    "another Studio process can locate the video even if Jobs completion never returns");
+  const recovered=await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-1");
+  assert.equal(recovered.status,200);
+  assert.equal(recovered.data.state,"done");
+  assert.match(recovered.data.mediaUrl,/\/media\/[a-f0-9-]+\/video\.mp4$/u);
+  assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=changed")).data.state,"idle",
+    "changing a script revision must not represent an old export as current");
+  confirmCompletion();
+  for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(completed,1);
+  assert.equal(server.status().state,"done");
+});
+
+test("restart reports the matching durable video job without inventing completed media",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-restart-jobs-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"c".repeat(24);
+  const latestProductionJob=async()=>({job:{id:"job-persisted",jobKind:"video-production",state:"RUNNING"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"revision-2"}}]});
+  const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob});
+  const recovered=await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-2");
+  assert.equal(recovered.status,200);assert.equal(recovered.data.state,"failed");
+  assert.equal(recovered.data.jobId,"job-persisted");
+  assert.match(recovered.data.message,/previous draft.*Jobs.*retry/i);
+  assert.doesNotMatch(recovered.data.message,/worker ownership|stale revision|fingerprint/i);
+  assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-3")).data.state,"idle");
+  assert.equal((await invoke(restarted,"GET","/status/../../invalid")).status,404);
+  assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=bad%0Avalue")).status,422);
+});
+
+test("a damaged media index never lets Rust Jobs commit an undiscoverable release",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-recovery-index-failure-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  await writeFile(join(dir,"production-media-index-v1.json"),"{invalid json");
+  let completed=0,failed=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-unindexed",advance:async()=>{},
+      complete:async()=>{completed++;},fail:async()=>{failed++;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"valid film");return{releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"b".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(completed,0);
+  assert.equal(failed,1);
+  assert.equal(await readFile(join(dir,"production-media-index-v1.json"),"utf8"),"{invalid json",
+    "unreadable existing production history must not be overwritten");
+});
+
+test("saved media links never follow a symlinked release folder or thumbnail",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-media-link-safety-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const runId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",productionId="production-"+"d".repeat(24);
+  const owned=join(dir,"draft-"+runId),outside=join(dir,"outside");
+  await mkdir(owned);await mkdir(outside);
+  await writeFile(join(outside,"thumbnail-1.png"),"private data");
+  await writeFile(join(dir,"production-media-index-v1.json"),JSON.stringify({version:1,records:[{
+    runId,productionId,sourceRevision:"r1",createdAt:Date.now()}]}));
+  await symlink(outside,join(owned,"release"));
+  const server=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  assert.equal((await invoke(server,"GET",`/media/${runId}/thumbnail-1.png`)).status,404);
+  assert.equal((await invoke(server,"GET",`/status/${productionId}?sourceRevision=r1`)).data.state,"idle");
+  await rm(join(owned,"release"));
+  await mkdir(join(owned,"release"));
+  await symlink(join(outside,"thumbnail-1.png"),join(owned,"release","thumbnail-1.png"));
+  assert.equal((await invoke(server,"GET",`/media/${runId}/thumbnail-1.png`)).status,404);
+  assert.deepEqual((await invoke(server,"GET","/assets/"+productionId)).data.assets,[]);
+});
+
 test("an opted-in draft saves scene-specific free media suggestions with Jobs provenance across restart",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-auto-assets-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));

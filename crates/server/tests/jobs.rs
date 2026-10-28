@@ -105,6 +105,65 @@ fn count(connection: &Connection, table: &str) -> i64 {
 }
 
 #[test]
+fn latest_video_for_production_uses_immutable_parent_input_not_child_jobs() {
+    let dir = TestDir::new("contentgen-jobs-production-lookup");
+    let mut connection = migrated_database(&dir);
+    let production_id = format!("production-{}", "a".repeat(24));
+    assert!(
+        scheduler::latest_video_for_production(&connection, &production_id)
+            .unwrap()
+            .is_none()
+    );
+    let make = |kind: &str, key: &str, project_id: &str| {
+        request(
+            kind,
+            key,
+            vec![NodeRequest {
+                node_key: "scene-plan".into(),
+                node_kind: "video.scene-plan".into(),
+                max_attempts: 3,
+                input: json!({"productionId": project_id, "runId": "test-run"}),
+                depends_on: vec![],
+            }],
+        )
+    };
+    let first = created(
+        &mut connection,
+        &make("video-production", "first", &production_id),
+    );
+    created(
+        &mut connection,
+        &make(
+            "video-production",
+            "other",
+            &format!("production-{}", "b".repeat(24)),
+        ),
+    );
+    created(
+        &mut connection,
+        &make("video-narration-scene", "child", &production_id),
+    );
+    let second = created(
+        &mut connection,
+        &make("video-production", "second", &production_id),
+    );
+    let selected = scheduler::latest_video_for_production(&connection, &production_id)
+        .unwrap()
+        .expect("latest video parent job");
+    assert_ne!(selected.dag.job.id, first.dag.job.id);
+    assert_eq!(selected.dag.job.id, second.dag.job.id);
+    assert_eq!(selected.dag.nodes[0].input["productionId"], production_id);
+    assert!(
+        scheduler::latest_video_for_production(
+            &connection,
+            &format!("production-{}", "c".repeat(24))
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
 fn happy_dag_run_succeeds_in_dependency_order() {
     let dir = TestDir::new("contentgen-jobs-happy");
     let mut connection = migrated_database(&dir);

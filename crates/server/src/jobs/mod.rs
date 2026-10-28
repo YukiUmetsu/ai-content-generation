@@ -27,6 +27,10 @@ use self::store::{ArtifactStore, PutOutcome};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/jobs", get(list_jobs).post(create_job))
+        .route(
+            "/api/jobs/production/{production_id}/latest",
+            get(latest_production_job),
+        )
         .route("/api/jobs/{job_id}", get(get_job))
         .route("/api/jobs/{job_id}/cancel", axum::routing::post(cancel_job))
         .route(
@@ -190,6 +194,27 @@ async fn get_job(
     let connection = app_state.connect()?;
     let snapshot = scheduler::snapshot(&connection, &job_id)?;
     Ok(Json(JobView::from_snapshot(snapshot)))
+}
+
+async fn latest_production_job(
+    State(app_state): State<AppState>,
+    Path(production_id): Path<String>,
+) -> Result<Json<Option<JobView>>, JobsError> {
+    if production_id.len() != 35
+        || !production_id.starts_with("production-")
+        || !production_id[11..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(JobsError::InvalidQuery(
+            "Invalid production identity".into(),
+        ));
+    }
+    let connection = app_state.connect()?;
+    Ok(Json(
+        scheduler::latest_video_for_production(&connection, &production_id)?
+            .map(JobView::from_snapshot),
+    ))
 }
 
 async fn cancel_job(

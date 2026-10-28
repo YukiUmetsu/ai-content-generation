@@ -14,6 +14,42 @@ const plan={schemaVersion:1,kind:"preview",job:{beats:[{id:"beat1",narration:"Ex
   shotMap:[{shotId:"shot1",beatId:"beat1",visualAction:"Reveal costs"}],warnings:["Review factual claims."],editorialStatus:"draft"};
 const reply=(payload:unknown)=>new Response(JSON.stringify(payload),{status:200});
 
+it("restores a matching saved draft after Studio navigation and links directly to its video",async()=>{
+  const productionId="production-"+"e".repeat(24);
+  const url="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4";
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.endsWith(`/status/${productionId}?sourceRevision=current-script`))return reply({
+      state:"done",phase:"review",message:"Your saved draft is ready.",mediaUrl:url});
+    throw Error("Unexpected request "+path);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} productionId={productionId}
+    sourceRevision="current-script"/>);
+  const reopen=await screen.findByRole("button",{name:"Review saved video"});
+  await userEvent.setup().click(reopen);
+  expect(screen.getByLabelText("Rendered ContentGen draft video")).toHaveAttribute("src",url);
+  expect(screen.getByRole("link",{name:"Download MP4"})).toHaveAttribute("href",url);
+});
+
+it("does not let delayed job recovery overwrite a newer readiness result",async()=>{
+  const productionId="production-"+"e".repeat(24);
+  let completeRecovery:(response:Response)=>void=()=>{};
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.includes(`/status/${productionId}`))return new Promise<Response>(resolve=>{completeRecovery=resolve;});
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/plan"))return reply(plan);
+    throw Error("Unexpected request "+path);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} productionId={productionId} initialStage="review"/>);
+  await screen.findByRole("button",{name:/Check readiness/i});
+  await userEvent.setup().click(screen.getByRole("button",{name:/Check readiness/i}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:/Continue to export/i})).toBeEnabled());
+  completeRecovery(reply({state:"failed",phase:"production",message:"An earlier draft failed",jobId:"old-job"}));
+  await waitFor(()=>expect(screen.queryByText("An earlier draft needs attention.")).not.toBeInTheDocument());
+  expect(screen.getByRole("button",{name:/Continue to export/i})).toBeEnabled();
+});
+
 it("guides the user from narration to final review and keeps voice settings when readiness resets",async()=>{
   const calls:string[]=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
