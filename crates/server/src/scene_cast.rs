@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
@@ -174,7 +175,7 @@ async fn save(
     State(state): State<AppState>,
     Path((project_id, source_sha)): Path<(String, String)>,
     headers: HeaderMap,
-    Json(request): Json<SaveRequest>,
+    payload: Result<Json<SaveRequest>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Snapshot>), ApiError> {
     if headers
         .get("x-contentgen-scene-cast")
@@ -185,6 +186,8 @@ async fn save(
             message: "Scene cast editing requires a local editor header".into(),
         });
     }
+    let Json(request) =
+        payload.map_err(|error| invalid(&format!("Invalid scene cast JSON: {error}")))?;
     validate(&project_id, &source_sha, &request.cast)?;
     if !(0..2147483647).contains(&request.revision) {
         return Err(invalid("Invalid scene cast revision"));
