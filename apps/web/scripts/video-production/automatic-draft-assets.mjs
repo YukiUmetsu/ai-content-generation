@@ -152,8 +152,17 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
       // Jobs attempt before the application was killed.
       let cached=await cachedDraft({directory:outputDir,identity,candidate,outputDir,
         ffprobe,signal,probePhoto,probeVideo});
-      if(!cached&&previousOutputDir)cached=await cachedDraft({directory:previousOutputDir,
-        identity,candidate,outputDir,ffprobe,signal,probePhoto,probeVideo});
+      if(!cached&&previousOutputDir){
+        try{cached=await cachedDraft({directory:previousOutputDir,
+          identity,candidate,outputDir,ffprobe,signal,probePhoto,probeVideo});}
+        catch(error){
+          if(signal?.aborted)throw error;
+          // The previous worker's cache is only an optimization. Never copy a
+          // corrupt/mismatched artifact, but try the authoritative provider
+          // again instead of discarding an otherwise usable scene candidate.
+          result.warnings.push(`Scene ${scene.shotId}: previous media cache failed verification; checking the original provider again.`);
+        }
+      }
       if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
       if(!cached){
         try{attempt=await sceneJobs?.beginScene({kind:"asset-download",sceneId:beatId,fingerprint:identity});}

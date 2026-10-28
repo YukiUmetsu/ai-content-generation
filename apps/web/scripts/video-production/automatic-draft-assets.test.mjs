@@ -78,7 +78,33 @@ test("verified draft cache survives worker restart and can be copied into a new 
     previousOutputDir:prior},{downloadPhoto:()=>{throw Error("Provider failed");},probePhoto});
   assert.equal(third.prepared,0,"damaged prior media cannot silently be reused");
   assert.equal(third.fingerprint,config.existing.fingerprint);
-  assert.equal(third.warnings.length,1);
+  assert.equal(third.warnings.length,2,"cache corruption and subsequent provider outage are reported separately");
+  assert.match(third.warnings[0],/previous media cache failed verification/);
+});
+
+test("corrupt prior worker media is redownloaded and reverified when its provider is available",async t=>{
+  const prior=await mkdtemp(join(tmpdir(),"contentgen-repair-prior-"));
+  const current=await mkdtemp(join(tmpdir(),"contentgen-repair-current-"));
+  t.after(()=>Promise.all([rm(prior,{recursive:true,force:true}),rm(current,{recursive:true,force:true})]));
+  const config={suggestions:suggestions([scene("shot-a","59")]),shotMap,existing:existing(),
+    outputDir:prior,pexelsKey:"test"};
+  const first=await prepareAutomaticDraftMedia(config,
+    {downloadPhoto:async id=>({bytes,meta:meta(id)}),probePhoto});
+  assert.equal(first.prepared,1);
+  await writeFile(first.assets[0].path,"corrupted partial file");
+  const calls=[];
+  const work={beginScene:async()=>{calls.push("claim");return "retry-claim";},
+    completeScene:async()=>calls.push("complete"),failScene:async()=>calls.push("fail")};
+  const repaired=await prepareAutomaticDraftMedia({...config,outputDir:current,
+    previousOutputDir:prior,sceneJobs:work},{downloadPhoto:async id=>{
+    calls.push("download");return {bytes,meta:meta(id)};
+  },probePhoto});
+  assert.equal(repaired.prepared,1);
+  assert.deepEqual(calls,["claim","download","complete"]);
+  assert.equal(hash(await readFile(repaired.assets[0].path)),hash(bytes));
+  assert.equal(await readFile(first.assets[0].path,"utf8"),"corrupted partial file",
+    "an invalid historical artifact is left intact for review");
+  assert.match(repaired.warnings.join(" "),/previous media cache failed verification/i);
 });
 
 test("automatic Pexels MP4 footage has a separately claimed job and survives a verified restart",async t=>{
