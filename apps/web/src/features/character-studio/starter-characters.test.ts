@@ -42,18 +42,19 @@ describe("original bundled character ZIPs", () => {
   it("fetches only the pinned local ZIP and rejects missing/tampered packages before import", async () => {
     const bytes=await readFile(new URL("../../../public/starter-characters/pip.zip",import.meta.url));
     const good=Uint8Array.from(bytes).buffer;
-    const fetcher=vi.fn().mockResolvedValue({ok:true,headers:new Headers({"content-length":String(bytes.length)}),
-      arrayBuffer:async()=>good});
+    const fetcher=vi.fn().mockImplementation(async()=>new Response(good,{headers:{"content-length":String(bytes.length)}}));
     vi.stubGlobal("fetch",fetcher);
     try {
       const result=await loadStarterArchive("pip");
       expect(result.byteLength).toBe(bytes.length);
       expect(fetcher).toHaveBeenCalledWith("/starter-characters/pip.zip",{cache:"no-store",credentials:"same-origin"});
       const bad=new Uint8Array(good.slice(0));bad[bad.length-25]^=1;
-      fetcher.mockResolvedValueOnce({ok:true,headers:new Headers(),arrayBuffer:async()=>bad.buffer});
+      fetcher.mockResolvedValueOnce(new Response(bad.buffer));
       await expect(loadStarterArchive("pip")).rejects.toThrow(/integrity verification/i);
-      fetcher.mockResolvedValueOnce({ok:false,status:404});
+      fetcher.mockResolvedValueOnce(new Response(null,{status:404}));
       await expect(loadStarterArchive("pip")).rejects.toThrow(/missing.*404/i);
+      fetcher.mockResolvedValueOnce(new Response(new Uint8Array(16*1024*1024+1)));
+      await expect(loadStarterArchive("pip")).rejects.toThrow(/16 MB import limit/i);
       expect(()=>starterArchiveUrl("../../admin" as "pip")).toThrow(/Unknown bundled character/u);
     } finally {vi.unstubAllGlobals();}
   });

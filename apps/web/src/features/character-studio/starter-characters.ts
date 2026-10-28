@@ -29,9 +29,30 @@ export async function loadStarterArchive(id: StarterCharacterId): Promise<ArrayB
   if (!response.ok) throw Error(`${starter.name}'s built-in ZIP is missing (HTTP ${response.status}). Rebuild bundled character packs.`);
   const size = Number(response.headers.get("content-length"));
   if (size > CHARACTER_PACK_LIMITS.compressedBytes) throw Error(`${starter.name}'s ZIP exceeds the 16 MB import limit.`);
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength < 22 || bytes.byteLength > CHARACTER_PACK_LIMITS.compressedBytes)
-    throw Error(`${starter.name}'s ZIP is empty or exceeds the import limit.`);
+  // Content-Length may be absent or forged; enforce the size limit *while*
+  // reading instead of letting a malformed response allocate unbounded memory.
+  if (!response.body) throw Error(`${starter.name}'s ZIP response has no readable body.`);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const {done,value} = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > CHARACTER_PACK_LIMITS.compressedBytes)
+        throw Error(`${starter.name}'s ZIP exceeds the 16 MB import limit.`);
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  if (length < 22) throw Error(`${starter.name}'s ZIP is empty or incomplete.`);
+  const assembled = new Uint8Array(length);
+  let offset=0;
+  for (const chunk of chunks) {assembled.set(chunk,offset);offset+=chunk.byteLength;}
+  const bytes=assembled.buffer;
   if (!globalThis.crypto?.subtle) throw Error("Browser SHA-256 is required to verify bundled characters.");
   const sha = await crypto.subtle.digest("SHA-256", bytes);
   const digest = Array.from(new Uint8Array(sha), byte => byte.toString(16).padStart(2, "0")).join("");

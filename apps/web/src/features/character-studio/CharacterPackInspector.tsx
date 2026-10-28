@@ -289,7 +289,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
     if (pack && bytesRef.current) await persistDraft(pack,bytesRef.current,generation.current);
   };
 
-  async function useStarter(id:StarterCharacterId){
+  async function addStarterToProject(id:StarterCharacterId){
     if(starterBusy||savingRef.current||draftsLoading||draftsError)return;
     const starter=STARTER_CHARACTERS.find(item=>item.id===id)!;
     const existing=drafts.find(draft=>draft.characterId===id);
@@ -347,7 +347,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
               <p className="text-[11px] text-muted-foreground">{ja?"頭・腕・目・口の独立パーツ":"Head · arms · eyes · mouth"} · rev {starter.definition.revision}</p>
               <Button size="sm" className="w-full" isLoading={starterBusy===starter.id}
                 disabled={draftsLoading||!!draftsError||!!starterBusy||saving}
-                onClick={()=>void useStarter(starter.id)}>
+                onClick={()=>void addStarterToProject(starter.id)}>
                 {existing?(ja?"保存したリグを開く":"Open saved rig"):(ja?`${starter.name} を追加`:`Use ${starter.name}`)}
               </Button>
               {existing&&<p className="text-[11px] text-muted-foreground">{ja?"既存の修正を保持します":"Your saved revision is preserved"}</p>}
