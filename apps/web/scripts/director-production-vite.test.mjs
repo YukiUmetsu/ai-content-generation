@@ -79,6 +79,31 @@ test("voice audition generates only a bounded first-scene excerpt and serves a p
   assert.equal((await audioResponse(server,samplePath)).status,404);
 });
 
+test("editor can audition the narration of one selected storyboard scene without synthesizing another scene",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-scene-audition-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const jobs=[];
+  const server=createDirectorProduction({outputRoot:dir,synthesizeNarration:async(job,options)=>{
+    jobs.push(job.beats.map(beat=>({id:beat.id,narration:beat.narration})));
+    const wavPath=join(options.cacheRoot,"voice.wav");
+    await writeFile(wavPath,Buffer.from("RIFFvoice-sampleWAVE"));
+    return [{wavPath}];
+  }});
+  const p=inputs(),planned=await invoke(server,"POST","/plan",p);
+  assert.equal(planned.status,200);
+  const shot=planned.data.shotMap[1],original=planned.data.job.beats.find(beat=>beat.id===shot.beatId);
+  assert.ok(shot&&original);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config,sceneShotId:"../../invalid"})).status,422);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config,sceneShotId:"not-a-scene"})).status,422);
+  assert.equal((await invoke(server,"POST","/narration-sample",{...p,settings:config,sceneShotId:shot.shotId})).status,202);
+  assert.equal((await waitSample(server)).state,"done");
+  assert.equal(jobs.length,1);
+  assert.equal(jobs[0].length,1);
+  assert.equal(jobs[0][0].id,shot.beatId);
+  assert.ok(original.narration.replace(/\s+/gu," ").includes(jobs[0][0].narration));
+  assert.ok(jobs[0][0].narration.length<=180);
+});
+
 test("sample audition refuses unauthorized voices and concurrent render/check",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-audition-block-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let resolveSample,synthesis=0;

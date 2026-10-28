@@ -81,6 +81,14 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const [sampleStatus,setSampleStatus]=useState<SampleStatus>({state:"idle",message:""});
   const sampleRevision=useRef(0);
   const activeSampleRevision=useRef(0);
+  const lastAuditionShot=useRef(selectedShotId);
+  useEffect(()=>{
+    if(lastAuditionShot.current===selectedShotId)return;
+    lastAuditionShot.current=selectedShotId;sampleRevision.current++;
+    setSampleStatus(current=>current.state==="generating"?
+      {...current,message:"The previous scene's voice sample is finishing. Choose Preview again for this scene."}:
+      {state:"idle",message:"Selected scene changed. Preview its narration when ready."});
+  },[selectedShotId]);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
   const [previewFocus,setPreviewFocus]=useState<string|undefined>();
@@ -245,9 +253,12 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     setWorking("sample");setNotice("");
     activeSampleRevision.current=sampleRevision.current;
     try{
-      const result=await request("narration-sample",{...payload,settings});
+      const sceneShotId=selectedShotId&&bundle.plan.shots.some(shot=>shot.id===selectedShotId)?selectedShotId:undefined;
+      const result=await request("narration-sample",{...payload,settings,...(sceneShotId?{sceneShotId}:{})});
       if(result.started!==true)throw Error("The local narration service did not start.");
-      setSampleStatus({state:"generating",message:"Synthesizing a short first-scene voice sample…"});
+      setSampleStatus({state:"generating",message:sceneShotId?
+        "Synthesizing the selected scene's voice sample…":
+        "Synthesizing a short first-scene voice sample…"});
     }catch(error){
       setSampleStatus({state:"failed",message:error instanceof Error?error.message:"Could not start voice audition."});
     }finally{setWorking("");}
@@ -466,10 +477,10 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         </div>
         <div className="rounded-control border border-border p-4 space-y-3">
           <p className="font-semibold">Listen before you render</p>
-          <p className="text-xs text-muted-foreground">Generates up to 180 characters from the first scene. This is an explicit TTS request and may take time on a local model.</p>
+          <p className="text-xs text-muted-foreground">Generates up to 180 characters from {selectedShotId?"the selected scene":"the opening scene"}. This is an explicit TTS request and may take time on a local model.</p>
           <div className="flex flex-wrap gap-2">
             <Button disabled={!!working||sampleStatus.state==="generating"||state.state==="rendering"}
-              onClick={()=>void audition()}><Play className="mr-2 size-4"/>Generate voice sample</Button>
+              onClick={()=>void audition()}><Play className="mr-2 size-4"/>{selectedShotId?"Preview selected scene voice":"Generate voice sample"}</Button>
             {sampleStatus.state==="generating"&&<Button variant="outline" onClick={()=>void cancelSample()}><Square className="mr-2 size-4"/>Cancel sample</Button>}
           </div>
           {sampleStatus.message&&<p role="status" className="text-xs text-muted-foreground">{sampleStatus.message}</p>}

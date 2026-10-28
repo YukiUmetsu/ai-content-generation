@@ -31,6 +31,7 @@ const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url))
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"};
 const productionIdPattern=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
+const sceneIdPattern=/^[a-z0-9][a-z0-9_-]{0,95}$/iu;
 const runIdPattern=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
 const MAX_SUGGESTIONS_BYTES=900_000;
 const failureRecovery={
@@ -62,7 +63,7 @@ function autoMediaChoice(input){
 }
 const sampleExcerpt=text=>{
   const compact=String(text??"").replace(/\s+/gu," ").trim();
-  if(!compact)throw Error("The first scene has no narration to audition.");
+  if(!compact)throw Error("The selected scene has no narration to audition.");
   if(compact.length<=180)return compact;
   const fragment=compact.slice(0,180),stop=fragment.lastIndexOf(" ");
   return fragment.slice(0,stop>=60?stop:180).trim();
@@ -357,10 +358,21 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const job=configureRenderJob(compiled.job,settings);
         if(!job.beats?.length)throw Error("Add a narrated scene before auditioning a voice.");
-        job.beats=[{...job.beats[0],narration:sampleExcerpt(job.beats[0].narration)}];
+        if(input.sceneShotId!==undefined&&
+          (typeof input.sceneShotId!=="string"||!sceneIdPattern.test(input.sceneShotId)))
+          throw Error("Choose a valid storyboard scene to preview its narration.");
+        const scene=input.sceneShotId===undefined?undefined:
+          compiled.shotMap.find(item=>item.shotId===input.sceneShotId);
+        if(input.sceneShotId!==undefined&&!scene)
+          throw Error("The chosen scene is no longer part of this storyboard.");
+        const selectedBeat=scene?job.beats.find(item=>item.id===scene.beatId):job.beats[0];
+        if(!selectedBeat)throw Error("The chosen scene has no narration to preview.");
+        job.beats=[{...selectedBeat,narration:sampleExcerpt(selectedBeat.narration)}];
         const id=randomUUID(),abort=new AbortController();
         sampleController=abort;busy=true;
-        sampleStatus={state:"generating",message:"Synthesizing a short, first-scene voice sample…",audioUrl:null};
+        sampleStatus={state:"generating",message:scene?
+          "Synthesizing a short voice sample for the selected scene…":
+          "Synthesizing a short, first-scene voice sample…",audioUrl:null};
         respond(res,202,{started:true});
         void (async()=>{
           let ownedRoot=null,nextStatus=null;

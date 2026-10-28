@@ -87,6 +87,26 @@ it("auditions a voice only on request and hides stale audio when provider settin
   expect(screen.queryByLabelText("Voice sample")).not.toBeInTheDocument();
 });
 
+it("auditions the selected scene instead of always using the opening narration",async()=>{
+  let submitted:Record<string,unknown>|null=null;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const url=String(input);
+    if(url.endsWith("/plan"))return reply(plan);
+    if(url.endsWith("/narration-sample")){
+      submitted=JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({started:true}),{status:202});
+    }
+    if(url.endsWith("/narration-sample/status"))return reply({state:"done",message:"Selected scene voice ready",
+      audioUrl:"/api/contentgen-video/narration-sample/scene.wav"});
+    throw Error("Unexpected request "+url);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} selectedShotId="shot1" initialStage="narration"/>);
+  const button=await screen.findByRole("button",{name:"Preview selected scene voice"});
+  await userEvent.setup().click(button);
+  await waitFor(()=>expect(submitted).not.toBeNull());
+  expect(submitted).toMatchObject({sceneShotId:"shot1"});
+});
+
 it("keeps render progress when switching production steps",async()=>{
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
     const url=String(input);
