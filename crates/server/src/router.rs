@@ -16,6 +16,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::character_drafts::router())
         .merge(crate::project_voices::router())
         .merge(crate::character_voices::router())
+        .merge(crate::scene_cast::router())
         .nest("/api/settings", crate::settings::router())
         .with_state(state)
 }

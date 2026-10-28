@@ -122,6 +122,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "0020_character_voice_bindings",
         sql: include_str!("../../../migrations/0020_character_voice_bindings.sql"),
     },
+    Migration {
+        version: 21,
+        name: "0021_project_scene_cast",
+        sql: include_str!("../../../migrations/0021_project_scene_cast.sql"),
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

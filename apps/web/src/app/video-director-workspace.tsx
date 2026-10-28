@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Download, Film, Headphones, Images, Layers3, RefreshCw, WandSparkles, Save, Undo2, Redo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -13,6 +13,8 @@ import { isVisualElements, type VisualElement } from "../../scripts/video-produc
 import { transferableDirectorEdits } from "./director-edit-transfer";
 import { readProjectVoices, type VoiceFavorite } from "./project-voice-favorites";
 import { readCharacterVoiceBindings, type CharacterVoiceBinding } from "@/features/character-studio/character-voice-bindings";
+import {castEdits,castEqual,castFromBundle,loadSceneCast,writeSceneCast,
+  type SceneCast,type SceneSpeaker} from "./scene-cast-api";
 import { directorStages, nextDirectorStage, resolveDirectorNavigation,
   shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
 import type { LiveVisualPreviewData } from "./live-renderer-preview";
@@ -35,6 +37,8 @@ type DirectorSnapshot={bundle:Bundle;revisions:Array<{shotId:string;impacts:Impa
 type DirectorStage="storyboard"|"assets"|"sound"|"preview";
 const stageIcons={storyboard:Layers3,assets:Images,sound:Headphones,preview:Film};
 type StoryboardSync={storyboardSha256:string;applied:string[];manualReview:string[]};
+type CastSync={key:string;status:"idle"|"loading"|"ready"|"error"|"conflict";
+  revision:number;remote:SceneCast|null;error:string};
 type SceneClipStatus={state:"idle"|"starting"|"rendering"|"done"|"failed"|"cancelled";
   shotId?:string|null;message:string;videoUrl?:string|null;jobId?:string|null;sourceRevision?:string};
 const field="w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -63,6 +67,22 @@ async function sceneClipRequest(path:string,payload?:unknown):Promise<Record<str
   const data=await response.json() as Record<string,unknown>;
   if(!response.ok)throw Error(typeof data.error==="string"?data.error:"The local scene video renderer is unavailable.");
   return data;
+}
+/** The existing Director edit endpoint recalculates source and scene hashes.
+ * Clear old voices before rebinding to avoid invalid intermediate identities. */
+async function replaySavedCast(dossier:Dossier,bundle:Bundle,saved:SceneCast):Promise<Bundle>{
+  const edits=castEdits(bundle,saved);
+  const remove=edits.filter(edit=>bundle.plan.sound.find(sound=>sound.shotId===edit.shotId)?.speaker);
+  const additions=edits.filter(edit=>edit.speaker!==null);
+  const sequence:Array<{shotId:string;speaker:SceneSpeaker|null}>=[...remove.map(item=>({shotId:item.shotId,speaker:null})),...additions];
+  let current=bundle;
+  for(const edit of sequence){
+    const revision=await request("edit",{dossier,bundle:current,shotId:edit.shotId,
+      changes:{speaker:edit.speaker}}) as unknown as Revision;
+    if(revision.bundle?.researchId!==dossier.id)throw Error("Scene cast sync returned another project's storyboard.");
+    current=revision.bundle;
+  }
+  return current;
 }
 async function loadJson(file:File,maxBytes=900000){
   if(file.size>maxBytes)throw Error("File is too large for the editorial workspace (900 KB limit).");
@@ -157,7 +177,11 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const [sourceBundle,setSourceBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
   const [draft,setDraft]=useState<ReturnType<typeof shotDraft>>({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,speaker:null,visualElementsText:"",motion:normalizedSceneMotion()});
+  const currentDraftRef=useRef(draft),currentShotRef=useRef(shotId);
   const [castVoices,setCastVoices]=useState<{voices:VoiceFavorite[];characters:CharacterVoiceBinding[];error:string}>({voices:[],characters:[],error:""});
+  const [castSync,setCastSync]=useState<CastSync>({key:"",status:"idle",revision:0,remote:null,error:""});
+  const castWritePending=useRef(false);
+  const currentBundleRef=useRef<Bundle|null>(null);
   const [variants,setVariants]=useState<Variant[]>([]);
   const [voiceVariant,setVoiceVariant]=useState("");
   const [visualVariant,setVisualVariant]=useState("");
@@ -178,6 +202,99 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const [loadError,setLoadError]=useState("");
   const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
   const [sourceStoryboardSha,setSourceStoryboardSha]=useState<string|null>(null);
+  const castScope=projectId&&sourceArtifactId&&/^[a-f0-9]{64}$/u.test(sourceBundle?.planSha256??"")?
+    {projectId,sha:sourceBundle!.planSha256!,key:`${projectId}:${sourceBundle!.planSha256!}`}:null;
+  currentBundleRef.current=bundle;
+  currentDraftRef.current=draft;
+  currentShotRef.current=shotId;
+  const [castReloadToken,setCastReloadToken]=useState(0);
+  useEffect(()=>{
+    if(!castScope||!bundle||!sourceBundle||!dossier)return;
+    let active=true;
+    const {key,projectId:owner,sha}=castScope;
+    const opened=bundle;
+    setCastSync({key,status:"loading",revision:0,remote:null,error:""});
+    void (async()=>{
+      try{
+        const local=castFromBundle(owner,sha,opened);
+        const original=castFromBundle(owner,sha,sourceBundle);
+        let saved=await loadSceneCast(owner,sha);
+        if(!active)return;
+        if(saved.cast===null&&local.assignments.length>0){
+          // Migrate an intact browser scene cast only if the server has no
+          // version. A concurrent migration receives a 409 and is not lost.
+          saved=await writeSceneCast(owner,sha,0,local);
+        }
+        if(!active)return;
+        const remote=saved.cast;
+        if(remote&&!castEqual(local,remote)){
+          if(!castEqual(local,original)||currentBundleRef.current!==opened||
+            currentShotRef.current!==shotId||
+            JSON.stringify(currentDraftRef.current)!==JSON.stringify(shotDraft(opened,shotId))){
+            setCastSync({key,status:"conflict",revision:saved.revision,remote,error:""});
+            return;
+          }
+          const merged=await replaySavedCast(dossier,opened,remote);
+          if(!active)return;
+          if(currentBundleRef.current!==opened||currentShotRef.current!==shotId||
+            JSON.stringify(currentDraftRef.current)!==JSON.stringify(shotDraft(opened,shotId))){
+            setCastSync({key,status:"conflict",revision:saved.revision,remote,error:""});
+            return;
+          }
+          setBundle(merged);
+          setDraft(shotDraft(merged,shotId));
+          setHistory({undo:[],redo:[]});setRevisions([]);
+          setRecheckToken(value=>value+1);
+          setStatus("Restored the scene cast saved with this project. Render checks will use those voice choices.");
+        }
+        setCastSync({key,status:"ready",revision:saved.revision,remote,error:""});
+      }catch(error){if(active)setCastSync({key,status:"error",revision:0,remote:null,
+        error:error instanceof Error?error.message:"Could not synchronize saved scene voices."});}
+    })();
+    return ()=>{active=false;};
+    // Source is an immutable plan. Ordinary scene edits must not fetch and
+    // overwrite this registry again after every local revision.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[castScope?.key,castReloadToken]);
+  async function persistCast(next:Bundle):Promise<void>{
+    if(!castScope)return;
+    if(castSync.key!==castScope.key||castSync.status!=="ready"||castWritePending.current)
+      throw Error("Scene voice sync is not ready. Resolve or retry saved cast sync before editing voices.");
+    castWritePending.current=true;
+    try{
+      const nextCast=castFromBundle(castScope.projectId,castScope.sha,next);
+      const saved=await writeSceneCast(castScope.projectId,castScope.sha,castSync.revision,nextCast);
+      setCastSync(current=>current.key===castScope.key?{
+        key:castScope.key,status:"ready",revision:saved.revision,remote:saved.cast,error:""}:current);
+    }catch(error){
+      setCastSync(current=>current.key===castScope.key?{...current,status:"error",
+        error:error instanceof Error?error.message:"Could not save scene voices. Retry sync."}:current);
+      throw error;
+    }finally{castWritePending.current=false;}
+  }
+  async function restoreServerCast(){
+    if(!castScope||!bundle||!dossier||!castSync.remote||busy||dirty)return;
+    setBusy(true);
+    try{
+      const revised=await replaySavedCast(dossier,bundle,castSync.remote);
+      setBundle(revised);setDraft(shotDraft(revised,shotId));
+      setHistory({undo:[],redo:[]});setRevisions([]);
+      setCastSync(current=>({...current,status:"ready",error:""}));setRecheckToken(value=>value+1);
+      setStatus("Used the project-saved scene voices. Your other scene edits were preserved.");
+    }catch(error){setStatus(error instanceof Error?error.message:"Could not restore saved scene voices.");}
+    finally{setBusy(false);}
+  }
+  async function keepBrowserCast(){
+    if(!castScope||!bundle||castSync.status!=="conflict"||busy||dirty)return;
+    setBusy(true);
+    try{
+      const saved=await writeSceneCast(castScope.projectId,castScope.sha,castSync.revision,
+        castFromBundle(castScope.projectId,castScope.sha,bundle));
+      setCastSync({key:castScope.key,status:"ready",revision:saved.revision,remote:saved.cast,error:""});
+      setStatus("Saved your current browser scene voice choices to the project.");
+    }catch(error){setStatus(error instanceof Error?error.message:"Could not save this browser cast. Reload before trying again.");}
+    finally{setBusy(false);}
+  }
   const [syncReport,setSyncReport]=useState<StoryboardSync|null>(null);
   useEffect(()=>{
     if(sceneClip.state!=="rendering")return;
@@ -465,7 +582,15 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
     if(!bundle||!dossier||!shot)return false;
     setBusy(true);setStatus("");
     try{
+      if(Object.hasOwn(changed,"speaker")&&castScope&&
+        (castSync.key!==castScope.key||castSync.status!=="ready"))
+        throw Error("The saved scene cast is not synchronized. Retry sync or choose which cast to keep before saving this voice.");
       const result=await request("edit",{bundle,dossier,shotId:shot.id,changes:changed}) as unknown as Revision;
+      if(Object.hasOwn(changed,"speaker")&&castScope){
+        // A failed or stale SQLite write must leave the typed edit visible,
+        // not falsely claim that this choice was saved or export-ready.
+        await persistCast(result.bundle);
+      }
       setHistory(prev=>({undo:[...prev.undo,{bundle,revisions}].slice(-20),redo:[]}));
       setBundle(result.bundle);
       setDraft(shotDraft(result.bundle,shot.id));
@@ -542,17 +667,24 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
     if(bundle)setDraft(shotDraft(bundle,shotId));
     setStatus("Unsaved scene edits discarded. The saved storyboard is unchanged.");
   }
-  function travelHistory(direction:"undo"|"redo"){
+  async function travelHistory(direction:"undo"|"redo"){
     if(!bundle||busy||dirty)return;
     const stack=history[direction];
     if(!stack.length)return;
     const previous=stack.at(-1)!;
-    const opposite=direction==="undo"?"redo":"undo";
-    setHistory(current=>({...current,[direction]:current[direction].slice(0,-1),
-      [opposite]:[...current[opposite],{bundle,revisions}].slice(-20)}));
-    setBundle(previous.bundle);setRevisions(previous.revisions);
-    setDraft(shotDraft(previous.bundle,shotId));setRecheckToken(value=>value+1);
-    setStatus(direction==="undo"?"Last saved scene change undone.":"Saved scene change restored.");
+    setBusy(true);
+    try{
+      if(castScope&&!castEqual(castFromBundle(castScope.projectId,castScope.sha,bundle),
+        castFromBundle(castScope.projectId,castScope.sha,previous.bundle)))
+        await persistCast(previous.bundle);
+      const opposite=direction==="undo"?"redo":"undo";
+      setHistory(current=>({...current,[direction]:current[direction].slice(0,-1),
+        [opposite]:[...current[opposite],{bundle,revisions}].slice(-20)}));
+      setBundle(previous.bundle);setRevisions(previous.revisions);
+      setDraft(shotDraft(previous.bundle,shotId));setRecheckToken(value=>value+1);
+      setStatus(direction==="undo"?"Last saved scene change undone.":"Saved scene change restored.");
+    }catch(error){setStatus(error instanceof Error?error.message:"Could not save the reversed scene cast.");}
+    finally{setBusy(false);}
   }
   const nextStage=nextDirectorStage(stage) as DirectorStage|null;
   const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId&&!!shot;
@@ -656,6 +788,21 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
           })}
         </nav>
         {status&&<p role="status" className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm" >{status}</p>}
+        {castScope&&castSync.key===castScope.key&&castSync.status==="loading"&&
+          <p role="status" className="text-xs text-muted-foreground">Checking saved scene voices for this storyboard…</p>}
+        {castScope&&castSync.key===castScope.key&&castSync.status==="error"&&
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-status-warning/40 bg-surface-subtle px-3 py-3">
+            <p role="alert" className="min-w-0 flex-1 text-xs text-foreground">{castSync.error} Scene voice changes cannot be saved on the server yet. Other editor changes remain local.</p>
+            <Button size="sm" variant="outline" disabled={busy} onClick={()=>setCastReloadToken(value=>value+1)}>Retry voice sync</Button>
+          </div>}
+        {castScope&&castSync.key===castScope.key&&castSync.status==="conflict"&&
+          <div className="space-y-2 rounded-control border border-status-warning/40 bg-surface-subtle px-3 py-3">
+            <p role="alert" className="text-xs text-foreground">This project has different scene voices on the server and in this browser. Choose one before saving another voice. Other scene edits stay intact.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" disabled={busy||dirty} onClick={()=>void restoreServerCast()}>Use saved scene cast</Button>
+              <Button size="sm" variant="outline" disabled={busy||dirty} onClick={()=>void keepBrowserCast()}>Keep this browser cast</Button>
+            </div>
+          </div>}
         {stage==="storyboard"&&<section aria-label="Storyboard editing" className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-lg font-semibold">Shape your story</h2>
@@ -940,7 +1087,12 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
         <div className={stage==="preview"?"space-y-4":"hidden"} aria-hidden={stage!=="preview"}>
           {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
-          <ProductionPanel key={`${voiceProjectId??projectId??dossier.id}:${dossier.id}:${draftLaunchCount}`} dossier={dossier} bundle={bundle}
+          {castScope&&(castSync.key!==castScope.key||castSync.status!=="ready")?
+            <p role="status" className="rounded-control border border-border bg-surface-subtle p-4 text-sm text-muted-foreground">
+              {castSync.status==="conflict"?"Choose which saved cast to keep above before rendering.":
+                castSync.status==="error"?"Retry saved scene voice sync above before rendering. Your current scenes are intact.":
+                "Restoring saved scene voices before checking the full video…"}
+            </p>:<ProductionPanel key={`${voiceProjectId??projectId??dossier.id}:${dossier.id}:${draftLaunchCount}`} dossier={dossier} bundle={bundle}
             voiceProjectId={voiceProjectId??projectId}
             onOpenJobs={onOpenJobs}
             onFindVisuals={id=>{chooseShot(id);navigate("assets");}}
@@ -954,7 +1106,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
             onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}
             initialStage={focusStage==="audio"?"narration":focusStage==="export"?"export":"preview"}
             autoStartDraft={focusStage==="draft"||draftLaunchCount>0}
-            autoOpenVisuals={focusStage==="visuals"}/>
+            autoOpenVisuals={focusStage==="visuals"}/>}
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle px-4 py-4">
           <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">{stage==="preview"?

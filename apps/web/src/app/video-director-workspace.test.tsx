@@ -78,6 +78,107 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("writes scene cast to SQLite-backed project storage and reloads the same speaker without a browser draft",async()=>{
+    const productionId="production-"+"7".repeat(24),sourceHash="b".repeat(64);
+    const original={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sourceHash};
+    const handoffKey="contentgen:director-approved-script:v1:"+productionId;
+    sessionStorage.setItem(handoffKey,JSON.stringify({productionId,scriptRevision:"first",
+      sourcePrefix:"approved-script:first:",dossier,bundle:original}));
+    let stored:unknown=null,revision=0,edits=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
+      const path=String(url),body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
+      if(path.includes("/api/scene-cast/")){
+        if(init?.method==="PUT"){
+          const request=body as {revision:number;cast:unknown};
+          if(request.revision!==revision)return new Response(JSON.stringify({error:{message:"stale"}}),{status:409});
+          stored=request.cast;revision++;
+        }
+        return new Response(JSON.stringify({revision,cast:stored}),{status:200});
+      }
+      if(path.endsWith("/edit")){
+        edits++;
+        const data=body as {bundle:typeof original;shotId:string;changes:{speaker?:unknown}};
+        const revised=structuredClone(data.bundle) as typeof original & {plan:{sound:Array<Record<string,unknown>>}};
+        const sound=revised.plan.sound.find(x=>x.shotId===data.shotId)! as Record<string,unknown>;
+        if(data.changes.speaker)sound.speaker=data.changes.speaker;
+        else delete sound.speaker;
+        revised.planSha256="c".repeat(64);
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:revised,impacts:{changedFields:["speaker"],
+          speechRegenerate:[data.shotId],visualRerender:[],sfxRemix:[],downstreamRetiming:[],
+          timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+      }
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({error:"Unconfigured test renderer"}),{status:503});
+      throw Error("Unexpected request "+path);
+    });
+    const user=userEvent.setup();
+    const first=render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    await screen.findByRole("combobox",{name:"Scene speaker"});
+    await waitFor(()=>expect(screen.queryByText(/Checking saved scene voices/)).not.toBeInTheDocument());
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene speaker"}),"pip");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(revision).toBe(1));
+    expect(stored).toMatchObject({projectId:productionId,sourcePlanSha256:sourceHash,
+      assignments:[{shotId:"hook",speaker:{id:"pip",role:"character",voiceId:"6ab4c6b0f37f4243a99046478647be94"}}]});
+    first.unmount();
+    const sessionId="approved-script:first:"+sourceHash;
+    const savedKey="contentgen:director-session:v1:"+productionId+":"+sessionId;
+    localStorage.removeItem(savedKey);sessionStorage.removeItem(savedKey);
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    await waitFor(()=>expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("pip"));
+    expect(edits).toBeGreaterThanOrEqual(2);
+    sessionStorage.removeItem(handoffKey);
+  });
+  it("never overwrites divergent browser and server scene casts without an explicit choice",async()=>{
+    const productionId="production-"+"8".repeat(24),sha="b".repeat(64);
+    const original={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sha};
+    const sourceId="approved-script:first:"+sha;
+    const sessionKey="contentgen:director-approved-script:v1:"+productionId;
+    const localKey="contentgen:director-session:v1:"+productionId+":"+sourceId;
+    const savedBrowser=structuredClone(original);
+    (savedBrowser.plan.sound[0] as Record<string,unknown>).speaker={id:"quill",role:"character",provider:"fish",voiceId:"b".repeat(32)};
+    savedBrowser.planSha256="c".repeat(64);
+    sessionStorage.setItem(sessionKey,JSON.stringify({productionId,scriptRevision:"first",sourcePrefix:"approved-script:first:",dossier,bundle:original}));
+    localStorage.setItem(localKey,JSON.stringify({version:2,savedAt:Date.now(),artifactId:sourceId,
+      dossier,sourceBundle:original,bundle:savedBrowser}));
+    const server={schemaVersion:1,projectId:productionId,sourcePlanSha256:sha,assignments:[{shotId:"hook",
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:"a".repeat(32)}}]};
+    let writes=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const path=String(url);
+      if(path.includes("/api/scene-cast/")){
+        if(opts?.method==="PUT")writes++;
+        return new Response(JSON.stringify({revision:2,cast:server}),{status:200});
+      }
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({error:"Renderer disabled"}),{status:503});
+      throw Error("Unexpected server call "+path);
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    expect(await screen.findByRole("button",{name:"Use saved scene cast"})).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("quill");
+    expect(writes).toBe(0);
+    expect(screen.getByRole("button",{name:"Keep this browser cast"})).toBeEnabled();
+    sessionStorage.removeItem(sessionKey);localStorage.removeItem(localKey);
+  });
+  it("blocks an automatic first draft when the saved scene cast server is unreachable",async()=>{
+    const productionId="production-"+"9".repeat(24),sourceHash="b".repeat(64);
+    const handoffKey="contentgen:director-approved-script:v1:"+productionId;
+    sessionStorage.setItem(handoffKey,JSON.stringify({productionId,scriptRevision:"first",
+      sourcePrefix:"approved-script:first:",dossier,
+      bundle:{...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sourceHash}}));
+    const requests:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+      const path=String(url);requests.push(path);
+      if(path.includes("/api/scene-cast/"))throw Error("offline");
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({error:"Renderer disabled"}),{status:503});
+      throw Error("Unexpected network request "+path);
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="draft"/>);
+    expect(await screen.findByRole("button",{name:"Retry voice sync"})).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Could not reach saved scene voices/i);
+    expect(screen.getByText(/Retry saved scene voice sync above before rendering/i)).toBeInTheDocument();
+    expect(requests.some(path=>path.endsWith("/api/contentgen-video/start"))).toBe(false);
+    sessionStorage.removeItem(handoffKey);
+  });
   it("assigns a saved character voice to a scene, persists the edit and restores it after switching scenes",async()=>{
     const castId="director-cast-project";
     const castVoice="b".repeat(32);
@@ -248,6 +349,7 @@ describe("Video Director selected-shot workbench",()=>{
     vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
       const path=String(input),catalog=localMediaCatalogResponse(input);
       if(catalog)return catalog;
+      if(path.includes("/api/scene-cast/"))return new Response(JSON.stringify({revision:0,cast:null}),{status:200});
       if(path.endsWith("/edit"))return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:edited,
         impacts:{changedFields:["onScreenText"],speechRegenerate:[],visualRerender:["hook"],
           sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
