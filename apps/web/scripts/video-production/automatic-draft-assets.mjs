@@ -135,8 +135,8 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
     throw Error("Automated draft media has invalid scene references.");
   const used=new Set(Object.values(result.bindings).filter(item=>item.provider==="pexels")
     .map(item=>`${item.assetType}:${item.assetId}`));
+  const pending=[];
   for(const scene of suggestions.scenes){
-    if(result.prepared>=MAX_AUTOMATIC)break;
     if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
     const beatId=shots.get(scene?.shotId);
     if(!beatId||result.bindings[beatId]||!Array.isArray(scene.candidates))continue;
@@ -146,6 +146,10 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
     const identity=sha(JSON.stringify({provider:"pexels",shotId:scene.shotId,
       assetId:candidate.assetId,license:"Pexels License",
       ...(candidate.assetType==="video"?{assetType:"video"}:{})}));
+    pending.push({scene,beatId,candidate,identity});
+  }
+  async function prepareOne({scene,beatId,candidate,identity}){
+    const warnings=[];
     let attempt=null,temporary=null,jobClaimFailed=false;
     try{
       // A verified cache is reusable even if the last worker finished its
@@ -160,7 +164,7 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
           // The previous worker's cache is only an optimization. Never copy a
           // corrupt/mismatched artifact, but try the authoritative provider
           // again instead of discarding an otherwise usable scene candidate.
-          result.warnings.push(`Scene ${scene.shotId}: previous media cache failed verification; checking the original provider again.`);
+          warnings.push(`Scene ${scene.shotId}: previous media cache failed verification; checking the original provider again.`);
         }
       }
       if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
@@ -216,20 +220,41 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
       if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
       if(attempt)await sceneJobs.completeScene(attempt,{sha256:digest,reused:false});
       const url=`/__video_media/${digest}.${candidate.assetType==="photo"?"jpg":"mp4"}`;
-      result.bindings[beatId]={assetType:candidate.assetType,url,sha256:digest,provider:"pexels",
+      const binding={assetType:candidate.assetType,url,sha256:digest,provider:"pexels",
         assetId:candidate.assetId,sourceUrl:source.sourceUrl,license:source.license,
         licenseUrl:source.licenseUrl,creator:source.creator??"",width:details.width,
         height:details.height,...(candidate.assetType==="video"?{durationSeconds:details.durationSeconds}:{}),
         rightsStatus:"draft-provider-license",automaticallyPrepared:true};
-      result.assets.push({url,path:destination,sha256:digest,assetType:candidate.assetType});
-      result.prepared++;
+      return {beatId,binding,asset:{url,path:destination,sha256:digest,assetType:candidate.assetType},warnings};
     }catch(error){
       if(attempt)await sceneJobs.failScene(attempt,error);
       if(signal?.aborted||jobClaimFailed)throw error;
       // A provider outage must not prevent Kumiki from rendering the scene.
       // Never persist third-party error bodies: they can include secrets.
-      result.warnings.push(`Scene ${scene.shotId}: original media unavailable; using Kumiki visuals.`);
+      warnings.push(`Scene ${scene.shotId}: original media unavailable; using Kumiki visuals.`);
+      return {warnings};
     }finally{if(temporary)await rm(temporary,{force:true});}
+  }
+  // At most two independently claimed downloads run together. Each batch
+  // reserves no more than the remaining successful-media quota, so concurrency
+  // cannot exceed three prepared assets or the 240 MB output budget. Drain
+  // siblings before surfacing a lost Jobs claim or cancellation.
+  for(let index=0;index<pending.length&&result.prepared<MAX_AUTOMATIC;){
+    if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
+    const batch=pending.slice(index,index+Math.min(2,MAX_AUTOMATIC-result.prepared));
+    index+=batch.length;
+    const outcomes=await Promise.allSettled(batch.map(prepareOne));
+    for(const outcome of outcomes){
+      if(outcome.status==="rejected")continue;
+      result.warnings.push(...outcome.value.warnings);
+      if(outcome.value.binding){
+        result.bindings[outcome.value.beatId]=outcome.value.binding;
+        result.assets.push(outcome.value.asset);
+        result.prepared++;
+      }
+    }
+    const failed=outcomes.find(outcome=>outcome.status==="rejected");
+    if(failed)throw failed.reason;
   }
   if(result.prepared)result.fingerprint=sha(JSON.stringify({pinned:existing.fingerprint,
     automatic:Object.entries(result.bindings).filter(([,item])=>item.automaticallyPrepared)

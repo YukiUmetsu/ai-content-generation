@@ -59,6 +59,60 @@ test("automatic draft images honor manually pinned scenes and avoid duplicate ph
   assert.equal(calls.length,2,"verified cache reuse does not duplicate a completed scene Job");
 });
 
+test("independent scene downloads overlap while keeping a strict three-asset quota",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-auto-overlap-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const ids=["shot-a","shot-b","shot-c","shot-d","shot-e"];
+  const map=ids.map((shotId,i)=>({shotId,beatId:`beat-${i}`}));
+  const proposals=ids.map((shotId,i)=>scene(shotId,String(i+50)));
+  let unblock=()=>{};
+  const gate=new Promise(resolve=>{unblock=resolve;});
+  let seenTwo=()=>{};
+  const ready=new Promise(resolve=>{seenTwo=resolve;});
+  const running=new Set(),started=[],maxConcurrency={value:0};
+  const work={beginScene:async({sceneId})=>sceneId,completeScene:async()=>{},failScene:async()=>{}};
+  const pending=prepareAutomaticDraftMedia({suggestions:suggestions(proposals),shotMap:map,
+    existing:existing(),outputDir:out,pexelsKey:"test",sceneJobs:work},{downloadPhoto:async id=>{
+    started.push(id);running.add(id);maxConcurrency.value=Math.max(maxConcurrency.value,running.size);
+    if(started.length===2)seenTwo();
+    await gate;
+    running.delete(id);
+    return {bytes,meta:meta(id)};
+  },probePhoto});
+  try{
+    await Promise.race([ready,new Promise((_,reject)=>setTimeout(()=>reject(Error("Downloads did not overlap")),1500))]);
+  }finally{unblock();}
+  const result=await pending;
+  assert.equal(maxConcurrency.value,2);
+  assert.equal(result.prepared,3);
+  assert.equal(started.length,3,"no fourth download can escape the three-asset quota");
+  assert.deepEqual(result.assets.map(x=>x.assetType),["photo","photo","photo"]);
+  assert.deepEqual(Object.keys(result.bindings).sort(),["beat-0","beat-1","beat-2"]);
+});
+
+test("a cancelled batch settles both claimed downloads before returning",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-auto-cancel-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const abort=new AbortController();
+  const claimed=[],failed=[],completed=[];
+  let bothStarted=()=>{};
+  const ready=new Promise(resolve=>{bothStarted=resolve;});
+  const work={beginScene:async({sceneId})=>{claimed.push(sceneId);if(claimed.length===2)bothStarted();return sceneId;},
+    failScene:async(id)=>failed.push(id),completeScene:async id=>completed.push(id)};
+  const pending=prepareAutomaticDraftMedia({suggestions:suggestions([scene("shot-a","81"),scene("shot-b","82")]),
+    shotMap,existing:existing(),outputDir:out,pexelsKey:"test",signal:abort.signal,sceneJobs:work},
+  {downloadPhoto:async(_id,{signal})=>new Promise((_,reject)=>{
+    if(signal.aborted)return reject(signal.reason);
+    signal.addEventListener("abort",()=>reject(signal.reason),{once:true});
+  }),probePhoto});
+  await ready;
+  abort.abort(Error("User cancelled media preparation"));
+  await assert.rejects(pending,/User cancelled media preparation/);
+  assert.deepEqual(claimed.sort(),["beat-a","beat-b"]);
+  assert.deepEqual(failed.sort(),["beat-a","beat-b"]);
+  assert.deepEqual(completed,[]);
+});
+
 test("verified draft cache survives worker restart and can be copied into a new production run",async t=>{
   const prior=await mkdtemp(join(tmpdir(),"contentgen-photo-prior-"));
   const current=await mkdtemp(join(tmpdir(),"contentgen-photo-next-"));
