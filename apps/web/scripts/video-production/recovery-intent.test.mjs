@@ -8,7 +8,7 @@ import {listRecoveryIntents,reserveRecoveryAttempt,writeRecoveryIntent} from "./
 const runId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const productionId="production-"+"a".repeat(24);
 const intent={productionId,sourceRevision:"script-rev-1",revision:"f".repeat(64),
-  request:{productionId,sourceRevision:"script-rev-1",settings:{provider:"fish",voiceId:"approved-voice",
+  request:{productionId,sourceRevision:"script-rev-1",characterProjectId:"project-custom-rigs",settings:{provider:"fish",voiceId:"approved-voice",
     providerRevision:"fish-v1",voiceConsent:true,transmitText:true,apiKey:"do-not-store-my-key",
     privateApiCredential:"unrecognized-secret-value"},
     dossier:{id:"test-project"},bundle:{plan:{shots:[]}},castVoiceConsent:true,
@@ -25,6 +25,8 @@ test("recovery snapshots are private, version-bound and never contain a provider
   assert.equal(listed.length,1);
   assert.equal(listed[0].revision,intent.revision);
   assert.equal(listed[0].request.settings.voiceConsent,true);
+  assert.equal(listed[0].request.characterProjectId,"project-custom-rigs",
+    "recovered renders must revalidate the same saved custom character revisions");
   assert.equal(listed[0].request.castVoiceConsent,true,
     "an authorized multi-speaker draft must retain its exact approved render intent after restart");
   assert.equal(listed[0].request.settings.apiKey,undefined);
@@ -51,6 +53,8 @@ test("invalid identities and oversized snapshots cannot be stored",async t=>{
   const root=await mkdtemp(join(tmpdir(),"draft-intent-bound-"));t.after(()=>rm(root,{recursive:true,force:true}));
   await assert.rejects(writeRecoveryIntent(root,"../escape",intent),/identity|run ID/i);
   await assert.rejects(writeRecoveryIntent(root,runId,{...intent,revision:"wrong"}),/revision/i);
+  await assert.rejects(writeRecoveryIntent(root,runId,{...intent,
+    request:{...intent.request,characterProjectId:"../another-project"}}),/Character Studio project/i);
   await assert.rejects(writeRecoveryIntent(root,runId,{...intent,
     request:{...intent.request,bundle:{text:"x".repeat(1_500_000)}}}),/size|large/i);
 });
