@@ -55,7 +55,7 @@ export async function fingerprintBuiltStage(distRoot) {
  * @param {{distRoot:string,validatedPlan:object,host?:'127.0.0.1'}} options
  * @returns {Promise<{url:string,close:()=>Promise<void>}>}
  */
-export async function startLocalStageServer({ distRoot, validatedPlan, approvedMedia = [], host = "127.0.0.1" }) {
+export async function startLocalStageServer({ distRoot, validatedPlan, approvedMedia = [], characterAssets = [], host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") throw new Error("Export stage must bind a loopback-only host.");
   if (typeof distRoot !== "string" || !distRoot.trim() || !validatedPlan || typeof validatedPlan !== "object") {
     throw new Error("A built page directory and validated plan are required.");
@@ -70,6 +70,26 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
       typeof asset.path !== "string" || !asset.path.startsWith("/") || media.has(asset.url))
       throw Error("Invalid or duplicate approved scene media path.");
     media.set(asset.url, { ...asset, verifiedKey: null });
+  }
+  // Only verified, immutable ZIP layer bytes may enter the private capture host.
+  // Do not serve arbitrary project files or filesystem paths to Chromium.
+  if (!Array.isArray(characterAssets) || characterAssets.length > 256)
+    throw Error("Character export has too many image layers.");
+  const characterImages = new Map();
+  let characterBytes = 0;
+  for (const item of characterAssets) {
+    const ext = item?.mediaType === "image/png" ? "png" : item?.mediaType === "image/webp" ? "webp" : null;
+    if (!ext || !Buffer.isBuffer(item.bytes) || item.bytes.length < 12 ||
+      !/^[a-f0-9]{64}$/.test(item.sha256 ?? "") ||
+      item.url !== `/__character_assets/${item.sha256}.${ext}`)
+      throw Error("Invalid Character Studio export image.");
+    if (createHash("sha256").update(item.bytes).digest("hex") !== item.sha256)
+      throw Error("Character Studio export image checksum mismatch.");
+    characterBytes += item.bytes.length;
+    if (characterBytes > 64 * 1024 * 1024) throw Error("Character export image budget exceeded.");
+    const previous = characterImages.get(item.url);
+    if (previous && !previous.bytes.equals(item.bytes)) throw Error("Character image hash collision.");
+    characterImages.set(item.url, { bytes: item.bytes, mediaType: item.mediaType });
   }
   const buildHash = await fingerprintBuiltStage(root);
   const entry = await stat(join(root, "video-export.html"));
@@ -87,6 +107,12 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
     catch { send(400, "Malformed path"); return; }
     if (pathname === "/__video_job") { send(200, json, mime[".json"]); return; }
     if (pathname === "/__video_build") { send(200, JSON.stringify({ sha256: buildHash }), mime[".json"]); return; }
+    if (pathname.startsWith("/__character_assets/")) {
+      const layer = characterImages.get(pathname);
+      if (!layer) { send(404); return; }
+      send(200, layer.bytes, layer.mediaType);
+      return;
+    }
     if (pathname.startsWith("/__video_media/")) {
       const asset = media.get(pathname);
       if (!asset) { send(404); return; }
