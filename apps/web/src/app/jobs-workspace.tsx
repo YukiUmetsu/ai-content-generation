@@ -232,6 +232,7 @@ const productionStageLabels:Record<string,string>={
   "scene-plan":"Prepare scene plan","visual-planning":"Prepare visual layouts",
   "asset-search":"Find suitable imagery","asset-preparation":"Prepare scene assets",
   "asset-download":"Download scene photo",
+  "thumbnail-concept":"Export one thumbnail concept",
   narration:"Generate narration",timeline:"Synchronize scene timing",
   "sound-mix":"Mix audio",captions:"Create captions",
   "scene-render":"Render video scenes",thumbnails:"Create three thumbnails",

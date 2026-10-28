@@ -662,6 +662,7 @@ fn exhausted_single_scene_job_can_be_retried_without_restarting_other_scenes() {
         "video-asset-download",
         "video-narration-scene",
         "video-render-segment",
+        "video-thumbnail-concept",
     ] {
         let spec = request(kind, kind, vec![node("scene", &[], 1)]);
         let dag = created(&mut connection, &spec).dag;

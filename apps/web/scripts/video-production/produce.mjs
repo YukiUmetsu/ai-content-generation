@@ -357,7 +357,10 @@ export async function produceVideo(candidate, options, deps = {}) {
       artifactLedger:{kind:"scene-render",planHash,buildHash:preflight.buildHash,
         segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))}});
     const thumbnails=await (deps.generateThumbnails??generateProductionThumbnails)(job,{
-      outputDir:working,ffmpeg:options.ffmpeg,signal:options.signal});
+      outputDir:working,cacheDir:join(out,".render","thumbnails"),
+      reuseCacheDir:options.reuseSpeechCacheFrom?
+        join(options.reuseSpeechCacheFrom,".render","thumbnails"):undefined,
+      ffmpeg:options.ffmpeg,signal:options.signal,sceneJobs:options.sceneJobs});
     if(!Array.isArray(thumbnails)||thumbnails.length!==3||new Set(thumbnails.map(x=>x.file)).size!==3||
       thumbnails.some((item,i)=>item.file!==`thumbnail-${i+1}.png`||
         !/^[a-f0-9]{64}$/u.test(item.sha256??"")||

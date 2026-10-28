@@ -1,10 +1,10 @@
 /** Produce editable, script-grounded Kumiki compositions and verified PNGs.
  * The composer is the same pinned MediaDocument implementation used by Publish Kit.
  */
-import { createHash } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFile, writeFile } from "node:fs/promises";
+import { lstat,mkdir,readFile,rename,rm,writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -58,7 +58,59 @@ function verifyPng(bytes) {
   }
 }
 
-export async function generateProductionThumbnails(job, { outputDir, ffmpeg = "ffmpeg", signal,
+async function ownedFile(path,limit){
+  const entry=await lstat(path);
+  if(!entry.isFile()||entry.isSymbolicLink()||entry.size<1||entry.size>limit)
+    throw Error("A cached thumbnail artifact is unsafe or too large.");
+  return readFile(path);
+}
+
+async function readVerifiedConcept(directory,name,svgHash){
+  if(!directory)return null;
+  let record;
+  try{
+    record=JSON.parse(await ownedFile(join(directory,`${name}.json`),1024));
+  }catch(error){if(error?.code==="ENOENT")return null;throw error;}
+  if(record.name!==name||record.sourceSha256!==svgHash||
+    !/^[a-f0-9]{64}$/u.test(record.sha256??""))return null;
+  const source=await ownedFile(join(directory,`${name}.svg`),2_000_000);
+  const png=await ownedFile(join(directory,`${name}.png`),12*1024*1024);
+  verifyPng(png);
+  if(hash(source)!==svgHash||hash(png)!==record.sha256)
+    throw Error("Cached thumbnail failed checksum verification.");
+  return {source,png,sha256:record.sha256};
+}
+
+async function reusableConcept(directory,name,svgHash){
+  try{return await readVerifiedConcept(directory,name,svgHash);}
+  catch(error){
+    // Corrupt/truncated cached media is an ordinary cache miss. Re-render the
+    // affected concept, but never paper over a symlink or filesystem denial.
+    if(error instanceof SyntaxError||error?.code==="ENOENT"||
+      ["Cached thumbnail failed checksum verification.",
+        "Kumiki thumbnail export is not a valid 1280×720 PNG."].includes(error?.message))return null;
+    throw error;
+  }
+}
+
+async function persistConcept(directory,name,source,png,sourceSha256,sha256){
+  await mkdir(directory,{recursive:true,mode:0o700});
+  const id=randomUUID(),working=`.thumbnail-${id}`;
+  const staging=[join(directory,working+".svg"),join(directory,working+".png"),
+    join(directory,working+".json")];
+  try{
+    await writeFile(staging[0],source,{flag:"wx",mode:0o600});
+    await writeFile(staging[1],png,{flag:"wx",mode:0o600});
+    await writeFile(staging[2],JSON.stringify({name,sourceSha256,sha256}),{flag:"wx",mode:0o600});
+    await rename(staging[0],join(directory,`${name}.svg`));
+    await rename(staging[1],join(directory,`${name}.png`));
+    // Commit marker is last: a killed worker cannot make partial output reusable.
+    await rename(staging[2],join(directory,`${name}.json`));
+  }finally{await Promise.all(staging.map(path=>rm(path,{force:true})));}
+}
+
+export async function generateProductionThumbnails(job, { outputDir,cacheDir,reuseCacheDir,sceneJobs,
+  ffmpeg = "ffmpeg", signal,
   compose = loadKumikiComposer, convert } = {}) {
   if (!outputDir) throw Error("Thumbnails need an owned production output directory.");
   if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
@@ -81,17 +133,43 @@ export async function generateProductionThumbnails(job, { outputDir, ffmpeg = "f
     const name = `thumbnail-${index + 1}`;
     const svgPath = join(outputDir, `${name}.svg`);
     const pngPath = join(outputDir, `${name}.png`);
-    await writeFile(svgPath, art.svg, { flag: "wx", mode: 0o600 });
-    if (convert) await convert(svgPath, pngPath, { signal, ffmpeg });
-    else await exec(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-n",
-      "-protocol_whitelist", "file,pipe", "-i", svgPath, "-frames:v", "1",
-      "-vf", "scale=1280:720:flags=lanczos", "-pix_fmt", "rgb24", pngPath],
-    { signal, timeout: 90_000, maxBuffer: 64 * 1024 });
-    const bytes = await readFile(pngPath);
-    verifyPng(bytes);
-    outputs.push({ id: name, label: art.label, headline: copy.headlines[index],
-      file: `${name}.png`, source: `${name}.svg`, sha256: hash(bytes),
-      sourceSha256: hash(Buffer.from(art.svg)), width: 1280, height: 720 });
+    const source=Buffer.from(art.svg),sourceSha256=hash(source);
+    let cached=await reusableConcept(cacheDir,name,sourceSha256);
+    const cachedLocally=Boolean(cached);
+    if(!cached)cached=await reusableConcept(reuseCacheDir,name,sourceSha256);
+    let attempt=null;
+    try{
+      if(cached){
+        if(signal?.aborted)throw signal.reason??Error("Thumbnail generation cancelled.");
+        await writeFile(svgPath,cached.source,{flag:"wx",mode:0o600});
+        await writeFile(pngPath,cached.png,{flag:"wx",mode:0o600});
+        if(cacheDir&&!cachedLocally)
+          await persistConcept(cacheDir,name,cached.source,cached.png,sourceSha256,cached.sha256);
+      }else{
+        if(sceneJobs){
+          attempt=await sceneJobs.beginScene({kind:"thumbnail-concept",sceneId:name,
+            fingerprint:sourceSha256});
+        }
+        if(signal?.aborted)throw signal.reason??Error("Thumbnail generation cancelled.");
+        await writeFile(svgPath,source,{flag:"wx",mode:0o600});
+        if (convert) await convert(svgPath, pngPath, { signal, ffmpeg });
+        else await exec(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-n",
+          "-protocol_whitelist", "file,pipe", "-i", svgPath, "-frames:v", "1",
+          "-vf", "scale=1280:720:flags=lanczos", "-pix_fmt", "rgb24", pngPath],
+        { signal, timeout: 90_000, maxBuffer: 64 * 1024 });
+      }
+      const bytes=await readFile(pngPath);
+      verifyPng(bytes);
+      const digest=hash(bytes);
+      if(cacheDir&&!cached)await persistConcept(cacheDir,name,source,bytes,sourceSha256,digest);
+      if(attempt)await sceneJobs.completeScene(attempt,{sha256:digest});
+      outputs.push({ id: name, label: art.label, headline: copy.headlines[index],
+        file: `${name}.png`, source: `${name}.svg`, sha256: digest,
+        sourceSha256, width: 1280, height: 720 });
+    }catch(error){
+      if(attempt)await sceneJobs.failScene(attempt,error);
+      throw error;
+    }
   }
   return outputs;
 }

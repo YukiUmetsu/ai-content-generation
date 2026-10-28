@@ -425,6 +425,7 @@ pub fn retry_failed_video_job(
             | "video-asset-download"
             | "video-narration-scene"
             | "video-render-segment"
+            | "video-thumbnail-concept"
     ) {
         return Err(JobsError::Forbidden);
     }

@@ -66,6 +66,11 @@ async function context(t) {
 
 test("one command connects synthetic adapter outputs into atomically published reviewed-draft artifacts", async (t) => {
   const ctx = await context(t);
+  const thumbnailGenerator=ctx.injected.generateThumbnails;
+  ctx.injected.generateThumbnails=async(job,options)=>{
+    assert.equal(options.cacheDir,join(ctx.opts.out,".render","thumbnails"));
+    return thumbnailGenerator(job,options);
+  };
   const result = await produceVideo(ctx.job, ctx.opts, ctx.injected);
   assert.equal(ctx.status().providerCalls, 3);
   assert.equal(ctx.status().browserCalls, 1);

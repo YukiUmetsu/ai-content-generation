@@ -233,7 +233,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
      * worker's attempt; Rust atomically verifies every transition. */
     async beginScene({kind,sceneId,fingerprint}){
       if(terminal||!sceneScope||!jobId)throw Error("A production must be running before scene work starts.");
-      if(!["asset-download","narration-scene","render-segment"].includes(kind)||!BEAT_ID.test(sceneId))
+      if(!["asset-download","narration-scene","render-segment","thumbnail-concept"].includes(kind)||!BEAT_ID.test(sceneId))
         throw Error("Scene Jobs require a valid scene and operation.");
       hash(fingerprint);
       const identity=JSON.stringify({...sceneScope,kind,sceneId,fingerprint});
@@ -241,7 +241,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       if(sceneAttempts.has(key))throw Error("This scene is already claimed by this worker.");
       const input={...sceneScope,kind,sceneId,fingerprint};
       const jobKind=kind==="asset-download"?"video-asset-download":
-        kind==="narration-scene"?"video-narration-scene":"video-render-segment";
+        kind==="narration-scene"?"video-narration-scene":
+        kind==="thumbnail-concept"?"video-thumbnail-concept":"video-render-segment";
       let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
         nodes:[{nodeKey:kind,nodeKind:`video.${kind}`,maxAttempts:3,input,dependsOn:[]}]});
       // Cancellation may race the HTTP submission. Do not leave a newly
