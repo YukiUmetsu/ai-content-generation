@@ -72,7 +72,9 @@ describe("CharacterPackInspector", () => {
     expect(screen.getByLabelText("Included starter characters")).toBeInTheDocument();
     expect(screen.getByLabelText("Pip original animated character")).toBeInTheDocument();
     expect(screen.getByLabelText("Quill original animated character")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button",{name:"Use Pip"}));
+    const addPip=screen.getByRole("button",{name:"Use Pip"});
+    await waitFor(()=>expect(addPip).toBeEnabled());
+    fireEvent.click(addPip);
     await waitFor(()=>expect(saveCharacterDraft).toHaveBeenCalledWith("project-local","pip",pip.definition.revision,bytes));
     expect(await screen.findByText("Draft saved")).toBeInTheDocument();
     expect(loadStarterArchive).toHaveBeenCalledWith("pip");
@@ -98,7 +100,9 @@ describe("CharacterPackInspector", () => {
   it("shows a recoverable error when a local bundled ZIP is missing and never claims it saved",async()=>{
     vi.mocked(loadStarterArchive).mockRejectedValue(Error("Pip's built-in ZIP is missing (HTTP 404)."));
     render(<CharacterPackInspector locale="en" projectId="project-local"/>);
-    fireEvent.click(screen.getByRole("button",{name:"Use Pip"}));
+    const addPip=screen.getByRole("button",{name:"Use Pip"});
+    await waitFor(()=>expect(addPip).toBeEnabled());
+    fireEvent.click(addPip);
     expect(await screen.findByText(/built-in ZIP is missing.*404/u)).toBeInTheDocument();
     expect(saveCharacterDraft).not.toHaveBeenCalled();
   });

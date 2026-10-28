@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { webcrypto as nodeCrypto } from "node:crypto";
 import { Blob as NodeBlob } from "node:buffer";
 import { DecompressionStream as NodeDecompressionStream } from "node:stream/web";
@@ -7,6 +8,10 @@ import { validateCharacterDefinition } from "@/components/character/validate";
 import type { CharacterDefinition } from "@/components/character/definition";
 import { inspectCharacterZip } from "./character-pack";
 import { STARTER_CHARACTERS, loadStarterArchive, starterArchiveUrl } from "./starter-characters";
+
+// Vitest rewrites import.meta.url to a virtual browser URL in jsdom; fixture
+// reads must use the web package's actual process working directory.
+const starterFile=(id:string)=>resolve(process.cwd(),"public","starter-characters",`${id}.zip`);
 
 beforeAll(() => {
   vi.stubGlobal("Blob", NodeBlob);
@@ -18,7 +23,7 @@ afterAll(() => vi.unstubAllGlobals());
 describe("original bundled character ZIPs", () => {
   for (const starter of STARTER_CHARACTERS) {
     it(`${starter.name} is a real importable rig with its exact source parts, gestures and rights metadata`, async () => {
-      const bytes = await readFile(new URL(`../../../public/starter-characters/${starter.id}.zip`, import.meta.url));
+      const bytes = await readFile(starterFile(starter.id));
       expect(bytes.byteLength).toBeGreaterThan(1_000);
       const pack = await inspectCharacterZip(Uint8Array.from(bytes).buffer);
       expect(pack.issues).toEqual([]);
@@ -40,7 +45,7 @@ describe("original bundled character ZIPs", () => {
   }
 
   it("fetches only the pinned local ZIP and rejects missing/tampered packages before import", async () => {
-    const bytes=await readFile(new URL("../../../public/starter-characters/pip.zip",import.meta.url));
+    const bytes=await readFile(starterFile("pip"));
     const good=Uint8Array.from(bytes).buffer;
     const fetcher=vi.fn().mockImplementation(async()=>new Response(good,{headers:{"content-length":String(bytes.length)}}));
     vi.stubGlobal("fetch",fetcher);
