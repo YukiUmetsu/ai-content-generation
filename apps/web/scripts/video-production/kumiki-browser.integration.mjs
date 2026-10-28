@@ -138,13 +138,14 @@ try{
       await rigPage.goto(rigStage.url,{waitUntil:"networkidle",timeout:30000});
       await rigPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
       const frames=[];
-      for(const frame of [2,6,12]){
+      for(const [index,frame] of [2,6,12].entries()){
         await rigPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
         const actor=rigPage.locator('[data-conversation-performer="pip"]');
         assert.equal(await actor.getAttribute("data-rig-source"),"character-studio");
         assert.equal(await actor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
         assert.ok(await actor.locator("svg image").count()>=4);
         frames.push(sha(await actor.screenshot({animations:"disabled"})));
+        await rigPage.locator("[data-km-video-capture]").screenshot({path:join(root,`custom-rig-${String(index).padStart(2,"0")}.png`),animations:"disabled"});
       }
       assert.notEqual(frames[0],frames[1],"saved Pip mouth/arm layers must visibly animate during measured speech");
       assert.notEqual(frames[1],frames[2],"Pip must return to listening when Quill speaks");
@@ -152,6 +153,18 @@ try{
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-speaking"),"true");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"] [data-km-character-presenter]').getAttribute("data-diagnostics"),"0");
     }finally{await rigPage.close();}
+    const customMp4=join(root,"custom-pip-quill.mp4");
+    await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+      "-framerate","3","-i",join(root,"custom-rig-%02d.png"),
+      "-frames:v","3","-c:v","libx264","-pix_fmt","yuv420p",customMp4],{timeout:60000});
+    const customProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+      "-show_entries","stream=codec_name,width,height,nb_read_frames","-of","json",customMp4],{timeout:30000});
+    const customStream=JSON.parse(customProbe.stdout).streams?.[0];
+    assert.equal(customStream?.codec_name,"h264");
+    assert.equal(customStream?.width,1920);
+    assert.equal(customStream?.height,1080);
+    assert.equal(Number(customStream?.nb_read_frames),3,
+      "custom Character Studio sprite frames must encode into a real H.264 video");
   }finally{await rigStage.close();}
   // Exercise the actual selected-scene API's file publication via the same
   // Chromium page, H.264 encoder and FFprobe. Only three preview frames are
