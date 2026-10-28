@@ -225,6 +225,7 @@ test("individual scene Jobs reserve attempts, persist hashes, retry and cancel i
   await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:FIRST_RUN});
   const a={kind:"narration-scene",sceneId:"intro",fingerprint:"a".repeat(64)};
   const b={kind:"render-segment",sceneId:"segment-00000",fingerprint:"b".repeat(64)};
+  const photo={kind:"asset-download",sceneId:"intro",fingerprint:"e".repeat(64)};
   const token=await tracker.beginScene(a);
   await assert.rejects(tracker.beginScene(a),/already claimed/i);
   await tracker.completeScene(token,{sha256:"c".repeat(64),samples:48000,reused:false});
@@ -237,10 +238,13 @@ test("individual scene Jobs reserve attempts, persist hashes, retry and cancel i
   const retried=await tracker.beginScene(b);
   assert.equal([...records.values()][1].attempts,2);
   await tracker.completeScene(retried,{sha256:"d".repeat(64),frameCount:150});
+  const photoToken=await tracker.beginScene(photo);
+  assert.equal([...records.values()][2].request.jobKind,"video-asset-download");
+  await tracker.completeScene(photoToken,{sha256:"e".repeat(64)});
   const orphan=await tracker.beginScene({...b,sceneId:"segment-00001"});
   await assert.rejects(tracker.complete(),/scene work is still claimed/i);
   await tracker.cancel();
-  assert.ok(records.size===3&&[...records.values()][2].state==="CANCELLED");
+  assert.ok(records.size===4&&[...records.values()][3].state==="CANCELLED");
   await assert.rejects(tracker.completeScene(orphan,{sha256:"d".repeat(64)}),/active scene/i);
   assert.equal(base.calls.filter(item=>item.path==="/api/jobs/job-test/cancel").length,1);
 });

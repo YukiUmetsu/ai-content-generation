@@ -437,6 +437,34 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal((await invoke(restarted,"GET","/suggestions/../secrets")).status,404);
 });
 
+test("automatic draft photos require their own opt-in and pass Pexels credentials only to the backend",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-photo-consent-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let received=null;
+  const server=createDirectorProduction({outputRoot:dir,env:{PEXELS_API_KEY:"test-private-key"},
+    findBrowser:async()=>"/mock/chromium",build:async()=>{},
+    inspect:async()=>({ready:true,findings:[]}),
+    searchAssets:async()=>({kind:"contentgen-scene-asset-suggestions",warnings:[],scenes:[]}),
+    jobTracker:()=>({start:async()=>"job-auto-1",advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      received={enabled:options.autoPrepareFreeMedia,key:options.pexelsKey};
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock video");
+      return {releaseDir};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"c".repeat(24),
+    searchFreeMedia:true,autoPrepareFreeMedia:true};
+  assert.equal((await invoke(server,"POST","/check",{...payload,searchFreeMedia:false})).status,422);
+  assert.equal((await invoke(server,"POST","/check",{...payload,autoPrepareFreeMedia:"yes"})).status,422);
+  assert.equal((await invoke(server,"POST","/check",payload)).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...payload,autoPrepareFreeMedia:false,confirmRender:true})).status,409,
+    "changing automatic download settings invalidates the readiness identity");
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<60&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.deepEqual(received,{enabled:true,key:"test-private-key"});
+  assert.doesNotMatch(JSON.stringify(server.status()),/test-private-key/);
+});
+
 test("retry reuses the interrupted run's intact scene catalog without another provider request",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-assets-retry-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));

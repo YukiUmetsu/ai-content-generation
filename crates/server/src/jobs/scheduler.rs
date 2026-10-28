@@ -421,7 +421,10 @@ pub fn retry_failed_video_job(
     let dag = load_dag(&transaction, job_id)?;
     if !matches!(
         dag.job.job_kind.as_str(),
-        "video-production" | "video-narration-scene" | "video-render-segment"
+        "video-production"
+            | "video-asset-download"
+            | "video-narration-scene"
+            | "video-render-segment"
     ) {
         return Err(JobsError::Forbidden);
     }

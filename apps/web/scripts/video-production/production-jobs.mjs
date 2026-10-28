@@ -228,19 +228,20 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       await request(`/api/jobs/${jobId}/nodes/${nodes[active].id}/fail`,{
         attemptId,errorCode:code.slice(0,80),errorDetail:detail.slice(0,240)});
     },
-    /** Each narration beat and encoded render chunk has a separately claimed,
+    /** Each photo download, narration beat and encoded render chunk has a separately claimed,
      * persisted attempt. An interrupted worker cannot complete another
      * worker's attempt; Rust atomically verifies every transition. */
     async beginScene({kind,sceneId,fingerprint}){
       if(terminal||!sceneScope||!jobId)throw Error("A production must be running before scene work starts.");
-      if(!["narration-scene","render-segment"].includes(kind)||!BEAT_ID.test(sceneId))
+      if(!["asset-download","narration-scene","render-segment"].includes(kind)||!BEAT_ID.test(sceneId))
         throw Error("Scene Jobs require a valid scene and operation.");
       hash(fingerprint);
       const identity=JSON.stringify({...sceneScope,kind,sceneId,fingerprint});
       const key="video-scene:"+createHash("sha256").update(identity).digest("hex");
       if(sceneAttempts.has(key))throw Error("This scene is already claimed by this worker.");
       const input={...sceneScope,kind,sceneId,fingerprint};
-      const jobKind=kind==="narration-scene"?"video-narration-scene":"video-render-segment";
+      const jobKind=kind==="asset-download"?"video-asset-download":
+        kind==="narration-scene"?"video-narration-scene":"video-render-segment";
       let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
         nodes:[{nodeKey:kind,nodeKind:`video.${kind}`,maxAttempts:3,input,dependsOn:[]}]});
       // Cancellation may race the HTTP submission. Do not leave a newly

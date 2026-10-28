@@ -139,6 +139,43 @@ test("a missing user-selected scene photo fails before any provider TTS or rende
   assert.equal(ctx.status().browserCalls, 0);
 });
 
+test("opted-in automatic photo becomes actual scene media before narration and persists draft provenance",async t=>{
+  const ctx=await context(t);
+  const general=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...general,voice:ctx.job.voice};
+  const beatId=ctx.job.beats[0].id,photoHash="f".repeat(64),events=[];
+  const media={assetType:"photo",url:`/__video_media/${photoHash}.jpg`,sha256:photoHash,
+    provider:"pexels",assetId:"42",sourceUrl:"https://www.pexels.com/photo/roof-42/",
+    license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
+    rightsStatus:"draft-provider-license",automaticallyPrepared:true};
+  ctx.injected.prepareApprovedSceneMedia=async()=>({bindings:{},assets:[],fingerprint:hash("empty")});
+  ctx.injected.prepareAutomaticDraftMedia=async(input)=>{
+    events.push("photo-prepare");
+    assert.equal(input.pexelsKey,"local-test-key");
+    assert.equal(input.shotMap[0].beatId,beatId);
+    return {bindings:{[beatId]:media},assets:[{url:media.url,path:join(ctx.root,"photo.jpg"),
+      sha256:photoHash,assetType:"photo"}],fingerprint:hash("photo-plan"),prepared:1,warnings:[]};
+  };
+  const speech=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{events.push("narration");return speech(...args);};
+  ctx.injected.startLocalStageServer=async({validatedPlan,approvedMedia})=>{
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.rightsStatus,"draft-provider-license");
+    assert.equal(approvedMedia.length,1);
+    return {url:"http://127.0.0.1:9876/video-export.html",buildHash:"b".repeat(64),close:async()=>{}};
+  };
+  const produced=await produceVideo(ctx.job,{...ctx.opts,sceneAssetProjectId:"dossier-1",
+    sceneShotMap:[{shotId:"scene-roof",beatId}],autoPrepareFreeMedia:true,pexelsKey:"local-test-key",
+    prepareAssetSuggestions:async()=>{
+      await writeFile(join(ctx.opts.out,"asset-suggestions.json"),JSON.stringify({
+        suggestions:{kind:"contentgen-scene-asset-suggestions",scenes:[]}}));
+      return {status:"completed"};
+    }},ctx.injected);
+  assert.deepEqual(events,["photo-prepare","narration"]);
+  const manifest=JSON.parse(await readFile(join(produced.releaseDir,"render-manifest.json"),"utf8"));
+  assert.equal(manifest.sceneMedia[0].rightsStatus,"draft-provider-license");
+  assert.equal(manifest.sceneMedia[0].sha256,photoHash);
+});
+
 test("release manifest records approved sound identity, event, and measured cue sample without local paths",async t=>{
   const ctx=await context(t);
   const original=ctx.injected.renderMasterAudio;

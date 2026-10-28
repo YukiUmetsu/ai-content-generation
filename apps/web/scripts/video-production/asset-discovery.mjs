@@ -299,6 +299,7 @@ async function resolveAssetFiles(input,opts){
     if(!opts.pexelsKey)throw Error("Set PEXELS_API_KEY locally before approving Pexels media.");
     const item=await getJson(`https://api.pexels.com/v1/photos/${encodeURIComponent(input.assetId)}`,
       {...opts,headers:{Authorization:opts.pexelsKey}});
+    if(String(item?.id)!==input.assetId)throw Error("Pexels returned a different photograph identifier.");
     const url=providerUrl(item.src?.large??item.src?.original,["images.pexels.com"]);
     return {files:[{name:"photo.jpg",url,size:0}],meta:{provider:"pexels",assetId:input.assetId,
       assetType:"photo",title:visible(item.alt,120)||`Pexels photo ${input.assetId}`,
@@ -320,6 +321,20 @@ async function resolveAssetFiles(input,opts){
     return {files:[{name:"video.mp4",url,size:0}],meta:candidate};
   }
   throw Error("Unsupported asset type or provider.");
+}
+
+/** Draft-only automated Pexels acquisition. The official per-ID API response,
+ * not a search result or caller-provided URL, determines the media bytes and
+ * their source/creator/license metadata. It does not approve publication. */
+export async function downloadPexelsDraftPhoto(assetId,opts={}){
+  ident(assetId,"Pexels asset");
+  if(!/^[1-9][0-9]{0,15}$/u.test(assetId))throw Error("Pexels photo ID is invalid.");
+  const {files,meta}=await resolveAssetFiles({provider:"pexels",assetId,assetType:"photo"},opts);
+  if(meta?.assetId!==assetId||meta?.assetType!=="photo"||
+    meta.license!=="Pexels License"||meta.licenseUrl!=="https://www.pexels.com/license/")
+    throw Error("Pexels did not verify the requested photograph and license.");
+  const bytes=await downloadFile(files[0],{...opts,provider:"pexels"});
+  return {bytes,meta};
 }
 
 /** User-approved import. No arbitrary user-supplied download URL is ever trusted. */

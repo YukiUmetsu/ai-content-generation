@@ -53,6 +53,13 @@ function mediaSearchChoice(input){
     throw Error("Free media search preference must be true or false.");
   return input.searchFreeMedia===true;
 }
+function autoMediaChoice(input){
+  if(input.autoPrepareFreeMedia!==undefined&&typeof input.autoPrepareFreeMedia!=="boolean")
+    throw Error("Automatic draft media preference must be true or false.");
+  if(input.autoPrepareFreeMedia===true&&input.searchFreeMedia!==true)
+    throw Error("Automatic draft media requires the enabled provider search preference.");
+  return input.autoPrepareFreeMedia===true;
+}
 const sampleExcerpt=text=>{
   const compact=String(text??"").replace(/\s+/gu," ").trim();
   if(!compact)throw Error("The first scene has no narration to audition.");
@@ -453,6 +460,7 @@ export function createDirectorProduction(deps={}){
       if(route==="/check"){
         const input=await readBody(req);
         const searchFreeMedia=mediaSearchChoice(input)&&Boolean(input.productionId);
+        const autoPrepareFreeMedia=autoMediaChoice(input)&&searchFreeMedia;
         if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
           throw Error("Invalid production identity.");
         if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
@@ -461,7 +469,7 @@ export function createDirectorProduction(deps={}){
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -489,6 +497,7 @@ export function createDirectorProduction(deps={}){
       if(route==="/start"){
         const input=await readBody(req);
         const searchFreeMedia=mediaSearchChoice(input)&&Boolean(input.productionId);
+        const autoPrepareFreeMedia=autoMediaChoice(input)&&searchFreeMedia;
         if(input.productionId!==undefined&&!productionIdPattern.test(input.productionId))
           throw Error("Invalid production identity.");
         if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
@@ -497,7 +506,7 @@ export function createDirectorProduction(deps={}){
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
@@ -567,6 +576,7 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
+              autoPrepareFreeMedia,pexelsKey:autoPrepareFreeMedia?env.PEXELS_API_KEY:undefined,
               ...(tracker?{sceneJobs:tracker}:{}),
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
               sceneAssetBundle:input.bundle,

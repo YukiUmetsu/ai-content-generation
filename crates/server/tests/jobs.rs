@@ -658,7 +658,11 @@ fn completed_scene_job_survives_worker_restart_while_interrupted_scene_retries()
 fn exhausted_single_scene_job_can_be_retried_without_restarting_other_scenes() {
     let dir = TestDir::new("contentgen-scene-retry");
     let mut connection = migrated_database(&dir);
-    for kind in ["video-narration-scene", "video-render-segment"] {
+    for kind in [
+        "video-asset-download",
+        "video-narration-scene",
+        "video-render-segment",
+    ] {
         let spec = request(kind, kind, vec![node("scene", &[], 1)]);
         let dag = created(&mut connection, &spec).dag;
         let id = node_id(&dag, "scene");

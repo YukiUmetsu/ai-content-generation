@@ -32,10 +32,15 @@ const defaults:Settings={provider:"local",voiceId:"",providerRevision:"",modelId
   endpoint:"http://127.0.0.1:8765",apiKey:"",localVoiceAuthorized:false,voiceConsent:false,transmitText:false};
 const voiceProfileKey="contentgen:production-voice-profile:v1";
 const freeMediaKey="contentgen:production-free-media:v1";
+const automaticMediaKey="contentgen:production-auto-media:v1";
 function savedFreeMediaPreference():boolean{
   // Scene descriptions can reveal private research. Never contact public
   // stock-media providers until the user explicitly enables the search.
   try{return localStorage.getItem(freeMediaKey)==="enabled";}catch{return false;}
+}
+function savedAutomaticMediaPreference():boolean{
+  // An older search-only opt-in is never silently upgraded to downloads.
+  try{return localStorage.getItem(automaticMediaKey)==="enabled";}catch{return false;}
 }
 function savedVoiceSettings():Settings{
   try{
@@ -67,6 +72,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const [stage,setStage]=useState<Stage>(initialStage);
   const [settings,setSettings]=useState<Settings>(savedVoiceSettings);
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
+  const [autoPrepareFreeMedia,setAutoPrepareFreeMedia]=useState(savedAutomaticMediaPreference);
   useEffect(()=>{
     try{localStorage.setItem(voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
       providerRevision:settings.providerRevision,modelId:settings.modelId,endpoint:settings.endpoint}));}
@@ -124,10 +130,19 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const changeMediaSearch=(enabled:boolean)=>{
     inputRevision.current++;
     setSearchFreeMedia(enabled);setReady(false);
+    if(!enabled)setAutoPrepareFreeMedia(false);
     try{localStorage.setItem(freeMediaKey,enabled?"enabled":"disabled");}
     catch{/* The choice still applies to this render when storage is unavailable. */}
+    if(!enabled){try{localStorage.setItem(automaticMediaKey,"disabled");}catch{/* Private mode. */}}
     setState(current=>["rendering","done"].includes(current.state)?current:
       {state:"idle",phase:"idle",message:"Media search preference changed; check again before rendering."});
+  };
+  const changeAutomaticMedia=(enabled:boolean)=>{
+    inputRevision.current++;
+    setAutoPrepareFreeMedia(enabled);setReady(false);
+    try{localStorage.setItem(automaticMediaKey,enabled?"enabled":"disabled");}catch{/* Private mode. */}
+    setState(current=>["rendering","done"].includes(current.state)?current:
+      {state:"idle",phase:"idle",message:"Scene media preference changed; check again before rendering."});
   };
   const payload={dossier,bundle};
   useEffect(()=>{
@@ -262,7 +277,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   async function check(){
     setWorking("check");setNotice("");setReady(false);
     try{
-      const response=await request("check",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings,searchFreeMedia,autoPrepareFreeMedia:searchFreeMedia&&autoPrepareFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
@@ -285,7 +300,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         if(revision!==inputRevision.current)return;
         setPreview(result);
       }
-      const requestInput={...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
+      const requestInput={...payload,settings,searchFreeMedia,autoPrepareFreeMedia:searchFreeMedia&&autoPrepareFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
@@ -319,7 +334,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     if(!ready)return;
     setWorking("start");setNotice("");
     try{
-      const r=await request("start",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
+      const r=await request("start",{...payload,settings,searchFreeMedia,autoPrepareFreeMedia:searchFreeMedia&&autoPrepareFreeMedia,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
       if(!r.started)throw Error("Studio did not confirm render startup.");
       setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
       setReady(false);
@@ -467,7 +482,13 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
             <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
               checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
               onChange={event=>changeMediaSearch(event.target.checked)}/>
-            Search free scene media while rendering (optional). Enabling this sends scene subjects to public Poly Haven and optional Pexels services; suggestions are saved locally, never downloaded or used without review.
+            Search free scene media while rendering (optional). Sends scene subjects to Poly Haven and optional Pexels; search-only suggestions stay local and are never used automatically.
+          </label>
+          <label className="ml-5 flex items-start gap-2 rounded-control border border-border/70 bg-surface/70 p-3 text-xs text-muted-foreground">
+            <input type="checkbox" className="mt-0.5" aria-label="Automatically prepare suitable licensed draft photos"
+              checked={searchFreeMedia&&autoPrepareFreeMedia} disabled={!searchFreeMedia||!!working||state.state==="rendering"}
+              onChange={event=>changeAutomaticMedia(event.target.checked)}/>
+            Automatically prepare suitable Pexels photos for the draft. ContentGen verifies each photo against Pexels before download, checks image integrity and keeps your manually selected scenes unchanged. You still review source rights and visual accuracy before publishing. Requires a locally configured Pexels API key.
           </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}
