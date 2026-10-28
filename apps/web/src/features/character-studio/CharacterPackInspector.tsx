@@ -10,6 +10,17 @@ import type { CharacterDraft } from "./character-drafts-api";
 import { summarizeRigMetadata } from "./rig-metadata";
 import { RigCalibrationEditor } from "./RigCalibrationEditor";
 import type { Locale } from "@/features/registry";
+import { exampleCharacterJson, exampleCharacterZip } from "./example-character";
+
+const manifestFields = [
+  { key: "schemaVersion / characterId / revision", en: "Required version 1, stable ID and editable revision string.", ja: "必須。バージョン 1、固定 ID、改訂番号。" },
+  { key: "mode / design", en: "sprite-2d or puppet-2.5d; logical canvas width and height in pixels.", ja: "2D / 2.5D モードと論理キャンバスの幅・高さ（px）。" },
+  { key: "channels / palette", en: "Named animation groups; optional color swatches. Each part names a declared channel.", ja: "動作グループ名と任意の色設定。パーツは宣言済みチャンネルを指定。" },
+  { key: "assets", en: "Image IDs mapped to safe layers/ paths, PNG/WebP type, actual width/height and source/license.", ja: "画像 ID、layers/ の安全なパス、PNG/WebP、実寸、出典とライセンス。" },
+  { key: "parts", en: "Unique IDs, optional parent IDs, channel, asset ID, image-pixel pivot, z order and optional variants/rest.", ja: "固有 ID、親、チャンネル、画像、ピボット（px）、重なり順、差分と初期配置。" },
+  { key: "poses / basePose", en: "Named, per-part transform deltas and the name of an existing default pose.", ja: "パーツごとのポーズ差分と既存の初期ポーズ名。" },
+  { key: "speech / capabilities", en: "Optional mouth part, closed/open variant map and declared features; speech timing is not verified here.", ja: "任意の口パーツと差分、機能宣言。音声との同期は別途検証。" },
+] as const;
 
 export function CharacterPackInspector({ locale, projectId }: { locale: Locale; projectId: string }) {
   // A project switch must invalidate in-flight ZIP inspections, saves, and
@@ -27,6 +38,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const [saving, setSaving] = useState(false);
   const [drafts, setDrafts] = useState<CharacterDraft[]>([]);
   const [draftsError, setDraftsError] = useState("");
+  const [exampleDownloadError, setExampleDownloadError] = useState("");
   const [loadedProjectId, setLoadedProjectId] = useState("");
   const [lastSaved, setLastSaved] = useState("");
   const bytesRef = useRef<ArrayBuffer | null>(null);
@@ -38,6 +50,24 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const rig = pack ? summarizeRigMetadata(pack.definition) : null;
   const urls = preview?.urls;
   const draftsLoading = loadedProjectId !== projectId;
+
+  function downloadExample(format: "json" | "zip") {
+    setExampleDownloadError("");
+    try {
+      const isZip = format === "zip";
+      const payload = isZip ? exampleCharacterZip() : exampleCharacterJson();
+      const file = new Blob([payload], { type: isZip ? "application/zip" : "application/json" });
+      const url = URL.createObjectURL(file);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = isZip ? "contentgen-example-character.zip" : "character.json";
+      document.body.append(link);
+      try { link.click(); }
+      finally { link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    } catch (caught) {
+      setExampleDownloadError(caught instanceof Error ? caught.message : "Example file could not be downloaded.");
+    }
+  }
 
   useEffect(() => () => {
     generation.current++;
@@ -295,12 +325,51 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
       </ul>}
     </Surface>
 
-    <details className="rounded-xl border border-border bg-surface px-5 py-4 text-sm text-foreground">
-      <summary className="cursor-pointer font-medium">{ja ? "ZIPの作り方と必要なファイル" : "ZIP format and rig instructions"}</summary>
-      <div className="mt-3 space-y-2 text-sm leading-relaxed text-muted-foreground">
-        <p>{ja ? "ルートにcharacter.jsonを置き、参照する画像をlayers/フォルダーに格納します。" : "Place character.json at the ZIP root and put all referenced transparent sprites inside layers/."}</p>
-        <p>{ja ? "schemaVersion 1、sprite-2d / puppet-2.5d、パーツ階層、チャンネル、ピボット、ポーズを宣言します。" : "Use schemaVersion 1, sprite-2d or puppet-2.5d, and explicit part parents, channels, pivots, poses and image provenance."}</p>
-        <p>{ja ? "公開・商用利用の権利承認やアニメーションの検証は別の手順です。" : "Rig playback, licenses, voice consent and publishing approval remain separate steps."}</p>
+    <details className="rounded-xl border border-border bg-surface px-5 py-4 text-sm text-foreground" aria-label={ja ? "ZIP形式とリグの作り方" : "ZIP format and rig instructions"}>
+      <summary className="cursor-pointer font-semibold focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{ja ? "ZIPの作り方・character.json の例・ダウンロード" : "ZIP format and rig instructions · examples & downloads"}</summary>
+      <div className="mt-5 space-y-5 text-sm leading-relaxed">
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
+          <div className="max-w-xl">
+            <h3 className="font-semibold">{ja ? "まずは実際に読み込めるサンプルから" : "Start with a package you can actually import"}</h3>
+            <p className="mt-1 text-xs text-muted-foreground">{ja ? "同じJSONと透過PNG３枚を含み、上の ZIP インポーターで検査できる例です。Pip / Quill の完成リグではありません。" : "These downloads share one manifest. The ZIP includes three original transparent PNG layers and passes this inspector. It is a teaching sprite, not the promised Pip or Quill character rig."}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" icon={<Download className="size-4"/>} onClick={() => downloadExample("json")}>{ja ? "JSONの例を保存" : "Download example character.json"}</Button>
+            <Button size="sm" icon={<FileArchive className="size-4"/>} onClick={() => downloadExample("zip")}>{ja ? "ZIPの例を保存" : "Download example ZIP"}</Button>
+          </div>
+          {!!exampleDownloadError&&<p role="alert" className="w-full text-xs text-danger">{ja ? "ファイルを保存できませんでした: " : "Could not save example: "}{exampleDownloadError}</p>}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+          <div className="min-w-0 space-y-3">
+            <h3 className="font-semibold">{ja ? "1 · ZIP内のファイル配置" : "1 · Arrange the ZIP files"}</h3>
+            <pre className="overflow-x-auto rounded-lg border border-border bg-surface-subtle p-3 text-xs leading-6 text-foreground">{"character.json\nlayers/\n  body.png\n  mouth-closed.png\n  mouth-open.png"}</pre>
+            <p className="text-xs text-muted-foreground">{ja ? "ZIPの最上位に character.json を置きます。画像は透過PNGまたはWebP。参照パスは layers/ から始まり、大文字小文字も一致させてください。" : "Place character.json at the ZIP root. Use transparent PNG or WebP sprites, and reference each asset by its exact case-sensitive layers/ path. No absolute paths, ../ segments, symlinks or scripts."}</p>
+            <h3 className="pt-2 font-semibold">{ja ? "2 · フィールドの意味" : "2 · What each field means"}</h3>
+            <dl className="space-y-2">
+              {manifestFields.map(field => <div key={field.key} className="rounded-lg border border-border/70 px-3 py-2">
+                <dt className="break-words font-mono text-xs font-semibold text-foreground">{field.key}</dt>
+                <dd className="mt-1 text-xs text-muted-foreground">{ja ? field.ja : field.en}</dd>
+              </div>)}
+            </dl>
+          </div>
+          <div className="min-w-0 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold">{ja ? "3 · 実際の character.json" : "3 · Complete example character.json"}</h3>
+              <span className="rounded-full bg-surface-subtle px-2.5 py-1 text-[11px] text-muted-foreground">schemaVersion 1</span>
+            </div>
+            <pre className="max-h-[34rem] overflow-auto rounded-lg border border-border bg-surface-subtle p-3 font-mono text-[11px] leading-5 text-foreground" tabIndex={0} aria-label="Example character.json"><code>{exampleCharacterJson()}</code></pre>
+            <p className="text-xs text-muted-foreground">{ja ? "ピボットは画像内のピクセル座標です。rest は親パーツに対する初期位置、z は重なり順です。JSONのみでは画像を含まないため、ZIPに必要なレイヤーを同梱してください。" : "Pivots use source-image pixel coordinates. rest positions a part relative to its parent; z controls layering. The JSON download alone does not contain sprites: package the referenced layers into a ZIP before import."}</p>
+          </div>
+        </div>
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-xs text-muted-foreground">
+          <h3 className="font-semibold text-foreground">{ja ? "よくあるエラーと検証範囲" : "Common errors and what the check proves"}</h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>{ja ? "“missing asset” → assets の ID と parts の asset を合わせ、画像を同梱。" : "“missing asset” → match parts[].asset to an assets key and include its referenced file."}</li>
+            <li>{ja ? "“basePose” → poses 内に同名のポーズを定義。" : "“basePose” → declare the named pose inside poses."}</li>
+            <li>{ja ? "“Unsafe ZIP path” → ../ や絶対パスを削除。" : "“Unsafe ZIP path” → remove ../, absolute paths, symlinks and unexpected files."}</li>
+            <li>{ja ? "ZIP は圧縮後16MB、展開後64MBまで。構造検査は動作・音声・権利の承認ではありません。" : "ZIP ≤16 MB compressed, ≤64 MB expanded (≤12 MB per layer). A valid manifest does not verify animation, lip-sync, rights or export readiness."}</li>
+          </ul>
+        </div>
       </div>
     </details>
   </section>;

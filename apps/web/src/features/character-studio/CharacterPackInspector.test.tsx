@@ -44,6 +44,26 @@ afterEach(() => {
 });
 
 describe("CharacterPackInspector", () => {
+  it("explains the real manifest schema and offers both importable ZIP and matching JSON downloads", () => {
+    const clicked = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      render(<CharacterPackInspector locale="en" projectId="project-local" />);
+      fireEvent.click(screen.getByText(/ZIP format and rig instructions · examples & downloads/));
+      expect(screen.getByText("1 · Arrange the ZIP files")).toBeInTheDocument();
+      expect(screen.getByText("2 · What each field means")).toBeInTheDocument();
+      expect(screen.getByText("3 · Complete example character.json")).toBeInTheDocument();
+      expect(screen.getByLabelText("Example character.json")).toHaveTextContent('"characterId": "example-sprite"');
+      expect(screen.getByText(/ZIP ≤16 MB compressed/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Download example character.json" }));
+      fireEvent.click(screen.getByRole("button", { name: "Download example ZIP" }));
+      expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
+      expect(clicked).toHaveBeenCalledTimes(2);
+      vi.mocked(URL.createObjectURL).mockImplementationOnce(() => { throw Error("Downloads are blocked."); });
+      fireEvent.click(screen.getByRole("button", { name: "Download example ZIP" }));
+      expect(screen.getByRole("alert")).toHaveTextContent("Downloads are blocked.");
+    } finally { clicked.mockRestore(); }
+  });
+
   it("previews safely inspected layers and revokes temporary URLs when unmounted", async () => {
     vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
     const { unmount } = render(<CharacterPackInspector locale="en" projectId="project-local" />);
