@@ -181,6 +181,44 @@ test("opted-in automatic photo becomes actual scene media before narration and p
   assert.equal(manifest.sceneMedia[0].sha256,photoHash);
 });
 
+test("opted-in automatic H.264 footage reaches the actual Kumiki scene and keeps draft provenance",async t=>{
+  const ctx=await context(t);
+  const general=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...general,voice:ctx.job.voice};
+  const beatId=ctx.job.beats[0].id,videoHash="e".repeat(64),events=[];
+  const media={assetType:"video",url:`/__video_media/${videoHash}.mp4`,sha256:videoHash,
+    provider:"pexels",assetId:"71",sourceUrl:"https://www.pexels.com/video/roof-71/",
+    license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
+    durationSeconds:12,width:1280,height:720,
+    rightsStatus:"draft-provider-license",automaticallyPrepared:true};
+  ctx.injected.prepareApprovedSceneMedia=async()=>({bindings:{},assets:[],fingerprint:hash("empty")});
+  ctx.injected.prepareAutomaticDraftMedia=async()=>({bindings:{[beatId]:media},
+    assets:[{url:media.url,path:join(ctx.root,"clip.mp4"),sha256:videoHash,assetType:"video"}],
+    fingerprint:hash("video-plan"),prepared:1,warnings:[]});
+  const speech=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{events.push("narration");return speech(...args);};
+  ctx.injected.startLocalStageServer=async({validatedPlan,approvedMedia})=>{
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.assetType,"video");
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.durationSeconds,12);
+    assert.equal(approvedMedia[0].assetType,"video");
+    assert.equal(approvedMedia[0].url,media.url);
+    return {url:"http://127.0.0.1:9876/video-export.html",buildHash:"b".repeat(64),close:async()=>{}};
+  };
+  const produced=await produceVideo(ctx.job,{...ctx.opts,sceneAssetProjectId:"dossier-1",
+    sceneShotMap:[{shotId:"scene-roof",beatId}],autoPrepareFreeMedia:true,pexelsKey:"local-test-key",
+    prepareAssetSuggestions:async()=>{
+      await writeFile(join(ctx.opts.out,"asset-suggestions.json"),JSON.stringify({
+        suggestions:{kind:"contentgen-scene-asset-suggestions",scenes:[]}}));
+      return {status:"completed"};
+    },onProgress:async event=>{if(event.phase==="asset-prepared")events.push(event.message);}},ctx.injected);
+  assert.equal(events.at(-1),"narration");
+  assert.match(events[0],/original scene media items prepared/);
+  const manifest=JSON.parse(await readFile(join(produced.releaseDir,"render-manifest.json"),"utf8"));
+  assert.equal(manifest.sceneMedia[0].assetType,"video");
+  assert.equal(manifest.sceneMedia[0].sha256,videoHash);
+  assert.equal(manifest.sceneMedia[0].rightsStatus,"draft-provider-license");
+});
+
 test("release manifest records approved sound identity, event, and measured cue sample without local paths",async t=>{
   const ctx=await context(t);
   const original=ctx.injected.renderMasterAudio;

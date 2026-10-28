@@ -237,8 +237,8 @@ export async function produceVideo(candidate, options, deps = {}) {
           pexelsKey:options.pexelsKey,signal:options.signal,sceneJobs:options.sceneJobs,
           ffprobe:options.ffprobe,
         });
-        await options.onProgress?.({phase:"asset-prepared",autoPhotos:sceneMedia.prepared,
-          message:sceneMedia.prepared?`${sceneMedia.prepared} original scene photos prepared; remaining visuals use Kumiki.`:
+        await options.onProgress?.({phase:"asset-prepared",autoMedia:sceneMedia.prepared,
+          message:sceneMedia.prepared?`${sceneMedia.prepared} original scene media items prepared; remaining visuals use Kumiki.`:
             "Using approved images and Kumiki visuals for the draft."});
       }
     }

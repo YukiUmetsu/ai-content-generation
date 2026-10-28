@@ -337,6 +337,21 @@ export async function downloadPexelsDraftPhoto(assetId,opts={}){
   return {bytes,meta};
 }
 
+/** Original, per-ID API-verified Pexels footage for an opted-in draft. The
+ * caller must separately probe the downloaded MP4 codec and dimensions; this
+ * endpoint never grants publication approval. */
+export async function downloadPexelsDraftVideo(assetId,opts={}){
+  ident(assetId,"Pexels asset");
+  if(!/^[1-9][0-9]{0,15}$/u.test(assetId))throw Error("Pexels video ID is invalid.");
+  const {files,meta}=await resolveAssetFiles({provider:"pexels",assetId,assetType:"video"},opts);
+  if(meta?.assetId!==assetId||meta?.assetType!=="video"||
+    meta.license!=="Pexels License"||meta.licenseUrl!=="https://www.pexels.com/license/"||
+    !Number.isSafeInteger(meta.durationSeconds)||meta.durationSeconds<1||meta.durationSeconds>90)
+    throw Error("Pexels did not verify the requested footage, duration or license.");
+  const bytes=await downloadFile(files[0],{...opts,provider:"pexels"});
+  return {bytes,meta};
+}
+
 /** User-approved import. No arbitrary user-supplied download URL is ever trusted. */
 export async function approveAsset(input,opts={}){
   if(input?.confirmDownload!==true||input?.confirmRights!==true)

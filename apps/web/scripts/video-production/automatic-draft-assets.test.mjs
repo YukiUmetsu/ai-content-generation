@@ -6,7 +6,7 @@ import {createHash} from "node:crypto";
 import {mkdtemp,readFile,rm,writeFile,readdir} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {downloadPexelsDraftPhoto} from "./asset-discovery.mjs";
+import {downloadPexelsDraftPhoto,downloadPexelsDraftVideo} from "./asset-discovery.mjs";
 import {prepareAutomaticDraftMedia} from "./automatic-draft-assets.mjs";
 
 const exec=promisify(execFile);
@@ -23,6 +23,14 @@ const shotMap=[{shotId:"shot-a",beatId:"beat-a"},{shotId:"shot-b",beatId:"beat-b
   {shotId:"shot-c",beatId:"beat-c"}];
 const existing=()=>({bindings:{},assets:[],fingerprint:hash("approved-assets")});
 const probePhoto=async()=>({codec:"mjpeg",width:1280,height:720});
+const videoBytes=Buffer.from("0000ftyp0000fake-mp4");
+const videoMeta=assetId=>({provider:"pexels",assetId,assetType:"video",
+  sourceUrl:`https://www.pexels.com/video/roof-footage-${assetId}/`,
+  license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
+  creator:"Videographer",durationSeconds:12});
+const videoCandidate=assetId=>({...videoMeta(assetId),title:"Close-up home roof repair",
+  match:{grade:"strong",score:82}});
+const probeVideo=async()=>({codec:"h264",width:1280,height:720,durationSeconds:12});
 
 test("automatic draft images honor manually pinned scenes and avoid duplicate photos",async t=>{
   const out=await mkdtemp(join(tmpdir(),"contentgen-auto-photos-"));
@@ -73,6 +81,55 @@ test("verified draft cache survives worker restart and can be copied into a new 
   assert.equal(third.warnings.length,1);
 });
 
+test("automatic Pexels MP4 footage has a separately claimed job and survives a verified restart",async t=>{
+  const first=await mkdtemp(join(tmpdir(),"contentgen-video-prior-"));
+  const next=await mkdtemp(join(tmpdir(),"contentgen-video-next-"));
+  t.after(()=>Promise.all([rm(first,{recursive:true,force:true}),rm(next,{recursive:true,force:true})]));
+  const calls=[];
+  const sceneJobs={beginScene:async info=>{calls.push(["claim",info.kind,info.sceneId]);return "claim";},
+    completeScene:async id=>calls.push(["complete",id]),failScene:async id=>calls.push(["fail",id])};
+  const input={suggestions:suggestions([{shotId:"shot-a",candidates:[videoCandidate("71")]}]),
+    shotMap,existing:existing(),outputDir:first,pexelsKey:"key",sceneJobs};
+  const downloaded=await prepareAutomaticDraftMedia(input,{downloadVideo:async id=>({
+    bytes:videoBytes,meta:videoMeta(id)}),probeVideo});
+  assert.equal(downloaded.prepared,1);
+  assert.equal(downloaded.bindings["beat-a"].assetType,"video");
+  assert.equal(downloaded.bindings["beat-a"].durationSeconds,12);
+  assert.ok(downloaded.assets[0].url.endsWith(".mp4"));
+  assert.equal(hash(await readFile(downloaded.assets[0].path)),hash(videoBytes));
+  assert.deepEqual(calls,[["claim","asset-download","beat-a"],["complete","claim"]]);
+
+  const resumed=await prepareAutomaticDraftMedia({...input,outputDir:next,previousOutputDir:first},
+    {downloadVideo:()=>{throw Error("Cached footage must not redownload");},probeVideo});
+  assert.equal(resumed.prepared,1);
+  assert.equal(resumed.fingerprint,downloaded.fingerprint);
+  assert.deepEqual(calls,[["claim","asset-download","beat-a"],["complete","claim"]],
+    "reusing fully verified footage must not repeat the download job");
+  assert.equal(hash(await readFile(resumed.assets[0].path)),hash(videoBytes));
+  await writeFile(resumed.assets[0].path,"damaged");
+  const denied=await prepareAutomaticDraftMedia({...input,outputDir:next},
+    {downloadVideo:()=>{throw Error("Provider unavailable");},probeVideo});
+  assert.equal(denied.prepared,0);
+  assert.equal(denied.warnings.length,1,"a corrupted cache never becomes a scene binding");
+});
+
+test("auto footage rejects unsupported codecs, oversized dimensions and mismatched rights",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-video-bad-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const input={suggestions:suggestions([{shotId:"shot-a",candidates:[videoCandidate("71")]}]),
+    shotMap,existing:existing(),outputDir:out,pexelsKey:"key"};
+  for(const probe of [{codec:"hevc",width:1280,height:720,durationSeconds:12},
+    {codec:"h264",width:1280,height:720,durationSeconds:91},
+    {codec:"h264",width:640,height:360,durationSeconds:12}]){
+    const result=await prepareAutomaticDraftMedia(input,{downloadVideo:async id=>({
+      bytes:videoBytes,meta:videoMeta(id)}),probeVideo:async()=>probe});
+    assert.equal(result.prepared,0);
+  }
+  const wrong=await prepareAutomaticDraftMedia(input,{downloadVideo:async id=>({
+    bytes:videoBytes,meta:{...videoMeta(id),license:"Unknown License"}}),probeVideo});
+  assert.equal(wrong.prepared,0);
+});
+
 test("provider mismatch, low-resolution photos and cancellation fail safely",async t=>{
   const out=await mkdtemp(join(tmpdir(),"contentgen-photo-reject-"));
   t.after(()=>rm(out,{recursive:true,force:true}));
@@ -116,6 +173,30 @@ test("automatic download verifies per-ID Pexels response and trusted JPEG endpoi
   await assert.rejects(downloadPexelsDraftPhoto("../42",{pexelsKey:"secret-key",fetchImpl}),/identifier|invalid/i);
 });
 
+test("Pexels footage download resolves only a matching official ID and trusted HD MP4",async()=>{
+  const seen=[];
+  const fetchImpl=async(url,opts)=>{
+    seen.push(String(url));
+    if(String(url).startsWith("https://api.pexels.com/")){
+      assert.equal(opts.headers.Authorization,"secret-key");
+      return new Response(JSON.stringify({id:71,url:"https://www.pexels.com/video/roof-71/",
+        image:"https://images.pexels.com/videos/71.jpg",duration:12,
+        user:{name:"Camera Operator"},video_files:[{file_type:"video/mp4",quality:"hd",
+          width:1280,height:720,link:"https://videos.pexels.com/video/71.mp4"}]}),
+      {headers:{"Content-Type":"application/json"}});
+    }
+    assert.equal(String(url),"https://videos.pexels.com/video/71.mp4");
+    return new Response(videoBytes,{headers:{"Content-Type":"video/mp4"}});
+  };
+  const result=await downloadPexelsDraftVideo("71",{pexelsKey:"secret-key",fetchImpl});
+  assert.equal(hash(result.bytes),hash(videoBytes));
+  assert.equal(result.meta.creator,"Camera Operator");
+  assert.equal(result.meta.durationSeconds,12);
+  assert.equal(seen.length,2);
+  await assert.rejects(downloadPexelsDraftVideo("72",{pexelsKey:"secret-key",fetchImpl}),/different video/i);
+  await assert.rejects(downloadPexelsDraftVideo("../71",{pexelsKey:"secret-key",fetchImpl}),/invalid/i);
+});
+
 test("real FFmpeg-generated JPEG is probed before automatic draft usage",async t=>{
   const out=await mkdtemp(join(tmpdir(),"contentgen-photo-real-probe-"));
   t.after(()=>rm(out,{recursive:true,force:true}));
@@ -129,4 +210,22 @@ test("real FFmpeg-generated JPEG is probed before automatic draft usage",async t
   assert.equal(result.prepared,1);
   assert.equal(result.bindings["beat-a"].width,1280);
   assert.equal(result.bindings["beat-a"].height,720);
+});
+
+test("real H.264 MP4 passes FFprobe and is reused without rerendering another scene",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-video-real-probe-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const generated=join(out,"generated.mp4");
+  await exec("ffmpeg",["-v","error","-f","lavfi","-i","color=c=blue:s=1280x720:r=12",
+    "-t","1","-c:v","libx264","-pix_fmt","yuv420p",generated],{timeout:30000});
+  const bytes=await readFile(generated);
+  const result=await prepareAutomaticDraftMedia({suggestions:suggestions([{
+    shotId:"shot-a",candidates:[videoCandidate("71")]}]),shotMap,existing:existing(),
+    outputDir:join(out,"owned"),pexelsKey:"test"},
+  {downloadVideo:async id=>({bytes,meta:videoMeta(id)})});
+  assert.equal(result.prepared,1);
+  assert.equal(result.bindings["beat-a"].assetType,"video");
+  assert.equal(result.bindings["beat-a"].width,1280);
+  assert.equal(result.bindings["beat-a"].height,720);
+  assert.equal(result.bindings["beat-a"].durationSeconds,1);
 });

@@ -493,13 +493,13 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
             <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
               checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
               onChange={event=>changeMediaSearch(event.target.checked)}/>
-            Search free scene media while rendering (optional). Sends scene subjects to Poly Haven and optional Pexels; search-only suggestions stay local and are never used automatically.
+            Search free scene media while rendering (optional). Sends scene subjects to Poly Haven and optional Pexels; results stay suggestions unless automatic preparation below is enabled.
           </label>
           <label className="ml-5 flex items-start gap-2 rounded-control border border-border/70 bg-surface/70 p-3 text-xs text-muted-foreground">
-            <input type="checkbox" className="mt-0.5" aria-label="Automatically prepare suitable licensed draft photos"
+            <input type="checkbox" className="mt-0.5" aria-label="Automatically prepare suitable licensed draft media"
               checked={searchFreeMedia&&autoPrepareFreeMedia} disabled={!searchFreeMedia||!!working||state.state==="rendering"}
               onChange={event=>changeAutomaticMedia(event.target.checked)}/>
-            Automatically prepare suitable Pexels photos for the draft. ContentGen verifies each photo against Pexels before download, checks image integrity and keeps your manually selected scenes unchanged. You still review source rights and visual accuracy before publishing. Requires a locally configured Pexels API key.
+            Prepare suitable Pexels photos or short HD footage for the draft. ContentGen verifies each item with Pexels, checks image/video integrity and keeps manually selected scenes unchanged. Review rights and visual accuracy before publishing. Requires a locally configured Pexels API key.
           </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}
