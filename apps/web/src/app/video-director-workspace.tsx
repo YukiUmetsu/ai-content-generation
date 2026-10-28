@@ -32,6 +32,8 @@ type DirectorSnapshot={bundle:Bundle;revisions:Array<{shotId:string;impacts:Impa
 type DirectorStage="storyboard"|"assets"|"sound"|"preview";
 const stageIcons={storyboard:Layers3,assets:Images,sound:Headphones,preview:Film};
 type StoryboardSync={storyboardSha256:string;applied:string[];manualReview:string[]};
+type SceneClipStatus={state:"idle"|"starting"|"rendering"|"done"|"failed"|"cancelled";
+  shotId?:string|null;message:string;videoUrl?:string|null;jobId?:string|null;sourceRevision?:string};
 const field="w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const header="text-xs font-semibold uppercase tracking-wide text-muted-foreground";
 async function request(path:string,data:unknown){
@@ -48,6 +50,15 @@ async function previewScene(dossier:Dossier,bundle:Bundle):Promise<LiveVisualPre
     body:JSON.stringify({dossier,bundle}),signal:AbortSignal.timeout(15000)});
   const data=await response.json() as LiveVisualPreviewData & {error?:string};
   if(!response.ok)throw Error(data.error??"Local scene renderer is unavailable.");
+  return data;
+}
+async function sceneClipRequest(path:string,payload?:unknown):Promise<Record<string,unknown>>{
+  const response=await fetch("/api/contentgen-video/scene-clip/"+path,{
+    method:payload===undefined?"GET":"POST",cache:"no-store",
+    headers:payload===undefined?undefined:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
+    ...(payload===undefined?{}:{body:JSON.stringify(payload)}),signal:AbortSignal.timeout(16000)});
+  const data=await response.json() as Record<string,unknown>;
+  if(!response.ok)throw Error(typeof data.error==="string"?data.error:"The local scene video renderer is unavailable.");
   return data;
 }
 async function loadJson(file:File,maxBytes=900000){
@@ -149,6 +160,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [history,setHistory]=useState<{undo:DirectorSnapshot[];redo:DirectorSnapshot[]}>({undo:[],redo:[]});
   const [quickPreview,setQuickPreview]=useState<LiveVisualPreviewData|null>(null);
   const [quickPreviewError,setQuickPreviewError]=useState("");
+  const [sceneClip,setSceneClip]=useState<SceneClipStatus>({state:"idle",message:""});
   const [previewPercent,setPreviewPercent]=useState(35);
   const [busy,setBusy]=useState(false);
   const [status,setStatus]=useState("");
@@ -160,9 +172,46 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
   const [sourceStoryboardSha,setSourceStoryboardSha]=useState<string|null>(null);
   const [syncReport,setSyncReport]=useState<StoryboardSync|null>(null);
+  useEffect(()=>{
+    if(sceneClip.state!=="rendering")return;
+    let active=true,pending=false;
+    const poll=async()=>{
+      if(pending)return;
+      pending=true;
+      try{
+        const data=await sceneClipRequest("status");
+        if(active&&["rendering","done","failed","cancelled"].includes(String(data.state)))
+          setSceneClip(current=>({state:data.state as SceneClipStatus["state"],
+            shotId:typeof data.shotId==="string"?data.shotId:null,
+            message:typeof data.message==="string"?data.message:"Checking scene preview…",
+            videoUrl:typeof data.videoUrl==="string"?data.videoUrl:null,
+            jobId:typeof data.jobId==="string"?data.jobId:null,sourceRevision:current.sourceRevision}));
+      }catch{if(active)setSceneClip(current=>({...current,
+        message:"Scene preview connection interrupted. Checking again; completed frames remain saved."}));}
+      finally{pending=false;}
+    };
+    const timer=setInterval(()=>{void poll();},1200);
+    void poll();
+    return ()=>{active=false;clearInterval(timer);};
+  },[sceneClip.state]);
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
+  async function renderSceneClip(){
+    if(!dossier||!bundle||!shotId||dirty)return;
+    const sourceRevision=quickPreview?.sourcePlanSha256;
+    setSceneClip({state:"starting",shotId,sourceRevision,
+      message:"Requesting a preview of the selected scene…"});
+    try{
+      await sceneClipRequest("start",{dossier,bundle,shotId,projectId:projectId??dossier.id});
+      setSceneClip({state:"rendering",shotId,sourceRevision,
+        message:"Preparing this scene's silent MP4 preview…"});
+    }catch(error){setSceneClip({state:"failed",shotId,message:error instanceof Error?error.message:"Could not start scene preview."});}
+  }
+  async function cancelSceneClip(){
+    try{await sceneClipRequest("cancel",{confirmed:true});}
+    catch(error){setSceneClip(current=>({...current,message:error instanceof Error?error.message:"Could not cancel scene preview."}));}
+  }
   const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null,originalBundle:Bundle=b)=>{
     setDossier(d);setBundle(b);setRevisions([]);setHistory({undo:[],redo:[]});setSampleMode(source==="sample");setSourceArtifactId(artifactId);
     setSourceBundle(originalBundle);
@@ -606,6 +655,25 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
                     <input className="mt-2 block w-full accent-primary" aria-label="Scrub selected scene" type="range" min="0" max="100" step="5"
                       value={previewPercent} onChange={e=>setPreviewPercent(Number(e.target.value))}/>
                   </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" variant="outline" disabled={busy||dirty||["starting","rendering"].includes(sceneClip.state)}
+                      onClick={()=>void renderSceneClip()}><Film className="mr-2 size-4"/>Render this scene MP4</Button>
+                    {sceneClip.state==="rendering"&&<Button size="sm" variant="outline"
+                      onClick={()=>void cancelSceneClip()}>Cancel scene render</Button>}
+                  </div>
+                  <p className="text-xs text-muted-foreground">Exports only this scene as a silent, real video. The complete draft adds narration, sound and final timing.</p>
+                  {sceneClip.state!=="idle"&&sceneClip.shotId===shotId&&<div role="status"
+                    className="rounded-control border border-border bg-surface-subtle p-3 text-xs text-muted-foreground">
+                    <p>{sceneClip.message}</p>
+                    {sceneClip.jobId&&onOpenJobs&&<Button size="sm" variant="outline"
+                      onClick={onOpenJobs}>View scene job</Button>}
+                    {sceneClip.state==="done"&&sceneClip.sourceRevision!==quickPreview.sourcePlanSha256&&
+                      <p className="mt-2">The storyboard changed after this render. Render this scene again to see the latest edits.</p>}
+                    {sceneClip.state==="done"&&sceneClip.videoUrl&&
+                      sceneClip.sourceRevision===quickPreview.sourcePlanSha256&&
+                      <video controls playsInline preload="metadata" aria-label="Selected scene MP4 preview"
+                        src={sceneClip.videoUrl} className="mt-3 aspect-video w-full rounded-control bg-black"/>}
+                  </div>}
                   <Button size="sm" variant="outline" onClick={()=>navigate("preview")}>Open full video preview</Button>
                 </div>
               </div>;

@@ -222,6 +222,35 @@ test("regenerating one edited scene reuses the other two verified scenes across 
   assert.equal(result.frameCount,180);
 });
 
+test("render one selected scene without capturing the other chapters",async t=>{
+  const {dir,dependencies,stats}=await harness(t);
+  const manifest=config(dir,180).manifest;
+  const chapters=[0,1,2].map(index=>({id:`scene-${index+1}`,
+    startFrame:index*60,endFrame:(index+1)*60,visual:{headline:`Chapter ${index+1}`}}));
+  const visualPlan={manifest,chapters};
+  const planHash=createHash("sha256").update(JSON.stringify(visualPlan)).digest("hex");
+  const progress=[];
+  const clip=await renderVideoSegments({...config(dir,180),planHash,visualPlan,
+    onlyChapterId:"scene-2",reviewFrames:[60,75],onProgress:e=>progress.push(e)},
+    {...dependencies,openCapture:async (...args)=>{
+      const capture=await dependencies.openCapture(...args);
+      return {...capture,captureFrame:async (frame,path)=>{
+        if(path.includes("/stills/"))await writeFile(path,pngFrame(frame));
+        else await capture.captureFrame(frame,path);
+      }};
+    }});
+  assert.equal(clip.frameCount,60);
+  assert.equal(clip.sourceChapterId,"scene-2");
+  assert.equal(clip.sourceStartFrame,60);
+  assert.deepEqual(stats().captured,Array.from({length:60},(_,i)=>i+60));
+  assert.equal(clip.segmentHashes.length,1);
+  assert.equal(progress.filter(item=>item.completedFrames!==undefined).at(-1)?.completedFrames,60);
+  await assert.rejects(renderVideoSegments({...config(join(dir,"invalid"),180),
+    planHash,visualPlan,onlyChapterId:"missing"},dependencies),/existing storyboard scene/u);
+  await assert.rejects(renderVideoSegments({...config(join(dir,"outside"),180),
+    planHash,visualPlan,onlyChapterId:"scene-2",reviewFrames:[1]},dependencies),/scene-local preview/u);
+});
+
 test("capture abort leaves verified segments but never publishes an incomplete MP4", async (t) => {
   const { dir, dependencies } = await harness(t);
   let closed = false;
@@ -334,6 +363,12 @@ test("real FFmpeg updates only one edited scene and exports valid six-frame MP4"
   assert.notEqual(result.segmentHashes[1].sha256,initial.segmentHashes[1].sha256);
   assert.equal(result.segmentHashes[2].sha256,initial.segmentHashes[2].sha256);
   assert.equal((await probeVideo(result.videoOnlyPath)).frameCount,6);
+  frames.length=0;
+  const preview=await renderVideoSegments({...config(join(dir,"single-scene"),6),maxBatchFrames:2,
+    planHash:hash(newPlan),visualPlan:newPlan,onlyChapterId:"scene-1"},deps);
+  assert.equal(preview.frameCount,2);
+  assert.deepEqual(frames.map(item=>item.frame),[2,3]);
+  assert.equal((await probeVideo(preview.videoOnlyPath)).frameCount,2);
 });
 
 test("captures bounded verified review stills, reuses them and repairs damaged preview only", async (t) => {

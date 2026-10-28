@@ -193,7 +193,14 @@ async function defaultConcat(paths, outputPath, { ffmpeg, signal }) {
 export async function renderVideoSegments(options, dependencies = {}) {
   const { dir, limit, reviewFrames } = validateOptions(options);
   const { manifest } = options;
-  const fingerprint = sha256(JSON.stringify({ version: 2, planHash: options.planHash, buildHash: options.buildHash, manifest, h264Profile: "libx264-crf18-yuv420p" }));
+  const selectedId=options.onlyChapterId;
+  if (selectedId!==undefined && (typeof selectedId!=="string" ||
+      !/^[a-z0-9][a-z0-9._:-]{0,127}$/iu.test(selectedId) ||
+      !Array.isArray(options.visualPlan?.chapters) ||
+      options.visualPlan.chapters.filter(chapter=>chapter.id===selectedId).length!==1))
+    fail("choose an existing storyboard scene to render independently");
+  const fingerprint = sha256(JSON.stringify({ version: 2, planHash: options.planHash, buildHash: options.buildHash, manifest, h264Profile: "libx264-crf18-yuv420p",
+    ...(selectedId===undefined?{}:{onlyChapterId:selectedId}) }));
   const segmentsDir = join(dir, "segments");
   const openCapture = dependencies.openCapture ?? ((url, expected) => defaultOpenCapture(url, expected, options));
   const encodeBatch = dependencies.encodeBatch ?? ((batch) => defaultEncode({ ...batch, ffmpeg: options.ffmpeg ?? "ffmpeg", signal: options.signal }));
@@ -201,7 +208,14 @@ export async function renderVideoSegments(options, dependencies = {}) {
   const concat = dependencies.concatSegments ?? ((paths, path) => defaultConcat(paths, path, { ffmpeg: options.ffmpeg ?? "ffmpeg", signal: options.signal }));
   const probeFinal = dependencies.probeFinal ?? probe;
   const started = performance.now();
-  const chunks = listRenderChunks(manifest,limit,options.visualPlan);
+  const allChunks = listRenderChunks(manifest,limit,options.visualPlan);
+  const selectedChapter=selectedId===undefined?null:options.visualPlan.chapters.find(chapter=>chapter.id===selectedId);
+  const chunks = selectedChapter?allChunks.filter(chunk=>
+    chunk.chapterIndex!==null&&options.visualPlan.chapters[chunk.chapterIndex].id===selectedId):allChunks;
+  const outputFrames=selectedChapter?selectedChapter.endFrame-selectedChapter.startFrame:manifest.durationFrames;
+  if(!chunks.length||chunks.reduce((sum,chunk)=>sum+chunk.frameCount,0)!==outputFrames||
+    (selectedChapter&&reviewFrames.some(frame=>frame<selectedChapter.startFrame||frame>=selectedChapter.endFrame)))
+    fail("selected scene must have a complete renderable chapter and scene-local preview frames");
   const prior = options.reuseFrom;
   if(prior && (!prior.sourcePlan || !prior.segmentsDir ||
       prior.buildHash!==options.buildHash || !options.visualPlan))
@@ -341,7 +355,9 @@ export async function renderVideoSegments(options, dependencies = {}) {
       if(sceneAttempt)await options.sceneJobs.completeScene(sceneAttempt,{
         sha256:segmentHash,frameCount,reused:completed});
       // Report verified progress only after segment metadata and probe succeed, including safe resume.
-      options.onProgress?.({ phase: "rendering", completedFrames: startFrame + frameCount, totalFrames: manifest.durationFrames });
+      options.onProgress?.({ phase: "rendering",
+        completedFrames: selectedChapter?startFrame+frameCount-selectedChapter.startFrame:startFrame+frameCount,
+        totalFrames: outputFrames });
       } catch(error){
         if(sceneAttempt)await options.sceneJobs.failScene(sceneAttempt,error);
         throw error;
@@ -412,7 +428,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
         // before the sidecar write leaves it intact for recovery and re-mux.
         if (record.sha256 !== await sha256File(videoOnlyPath)) damaged = true;
         else {
-          try { finalVerified = matchProbe(await probeFinal(videoOnlyPath),manifest,manifest.durationFrames); }
+          try { finalVerified = matchProbe(await probeFinal(videoOnlyPath),manifest,outputFrames); }
           catch (error) { if (options.signal?.aborted) throw error; }
           damaged = !finalVerified;
         }
@@ -429,16 +445,17 @@ export async function renderVideoSegments(options, dependencies = {}) {
     try {
       await concat(segments.map((item) => item.path), stagedPath);
       const check = await probeFinal(stagedPath);
-      if (!matchProbe(check, manifest, manifest.durationFrames)) fail("concatenated video failed final frame/FPS/raster QA");
+      if (!matchProbe(check, manifest, outputFrames)) fail("concatenated video failed final frame/FPS/raster QA");
       const digest = await sha256File(stagedPath);
       await rename(stagedPath, videoOnlyPath);
-      await writeFile(finalMetadataPath, JSON.stringify({ fingerprint, sha256: digest, frameCount: manifest.durationFrames }, null, 2), { flag: "wx" });
+      await writeFile(finalMetadataPath, JSON.stringify({ fingerprint, sha256: digest, frameCount: outputFrames }, null, 2), { flag: "wx" });
     } finally { await rm(stagedPath, { force: true }); }
   }
   const finishedProbe = await probeFinal(videoOnlyPath);
-  if (!matchProbe(finishedProbe, manifest, manifest.durationFrames)) fail("finished video lost its verified frame count or FPS");
+  if (!matchProbe(finishedProbe, manifest, outputFrames)) fail("finished video lost its verified frame count or FPS");
   return {
-    videoOnlyPath, frameCount: manifest.durationFrames,
+    videoOnlyPath, frameCount:outputFrames,
+    ...(selectedChapter?{sourceChapterId:selectedId,sourceStartFrame:selectedChapter.startFrame}:{}),
     segmentHashes: segments.map(({ sha256: digest, startFrame, frameCount }) => ({ sha256: digest, startFrame, frameCount })),
     reviewStills, peakScratchBytes, renderedSegmentCount, reusedSegmentCount,
     renderSeconds: (performance.now() - started) / 1000,

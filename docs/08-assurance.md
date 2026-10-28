@@ -75,6 +75,17 @@ These checks prove artifact-level recovery on a restarted invocation. They do
 **not** yet prove that an application restart automatically launches and
 finishes the complete production run without a user-initiated retry.
 
+Video Director also offers **Render this scene MP4** beside the immediate
+Kumiki timeline preview. It builds and renders only the selected chapter to a
+silent H.264 MP4 using the full, build-checked scene source. It records an
+independent, lease-validated Rust `video-render-segment` Job with bounded
+attempts and cancellation; a mismatched SHA-256 result is never exposed as a
+playable preview. Scene-only playback uses estimated narration timing and has
+no voice or music. The full draft performs measured narration and sound mixing.
+The single-chapter real FFmpeg test confirms only that chapter's frames were
+captured and the result decodes; final exported video regeneration still uses
+the separate chapter-aware segment cache.
+
 ## Security and privacy baseline
 
 - Local API binds loopback; enforce origin checks, scoped file paths, size limits, request validation, CSP for rendered previews, safe Markdown/HTML sanitization and restricted embeds. Do not run content from scraped pages; they are untrusted and can contain prompt injection.

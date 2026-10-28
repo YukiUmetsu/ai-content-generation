@@ -77,6 +77,43 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("renders only the selected saved scene as a playable silent MP4",async()=>{
+    const requests:Array<{url:string;body:Record<string,unknown>}> = [];
+    const previewId="123e4567-e89b-42d3-a456-426614174000";
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const path=String(url),body=opts?.body?JSON.parse(String(opts.body)) as Record<string,unknown>:{};
+      requests.push({url:path,body});
+      const catalog=localMediaCatalogResponse(url);
+      if(catalog)return catalog;
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({
+        kind:"live-renderer-preview/v1",schemaVersion:1,renderPlanSha256:"a".repeat(64),
+        plan:{kind:"general-explainer-visual-plan",schemaVersion:1,
+          manifest:{schemaVersion:1,id:"test",width:1920,height:1080,durationFrames:90,
+            fps:{num:30,den:1},preset:"youtube"},
+          chapters:[{id:"beat-1",startFrame:0,endFrame:45,visual:{items:["A","B"]}},
+            {id:"beat-2",startFrame:45,endFrame:90,visual:{items:["C","D"]}}],events:{}},
+        shotMap:[{shotId:"hook",beatId:"beat-1",startFrame:0,endFrame:45},
+          {shotId:"middle",beatId:"beat-2",startFrame:45,endFrame:90}],
+        timing:{basis:"estimated-text-only",spokenWpm:145,measuredNarration:false,note:""},visualLimits:[]
+      }),{status:200});
+      if(path.endsWith("/scene-clip/start"))return new Response(JSON.stringify({started:true,id:previewId}),{status:202});
+      if(path.endsWith("/scene-clip/status"))return new Response(JSON.stringify({state:"done",shotId:"middle",
+        message:"This scene's silent MP4 is ready.",
+        videoUrl:`/api/contentgen-video/scene-clip/media/${previewId}/video.mp4`}),{status:200});
+      throw Error("Unexpected network request "+path);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"selected-scene.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    const renderButton=await screen.findByRole("button",{name:"Render this scene MP4"});
+    await user.click(renderButton);
+    await waitFor(()=>expect(requests.some(item=>item.url.endsWith("/scene-clip/start")&&
+      item.body.shotId==="middle")).toBe(true));
+    const video=await screen.findByLabelText("Selected scene MP4 preview");
+    expect(video).toHaveAttribute("src",`/api/contentgen-video/scene-clip/media/${previewId}/video.mp4`);
+    expect(screen.getByText(/complete draft adds narration, sound/i)).toBeInTheDocument();
+  });
   it("opens an approved script's visual shortcut at the rendered scene editor",async()=>{
     const productionId="production-"+"b".repeat(24);
     sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({

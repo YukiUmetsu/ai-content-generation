@@ -27,6 +27,8 @@ import { discoverShotAssets, listApprovedAssets, listSelectedSceneAssets } from 
 import { selectedMediaFingerprint } from "./video-production/render-scene-media.mjs";
 import { withAutomaticApprovedMedia } from "./video-production/automatic-approved-assets.mjs";
 import { productionProviderKey } from "./video-production/provider-keychain.mjs";
+import { renderSelectedSceneClip } from "./video-production/scene-clip.mjs";
+import { withSceneClipJob } from "./video-production/scene-clip-jobs.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -135,6 +137,48 @@ async function deliverVideo(req,res,releaseDir){
   res.writeHead(code,{...headers,"Content-Type":"video/mp4","Accept-Ranges":"bytes",
     "Content-Length":end-start+1,...(code===206?{"Content-Range":"bytes "+start+"-"+end+"/"+info.size}:{})});
   createReadStream(path,{start,end}).on("error",()=>res.destroy()).pipe(res);
+}
+/** Serve only the exact verified preview inode. A media range request cannot
+ * swap the file between its checksum and streaming to the user. */
+async function deliverSceneVideo(req,res,file,expectedHash,expectedSize,digestCache){
+  const descriptor=await open(file,constants.O_RDONLY|constants.O_NOFOLLOW);
+  let released=false;
+  const release=()=>{if(!released){released=true;void descriptor.close().catch(()=>{});}};
+  try{
+    const before=await descriptor.stat();
+    if(!before.isFile()||before.size!==expectedSize||before.size<100){
+      release();respond(res,404,{error:"Scene preview failed its media integrity check."});return;
+    }
+    const signature=["scene-clip",file,before.ino,before.size,before.mtimeMs,before.ctimeMs,expectedHash].join(":");
+    if(digestCache.get(signature)!==true){
+      const digest=createHash("sha256");
+      for await(const part of descriptor.createReadStream({autoClose:false}))digest.update(part);
+      const after=await descriptor.stat();
+      if(after.ino!==before.ino||after.size!==before.size||after.mtimeMs!==before.mtimeMs||
+        after.ctimeMs!==before.ctimeMs||digest.digest("hex")!==expectedHash){
+        release();respond(res,404,{error:"Scene preview bytes have changed. Render the scene again."});return;
+      }
+      if(digestCache.size>128)digestCache.clear();
+      digestCache.set(signature,true);
+    }
+    let start=0,end=before.size-1,code=200;
+    if(req.headers.range){
+      const match=/^bytes=(\d+)-(\d*)$/u.exec(req.headers.range);
+      if(!match){release();respond(res,416,{error:"Unsupported video byte range."});return;}
+      start=Number(match[1]);end=match[2]?Number(match[2]):end;
+      if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>end||end>=before.size){
+        release();respond(res,416,{error:"Video byte range outside file."});return;
+      }
+      code=206;
+    }
+    res.writeHead(code,{...headers,"Content-Type":"video/mp4","Accept-Ranges":"bytes",
+      "Content-Length":end-start+1,...(code===206?{"Content-Range":`bytes ${start}-${end}/${before.size}`}:{})});
+    const stream=descriptor.createReadStream({start,end,autoClose:false});
+    stream.once("end",release);
+    stream.once("error",()=>{release();res.destroy();});
+    res.once?.("close",release);
+    stream.pipe(res);
+  }catch(error){release();throw error;}
 }
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
@@ -415,6 +459,8 @@ export function createDirectorProduction(deps={}){
   let activeJobTracker=null;
   let sample=null,sampleController=null;
   let sampleStatus={state:"idle",message:"No voice sample generated.",audioUrl:null};
+  let sceneClipController=null;
+  let sceneClip={state:"idle",id:null,shotId:null,message:"Select a scene to render a short video preview.",videoUrl:null};
   const results=new Map();
   let status={state:"idle",phase:"idle",message:"Review the renderable storyboard before creating media.",
     progress:null,report:null,runId:null,jobId:null,mediaUrl:null,regeneration:null};
@@ -481,6 +527,22 @@ export function createDirectorProduction(deps={}){
       }
       if(req.method==="GET"&&route==="/narration-sample/status"){
         respond(res,200,sampleStatus);return;
+      }
+      if(req.method==="GET"&&route==="/scene-clip/status"){
+        respond(res,200,sceneClip);return;
+      }
+      if(req.method==="GET"&&route.startsWith("/scene-clip/media/")){
+        const id=/^\/scene-clip\/media\/([a-f0-9-]+)\/video\.mp4$/u.exec(route)?.[1];
+        if(!id||!runIdPattern.test(id)||sceneClip.id!==id||sceneClip.state!=="done"){
+          respond(res,404,{error:"Scene preview is no longer available."});return;
+        }
+        const folder=join(outputRoot,"scene-preview-"+id),file=join(folder,"video.mp4");
+        const [directory,info]=await Promise.all([lstat(folder),lstat(file)]);
+        if(!directory.isDirectory()||directory.isSymbolicLink()||
+          !info.isFile()||info.isSymbolicLink()||info.size!==sceneClip.sizeBytes){
+          respond(res,404,{error:"Scene preview did not pass its media checks."});return;
+        }
+        await deliverSceneVideo(req,res,file,sceneClip.sha256,sceneClip.sizeBytes,mediaDigests);return;
       }
       if(req.method==="GET"&&route.startsWith("/narration-sample/")){
         const id=/^\/narration-sample\/([a-f0-9-]+)\.wav$/u.exec(route)?.[1];
@@ -552,7 +614,81 @@ export function createDirectorProduction(deps={}){
         }
         respond(res,202,{cancelRequested:true});return;
       }
+      if(route==="/scene-clip/cancel"){
+        if(!sceneClipController||sceneClip.state!=="rendering"){
+          respond(res,409,{error:"No scene preview is rendering."});return;
+        }
+        sceneClipController.abort(Error("Scene preview cancelled by editor."));
+        respond(res,202,{cancelRequested:true});return;
+      }
       if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
+      if(route==="/scene-clip/start"){
+        const input=await readBody(req);
+        if(typeof input.shotId!=="string"||!sceneIdPattern.test(input.shotId))
+          throw Error("Choose a valid scene to render.");
+        // Validate the exact editorial input before allocating a renderer or
+        // returning a successful start response.
+        const compiled=compileLive(input.dossier,input.bundle);
+        const selected=compiled.shotMap?.find(item=>item.shotId===input.shotId);
+        const chapter=compiled.plan?.chapters?.find(item=>item.id===selected?.beatId);
+        if(!selected||!chapter)
+          throw Error("The selected scene no longer matches this storyboard.");
+        if(chapter.endFrame-chapter.startFrame>1800)
+          throw Error("This scene exceeds a one-minute preview. Use the complete draft export instead.");
+        busy=true;
+        const id=randomUUID(),outDir=join(outputRoot,"scene-preview-"+id),abort=new AbortController();
+        sceneClipController=abort;
+        sceneClip={state:"rendering",id,shotId:input.shotId,
+          message:"Preparing a silent video preview of this scene…",videoUrl:null};
+        respond(res,202,{started:true,id});
+        void(async()=>{
+          try{
+            await mkdir(outputRoot,{recursive:true,mode:0o700});
+            const rootInfo=await lstat(outputRoot);
+            if(!rootInfo.isDirectory()||rootInfo.isSymbolicLink())
+              throw Error("Scene previews require a real local output folder, not a linked directory.");
+            await mkdir(outDir,{mode:0o700});
+            await build();
+            if(abort.signal.aborted)throw abort.signal.reason;
+            const browserExecutable=await browser(env);
+            const sceneSignal=AbortSignal.any([abort.signal,AbortSignal.timeout(12*60_000)]);
+            const result=await (deps.trackSceneClip??withSceneClipJob)({
+              projectId:productionIdPattern.test(input.projectId??"")?
+                input.projectId:input.dossier.id,
+              shotId:input.shotId,sourceHash:compiled.renderPlanSha256,runId:id,
+              signal:sceneSignal},async({signal,jobId})=>{
+              sceneClip={...sceneClip,jobId};
+              return (deps.renderSceneClip??renderSelectedSceneClip)({
+                dossier:input.dossier,bundle:input.bundle,shotId:input.shotId,outDir,
+                browserExecutable,signal,onProgress:event=>{
+                  if(!abort.signal.aborted&&typeof event.message==="string")
+                    sceneClip={...sceneClip,message:event.message.slice(0,180)};
+                }});
+            });
+            if(abort.signal.aborted)throw abort.signal.reason;
+            if(result.shotId!==input.shotId||!/^[a-f0-9]{64}$/u.test(result.sha256??"")||
+              !Number.isSafeInteger(result.sizeBytes)||result.sizeBytes<100||result.sizeBytes>256*1024*1024)
+              throw Error("The selected scene did not produce a verified video preview.");
+            const previewPath=join(outDir,"video.mp4"),info=await lstat(previewPath);
+            if(!info.isFile()||info.isSymbolicLink()||info.size!==result.sizeBytes)
+              throw Error("Scene preview output is missing or was replaced.");
+            const checksum=createHash("sha256");
+            for await(const part of createReadStream(previewPath))checksum.update(part);
+            if(checksum.digest("hex")!==result.sha256)
+              throw Error("Scene preview output did not pass its integrity check.");
+            sceneClip={state:"done",id,shotId:input.shotId,
+              message:"This scene's silent MP4 is ready. The full draft adds narration and sound.",
+              videoUrl:`/api/contentgen-video/scene-clip/media/${id}/video.mp4`,
+              sha256:result.sha256,sizeBytes:result.sizeBytes,jobId:result.jobId};
+          }catch(error){
+            sceneClip={state:abort.signal.aborted?"cancelled":"failed",id,shotId:input.shotId,
+              message:abort.signal.aborted?"Scene preview cancelled. Other scenes were not changed.":
+                "Could not render this scene. Check Chromium, FFmpeg and the local build, then retry. "+
+                String(error?.message??"").slice(0,130),videoUrl:null};
+          }finally{busy=false;sceneClipController=null;}
+        })();
+        return;
+      }
       if(route==="/narration-sample"){
         const input=await readBody(req),settings=await resolvedVoiceSettings(input.settings,remember);
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});

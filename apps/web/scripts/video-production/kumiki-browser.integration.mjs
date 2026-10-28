@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {execFile} from "node:child_process";
 import {readFileSync} from "node:fs";
-import {mkdtemp,readFile,rm} from "node:fs/promises";
+import {mkdir,mkdtemp,readFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -16,6 +16,8 @@ import {buildSampleTimeline} from "./timeline.mjs";
 import {compileGeneralVisuals} from "./general-visual-plan.mjs";
 import {startLocalStageServer} from "./stage-server.mjs";
 import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
+import {renderSelectedSceneClip} from "./scene-clip.mjs";
+import {renderVideoSegments} from "./render.mjs";
 
 const run=promisify(execFile);
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
@@ -105,6 +107,37 @@ try{
       assert.notEqual(sha(seen),screenshots[0],"verified Commons photo must visibly change the scene");
     }finally{await mediaPage.close();}
   }finally{await mediaStage.close();}
+  // Exercise the actual selected-scene API's file publication via the same
+  // Chromium page, H.264 encoder and FFprobe. Only three preview frames are
+  // requested, keeping the provider-free smoke run bounded.
+  const clipPlan=structuredClone(plan);
+  clipPlan.manifest.durationFrames=3;
+  clipPlan.chapters=[{...clipPlan.chapters[0],endFrame:3}];
+  const selectedShot="selected-first-scene",clipOut=join(root,"selected-preview");
+  await mkdir(clipOut);
+  const clip=await renderSelectedSceneClip({shotId:selectedShot,outDir:clipOut,
+    browserExecutable:browserPath},{compile:()=>({plan:clipPlan,
+      renderPlanSha256:sha(Buffer.from(JSON.stringify(clipPlan))),
+      shotMap:[{shotId:selectedShot,beatId:clipPlan.chapters[0].id}]}),
+    render:options=>renderVideoSegments(options,{openCapture:async(url,expected)=>{
+      const clipPage=await browser.newPage({viewport:{width:expected.width,height:expected.height}});
+      await clipPage.goto(url,{waitUntil:"networkidle",timeout:30000});
+      await clipPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      return {manifest:await clipPage.evaluate(()=>window.__kmVideoExport.manifest),
+        buildHash:await clipPage.evaluate(()=>window.__contentgenBuildHash),
+        captureFrame:async(frame,path)=>{await clipPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
+          await clipPage.locator("[data-km-video-capture]").screenshot({path,animations:"disabled",scale:"css"});},
+        close:async()=>clipPage.close()};
+    }})});
+  assert.equal(clip.durationFrames,3);
+  const clipProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+    "-show_entries","stream=codec_name,width,height,nb_read_frames","-of","json",
+    join(clipOut,"video.mp4")],{timeout:30000});
+  const clipStream=JSON.parse(clipProbe.stdout).streams?.[0];
+  assert.equal(clipStream?.codec_name,"h264");
+  assert.equal(Number(clipStream.nb_read_frames),3);
+  assert.equal(clipStream.width,manifest.width);
+  assert.equal(clipStream.height,manifest.height);
   const concepts=await generateProductionThumbnails(input,{outputDir:root});
   assert.equal(concepts.length,3);
   await page.setViewportSize({width:1920,height:1080});
@@ -122,7 +155,7 @@ try{
   assert.equal(textFit.panels,3,"bento thumbnail needs three separate visual panels");
   assert.ok(textFit.labels>=6,"bento thumbnail needs meaningful visible headings");
   assert.equal(textFit.outside,0,"no tile heading may overlap adjacent thumbnails or escape its panel");
-  process.stdout.write(`PASS: real Kumiki Chromium export, deterministic ${manifest.width}x${manifest.height} PNG frames, FFmpeg H.264, FFprobe and three bounded thumbnail panels.\n`);
+  process.stdout.write(`PASS: real Kumiki Chromium export, a three-frame selected-scene H.264 preview, deterministic ${manifest.width}x${manifest.height} PNGs, FFprobe and three bounded thumbnail panels.\n`);
 }finally{
   await browser?.close().catch(()=>{});
   await stage?.close().catch(()=>{});

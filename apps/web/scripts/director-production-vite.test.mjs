@@ -5,7 +5,8 @@ import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, symlink } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import { once } from "node:events";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
 import { createDirectorProduction, configureRenderJob } from "./director-production-vite.mjs";
 
@@ -38,6 +39,18 @@ async function audioResponse(controller,path){
   await controller.handle(req,res);
   return {status,headers,bytes:Buffer.concat(bytes)};
 }
+async function videoResponse(controller,path,range){
+  const req=Readable.from([]);
+  Object.assign(req,{method:"GET",url:path,headers:{host:"127.0.0.1:5173",
+    ...(range?{range}:{})}});
+  let status=0,headers={};const bytes=[];
+  const res=new Writable({write(chunk,_encoding,callback){bytes.push(Buffer.from(chunk));callback();}});
+  res.writeHead=(code,value)=>{status=code;headers=value;};
+  const finished=once(res,"finish");
+  await controller.handle(req,res);
+  await finished;
+  return {status,headers,bytes:Buffer.concat(bytes)};
+}
 async function waitSample(server){
   for(let i=0;i<40;i++){
     const result=await invoke(server,"GET","/narration-sample/status");
@@ -46,6 +59,79 @@ async function waitSample(server){
   }
   throw Error("Narration sample did not settle");
 }
+async function waitSceneClip(server){
+  for(let i=0;i<100;i++){
+    const result=await invoke(server,"GET","/scene-clip/status");
+    if(result.data.state!=="rendering")return result.data;
+    await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  throw Error("Scene preview did not settle");
+}
+
+test("Video Director renders only the selected scene and advertises a hash-verified MP4",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-selected-scene-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const p=inputs(),calls=[];
+  const server=createDirectorProduction({outputRoot:dir,build:async()=>{},
+    findBrowser:async()=>"/local/chrome",produce:async()=>{throw Error("No full production permitted");},
+    trackSceneClip:async(meta,render)=>({...await render({signal:meta.signal,jobId:"job-scene"}),jobId:"job-scene"}),
+    renderSceneClip:async options=>{
+      calls.push(options);
+      const bytes=Buffer.alloc(256,0x45);
+      await writeFile(join(options.outDir,"video.mp4"),bytes);
+      return {shotId:options.shotId,sizeBytes:bytes.length,
+        sha256:createHash("sha256").update(bytes).digest("hex")};
+    }});
+  const planned=await invoke(server,"POST","/plan",p);
+  const shotId=planned.data.shotMap[1].shotId;
+  assert.equal((await invoke(server,"POST","/scene-clip/start",{...p,shotId:"../unsafe"})).status,422);
+  assert.equal((await invoke(server,"POST","/scene-clip/start",{...p,shotId:"unrelated-scene"})).status,422);
+  const response=await invoke(server,"POST","/scene-clip/start",{...p,shotId});
+  assert.equal(response.status,202);
+  const result=await waitSceneClip(server);
+  assert.equal(result.state,"done");
+  assert.equal(result.shotId,shotId);
+  assert.match(result.videoUrl,/\/scene-clip\/media\/[a-f0-9-]+\/video\.mp4$/u);
+  assert.equal(calls.length,1);
+  assert.equal(calls[0].shotId,shotId);
+  assert.equal(calls[0].browserExecutable,"/local/chrome");
+  assert.equal((await invoke(server,"GET","/scene-clip/media/invalid/video.mp4")).status,404);
+  const path=result.videoUrl.replace("/api/contentgen-video","");
+  const full=await videoResponse(server,path);
+  assert.equal(full.status,200);
+  assert.equal(full.bytes.length,256);
+  const slice=await videoResponse(server,path,"bytes=20-39");
+  assert.equal(slice.status,206);
+  assert.equal(slice.bytes.length,20);
+  assert.equal(slice.headers["Content-Range"],"bytes 20-39/256");
+  await writeFile(join(calls[0].outDir,"video.mp4"),Buffer.alloc(256,0x46));
+  assert.equal((await invoke(server,"GET",result.videoUrl.replace("/api/contentgen-video",""))).status,404,
+    "a damaged scene clip is never served or presented as verified");
+});
+
+test("scene clip cancellation stops only that selected preview and reports a clear retry",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-scene-cancel-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const p=inputs(),planned=await invoke(createDirectorProduction({outputRoot:dir}),"POST","/plan",p);
+  const shotId=planned.data.shotMap[0].shotId;
+  let calls=0;
+  const server=createDirectorProduction({outputRoot:dir,build:async()=>{},findBrowser:async()=>"/local/chrome",
+    trackSceneClip:async(meta,render)=>render({signal:meta.signal,jobId:"job-scene"}),
+    renderSceneClip:async options=>{
+      calls++;
+      await new Promise((_resolve,reject)=>{
+        options.signal.addEventListener("abort",()=>reject(options.signal.reason),{once:true});
+      });
+    }});
+  assert.equal((await invoke(server,"POST","/scene-clip/start",{...p,shotId})).status,202);
+  assert.equal((await invoke(server,"POST","/scene-clip/start",{...p,shotId})).status,409);
+  assert.equal((await invoke(server,"POST","/scene-clip/cancel",{confirmed:true})).status,202);
+  const final=await waitSceneClip(server);
+  assert.equal(final.state,"cancelled");
+  assert.match(final.message,/cancelled/i);
+  assert.equal(final.videoUrl,null);
+  assert.ok(calls<=1);
+});
 
 test("voice audition generates only a bounded first-scene excerpt and serves a protected WAV",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-audition-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
