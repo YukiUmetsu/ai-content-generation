@@ -598,7 +598,11 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   const suggestion={kind:"contentgen-scene-asset-suggestions",schemaVersion:1,
     scenes:[{shotId:inputs().bundle.plan.shots[0].id,query:"house",strategy:"search",reason:"Physical subject",
       candidates:[{provider:"pexels",assetId:"42",title:"A house exterior",previewUrl:"",sourceUrl:"https://www.pexels.com/photo/house-42",
-        license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",rightsStatus:"needs-human-review"}]}],
+        license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",rightsStatus:"needs-human-review"},
+      {provider:"openverse",assetId:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",title:"Roof restoration",
+        previewUrl:"https://api.openverse.org/v1/images/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/thumb/",
+        sourceUrl:"https://example.org/roof",license:"CC0-1.0 (unverified index)",
+        licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",rightsStatus:"needs-human-review"}]}],
     warnings:["A provider returned no other usable alternatives."]};
   const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
     build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
@@ -627,7 +631,7 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal(searchCalls[0].options.pexelsKey,undefined);
   assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","asset-preparation","narration","complete"]);
   assert.equal(events[2][1].assetSearch.status,"partial");
-  assert.equal(events[2][1].assetSearch.candidates,1);
+  assert.equal(events[2][1].assetSearch.candidates,2);
   assert.equal(events[3][1].artifactLedger.selected[0].sha256,"b".repeat(64));
   const restarted=createDirectorProduction({outputRoot:dir});
   const saved=await invoke(restarted,"GET","/suggestions/"+productionId);

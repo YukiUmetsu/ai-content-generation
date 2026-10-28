@@ -6,7 +6,7 @@ import {Surface} from "@/components/ui/surface-card";
 type Shot={id:string;purpose?:string;visualChange?:string;onScreenText?:string;
   visualElements?:Array<{label:string;detail:string}>};
 type Bundle={plan:{shots:Shot[];sound?:Array<{shotId:string;narration?:string;sfxIntent?:string|null}>}};
-type Candidate={provider:"polyhaven"|"pexels";assetId:string;assetType:"model"|"texture"|"hdri"|"photo"|"video";
+type Candidate={provider:"polyhaven"|"pexels"|"openverse";assetId:string;assetType:"model"|"texture"|"hdri"|"photo"|"video";
   title:string;sourceUrl:string;previewUrl:string;license:string;licenseUrl:string;creator:string;durationSeconds?:number;
   width?:number;height?:number;match?:{grade:"strong"|"review"|"weak";reasons:string[];score:number}};
 type Scene={shotId:string;query:string;strategy:"search"|"kumiki";reason:string;candidates:Candidate[];
@@ -88,9 +88,9 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
     setBusy("search");setNotice("");setPending(null);
     try{
       // This button is the user-facing opt-in to public-provider requests.
-      const result=await localAssets("suggest",{bundle,destination,providers:["polyhaven","pexels"],allowExternalSearch:true});
+      const result=await localAssets("suggest",{bundle,destination,providers:["polyhaven","pexels","openverse"],allowExternalSearch:true});
       setSearch({bundle,destination,data:result as unknown as Results});
-      setNotice("Ranked metadata suggestions only—no downloads or scene selections were made. Review the previews before importing.");
+      setNotice("Ranked search suggestions only—no files were downloaded or selected. Check original sources and rights before importing; some providers offer reference links only.");
     }catch(error){setNotice(error instanceof Error?error.message:"Asset search failed.");}
     finally{setBusy("");}
   }
@@ -180,7 +180,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
             <div className="space-y-2 p-3">
               <p className="font-semibold">{asset.title}</p>
               {top&&<p className="text-xs font-semibold text-primary">Top metadata suggestion · preview required</p>}
-              <p className="text-xs text-muted-foreground">{asset.assetType}{asset.durationSeconds?` · ${asset.durationSeconds}s`:""} · {asset.provider==="polyhaven"?"Poly Haven":"Pexels"}
+              <p className="text-xs text-muted-foreground">{asset.assetType}{asset.durationSeconds?` · ${asset.durationSeconds}s`:""} · {asset.provider==="polyhaven"?"Poly Haven":asset.provider==="openverse"?"Openverse":"Pexels"}
                 {asset.creator?` · ${asset.creator}`:""}</p>
               {asset.match&&<details className="text-xs text-muted-foreground">
                 <summary className="cursor-pointer">{asset.match.grade==="strong"?"Promising metadata match":
@@ -193,10 +193,12 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
                 <a href={asset.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">View original <ExternalLink className="inline size-3"/></a>
                 <a href={asset.licenseUrl} target="_blank" rel="noopener noreferrer" className="underline">{asset.license} terms</a>
               </div>
-              <Button size="sm" variant="outline" disabled={!!busy||existing}
+              {asset.provider==="openverse"?<p className="text-xs text-muted-foreground">
+                Search reference only. Openverse indexes third-party CC0 claims; verify the original source before using it. Automatic import is not available for this provider.
+              </p>:<Button size="sm" variant="outline" disabled={!!busy||existing}
                 onClick={()=>{setPending({asset,bundle,shotId:selectedShotId});setAcknowledged(false);}}>
                 {existing?<><CheckCircle2 className="mr-1 size-4"/> Imported</>:"Review before import"}
-              </Button>
+              </Button>}
             </div>
           </div>;
         })}

@@ -328,7 +328,7 @@ export function createDirectorProduction(deps={}){
         data.suggestions.warnings.some(value=>typeof value!=="string"||value.length>240)||
         data.suggestions.scenes.some(scene=>typeof scene?.shotId!=="string"||
           !Array.isArray(scene.candidates)||scene.candidates.length>12||
-          scene.candidates.some(candidate=>!(["pexels","polyhaven"].includes(candidate?.provider))||
+          scene.candidates.some(candidate=>!(["pexels","polyhaven","openverse"].includes(candidate?.provider))||
             typeof candidate.title!=="string"||typeof candidate.sourceUrl!=="string"||
             typeof candidate.licenseUrl!=="string"||typeof candidate.previewUrl!=="string"||
             !/^https:\/\//u.test(candidate.sourceUrl)||!/^https:\/\//u.test(candidate.licenseUrl)||
@@ -745,7 +745,7 @@ export function createDirectorProduction(deps={}){
                   const deadline=AbortSignal.timeout(35000);
                   const searchSignal=signal?AbortSignal.any([signal,deadline]):deadline;
                   const suggestions=await searchAssets({bundle:input.bundle,destination:"landscape",
-                    providers:["polyhaven","pexels"],allowExternalSearch:true},
+                    providers:["polyhaven","pexels","openverse"],allowExternalSearch:true},
                   {pexelsKey:env.PEXELS_API_KEY,signal:searchSignal});
                   if(signal?.aborted)throw Error("Media search cancelled.");
                   if(deadline.aborted)throw Error("Media search timed out; use scene search to retry.");

@@ -151,6 +151,38 @@ async function pexelsVideoCandidates(query,opts){
     .map(pexelsVideoCandidate).filter(Boolean);
 }
 
+function openverseCandidate(item){
+  // Openverse catalogs third-party declarations; a CC0 search result is a
+  // lead, never a verified ownership/license grant or an automatic download.
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(item?.id??"")||
+    item.license!=="cc0"||!(["jpg","jpeg","png"].includes(String(item.filetype??"").toLowerCase()))||
+    item.mature!==false||item.watermarked!==false||
+    !Number.isSafeInteger(item.width)||!Number.isSafeInteger(item.height)||
+    Math.max(item.width,item.height)<960||Math.min(item.width,item.height)<540)return null;
+  let source;
+  try{
+    const url=new URL(item.foreign_landing_url);
+    if(url.protocol!=="https:"||url.username||url.password||url.port||
+      ["localhost","127.0.0.1","::1"].includes(url.hostname)||url.hostname.endsWith(".local"))return null;
+    source=url.toString();
+  }catch{return null;}
+  const keywords=(Array.isArray(item.tags)?item.tags:[]).slice(0,12)
+    .map(tag=>visible(tag?.name,60)).filter(Boolean);
+  return {provider:"openverse",assetId:item.id.toLowerCase(),assetType:"photo",
+    title:visible(item.title,120)||"Openverse CC0 photo",previewUrl:
+      `https://api.openverse.org/v1/images/${item.id.toLowerCase()}/thumb/`,sourceUrl:source,
+    license:"CC0-1.0 (unverified index)",licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",
+    creator:visible(item.creator,100),originProvider:visible(item.provider,60),keywords,
+    width:item.width,height:item.height,relevance:0,rightsStatus:"needs-human-review"};
+}
+async function openverseCandidates(query,opts){
+  const params=new URLSearchParams({q:query,page_size:"4",license:"cc0",mature:"false"});
+  const data=await getJson(`https://api.openverse.org/v1/images/?${params}`,{
+    ...opts,headers:{"User-Agent":UA,"Accept":"application/json"}});
+  if(!data||!Array.isArray(data.results))throw Error("Openverse returned an invalid image catalog.");
+  return data.results.slice(0,4).map(openverseCandidate).filter(Boolean);
+}
+
 /** One user-triggered search across scenes, bounded and read-only. */
 export async function discoverShotAssets(input,opts={}){
   const needs=planSceneAssetNeeds(input?.bundle);
@@ -162,8 +194,9 @@ export async function discoverShotAssets(input,opts={}){
     Object.entries(durations).some(([shotId,seconds])=>!needs.some(x=>x.shotId===shotId)||
       typeof seconds!=="number"||!Number.isFinite(seconds)||seconds<=0||seconds>600))
     throw Error("Invalid per-scene narration duration override.");
-  const providers=input.providers??["polyhaven","pexels"];
-  if(!Array.isArray(providers)||providers.length>2||providers.some(x=>!["polyhaven","pexels"].includes(x)))
+  const providers=input.providers??["polyhaven","pexels","openverse"];
+  if(!Array.isArray(providers)||providers.length>3||
+    new Set(providers).size!==providers.length||providers.some(x=>!["polyhaven","pexels","openverse"].includes(x)))
     throw Error("Unknown asset search provider.");
   const warnings=[],byShot=new Map(needs.map(need=>[need.shotId,[]]));
   const active=needs.filter(x=>x.strategy==="search");
@@ -198,11 +231,23 @@ export async function discoverShotAssets(input,opts={}){
         warnings.push("Pexels requests were capped at 12 distinct subjects; use Poly Haven for remaining scenes.");
     }
   }
+  if(active.length&&providers.includes("openverse")){
+    const cache=new Map(),queries=[...new Set(active.map(x=>x.query))].slice(0,8);
+    for(let start=0;start<queries.length;start+=2){
+      await Promise.all(queries.slice(start,start+2).map(async query=>{
+        try{cache.set(query,await openverseCandidates(query,opts));}
+        catch(error){warnings.push(`Openverse ${query}: ${visible(error?.message,120)}`);cache.set(query,[]);}
+      }));
+    }
+    for(const need of active)byShot.get(need.shotId).push(...(cache.get(need.query)??[]));
+    if(new Set(active.map(x=>x.query)).size>8)
+      warnings.push("Openverse search was capped at eight distinct scene subjects.");
+  }
   const sound=new Map((Array.isArray(input.bundle?.plan?.sound)?input.bundle.plan.sound:[])
     .filter(x=>x&&typeof x.shotId==="string").map(x=>[x.shotId,x]));
   const shots=new Map(input.bundle.plan.shots.map(shot=>[shot.id,shot]));
   return {schemaVersion:1,kind:"contentgen-scene-asset-suggestions",destination,
-    providerCredit:"Assets via Poly Haven / Pexels",
+    providerCredit:"Assets via Poly Haven / Pexels / Openverse",
     scenes:needs.map(need=>({...need,...rankShotCandidates({shot:shots.get(need.shotId),
       narration:sound.get(need.shotId),query:need.query,candidates:byShot.get(need.shotId),
       destination,durationSeconds:durations[need.shotId]})})),warnings};

@@ -45,6 +45,46 @@ test("discovery is opt-in, metadata-only, and does not download any assets", asy
   assert.equal(result.scenes[1].strategy, "kumiki");
 });
 
+test("Openverse adds CC0-only scene photo leads without treating index metadata as verified rights",async()=>{
+  const valid={id:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",title:"Damaged roof on home",
+    foreign_landing_url:"https://example.org/photos/damaged-roof",license:"cc0",filetype:"jpg",
+    mature:false,watermarked:false,width:1920,height:1080,creator:"An artist",provider:"flickr",
+    tags:[{name:"roof"},{name:"house"}]};
+  const urls=[];
+  const discovered=await discoverShotAssets({bundle,providers:["openverse"],allowExternalSearch:true},
+    {fetchImpl:async(url,options)=>{
+      urls.push(String(url));
+      assert.equal(options.redirect,"error");
+      assert.equal(new URL(url).hostname,"api.openverse.org");
+      assert.equal(new URL(url).searchParams.get("license"),"cc0");
+      return response({results:[valid,
+        {...valid,id:"bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee",license:"by"},
+        {...valid,id:"cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee",mature:true},
+        {...valid,id:"dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee",foreign_landing_url:"https://localhost/private"}]});
+    }});
+  assert.equal(urls.length,1);
+  const lead=discovered.scenes[0].candidates[0];
+  assert.equal(discovered.scenes[0].candidates.length,1);
+  assert.equal(lead.provider,"openverse");
+  assert.equal(lead.assetType,"photo");
+  assert.equal(lead.rightsStatus,"needs-human-review");
+  assert.equal(lead.licenseUrl,"https://creativecommons.org/publicdomain/zero/1.0/");
+  assert.equal(lead.previewUrl,"https://api.openverse.org/v1/images/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/thumb/");
+  assert.equal(lead.sourceUrl,valid.foreign_landing_url);
+  assert.equal(discovered.scenes[1].candidates.length,0,"abstract chart scenes must not trigger provider suggestions");
+  await assert.rejects(approveAsset({projectId:"project-1",shotId:"shot-house",provider:"openverse",
+    assetId:valid.id,assetType:"photo",confirmDownload:true,confirmRights:true}),/unknown asset provider\/type/i,
+    "a search-only lead must never enter the approved importer without a separate rights-verified implementation");
+});
+
+test("Openverse rate limits leave Kumiki fallback available without fabricating licensed matches",async()=>{
+  const discovered=await discoverShotAssets({bundle,providers:["openverse"],allowExternalSearch:true},
+    {fetchImpl:async()=>response({detail:"Rate limited"},429)});
+  assert.equal(discovered.scenes[0].candidates.length,0);
+  assert.equal(discovered.scenes[0].strategy,"search");
+  assert.match(discovered.warnings.join(" "),/Openverse.*HTTP 429/iu);
+});
+
 test("job cancellation propagates into provider requests without removing per-request deadlines",async()=>{
   const cancel=new AbortController();let requestSignal;
   await discoverShotAssets({bundle,providers:["polyhaven"],allowExternalSearch:true},

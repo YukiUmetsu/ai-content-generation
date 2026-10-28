@@ -37,6 +37,21 @@ it("restores auto-searched scene media without downloading or selecting it",asyn
   expect(paths.every(path=>!path.endsWith("/approve")&&!path.endsWith("/select"))).toBe(true);
 });
 
+it("shows Openverse CC0 search leads as references without offering an unsupported importer",async()=>{
+  const openverse={...suggestions,scenes:[{...suggestions.scenes[0],recommendedAssetKey:null,
+    candidates:[{...suggestions.scenes[0].candidates[0],provider:"openverse",
+      assetId:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",title:"Front porch photo",
+      sourceUrl:"https://example.org/front-porch",license:"CC0-1.0 (unverified index)",
+      licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/"}]}]};
+  const requests=mockFetch({found:true,sourceShots:bundle.plan.shots,sourceSound:[],suggestions:openverse});
+  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1" productionId={productionId}/>);
+  expect(await screen.findByText("Front porch photo")).toBeInTheDocument();
+  expect(screen.getByText(/Openverse indexes third-party CC0 claims/)).toBeInTheDocument();
+  expect(screen.queryByRole("button",{name:"Review before import"})).not.toBeInTheDocument();
+  expect(screen.getByRole("link",{name:/View original/})).toHaveAttribute("href","https://example.org/front-porch");
+  expect(requests.every(path=>!path.endsWith("/approve"))).toBe(true);
+});
+
 it("does not offer stale media suggestions after scene edits",async()=>{
   mockFetch({found:true,sourceShots:[{id:"scene-1",purpose:"Older scene"}],sourceSound:[],suggestions});
   render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1" productionId={productionId}/>);
