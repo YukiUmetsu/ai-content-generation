@@ -127,6 +127,8 @@ export async function produceVideo(candidate, options, deps = {}) {
     Object.keys(characterPacks.rigs).some(id => !parsed.job.beats.some(beat =>
       (beat.speechTurns ?? [beat]).some(turn => turn.speaker?.id === id))))
     fail("custom Character Studio rig does not match a speaking character in this job");
+  if (Object.keys(characterPacks.rigs).length && parsed.job.visualFamily !== "general-explainer-v1")
+    fail("custom character rigs require the general-scene Kumiki renderer");
   if (!options?.out || !options.providerRevision) fail("explicit output and provider/engine revision are required");
   if (options.provider !== parsed.job.voice.provider) fail("provider substitution is forbidden; change the job voice configuration first");
   if (!Number.isFinite(options.budgetUsd ?? 0) || (options.budgetUsd ?? 0) < 0 ||
