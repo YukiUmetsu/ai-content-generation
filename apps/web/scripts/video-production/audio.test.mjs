@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { buildSampleTimeline } from "./timeline.mjs";
+import { synthesizeNarration } from "./speech.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 
 function toneWav(samples, amplitude = 2000, sampleRate = 48000, hertz = 220) {
@@ -65,6 +66,43 @@ test("intentional no-SFX mix remains playable without inserting sounds", { skip:
   assert.deepEqual(result.sfxCueSamples, {});
   assert.equal(result.findings.length, 0);
   assert.equal(result.ducking,null,"silence-only or narration-only mixes must not claim music processing");
+});
+
+test("actual FFmpeg voice stem follows Pip, Quill, narrator, Pip without swapping speakers", {skip:!enabled},async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"contentgen-dialogue-master-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const voices={pip:240,quill:360,narrator:480};
+  const beats=["pip","quill","narrator","pip"].map((name,index)=>({
+    id:`line-${index}`,narration:`Spoken line ${index} by ${name}.`,pauseAfterMs:index===1?250:0,
+    eventIds:[],speaker:{id:name,role:name==="narrator"?"narrator":"character",voiceId:name}
+  }));
+  const job={locale:"en-US",approval:"test-only",policy:{commercialRightsVerified:false},
+    voice:{provider:"local",voiceId:"narrator",modelId:"local-fixture",licenseStatus:"test-only"},beats};
+  const speech=await synthesizeNarration(job,{
+    provider:"local",providerRevision:"rig-test-1",cacheRoot:join(dir,"cache"),
+    localVoiceAuthorized:true,authorizedVoiceIds:["pip","quill"],
+    normalizeWav:async(input,output)=>writeFile(output,await readFile(input)),
+    synthesize:async request=>({audio:toneWav(48000,3000,48000,voices[request.voiceId]),
+      provider:"local",modelId:"local-fixture",voiceId:request.voiceId,
+      engineVersion:"rig-test-1",encoding:"wav"})
+  });
+  assert.deepEqual(speech.map(beat=>beat.speakerId),["pip","quill","narrator","pip"]);
+  const timeline=buildSampleTimeline(speech,{fps:{num:30,den:1},events:[]});
+  const master=await renderMasterAudio({beats:speech,timeline,sfx:[]},{outputDir:join(dir,"mixed")});
+  const stem=await readFile(master.voiceStemPath);
+  for(const range of timeline.beats){
+    const speaker=speech.find(beat=>beat.id===range.id).speakerId;
+    const expected=voices[speaker];
+    const signal=strengthAt(stem,range.startSample+12000,12000,expected);
+    assert.ok(signal>500,`Expected ${speaker} to be audible on its own aligned segment, measured ${signal}`);
+    for(const [name,hz] of Object.entries(voices)){
+      if(name===speaker)continue;
+      assert.ok(strengthAt(stem,range.startSample+12000,12000,hz)<signal/8,
+        `${speaker}'s segment must not contain ${name}'s voice tone`);
+    }
+  }
+  assert.equal(stem.readInt16LE(44+timeline.beats[1].pauseEndSample*2-2),0,
+    "narration pauses must remain silent before the next speaker");
 });
 
 test("reviewed SFX is mixed at the exact event sample only when the imported WAV hash still matches", { skip: !enabled }, async t=>{

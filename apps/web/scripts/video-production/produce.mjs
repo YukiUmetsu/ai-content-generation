@@ -113,7 +113,7 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,generateThumbnails?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -262,6 +262,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       },
       allowNetwork: options.allowNetwork, voiceReferenceConsent: options.voiceReferenceConsent,
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
+      authorizedVoiceIds: options.authorizedVoiceIds,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
       sceneJobs:options.sceneJobs,
@@ -405,6 +406,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     const narration = speech.map((beat) => ({
       id: beat.id, sha256: beat.sha256, samples: beat.samples,
       provider: beat.provider, modelId: beat.modelId, providerRevision: beat.providerRevision,
+      voiceId: beat.voiceId, speakerId: beat.speakerId, speakerRole: beat.speakerRole,
       licenseStatus: beat.licenseStatus ?? job.voice.licenseStatus,
       commercialRightsVerified: beat.commercialRightsVerified === true,
     }));

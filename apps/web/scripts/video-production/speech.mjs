@@ -60,7 +60,7 @@ function validateProbe(probe) {
 
 /**
  * @param {object} job validated video-production-job v1
- * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,paidUsageApproved?:boolean,budgetUsd?:number,direction?:object,skipInvalidPriorCache?:boolean}} options
+ * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],paidUsageApproved?:boolean,budgetUsd?:number,direction?:object,skipInvalidPriorCache?:boolean}} options
  */
 export async function synthesizeNarration(job, options) {
   const voice = job?.voice;
@@ -74,6 +74,31 @@ export async function synthesizeNarration(job, options) {
     fail("Fish requires explicit network and voice/text transmission consent, including on cache hits");
   }
   if (job.approval === "approved" && (voice.licenseStatus !== "verified" || job.policy?.commercialRightsVerified !== true)) fail("approved narration requires verified commercial voice rights");
+
+  // Non-default cast voices require separate, explicit authorization. Validate
+  // ALL beats before any TTS or cache reuse so a late unauthorized character
+  // cannot leave earlier provider requests half-completed.
+  if (options.authorizedVoiceIds !== undefined &&
+      (!Array.isArray(options.authorizedVoiceIds) || options.authorizedVoiceIds.length > 16 ||
+        options.authorizedVoiceIds.some(id => typeof id !== "string" || !id.trim() ||
+          id.length > 128 || id.trim() !== id || /[\u0000-\u001f\u007f]/u.test(id))))
+    fail("authorized cast voice IDs must be a bounded list of nonsecret provider references");
+  const authorized = new Set(options.authorizedVoiceIds ?? []);
+  for (const beat of job.beats) {
+    if (beat?.speaker === undefined) continue;
+    const speaker = beat.speaker;
+    if (!speaker || typeof speaker !== "object" || Array.isArray(speaker) ||
+        typeof speaker.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/u.test(speaker.id) ||
+        !["narrator", "character"].includes(speaker.role) ||
+        typeof speaker.voiceId !== "string" || !speaker.voiceId.trim() ||
+        speaker.voiceId.length > 128 || speaker.voiceId.trim() !== speaker.voiceId ||
+        /[\u0000-\u001f\u007f]/u.test(speaker.voiceId))
+      fail("invalid beat speaker assignment; reopen the cast editor");
+    if (speaker.voiceId !== voice.voiceId && !authorized.has(speaker.voiceId))
+      fail("an additional speaker voice is not authorized; review each cast voice before generating speech");
+    if (job.approval === "approved" && speaker.voiceId !== voice.voiceId)
+      fail("commercial multi-voice export requires individually verified cast voice rights; use a private draft until rights can be verified");
+  }
 
   const root = resolve(options.cacheRoot);
   if (parse(root).root === root) fail("filesystem root cannot be used as a narration cache");
@@ -95,10 +120,14 @@ export async function synthesizeNarration(job, options) {
   for (const beat of job.beats) {
     if (options.signal?.aborted) fail("narration synthesis cancelled");
     if (!valid(beat?.id) || !valid(beat?.narration)) fail("each beat needs an ID and nonempty narration");
+    const selectedVoiceId = beat.speaker?.voiceId ?? voice.voiceId;
+    const speakerId = beat.speaker?.id ?? "narrator";
+    const speakerRole = beat.speaker?.role ?? "narrator";
     const signature = {
       schemaVersion: 1, text: beat.narration.trim().normalize("NFC"),
       locale: job.locale, provider: options.provider, providerRevision: options.providerRevision,
-      modelId: voice.modelId, voiceId: voice.voiceId, profileId: voice.profileId,
+      modelId: voice.modelId, voiceId: selectedVoiceId, profileId: voice.profileId,
+      ...(beat.speaker ? {speakerId,speakerRole} : {}),
       direction, encoding: "wav/pcm_s16le/mono/48000", approval: job.approval,
       licenseStatus: voice.licenseStatus, commercialRightsVerified: job.policy?.commercialRightsVerified === true,
     };
@@ -164,11 +193,11 @@ export async function synthesizeNarration(job, options) {
       await mkdir(keyDir, { recursive: true });
       const staging = await mkdtemp(join(keyDir, ".staging-"));
       try {
-        const request = { text: signature.text, locale: job.locale, voiceId: voice.voiceId, modelId: voice.modelId, direction };
+        const request = { text: signature.text, locale: job.locale, voiceId: selectedVoiceId, modelId: voice.modelId, direction };
         const result = await synthesize(request, beat.id);
         if (!(result?.audio instanceof Uint8Array) || result.audio.length === 0 ||
           result.provider !== options.provider || result.modelId !== voice.modelId ||
-          result.voiceId !== voice.voiceId || result.encoding !== "wav") fail(`provider returned invalid speech identity/audio for beat ${beat.id}`);
+          result.voiceId !== selectedVoiceId || result.encoding !== "wav") fail(`provider returned invalid speech identity/audio for beat ${beat.id}`);
         if (options.provider === "local" && result.engineVersion !== options.providerRevision) fail("local engine version differs from the pinned cache revision");
         const generatedPath = join(staging, "generated.wav");
         const outputPath = join(staging, "normalized.wav");
@@ -196,7 +225,8 @@ export async function synthesizeNarration(job, options) {
     outputs.push({
       id: beat.id, text: beat.narration, samples: cached.samples,
       wavPath, sha256: cached.sha256, provider: options.provider,
-      providerRevision: options.providerRevision, modelId: voice.modelId, voiceId: voice.voiceId,
+      providerRevision: options.providerRevision, modelId: voice.modelId, voiceId: selectedVoiceId,
+      speakerId, speakerRole,
       licenseStatus: cached.licenseStatus, commercialRightsVerified: cached.commercialRightsVerified,
       pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds ?? [],
     });

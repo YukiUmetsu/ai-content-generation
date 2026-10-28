@@ -101,7 +101,7 @@ async fn load(
     Path(project_id): Path<String>,
 ) -> Result<Json<Snapshot>, ApiError> {
     if !valid_project(&project_id) { return Err(invalid("Invalid project ID")); }
-    let snapshot = tokio::task::spawn_blocking(move || {
+    let snapshot = tokio::task::spawn_blocking(move || -> Result<Snapshot, ApiError> {
         let db = state.connect().map_err(|_| unavailable())?;
         let row: Option<(i64, String)> = db.query_row(
             "SELECT revision, registry_json FROM character_voice_bindings WHERE project_id = ?1",

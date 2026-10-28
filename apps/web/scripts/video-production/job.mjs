@@ -259,10 +259,26 @@ export function parseVideoProductionJob(input) {
       }
     }
   };
-  const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual"]);
+  const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual", "speaker"]);
   if (beats.length === 0) add("empty-narration", "beats", "At least one narrated beat is required.");
+  const speakerVoices = new Map();
   for (const [index, beat] of beats.entries()) {
     text(beat.narration, `beats[${index}].narration`);
+    if (has(beat, "speaker") && fields(beat.speaker, `beats[${index}].speaker`, ["id", "role", "voiceId"])) {
+      const speaker = beat.speaker;
+      if (typeof speaker.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/u.test(speaker.id) ||
+          !["narrator", "character"].includes(speaker.role) ||
+          typeof speaker.voiceId !== "string" || speaker.voiceId.length > 128 ||
+          !speaker.voiceId.trim() || speaker.voiceId.trim() !== speaker.voiceId ||
+          /[\u0000-\u001f\u007f]/u.test(speaker.voiceId)) {
+        add("invalid-speaker", `beats[${index}].speaker`, "Choose a named speaker, role and nonsecret provider voice ID.");
+      } else {
+        const prior = speakerVoices.get(speaker.id);
+        if (prior && (prior.role !== speaker.role || prior.voiceId !== speaker.voiceId))
+          add("speaker-identity-changed", `beats[${index}].speaker`, "One speaker cannot change role or voice ID within the same video draft.");
+        speakerVoices.set(speaker.id, speaker);
+      }
+    }
     if (!(family === "general-explainer-v1" ? genericIntents : allowedIntents).has(beat.visualIntent)) add("unsupported-scene-intent", `beats[${index}].visualIntent`, "No visual recipe in this family supports this intent.");
     for (const ref of idList(beat.claimRefs, `beats[${index}].claimRefs`)) {
       if (!claimIds.has(ref)) add("unknown-claim-ref", `beats[${index}].claimRefs`, "Beat references an unknown claim.");

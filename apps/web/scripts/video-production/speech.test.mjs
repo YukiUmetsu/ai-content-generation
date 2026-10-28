@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +44,14 @@ test("speech outputs measured 48 kHz samples and a SHA-backed reusable per-beat 
   assert.deepEqual(first.map((b) => b.samples), [4800, 4800]);
   assert.equal(first[0].licenseStatus, "test-only");
   assert.match(first[0].sha256, /^[0-9a-f]{64}$/);
+  const legacySignature={schemaVersion:1,text:job.beats[0].narration,locale:job.locale,
+    provider:"local",providerRevision:"engine-0.1",modelId:job.voice.modelId,
+    voiceId:job.voice.voiceId,profileId:job.voice.profileId,
+    direction:{pace:"measured"},encoding:"wav/pcm_s16le/mono/48000",approval:job.approval,
+    licenseStatus:job.voice.licenseStatus,commercialRightsVerified:false};
+  const legacyKey=createHash("sha256").update(JSON.stringify(legacySignature)).digest("hex");
+  assert.ok(first[0].wavPath.endsWith(join("narration",legacyKey.slice(0,2),legacyKey,"speech.wav")),
+    "legacy one-narrator caches must retain their exact content-addressed identity");
   const second = await synthesizeNarration(job, options);
   assert.equal(calls, 2, "cache hit must avoid both provider calls");
   assert.deepEqual(second.map((b) => b.wavPath), first.map((b) => b.wavPath));
@@ -73,6 +82,77 @@ test("each narration beat is claimed and committed independently before the next
   assert.deepEqual(events,["start:a","done:a","start:b","done:b"]);
 });
 
+test("Pip and Quill dialogue alternates with narrator on one authorized, cached timeline", async(t) => {
+  const cacheRoot = await testContext(t);
+  const castJob = { ...job, beats: [
+    {...job.beats[0], id:"pip-line-1", speaker:{id:"pip",role:"character",voiceId:"pip-voice"}},
+    {...job.beats[1], id:"quill-line", speaker:{id:"quill",role:"character",voiceId:"quill-voice"}},
+    {...job.beats[0], id:"narration", speaker:{id:"narrator",role:"narrator",voiceId:job.voice.voiceId}},
+    {...job.beats[1], id:"pip-line-2", speaker:{id:"pip",role:"character",voiceId:"pip-voice"}},
+  ]};
+  const calls=[];
+  const options={provider:"local",providerRevision:"engine-0.1",cacheRoot,localVoiceAuthorized:true,
+    authorizedVoiceIds:["pip-voice","quill-voice"],...fakeMedia,
+    synthesize:async(request,id)=>{calls.push({id,voiceId:request.voiceId});return {
+      audio:pcmWave(960),provider:"local",modelId:job.voice.modelId,voiceId:request.voiceId,
+      engineVersion:"engine-0.1",encoding:"wav"};}};
+  const result=await synthesizeNarration(castJob,options);
+  assert.deepEqual(calls,[
+    {id:"pip-line-1",voiceId:"pip-voice"},{id:"quill-line",voiceId:"quill-voice"},
+    {id:"narration",voiceId:job.voice.voiceId},{id:"pip-line-2",voiceId:"pip-voice"},
+  ]);
+  assert.deepEqual(result.map(b=>b.speakerId),["pip","quill","narrator","pip"]);
+  assert.deepEqual(result.map(b=>b.speakerRole),["character","character","narrator","character"]);
+  const again=await synthesizeNarration(castJob,options);
+  assert.equal(calls.length,4,"verified cached lines must not trigger further paid requests");
+  assert.deepEqual(again.map(b=>b.wavPath),result.map(b=>b.wavPath));
+  const replacement={...castJob,beats:castJob.beats.map(b=>b.speaker?.id==="quill"?
+    {...b,speaker:{...b.speaker,voiceId:"quill-new"}}:b)};
+  await synthesizeNarration(replacement,{...options,authorizedVoiceIds:[...options.authorizedVoiceIds,"quill-new"]});
+  assert.equal(calls.length,5,"changing one character's voice invalidates only that character's speech");
+  assert.deepEqual(calls[4],{id:"quill-line",voiceId:"quill-new"});
+});
+
+test("unauthorized late cast voice fails before any provider call, even with cached narration", async(t) => {
+  const cacheRoot=await testContext(t);
+  let calls=0;
+  const options={provider:"local",providerRevision:"engine-0.1",cacheRoot,
+    localVoiceAuthorized:true,...fakeMedia,synthesize:async request=>{
+      calls++;return{audio:pcmWave(960),provider:"local",modelId:job.voice.modelId,
+        voiceId:request.voiceId,engineVersion:"engine-0.1",encoding:"wav"};}};
+  await synthesizeNarration(job,options);
+  assert.equal(calls,2);
+  const unsafe={...job,beats:[job.beats[0],{...job.beats[1],speaker:{id:"quill",role:"character",voiceId:"quill-voice"}}]};
+  await assert.rejects(synthesizeNarration(unsafe,options),/additional speaker voice is not authorized/u);
+  await assert.rejects(synthesizeNarration(unsafe,{...options,authorizedVoiceIds:[" other "]}),/bounded list/u);
+  await assert.rejects(synthesizeNarration(unsafe,{...options,authorizedVoiceIds:["quill-voice"],localVoiceAuthorized:false}),/local voice consent/u);
+  await assert.rejects(synthesizeNarration({...unsafe,approval:"approved",voice:{...job.voice,licenseStatus:"verified"},
+    policy:{...job.policy,commercialRightsVerified:true}},
+    {...options,authorizedVoiceIds:["quill-voice"]}),/commercial multi-voice export/u);
+  assert.equal(calls,2,"authorization must be checked before narration cache reuse or partial synthesis");
+});
+
+test("Fish cast choices are provider-neutral and still require network, voice and text consent",async t=>{
+  const cacheRoot=await testContext(t);
+  const fishJob={...job,voice:{...job.voice,provider:"fish",modelId:"s2.1-pro-free",
+    voiceId:"reference-default"},beats:[
+      {...job.beats[0],speaker:{id:"pip",role:"character",voiceId:"fish-pip"}},
+      {...job.beats[1],speaker:{id:"narrator",role:"narrator",voiceId:"reference-default"}},
+    ]};
+  const seen=[];
+  const options={provider:"fish",providerRevision:"fish-v1",cacheRoot,allowNetwork:true,
+    voiceReferenceConsent:true,textTransmissionApproved:true,authorizedVoiceIds:["fish-pip"],
+    ...fakeMedia,synthesize:async request=>{seen.push(request.voiceId);return {
+      audio:pcmWave(960),provider:"fish",modelId:fishJob.voice.modelId,
+      voiceId:request.voiceId,encoding:"wav"};}};
+  const beats=await synthesizeNarration(fishJob,options);
+  assert.deepEqual(seen,["fish-pip","reference-default"]);
+  assert.deepEqual(beats.map(b=>b.voiceId),seen);
+  await assert.rejects(synthesizeNarration(fishJob,{...options,textTransmissionApproved:false}),/consent/u);
+  await assert.rejects(synthesizeNarration(fishJob,{...options,authorizedVoiceIds:[]}),/not authorized/u);
+  assert.equal(seen.length,2,"revoked Fish permissions must also block cache reuse");
+});
+
 test("failed narration marks only the affected scene attempt as failed",async(t)=>{
   const cacheRoot=await testContext(t),events=[];
   const sceneJobs={beginScene:async ({sceneId})=>{events.push("start:"+sceneId);return sceneId;},
@@ -84,6 +164,23 @@ test("failed narration marks only the affected scene attempt as failed",async(t)
       return {audio:pcmWave(960),provider:"local",modelId:job.voice.modelId,
         voiceId:job.voice.voiceId,engineVersion:"engine-0.1",encoding:"wav"};}}),/provider unavailable/u);
   assert.deepEqual(events,["start:a","done:a","start:b","failed:b"]);
+});
+
+test("provider returning the wrong character voice fails the named Jobs scene without caching speech",async t=>{
+  const cacheRoot=await testContext(t),events=[];
+  const cast={...job,beats:[{...job.beats[0],speaker:{id:"pip",role:"character",voiceId:"pip-voice"}}]};
+  const sceneJobs={beginScene:async({sceneId})=>{events.push(`started:${sceneId}`);return sceneId;},
+    completeScene:async()=>events.push("completed"),
+    failScene:async(id,error)=>{assert.match(error.message,/invalid speech identity/u);events.push(`failed:${id}`);}};
+  let calls=0;
+  const options={provider:"local",providerRevision:"engine-0.1",cacheRoot,
+    authorizedVoiceIds:["pip-voice"],localVoiceAuthorized:true,sceneJobs,...fakeMedia,
+    synthesize:async()=>{calls++;return {audio:pcmWave(960),provider:"local",
+      modelId:job.voice.modelId,voiceId:"quill-voice",engineVersion:"engine-0.1",encoding:"wav"};}};
+  await assert.rejects(synthesizeNarration(cast,options),/invalid speech identity/u);
+  assert.deepEqual(events,["started:a","failed:a"]);
+  await assert.rejects(synthesizeNarration(cast,options),/invalid speech identity/u);
+  assert.equal(calls,2,"an invalid provider response must never become a reusable cache entry");
 });
 
 test("editing one beat does not regenerate unrelated speech; engine/version/voice isolate keys", async (t) => {

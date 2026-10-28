@@ -19,7 +19,8 @@ async function context(t) {
   const injected = {
     synthesizeNarration: async (j) => {
       providerCalls += j.beats.length;
-      return j.beats.map((b) => ({ id: b.id, samples: 48000, pauseAfterMs: b.pauseAfterMs, eventIds: b.eventIds, text: b.narration, wavPath: "mocked", sha256: hash(b.narration), provider: "local", modelId: "installed-mock", providerRevision: "bridge-1" }));
+      return j.beats.map((b) => ({ id: b.id, samples: 48000, pauseAfterMs: b.pauseAfterMs, eventIds: b.eventIds, text: b.narration, wavPath: "mocked", sha256: hash(b.narration), provider: "local", modelId: "installed-mock", providerRevision: "bridge-1",
+        voiceId:b.speaker?.voiceId??j.voice.voiceId,speakerId:b.speaker?.id??"narrator",speakerRole:b.speaker?.role??"narrator" }));
     },
     renderMasterAudio: async (input, options) => {
       await mkdir(options.outputDir, { recursive: true });
@@ -103,6 +104,29 @@ test("one command connects synthetic adapter outputs into atomically published r
     assert.ok(scene.reviewStill.frame<manifest.plan.chapters.find(chapter=>chapter.id===scene.id).endFrame);
     assert.equal(hash(await readFile(join(result.releaseDir,scene.reviewStill.file))),scene.reviewStill.sha256);
   }
+});
+
+test("full export carries authorized character voices and speaker provenance into the immutable release",async t=>{
+  const ctx=await context(t);
+  const names=["pip","quill","narrator"];
+  ctx.job.beats.forEach((beat,index)=>{
+    const name=names[index];
+    beat.speaker={id:name,role:name==="narrator"?"narrator":"character",
+      voiceId:name==="narrator"?ctx.job.voice.voiceId:`${name}-voice`};
+  });
+  const original=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(job,options)=>{
+    assert.deepEqual(options.authorizedVoiceIds,["pip-voice","quill-voice"]);
+    assert.deepEqual(job.beats.map(b=>b.speaker.id),names);
+    return original(job,options);
+  };
+  const result=await produceVideo(ctx.job,{...ctx.opts,authorizedVoiceIds:["pip-voice","quill-voice"]},ctx.injected);
+  const manifest=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.deepEqual(manifest.narration.map(({speakerId,speakerRole,voiceId})=>({speakerId,speakerRole,voiceId})),[
+    {speakerId:"pip",speakerRole:"character",voiceId:"pip-voice"},
+    {speakerId:"quill",speakerRole:"character",voiceId:"quill-voice"},
+    {speakerId:"narrator",speakerRole:"narrator",voiceId:"licensed"},
+  ]);
 });
 
 test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
