@@ -6,6 +6,9 @@ import { PIP_RIG, QUILL_RIG } from "./pip-quill-rigs";
 
 type Chapter = GeneralVisualPlan["chapters"][number];
 type CastId = "pip" | "quill";
+export type ExportRigMap = Partial<Record<CastId, {
+  draftId: string; archiveSha256: string; definition: CharacterDefinition; assetUrls: Record<string, string>;
+}>>;
 const cast: Record<CastId, { definition: CharacterDefinition; name: string; color: string; tint: string }> = {
   pip: { definition: PIP_RIG, name: "Pip", color: "#83E5CB", tint: "#203F45" },
   quill: { definition: QUILL_RIG, name: "Quill", color: "#C5BFFF", tint: "#353750" },
@@ -13,7 +16,7 @@ const cast: Record<CastId, { definition: CharacterDefinition; name: string; colo
 const castId = (id: string): id is CastId => id === "pip" || id === "quill";
 
 /** This is approximate mouth animation timed to *measured* voice ranges, not claimed phoneme alignment. */
-function conversationCues(chapter: Chapter, id: CastId): CharacterCue[] {
+function conversationCues(chapter: Chapter, id: CastId, definition: CharacterDefinition): CharacterCue[] {
   const result: CharacterCue[] = [];
   const turns = chapter.dialogue?.turns ?? [];
   for (const turn of turns) {
@@ -22,15 +25,17 @@ function conversationCues(chapter: Chapter, id: CastId): CharacterCue[] {
         turn.startFrame === undefined || turn.endFrame === undefined || turn.endFrame <= turn.startFrame) continue;
     result.push({ id: `voice-${chapter.id}-${turn.id}`, kind: "speech", instanceId: id,
       startFrame: turn.startFrame, endFrame: turn.endFrame, precision: "approximate" });
-    if (turn.endFrame - turn.startFrame >= 18) result.push({ id: `gesture-${chapter.id}-${turn.id}`,
-      kind: "action", instanceId: id, name: `${id}-explain`, startFrame: turn.startFrame + 3 });
+    const action = definition.actions?.[`${id}-explain`] ? `${id}-explain` :
+      definition.actions?.explain ? "explain" : null;
+    if (action && turn.endFrame - turn.startFrame >= 18) result.push({ id: `gesture-${chapter.id}-${turn.id}`,
+      kind: "action", instanceId: id, name: action, startFrame: turn.startFrame + 3 });
   }
   return result;
 }
 
 /** Layout is isolated to an editorial scene: other video families and unvoiced scenes stay unchanged. */
-export function ConversationCharacters({ chapter, frame, portrait = false, compact = false }: {
-  chapter: Chapter; frame: number; portrait?: boolean; compact?: boolean;
+export function ConversationCharacters({ chapter, frame, portrait = false, compact = false, rigs }: {
+  chapter: Chapter; frame: number; portrait?: boolean; compact?: boolean; rigs?: ExportRigMap;
 }) {
   const people = useMemo(() => [...new Set((chapter.dialogue?.turns ?? [])
     .filter(turn => turn.role === "character" && castId(turn.speakerId))
@@ -58,17 +63,21 @@ export function ConversationCharacters({ chapter, frame, portrait = false, compa
     <div style={{ display: "flex", justifyContent: "center", gap: compact ? 22 : 26,
       height: compact ? 245 : portrait ? 470 : 482, alignItems: "stretch", marginTop: 13 }}>
       {people.map(id => {
+        const custom = rigs?.[id];
+        const definition = custom?.definition ?? cast[id].definition;
         const performer: CharacterInstance = { instanceId: id, characterId: id,
-          revision: cast[id].definition.revision, seed: id === "pip" ? 117 : 283 };
+          revision: definition.revision, seed: id === "pip" ? 117 : 283 };
         const speaking = speaker === id;
         return <div key={id} data-conversation-performer={id} data-speaking={speaking ? "true" : "false"}
+          data-rig-source={custom ? "character-studio" : "bundled"} data-rig-revision={definition.revision}
+          data-rig-draft-id={custom?.draftId} data-rig-archive-sha256={custom?.archiveSha256}
           style={{ flex: 1, maxWidth: people.length === 1 ? 355 : 345, minWidth: 0,
             borderRadius: compact ? 19 : 24, border: `2px solid ${speaking ? cast[id].color : "#4E6673"}`,
             background: speaking ? cast[id].tint : "#203643", boxSizing: "border-box",
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "space-between",
             padding: compact ? "8px 12px" : "15px 19px", overflow: "hidden" }}>
-          <CharacterPresenter definition={cast[id].definition} instance={performer}
-            cues={conversationCues(chapter, id)} frame={frame} label={`${cast[id].name} animated character`}
+          <CharacterPresenter definition={definition} instance={performer} assetUrls={custom?.assetUrls}
+            cues={conversationCues(chapter, id, definition)} frame={frame} label={`${cast[id].name} animated character`}
             reducedMotion={false}
             style={{ width: compact ? "72%" : "100%", maxHeight: compact ? 192 : portrait ? 365 : 392,
               flex: "1 1 auto", objectFit: "contain" }} />
