@@ -21,11 +21,18 @@ const fixture=(root,overrides={})=>createResearchJobManager({root,inferenceGate:
   capture:async()=>capture,evidence:()=>dossier,outline:async()=>outline,
   scene:async (_outline,index)=>({index}),assemble:()=>({shots:[{id:"shot_1"}]}),
   persist:async()=>"research_test-0123456789ab",sleep:async()=>{},...overrides});
-async function settled(manager,id){for(let n=0;n<200;n++){
-  const state=await manager.get(id);
-  if(["completed","failed","cancelled","paused"].includes(state.status))return state;
-  await later(5);
-}throw Error("Job did not settle in time.");}
+async function settled(manager,id){
+  // File-backed local Jobs may take more than one second under parallel CI
+  // browser/FFmpeg and filesystem load. Bound by wall time, not poll count.
+  const deadline=Date.now()+10000;
+  let last;
+  do{
+    last=await manager.get(id);
+    if(["completed","failed","cancelled","paused"].includes(last.status))return last;
+    await later(10);
+  }while(Date.now()<deadline);
+  throw Error(`Job did not settle in time (status: ${last?.status??"unknown"}, stage: ${last?.stage??"unknown"}).`);
+}
 
 test("evidence repair is checkpointed before outlining and visible in job status",async()=>{
   const root=await mkdtemp(join(tmpdir(),"research-repair-checkpoint-"));
