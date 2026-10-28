@@ -8,7 +8,7 @@ import { AssetDiscoveryPanel } from "./asset-discovery-panel";
 import { SfxDiscoveryPanel } from "./sfx-discovery-panel";
 import { loadProjectStoryboard } from "@/features/storyboard-planner/model/project-storage";
 import { NewVideoSetup } from "./new-video-setup";
-import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
+import { isSceneMotion, normalizedSceneMotion, type SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
 import { directorStages, nextDirectorStage, resolveDirectorNavigation,
   shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
@@ -16,7 +16,7 @@ import type { LiveVisualPreviewData } from "./live-renderer-preview";
 
 const RendererScene=lazy(()=>import("./live-renderer-scene"));
 
-type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[]};
+type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[];motion?:SceneMotion};
 type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
@@ -62,6 +62,7 @@ function downloadJson(name:string,data:unknown){
 const directorSessionKey=(projectId:string,artifactId:string,storyboardSha256:string|null=null)=>
   storyboardSha256?"contentgen:director-session:v2:"+projectId+":"+artifactId+":"+storyboardSha256:
     "contentgen:director-session:v1:"+projectId+":"+artifactId;
+const safeSceneMotion=(value:unknown):SceneMotion=>normalizedSceneMotion(isSceneMotion(value)?value:undefined);
 function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle,
   storyboardSha256:string|null=null):
   {dossier:Dossier;bundle:Bundle}|null {
@@ -91,7 +92,8 @@ function shotDraft(bundle:Bundle,id:string){
   return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",family:shot?.family??"process",
     visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
     sfxIntent:audio?.sfxIntent??"",pauseAfterMs:audio?.pauseAfterMs??160,
-    visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
+    visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"",
+    motion:safeSceneMotion(shot?.motion)};
 }
 type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void};
 export function VideoDirectorWorkspace(props:DirectorWorkspaceProps){
@@ -102,7 +104,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
-  const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,visualElementsText:""});
+  const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,visualElementsText:"",motion:normalizedSceneMotion()});
   const [variants,setVariants]=useState<Variant[]>([]);
   const [voiceVariant,setVoiceVariant]=useState("");
   const [visualVariant,setVisualVariant]=useState("");
@@ -299,7 +301,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   }
   function changes(){
     if(!shot||!audio)return {};
-    const result:Record<string,string|null|VisualElement[]|number>={};
+    const result:Record<string,string|null|VisualElement[]|number|SceneMotion>={};
     if(draft.narration!==audio.narration)result.narration=draft.narration;
     if(draft.family!==(shot.family??"process"))result.family=draft.family;
     if(draft.onScreenText!==shot.onScreenText)result.onScreenText=draft.onScreenText;
@@ -307,12 +309,13 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     if(draft.visualAction!==(phase?.visualAction??shot.visualChange))result.visualAction=draft.visualAction;
     if(draft.sfxIntent!==(audio.sfxIntent??""))result.sfxIntent=draft.sfxIntent||null;
     if(draft.pauseAfterMs!==(audio.pauseAfterMs??160))result.pauseAfterMs=draft.pauseAfterMs;
+    if(JSON.stringify(draft.motion)!==JSON.stringify(safeSceneMotion(shot.motion)))result.motion=draft.motion;
     const savedText=shot.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
     if(draft.visualElementsText.trim()!==savedText.trim())
       result.visualElements=parseElementsInput(draft.visualElementsText);
     return result;
   }
-  async function apply(changed:Record<string,string|null|VisualElement[]|number>){
+  async function apply(changed:Record<string,string|null|VisualElement[]|number|SceneMotion>){
     if(!bundle||!dossier||!shot)return;
     setBusy(true);setStatus("");
     try{
@@ -332,6 +335,9 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       const result=await request("edit",{bundle,dossier,shotId:id,changes:{motion}}) as unknown as Revision;
       setHistory(prev=>({undo:[...prev.undo,{bundle,revisions}].slice(-20),redo:[]}));
       setBundle(result.bundle);
+      // The full preview and scene workbench edit the same motion field.
+      // Keep both controls aligned so returning to the scene never looks dirty.
+      if(id===shotId)setDraft(shotDraft(result.bundle,id));
       setRevisions(prev=>[...prev,{shotId:id,impacts:result.impacts}]);
       setStatus("Scene motion saved. Only its visual segment needs rebuilding; narration remains reusable.");
       return result.bundle;
@@ -362,6 +368,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     draft.family!==(shot.family??"process")||
     draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
     draft.sfxIntent!==(audio.sfxIntent??"")||draft.pauseAfterMs!==(audio.pauseAfterMs??160)||
+    JSON.stringify(draft.motion)!==JSON.stringify(safeSceneMotion(shot.motion))||
     draft.visualElementsText.trim()!==visualTextSaved.trim());
   function navigate(target:DirectorStage){
     const result=resolveDirectorNavigation({current:stage,target,unsaved:dirty});
@@ -574,6 +581,46 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
                     aria-label="Scene pause duration" value={draft.pauseAfterMs}
                     onChange={e=>setDraft({...draft,pauseAfterMs:Number(e.target.value)})}/>
                   <span className="mt-1 block text-xs font-normal normal-case tracking-normal text-muted-foreground">0–3000 ms. Changes pacing and adjusts later scene timing without regenerating this scene’s voice.</span>
+                </label>
+              </div>
+            </div>
+            <div className="rounded-surface border border-border bg-surface-subtle p-4">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Scene motion &amp; transition</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">Control what actually animates in the exported scene. Changes here only rebuild this scene’s visual segment.</p>
+                </div>
+                <Button size="sm" variant="outline" disabled={busy} onClick={()=>setDraft({...draft,motion:normalizedSceneMotion()})}>Reset motion</Button>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <label className={header}>Reveal delay · {draft.motion.revealDelayPercent}%
+                  <input className="mt-3 w-full accent-primary" type="range" min={0} max={30} step={5}
+                    aria-label="Scene reveal delay" value={draft.motion.revealDelayPercent}
+                    onChange={e=>setDraft({...draft,motion:{...draft.motion,revealDelayPercent:Number(e.target.value)}})}/>
+                  <span className="mt-1 block text-xs font-normal normal-case tracking-normal text-muted-foreground">Wait before showing the first visual element.</span>
+                </label>
+                <label className={header}>Reveal pace
+                  <select className={field+" mt-2"} aria-label="Scene reveal pace" value={draft.motion.revealPace}
+                    onChange={e=>setDraft({...draft,motion:{...draft.motion,revealPace:e.target.value as SceneMotion["revealPace"]}})}>
+                    <option value="snappy">Quick reveals</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="deliberate">Slow &amp; deliberate</option>
+                  </select>
+                </label>
+                <label className={header}>Camera movement
+                  <select className={field+" mt-2"} aria-label="Scene camera movement" value={draft.motion.camera}
+                    onChange={e=>setDraft({...draft,motion:{...draft.motion,camera:e.target.value as SceneMotion["camera"]}})}>
+                    <option value="locked">Still</option>
+                    <option value="subtle">Subtle push</option>
+                    <option value="cinematic">Cinematic push</option>
+                  </select>
+                </label>
+                <label className={header}>Transition in
+                  <select className={field+" mt-2"} aria-label="Scene transition" value={draft.motion.transition}
+                    onChange={e=>setDraft({...draft,motion:{...draft.motion,transition:e.target.value as SceneMotion["transition"]}})}>
+                    <option value="cut">Cut</option>
+                    <option value="fade">Fade in</option>
+                  </select>
                 </label>
               </div>
             </div>

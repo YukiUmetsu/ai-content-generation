@@ -193,6 +193,37 @@ describe("Video Director selected-shot workbench",()=>{
     await waitFor(()=>expect(edits).toEqual([{pauseAfterMs:950}]));
     expect(screen.getByText(/New narration: none/)).toBeInTheDocument();
   });
+  it("saves camera, reveal timing and transition on only the selected scene",async()=>{
+    const edits:Array<{shotId:string;changes:Record<string,unknown>}>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;shotId:string;changes:Record<string,unknown>};
+      edits.push({shotId:body.shotId,changes:body.changes});
+      const revised=structuredClone(body.bundle);
+      Object.assign(revised.plan.shots.find(s=>s.id===body.shotId)!,{motion:body.changes.motion});
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:["motion"],
+        speechRegenerate:[],visualRerender:[body.shotId],sfxRemix:[],downstreamRetiming:[],
+        timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scene-motion.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene camera movement"}),"cinematic");
+    fireEvent.change(screen.getByRole("slider",{name:"Scene reveal delay"}),{target:{value:"15"}});
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene reveal pace"}),"deliberate");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene transition"}),"fade");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toEqual([{shotId:"middle",changes:{motion:{
+      revealDelayPercent:15,revealPace:"deliberate",camera:"cinematic",transition:"fade"
+    }}}]));
+    expect(screen.getByText(/New narration: none/)).toBeInTheDocument();
+    expect(screen.getByText(/Rerender visuals: middle/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:/Scene 1: Why\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene camera movement"})).toHaveValue("subtle");
+    await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene camera movement"})).toHaveValue("cinematic");
+  });
 });
 
 describe("first-run complete Studio demo",()=>{
