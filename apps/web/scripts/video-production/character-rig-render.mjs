@@ -9,7 +9,8 @@ const MAX_ZIP = 16 * 1024 * 1024;
 const MAX_ENTRY = 12 * 1024 * 1024;
 const MAX_EXPANDED = 64 * 1024 * 1024;
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
-const safeId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value);
+const safeId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value) &&
+  !["__proto__", "prototype", "constructor"].includes(value);
 const safePath = value => typeof value === "string" && value.length <= 240 &&
   /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !value.split("/").some(part => part === "." || part === ".." || !part);
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -135,11 +136,26 @@ function verifyPack(archive, draft, id) {
       !Object.hasOwn(definition.assets, part.asset) || !definition.channels.includes(part.channel) ||
       !object(part.pivot) || !Number.isFinite(part.pivot.x) || !Number.isFinite(part.pivot.y))
       fail("Character has invalid articulated parts.");
+    if (!Number.isFinite(part.z) || part.z < -1000 || part.z > 1000 ||
+      (part.variants && (!object(part.variants) || Object.values(part.variants).some(value =>
+        !safeId(value) || !Object.hasOwn(definition.assets, value)))))
+      fail("Character has an invalid layer order or missing pose image.");
     parts.set(part.id, part);
+  }
+  for (const part of parts.values()) {
+    const seen = new Set([part.id]);
+    let parent = part.parent;
+    while (parent !== undefined) {
+      if (!safeId(parent) || !parts.has(parent) || seen.has(parent))
+        fail("Character part hierarchy contains a cycle or missing parent.");
+      seen.add(parent);
+      parent = parts.get(parent).parent;
+    }
   }
   const speech = definition.speech;
   if (!object(speech) || !safeId(speech.mouthPart) || !parts.has(speech.mouthPart) ||
     !Array.isArray(speech.approximateCycle) || speech.approximateCycle.length < 2 ||
+    new Set(speech.approximateCycle).size < 2 ||
     speech.approximateCycle.some(value => typeof value !== "string"))
     fail(`Saved ${id} must include an articulated speech mouth and at least two mouth shapes for video export.`);
   const mouth = parts.get(speech.mouthPart);
