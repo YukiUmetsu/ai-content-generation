@@ -53,8 +53,8 @@ describe("original Pip and Quill rig integration in exported scenes", () => {
     expect(narrator).not.toContain('data-asset="mouthWide"');
     expect(silent).toContain('data-dialogue-active="quiet"');
     expect(silent).toContain('data-asset="mouthRest"');
-    expect(render(19)).toBe(pip, "random seeking cannot move a puppet to a different pose");
-    expect(pip).not.toBe(render(24), "authored arm and mouth motion changes rendered frames");
+    expect(render(19)).toBe(pip);
+    expect(pip).not.toBe(render(24));
   });
 
   it("uses local scene artwork instead of fetching missing character images or inventing cast voices", () => {

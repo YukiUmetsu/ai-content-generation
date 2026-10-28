@@ -13,7 +13,7 @@ const cast: Record<CastId, { definition: CharacterDefinition; name: string; colo
 const castId = (id: string): id is CastId => id === "pip" || id === "quill";
 
 /** This is approximate mouth animation timed to *measured* voice ranges, not claimed phoneme alignment. */
-export function conversationCues(chapter: Chapter, id: CastId): CharacterCue[] {
+function conversationCues(chapter: Chapter, id: CastId): CharacterCue[] {
   const result: CharacterCue[] = [];
   const turns = chapter.dialogue?.turns ?? [];
   for (const turn of turns) {
