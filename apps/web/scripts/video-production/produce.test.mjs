@@ -585,3 +585,11 @@ test("corrupt previous plan hash refuses release before any TTS",async t=>{
   await assert.rejects(produceVideo(ctx.job,{...ctx.opts,out:join(ctx.root,"new"),reuseFrom:ctx.opts.out},ctx.injected),/tampered|invalid/i);
   assert.equal(ctx.status().providerCalls,oldCalls);
 });
+
+test("custom character rigs cannot silently enter an unrelated visual family or incur TTS",async t=>{
+  const ctx=await context(t);
+  ctx.job.beats[0].speaker={id:"pip",role:"character",voiceId:"licensed"};
+  ctx.opts.characterRigPacks={rigs:{pip:{definition:{characterId:"pip"}}},assets:[],identity:[]};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/custom character rigs require the general-scene/);
+  assert.equal(ctx.status().providerCalls,0);
+});
