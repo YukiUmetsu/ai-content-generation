@@ -15,6 +15,7 @@ import { compileAnimatic } from "./video-production/animatic.mjs";
 import { renderAnimaticHtml } from "./video-production/animatic-player.mjs";
 import { inspectProduction } from "./video-production/cli.mjs";
 import { produceVideo } from "./video-production/produce.mjs";
+import { loadProjectCharacterRigs } from "./video-production/character-rig-render.mjs";
 import { findChromium } from "./video-production/try.mjs";
 import { localSpeechEndpoint } from "./video-production/local.mjs";
 import { researchVideoTopic } from "./video-production/research-agent.mjs";
@@ -243,6 +244,17 @@ async function deliverSceneVideo(req,res,file,expectedHash,expectedSize,digestCa
 }
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
+  const resolveRigs=deps.loadCharacterRigs??loadProjectCharacterRigs;
+  async function characterRigSelection(input,job){
+    const speakers=[...new Set(job.beats.flatMap(beat=>
+      (beat.speechTurns??[beat]).map(turn=>turn.speaker?.id)).filter(id=>id==="pip"||id==="quill"))];
+    if(!speakers.length||input.characterProjectId===undefined)
+      return {rigs:{},assets:[],identity:[]};
+    if(typeof input.characterProjectId!=="string"||
+      !/^[A-Za-z0-9_-]{1,120}$/.test(input.characterProjectId))
+      throw Error("Invalid Character Studio project identity.");
+    return resolveRigs({projectId:input.characterProjectId,speakers});
+  }
   const synthesizeSample=deps.synthesizeNarration??synthesizeNarration;
   const compile=deps.compile??compilePreproductionRenderJob;
   const bindSfx=async (compiled,input)=>resolveAndBindApprovedSfx(compiled,input,{
@@ -961,7 +973,8 @@ export function createDirectorProduction(deps={}){
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+        const characterRigPacks=await characterRigSelection(input,job);
+        const identity=sha({characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -1002,7 +1015,8 @@ export function createDirectorProduction(deps={}){
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+        const characterRigPacks=await characterRigSelection(input,job);
+        const identity=sha({characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
@@ -1098,6 +1112,7 @@ export function createDirectorProduction(deps={}){
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
               sceneAssetBundle:input.bundle,
               expectedSceneMediaFingerprint:sceneMedia.fingerprint,
+              characterRigPacks,
               ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom,
                 reuseRenderSegmentsFrom:reuseSpeechCacheFrom}:{}),
               ...(searchFreeMedia?{prepareAssetSuggestions:async({signal})=>{
