@@ -125,7 +125,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     !Array.isArray(characterPacks.identity) ||
     Object.keys(characterPacks.rigs).some(id => !["pip", "quill"].includes(id)) ||
     Object.keys(characterPacks.rigs).some(id => !parsed.job.beats.some(beat =>
-      (beat.speechTurns ?? [beat]).some(turn => turn.speaker?.id === id))))
+      (beat.speechTurns ?? [beat]).some(turn => turn.speaker?.role === "character" && turn.speaker.id === id))))
     fail("custom Character Studio rig does not match a speaking character in this job");
   if (Object.keys(characterPacks.rigs).length && parsed.job.visualFamily !== "general-explainer-v1")
     fail("custom character rigs require the general-scene Kumiki renderer");
