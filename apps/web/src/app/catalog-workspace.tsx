@@ -17,6 +17,7 @@ import { usePreferences } from "./use-preferences";
 import { ResearchModelSettings } from "./research-model-settings";
 import { PromptStudio } from "./prompt-studio";
 import { ProviderConnections } from "./provider-connections";
+import { clearProjectVoiceData } from "./project-voice-favorites";
 import { ProjectDiscoveryPanel } from "./project-discovery-panel";
 import { ProjectBrandAppearancePanel } from "./project-brand-appearance-panel";
 import type {DiscoveryCandidate,GraphSource} from "@/lib/api/discovery";
@@ -125,10 +126,13 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
                 {selected?localMessage(locale,"Selected","選択中"):localMessage(locale,"Select","選択")}
               </Button>
               <Button variant="subtle" size="icon" aria-label={"Delete "+project.name} disabled={catalog.projects.length<=1}
-                onClick={()=>{if(window.confirm("Delete project "+project.name+" and its content, assets, products, and local research history?")){
+                onClick={()=>{if(window.confirm("Delete project "+project.name+" and its content, assets, products, saved voices, and local research history?")){
                   void (async()=>{
                     if(onDeleteProject&&!(await onDeleteProject(project.id)))return;
-                    save(withoutProject(catalog,project.id));
+                    if(save(withoutProject(catalog,project.id))){
+                      // A failed catalog save must never discard project voices.
+                      try{clearProjectVoiceData(project.id);}catch{/* Browser storage may be unavailable. */}
+                    }
                   })();
                 }}}>
                 <Trash2 aria-hidden className="size-4"/>

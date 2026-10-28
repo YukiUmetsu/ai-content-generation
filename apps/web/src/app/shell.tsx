@@ -237,6 +237,7 @@ export function Shell() {
             <VideoDirectorWorkspace
               key={(directorEntry?.projectId??catalog.activeProjectId)+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
               locale={locale} projectId={directorEntry?.projectId??catalog.activeProjectId}
+              voiceProjectId={catalog.activeProjectId}
               researchArtifactId={directorEntry?.artifactId}
               focusStage={directorEntry?.stage} onOpenJobs={()=>selectSection("jobs-qa")}/>
           ) : activeSection === "research" ? (

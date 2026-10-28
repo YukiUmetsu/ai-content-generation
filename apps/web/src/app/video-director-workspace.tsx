@@ -141,11 +141,11 @@ function shotDraft(bundle:Bundle,id:string){
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"",
     motion:safeSceneMotion(shot?.motion)};
 }
-type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void};
+type DirectorWorkspaceProps={locale:Locale;projectId?:string;voiceProjectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void};
 export function VideoDirectorWorkspace(props:DirectorWorkspaceProps){
-  return <VideoDirectorWorkspaceContent key={`${props.projectId??""}:${props.researchArtifactId??""}`} {...props}/>;
+  return <VideoDirectorWorkspaceContent key={`${props.voiceProjectId??""}:${props.projectId??""}:${props.researchArtifactId??""}`} {...props}/>;
 }
-function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focusStage,onOpenJobs}:DirectorWorkspaceProps){
+function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,researchArtifactId,focusStage,onOpenJobs}:DirectorWorkspaceProps){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
@@ -873,7 +873,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         <div className={stage==="preview"?"space-y-4":"hidden"} aria-hidden={stage!=="preview"}>
           {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
-          <ProductionPanel key={`${dossier.id}:${draftLaunchCount}`} dossier={dossier} bundle={bundle}
+          <ProductionPanel key={`${voiceProjectId??projectId??dossier.id}:${dossier.id}:${draftLaunchCount}`} dossier={dossier} bundle={bundle}
+            voiceProjectId={voiceProjectId??projectId}
             onOpenJobs={onOpenJobs}
             onFindVisuals={id=>{chooseShot(id);navigate("assets");}}
             // A saved script can have multiple applied scene edits. Keep the

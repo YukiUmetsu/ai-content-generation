@@ -3,6 +3,8 @@ import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, Film, Headphones, Pla
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import { LiveRendererPreview, type LiveVisualPreviewData } from "./live-renderer-preview";
+import { ProjectVoiceFavoritesPanel } from "./project-voice-favorites-panel";
+import { projectNarratorSettingsKey, readProjectVoices, type VoiceFavorite } from "./project-voice-favorites";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
@@ -35,19 +37,42 @@ const inputLabel="flex flex-col text-xs font-semibold text-muted-foreground";
 const defaults:Settings={provider:"local",voiceId:"",providerRevision:"",modelId:"",
   endpoint:"http://127.0.0.1:8765",apiKey:"",localVoiceAuthorized:false,voiceConsent:false,transmitText:false};
 const voiceProfileKey="contentgen:production-voice-profile:v1";
+const legacyVoiceOwnerKey="contentgen:production-voice-profile:legacy-owner:v1";
 const freeMediaKey="contentgen:production-free-media:v1";
 function savedFreeMediaPreference():boolean{
   // Scene descriptions can reveal private research. Never contact public
   // stock-media providers until the user explicitly enables the search.
   try{return localStorage.getItem(freeMediaKey)==="enabled";}catch{return false;}
 }
-function savedVoiceSettings():Settings{
+function savedVoiceSettings(projectId?:string):Settings{
   try{
-    const saved=JSON.parse(localStorage.getItem(voiceProfileKey)??"null") as Partial<Settings>|null;
-    if(!saved||!(["local","fish"] as string[]).includes(saved.provider??""))return {...defaults};
-    const profile={...defaults,provider:saved.provider as Settings["provider"]};
-    for(const key of ["voiceId","providerRevision","modelId","endpoint"] as const){
-      if(typeof saved[key]==="string"&&saved[key]!.length<=256)profile[key]=saved[key]!;
+    const saved=JSON.parse(localStorage.getItem(projectId?projectNarratorSettingsKey(projectId):voiceProfileKey)??"null") as Partial<Settings>|null;
+    const profile={...defaults};
+    if(saved&&(["local","fish"] as string[]).includes(saved.provider??"")){
+      profile.provider=saved.provider as Settings["provider"];
+      for(const key of ["voiceId","providerRevision","modelId","endpoint"] as const){
+        if(typeof saved[key]==="string"&&saved[key]!.length<=256)profile[key]=saved[key]!;
+      }
+      return profile;
+    }
+    if(projectId){
+      // Claim a previous browser-global manual choice at most once; it must
+      // not silently become another project's narrator on subsequent visits.
+      const legacy=localStorage.getItem(voiceProfileKey);
+      const owner=localStorage.getItem(legacyVoiceOwnerKey);
+      if(legacy&&(!owner||owner===projectId)){
+        const prior=JSON.parse(legacy) as Partial<Settings>|null;
+        if(prior&&typeof prior.voiceId==="string"&&prior.voiceId.trim()&&prior.voiceId.length<=256&&
+          (prior.provider==="fish"||prior.provider==="local")){
+          if(!owner)localStorage.setItem(legacyVoiceOwnerKey,projectId);
+          return {...profile,provider:prior.provider,voiceId:prior.voiceId,
+            providerRevision:typeof prior.providerRevision==="string"&&prior.providerRevision.length<=256?prior.providerRevision:"",
+            modelId:typeof prior.modelId==="string"&&prior.modelId.length<=256?prior.modelId:"",
+            endpoint:typeof prior.endpoint==="string"&&prior.endpoint.length<=256?prior.endpoint:defaults.endpoint};
+        }
+      }
+      const first=readProjectVoices(projectId).voices[0];
+      if(first){profile.provider=first.provider;profile.voiceId=first.voiceId;}
     }
     // Authorization, permission to transmit, and API credentials never persist
     // in browser storage; each session must independently authorize requests.
@@ -76,16 +101,16 @@ async function request(path:string,payload?:unknown){
     `Local production failed (HTTP ${response.status}). Check the Studio terminal.`);
   return data;
 }
-export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
-  initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs,onFindVisuals}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void;onFindVisuals?:(shotId:string)=>void}){
+export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
+  initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs,onFindVisuals}:{dossier:Dossier;bundle:Bundle;productionId?:string;voiceProjectId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void;onFindVisuals?:(shotId:string)=>void}){
   const [stage,setStage]=useState<Stage>(initialStage);
-  const [settings,setSettings]=useState<Settings>(savedVoiceSettings);
+  const [settings,setSettings]=useState<Settings>(()=>savedVoiceSettings(voiceProjectId));
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
   useEffect(()=>{
-    try{localStorage.setItem(voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
+    try{localStorage.setItem(voiceProjectId?projectNarratorSettingsKey(voiceProjectId):voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
       providerRevision:settings.providerRevision,modelId:settings.modelId,endpoint:settings.endpoint}));}
     catch{/* Private mode must not block production. */}
-  },[settings.provider,settings.voiceId,settings.providerRevision,settings.modelId,settings.endpoint]);
+  },[voiceProjectId,settings.provider,settings.voiceId,settings.providerRevision,settings.modelId,settings.endpoint]);
   const [sampleStatus,setSampleStatus]=useState<SampleStatus>({state:"idle",message:""});
   const sampleRevision=useRef(0);
   const activeSampleRevision=useRef(0);
@@ -158,6 +183,10 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     setSfxSummary(null);
     setState(current=>["rendering","done"].includes(current.state)?current:
       {state:"idle",phase:"idle",message:"",report:null});
+  };
+  const useFavoriteVoice=(voice:VoiceFavorite)=>{
+    if(settings.provider===voice.provider&&settings.voiceId===voice.voiceId)return;
+    change({provider:voice.provider,voiceId:voice.voiceId,localVoiceAuthorized:false,voiceConsent:false,transmitText:false});
   };
   const changeMediaSearch=(enabled:boolean)=>{
     inputRevision.current++;
@@ -494,6 +523,8 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       {stage==="narration"&&<>
         <div className="space-y-1"><h3 className="flex items-center gap-2 text-base font-semibold"><Headphones className="size-4"/>Choose your narrator</h3>
           <p className="text-muted-foreground">Select an authorized voice and listen to a short excerpt from your first scene. This is a voice test, not the finished soundtrack.</p></div>
+        {voiceProjectId&&<ProjectVoiceFavoritesPanel key={voiceProjectId} projectId={voiceProjectId}
+          selectedVoice={{provider:settings.provider,voiceId:settings.voiceId}} onUseVoice={useFavoriteVoice}/>}
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={inputLabel}>Voice provider
             <select className={field} aria-label="Production voice provider" value={settings.provider}

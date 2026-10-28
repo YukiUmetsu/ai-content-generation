@@ -1,8 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { CATALOG_KEY } from "./catalog-model";
+import { CatalogWorkspace } from "./catalog-workspace";
+import {defaultProjectVoices,saveProjectVoices,voiceFavoritesKey} from "./project-voice-favorites";
+
+it("keeps project voices if deletion fails and clears them only after a successful confirmed catalog save",async()=>{
+  const catalog={version:1 as const,activeProjectId:"project-one",projects:[
+    {id:"project-one",name:"First",notes:"",createdAt:"2026-10-28T00:00:00Z"},
+    {id:"project-two",name:"Second",notes:"",createdAt:"2026-10-28T00:00:00Z"}],
+    content:[],assets:[],products:[]};
+  saveProjectVoices(defaultProjectVoices("project-one"));
+  saveProjectVoices(defaultProjectVoices("project-two"));
+  const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+  const save=vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+  const user=userEvent.setup();
+  render(<CatalogWorkspace section="projects" locale="en" catalog={catalog}
+    save={save} onCreate={()=>{}} onDeleteProject={()=>true}/>);
+  const remove=screen.getByRole("button",{name:"Delete First"});
+  await user.click(remove);
+  await waitFor(()=>expect(save).toHaveBeenCalledTimes(1));
+  expect(localStorage.getItem(voiceFavoritesKey("project-one"))).not.toBeNull();
+  await user.click(remove);
+  await waitFor(()=>expect(save).toHaveBeenCalledTimes(2));
+  expect(localStorage.getItem(voiceFavoritesKey("project-one"))).toBeNull();
+  expect(localStorage.getItem(voiceFavoritesKey("project-two"))).not.toBeNull();
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("saved voices"));
+  confirm.mockRestore();
+});
 
 describe("Studio menu workspaces", () => {
   beforeEach(() => localStorage.clear());
