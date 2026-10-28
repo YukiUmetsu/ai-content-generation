@@ -2,6 +2,7 @@
 //! registered-but-not-implemented lane routers.
 
 pub mod character_drafts;
+pub mod character_voices;
 pub mod creative;
 pub mod credentials;
 pub mod db;

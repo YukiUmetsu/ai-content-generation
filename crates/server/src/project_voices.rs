@@ -29,7 +29,7 @@ async fn require_local_host(request: Request, next: Next) -> Result<Response, Ap
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Favorite {
+pub(crate) struct Favorite {
     provider: String,
     voice_id: String,
     name: String,
@@ -68,12 +68,12 @@ fn unavailable() -> ApiError {
     ApiError::Internal { message: "Project voice storage is unavailable".into() }
 }
 
-fn valid_project(value: &str) -> bool {
+pub(crate) fn valid_project(value: &str) -> bool {
     (1..=160).contains(&value.len())
         && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
-fn valid_text(value: &str, max: usize) -> bool {
+pub(crate) fn valid_text(value: &str, max: usize) -> bool {
     !value.is_empty() && value.len() <= max && value.trim() == value
         && !value.chars().any(char::is_control)
 }
@@ -94,20 +94,25 @@ fn validate(project_id: &str, library: &Library) -> Result<(), ApiError> {
     }
     let mut seen = HashSet::new();
     for voice in &library.voices {
-        if !matches!(voice.provider.as_str(), "fish" | "local")
-            || !valid_text(&voice.voice_id, 128)
-            || (voice.provider == "fish" && (voice.voice_id.len() != 32 || !voice.voice_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())))
-            || !valid_text(&voice.name, 72)
-            || !matches!(voice.gender.as_str(), "unspecified" | "female" | "male" | "nonbinary")
-            || !valid_text(&voice.situation, 48)
-            || !valid_text(&voice.language, 35)
-            || !valid_language(&voice.language)
+        if !valid_favorite(voice)
             || !seen.insert((voice.provider.as_str(), voice.voice_id.as_str()))
         {
             return Err(invalid("Project voices contain invalid or duplicate voice IDs or tags"));
         }
     }
     Ok(())
+}
+
+pub(crate) fn valid_favorite(voice: &Favorite) -> bool {
+    matches!(voice.provider.as_str(), "fish" | "local")
+        && valid_text(&voice.voice_id, 128)
+        && (voice.provider != "fish" || (voice.voice_id.len() == 32
+            && voice.voice_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())))
+        && valid_text(&voice.name, 72)
+        && matches!(voice.gender.as_str(), "unspecified" | "female" | "male" | "nonbinary")
+        && valid_text(&voice.situation, 48)
+        && valid_text(&voice.language, 35)
+        && valid_language(&voice.language)
 }
 
 async fn load(

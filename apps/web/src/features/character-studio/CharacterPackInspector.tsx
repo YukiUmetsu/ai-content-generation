@@ -13,7 +13,8 @@ import type { Locale } from "@/features/registry";
 import { exampleCharacterJson, exampleCharacterZip } from "./example-character";
 import { readProjectVoices, type VoiceFavorite } from "@/app/project-voice-favorites";
 import { changeCharacterVoice, readCharacterVoiceBindings, saveCharacterVoiceBindings,
-  type CharacterVoiceBindings } from "./character-voice-bindings";
+  characterVoicesKey,type CharacterVoiceBindings } from "./character-voice-bindings";
+import {loadSavedCharacterVoices,writeSavedCharacterVoices} from "./character-voice-bindings-api";
 
 const manifestFields = [
   { key: "schemaVersion / characterId / revision", en: "Required version 1, stable ID and editable revision string.", ja: "必須。バージョン 1、固定 ID、改訂番号。" },
@@ -50,6 +51,10 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
     try { return {registry:readCharacterVoiceBindings(projectId),error:""}; }
     catch (caught) { return {registry:null,error:caught instanceof Error?caught.message:"Cannot load character voices."}; }
   });
+  const [voiceSync,setVoiceSync]=useState<{revision:number;status:"loading"|"ready"|"error"|"conflict";remote:CharacterVoiceBindings|null}>(
+    {revision:0,status:"loading",remote:null});
+  const [voicePending,setVoicePending]=useState(false);
+  const [voiceReload,setVoiceReload]=useState(0);
   const [exampleDownloadError, setExampleDownloadError] = useState("");
   const [loadedProjectId, setLoadedProjectId] = useState("");
   const [lastSaved, setLastSaved] = useState("");
@@ -63,20 +68,85 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const urls = preview?.urls;
   const draftsLoading = loadedProjectId !== projectId;
 
-  function chooseCharacterVoice(draft:CharacterDraft,selected:string) {
-    if (!voiceBindings.registry) return;
+  async function chooseCharacterVoice(draft:CharacterDraft,selected:string) {
+    if (!voiceBindings.registry||voiceSync.status!=="ready"||voicePending) return;
     const voice = selected === "" ? null : favoriteOptions.voices[Number(selected)-1];
     if (selected !== "" && !voice) { setCharacterVoiceError("Unknown project voice. Reload Character Studio."); return; }
+    setVoicePending(true);
     try {
       if (voice && JSON.stringify(readProjectVoices(projectId).voices) !== JSON.stringify(favoriteOptions.voices))
         throw Error("Project voice favorites changed in another tab. Reload before assigning a character voice.");
       const next=changeCharacterVoice(voiceBindings.registry,draft,voice);
+      if(JSON.stringify(readCharacterVoiceBindings(projectId))!==JSON.stringify(voiceBindings.registry))
+        throw Error("Character assignments changed in another tab. Reload before saving.");
+      const saved=await writeSavedCharacterVoices(projectId,voiceSync.revision,next);
       saveCharacterVoiceBindings(next,voiceBindings.registry);
       setVoiceBindings({registry:next,error:""});
+      setVoiceSync({status:"ready",revision:saved.revision,remote:next});
       setCharacterVoiceError("");
     } catch (caught) {
       setCharacterVoiceError(caught instanceof Error?caught.message:"Could not save the character voice.");
+    } finally {
+      setVoicePending(false);
     }
+  }
+
+  function reloadCharacterVoices(){setCharacterVoiceError("");setVoiceReload(current=>current+1);}
+
+  useEffect(()=>{
+    let active=true;
+    void (async()=>{
+      // Allow React's initial state commit before reconciling external storage.
+      await Promise.resolve();
+      if(!active)return;
+      let local:CharacterVoiceBindings;
+      try{local=readCharacterVoiceBindings(projectId);}
+      catch(caught){setVoiceBindings({registry:null,error:caught instanceof Error?caught.message:"Cannot read browser character assignments."});
+        setVoiceSync({revision:0,status:"error",remote:null});return;}
+      setVoiceBindings({registry:local,error:""});
+      setVoiceSync({revision:0,status:"loading",remote:null});
+      try{
+        const localExists=localStorage.getItem(characterVoicesKey(projectId))!==null;
+        const remote=await loadSavedCharacterVoices(projectId);
+        if(!active)return;
+        if(remote.registry===null){
+          const saved=await writeSavedCharacterVoices(projectId,0,local);
+          if(!active)return;
+          saveCharacterVoiceBindings(local,local);
+          setVoiceSync({revision:saved.revision,status:"ready",remote:local});
+        }else if(localExists&&JSON.stringify(local)!==JSON.stringify(remote.registry)){
+          setVoiceSync({revision:remote.revision,status:"conflict",remote:remote.registry});
+        }else{
+          saveCharacterVoiceBindings(remote.registry,local);
+          setVoiceBindings({registry:remote.registry,error:""});
+          setVoiceSync({revision:remote.revision,status:"ready",remote:remote.registry});
+        }
+      }catch(caught){if(active){setVoiceSync(current=>({...current,status:"error"}));
+        setCharacterVoiceError(caught instanceof Error?caught.message:"Character voice server sync failed.");}}
+    })();
+    return ()=>{active=false;};
+  },[projectId,voiceReload]);
+
+  async function keepBrowserCharacterVoices(){
+    if(!voiceBindings.registry||voicePending||!voiceSync.remote)return;
+    setVoicePending(true);
+    try{
+      if(JSON.stringify(readCharacterVoiceBindings(projectId))!==JSON.stringify(voiceBindings.registry))
+        throw Error("Character assignments changed in another tab. Reload before resolving.");
+      const saved=await writeSavedCharacterVoices(projectId,voiceSync.revision,voiceBindings.registry);
+      setVoiceSync({revision:saved.revision,status:"ready",remote:saved.registry});
+      setCharacterVoiceError("");
+    }catch(caught){setCharacterVoiceError(caught instanceof Error?caught.message:"Could not upload browser character assignments.");}
+    finally{setVoicePending(false);}
+  }
+
+  function useServerCharacterVoices(){
+    if(!voiceBindings.registry||!voiceSync.remote||voicePending)return;
+    try{
+      saveCharacterVoiceBindings(voiceSync.remote,voiceBindings.registry);
+      setVoiceBindings({registry:voiceSync.remote,error:""});
+      setVoiceSync(current=>({...current,status:"ready"}));setCharacterVoiceError("");
+    }catch(caught){setCharacterVoiceError(caught instanceof Error?caught.message:"Cannot apply server character assignments.");}
   }
 
   function downloadExample(format: "json" | "zip") {
@@ -335,7 +405,18 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
       </div>
       {draftsLoading && <p role="status" className="text-sm text-muted-foreground">{ja ? "下書きを読み込み中…" : "Loading local drafts…"}</p>}
       {!draftsLoading && !!draftsError && <p role="alert" className="mb-3 text-sm text-danger">{draftsError}</p>}
+      {voiceSync.status==="loading"&&<p role="status" className="mb-2 text-xs text-muted-foreground">{ja?"キャラクターの声を同期中…":"Syncing character voices…"}</p>}
+      {voicePending&&<p role="status" className="mb-2 text-xs text-muted-foreground">{ja?"声の設定を保存中…":"Saving character voice…"}</p>}
+      {voiceSync.status==="conflict"&&<div className="mb-3 space-y-2 rounded-lg border border-warning/50 bg-surface-subtle p-3">
+        <p role="alert" className="text-xs text-foreground">{ja?"サーバーとこのブラウザーの声の設定が異なります。保存する側を選んでください。":"Character assignments differ between this browser and the server. Choose which copy to keep."}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={voicePending} onClick={useServerCharacterVoices}>{ja?"サーバーの設定を使用":"Use server assignments"}</Button>
+          <Button size="sm" variant="outline" disabled={voicePending} onClick={()=>void keepBrowserCharacterVoices()}>{ja?"ブラウザーの設定を保持":"Keep browser assignments"}</Button>
+          <Button size="sm" variant="subtle" disabled={voicePending} onClick={reloadCharacterVoices}>{ja?"再読み込み":"Reload"}</Button>
+        </div>
+      </div>}
       {!!(favoriteOptions.error||voiceBindings.error||characterVoiceError)&&<p role="alert" className="mb-3 text-xs text-danger">{favoriteOptions.error||voiceBindings.error||characterVoiceError}</p>}
+      {voiceSync.status==="error"&&!voiceBindings.error&&<Button size="sm" variant="outline" onClick={reloadCharacterVoices}>{ja?"同期を再試行":"Retry character voice sync"}</Button>}
       {!draftsLoading && !draftsError && drafts.length === 0 && <p className="text-sm text-muted-foreground">{ja ? "まだ保存した下書きはありません。" : "No saved drafts yet. Import a ZIP and select Save draft locally."}</p>}
       {!draftsLoading && drafts.length > 0 && <ul className="space-y-2">
         {drafts.map(draft => <li key={draft.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-subtle/50 px-4 py-3">
@@ -346,12 +427,12 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
               <label className="text-xs font-semibold text-foreground" htmlFor={`character-voice-${draft.id}`}>{ja ? "キャラクターの声" : "Character voice"}</label>
               <select id={`character-voice-${draft.id}`} aria-label={`Voice for ${draft.characterId}, revision ${draft.revision}`}
                 className="max-w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                disabled={!!favoriteOptions.error}
+                disabled={!!favoriteOptions.error||voiceSync.status!=="ready"||voicePending}
                 value={(() => {const saved=voiceBindings.registry?.bindings.find(binding=>binding.draftId===draft.id);
                   if(!saved)return "";
                   const index=favoriteOptions.voices.findIndex(voice=>voice.provider===saved.voice.provider&&voice.voiceId===saved.voice.voiceId);
                   return index>=0?String(index+1):"saved";})()}
-                onChange={event=>{if(event.target.value!=="saved")chooseCharacterVoice(draft,event.target.value);}}>
+                onChange={event=>{if(event.target.value!=="saved")void chooseCharacterVoice(draft,event.target.value);}}>
                 <option value="">{ja ? "未設定 · プロジェクトの候補を使用" : "Not assigned · use project suggestions"}</option>
                 {favoriteOptions.voices.map((voice,index)=><option key={`${voice.provider}:${voice.voiceId}`} value={String(index+1)}>
                   {index===0?"Primary":index===1?"Secondary":`#${index+1}`} · {voice.name} ({voice.provider}, {voice.language})
@@ -360,7 +441,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
                   !favoriteOptions.voices.some(voice=>voice.provider===binding.voice.provider&&voice.voiceId===binding.voice.voiceId))&&
                   <option value="saved">{ja ? "保存した声（候補から削除済み）" : "Saved voice (no longer a favorite)"}</option>}
               </select>
-              <span className="text-[11px] text-muted-foreground">{ja ? "このブラウザーに改訂別で保存。音声利用の許可は別途必要" : "Saved per revision in this browser; voice usage still needs approval"}</span>
+              <span className="text-[11px] text-muted-foreground">{ja ? "改訂別にローカルサーバーへ保存。音声利用の許可は別途必要" : "Saved per revision on the local server; voice usage still needs approval"}</span>
             </div>}
           </div>
           <div className="flex flex-wrap gap-2">

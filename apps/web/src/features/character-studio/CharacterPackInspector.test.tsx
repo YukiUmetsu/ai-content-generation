@@ -3,6 +3,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CharacterPackInspector } from "./CharacterPackInspector";
 import { inspectCharacterZip } from "./character-pack";
 import { listCharacterDrafts, loadCharacterDraft, saveCharacterDraft } from "./character-drafts-api";
+import {loadSavedCharacterVoices,writeSavedCharacterVoices} from "./character-voice-bindings-api";
+import {readCharacterVoiceBindings,type CharacterVoiceBindings} from "./character-voice-bindings";
 import type { InspectedCharacterPack } from "./character-pack";
 
 vi.mock("./character-pack", async importOriginal => {
@@ -13,6 +15,7 @@ vi.mock("./character-drafts-api", async importOriginal => {
   const module = await importOriginal<typeof import("./character-drafts-api")>();
   return { ...module, listCharacterDrafts: vi.fn(), loadCharacterDraft: vi.fn(), saveCharacterDraft: vi.fn() };
 });
+vi.mock("./character-voice-bindings-api",()=>({loadSavedCharacterVoices:vi.fn(),writeSavedCharacterVoices:vi.fn()}));
 
 const sprite = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
 const fixture: InspectedCharacterPack = {
@@ -28,8 +31,15 @@ const fixture: InspectedCharacterPack = {
   images: new Map([["layers/torso.png", sprite]]), issues: [], compressedBytes: 500, expandedBytes: 1200,
 };
 const existingArrayBuffer = Object.getOwnPropertyDescriptor(File.prototype, "arrayBuffer");
+let storedVoices:{revision:number;registry:CharacterVoiceBindings|null};
 
 beforeEach(() => {
+  storedVoices={revision:0,registry:null};
+  vi.mocked(loadSavedCharacterVoices).mockReset().mockImplementation(async()=>storedVoices);
+  vi.mocked(writeSavedCharacterVoices).mockReset().mockImplementation(async(_projectId,revision,registry)=>{
+    if(revision!==storedVoices.revision)throw Error("Character assignments changed in another editor.");
+    storedVoices={revision:revision+1,registry};return storedVoices;
+  });
   vi.mocked(inspectCharacterZip).mockReset();
   vi.mocked(listCharacterDrafts).mockReset().mockResolvedValue([]);
   vi.mocked(loadCharacterDraft).mockReset();
@@ -54,13 +64,14 @@ describe("CharacterPackInspector", () => {
     try {
       render(<CharacterPackInspector locale="en" projectId={projectId} />);
       const select=await screen.findByRole("combobox",{name:"Voice for pip, revision 3"});
+      await waitFor(()=>expect(select).toBeEnabled());
       fireEvent.change(select,{target:{value:"1"}});
-      expect(select).toHaveValue("1");
+      await waitFor(()=>expect(select).toHaveValue("1"));
       const stored=JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null");
       expect(stored.bindings).toMatchObject([{draftId:savedDraft.id,characterId:"pip",revision:"3",
         voice:{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94"}}]);
       fireEvent.change(select,{target:{value:""}});
-      expect(JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null").bindings).toEqual([]);
+      await waitFor(()=>expect(JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null").bindings).toEqual([]));
       localStorage.setItem("contentgen:project-voice-favorites:v1:"+projectId,JSON.stringify({
         schemaVersion:1,projectId,voices:[{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94",
           name:"Changed in another tab",gender:"unspecified",situation:"narration",language:"und"}],
@@ -72,6 +83,58 @@ describe("CharacterPackInspector", () => {
       localStorage.removeItem("contentgen:character-voices:v1:"+projectId);
       localStorage.removeItem("contentgen:project-voice-favorites:v1:"+projectId);
     }
+  });
+
+  it("requires an explicit choice before replacing browser character voices with server data",async()=>{
+    const projectId="voice-conflict", draft={id:"character-draft-"+"b".repeat(32),projectId,
+      characterId:"quill",revision:"v1",archiveSha256:"d".repeat(64),sizeBytes:80,
+      status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    const browser:{schemaVersion:1;projectId:string;bindings:[]}={schemaVersion:1,projectId,bindings:[]};
+    const server=JSON.parse(JSON.stringify(browser)) as CharacterVoiceBindings;
+    server.bindings.push({draftId:draft.id,characterId:draft.characterId,revision:draft.revision,
+      voice:{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94",
+        name:"Fish default",gender:"unspecified",situation:"narration",language:"und"}});
+    localStorage.setItem("contentgen:character-voices:v1:"+projectId,JSON.stringify(browser));
+    storedVoices={revision:3,registry:server};
+    try{
+      render(<CharacterPackInspector locale="en" projectId={projectId}/>);
+      expect(await screen.findByRole("alert")).toHaveTextContent(/differ between this browser and the server/);
+      expect(localStorage.getItem("contentgen:character-voices:v1:"+projectId)).toBe(JSON.stringify(browser));
+      const select=screen.getByRole("combobox",{name:"Voice for quill, revision v1"});
+      expect(select).toBeDisabled();
+      fireEvent.click(screen.getByRole("button",{name:"Use server assignments"}));
+      expect(select).toHaveValue("1");
+      expect(readCharacterVoiceBindings(projectId).bindings).toHaveLength(1);
+    }finally{localStorage.removeItem("contentgen:character-voices:v1:"+projectId);}
+  });
+
+  it("keeps the voice selector disabled and offers retry when the character voice backend fails",async()=>{
+    vi.mocked(loadSavedCharacterVoices).mockRejectedValue(Error("Character voice backend offline"));
+    const projectId="voice-offline",draft={id:"character-draft-"+"c".repeat(32),projectId,
+      characterId:"pip",revision:"v1",archiveSha256:"a".repeat(64),sizeBytes:80,
+      status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    render(<CharacterPackInspector locale="en" projectId={projectId}/>);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/backend offline/);
+    expect(screen.getByRole("combobox",{name:"Voice for pip, revision v1"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Retry character voice sync"})).toBeEnabled();
+  });
+
+  it("does not update the browser assignment when a stale server revision rejects the save",async()=>{
+    const projectId="voice-stale",draft={id:"character-draft-"+"f".repeat(32),projectId,
+      characterId:"pip",revision:"v1",archiveSha256:"a".repeat(64),sizeBytes:80,
+      status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    render(<CharacterPackInspector locale="en" projectId={projectId}/>);
+    const select=await screen.findByRole("combobox",{name:"Voice for pip, revision v1"});
+    await waitFor(()=>expect(select).toBeEnabled());
+    vi.mocked(writeSavedCharacterVoices).mockRejectedValueOnce(Error("Character assignments changed in another editor."));
+    fireEvent.change(select,{target:{value:"1"}});
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed in another editor/);
+    expect(select).toHaveValue("");
+    expect(readCharacterVoiceBindings(projectId).bindings).toEqual([]);
+    localStorage.removeItem("contentgen:character-voices:v1:"+projectId);
   });
 
   it("explains the real manifest schema and offers both importable ZIP and matching JSON downloads", () => {
