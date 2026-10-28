@@ -5,6 +5,8 @@ import type { GeneralVisualPlan } from "../../scripts/video-production/general-v
 import { GeneralExportScene } from "./general-scene";
 import { PortraitGeneralExportScene } from "./portrait-general-scene";
 import { PIP_RIG, QUILL_RIG } from "./pip-quill-rigs";
+import type { CharacterDefinition } from "@/components/character/definition";
+import type { ExportRigMap } from "./conversation-characters";
 
 const plan: GeneralVisualPlan = {
   schemaVersion: 1, kind: "general-explainer-visual-plan", title: "Conversation test",
@@ -75,5 +77,35 @@ describe("original Pip and Quill rig integration in exported scenes", () => {
     expect(html).toContain('data-dialogue-active="quill"');
     expect(html).not.toContain('data-portrait-node=');
     expect(html).toContain('data-conversation-performer="pip"');
+  });
+});
+
+describe("custom Character Studio rigs in exported conversation frames", () => {
+  it("uses the saved raster revision and its animated mouth/arm parts instead of the bundled vector puppet", () => {
+    const assets = Object.fromEntries(Object.keys(PIP_RIG.assets).map(key => [key, {
+      kind: "image", uri: `layers/${key}.png`, mediaType: "image/png", width: 360, height: 420,
+      provenance: {source:"Original custom art",license:"Private draft test"}
+    }])) as CharacterDefinition["assets"];
+    const definition: CharacterDefinition = {...PIP_RIG,revision:"custom-pip-v2",assets};
+    const assetUrls = Object.fromEntries(Object.keys(assets).map(key =>
+      [`layers/${key}.png`, `/__character_assets/${"a".repeat(64)}.png`]));
+    const rigs: ExportRigMap = {pip:{definition,assetUrls,
+      draftId:`character-draft-${"b".repeat(32)}`,archiveSha256:"c".repeat(64)}};
+    const customPlan = {...plan,characterRigs:rigs};
+    const custom = (frame:number) => renderToStaticMarkup(<GeneralExportScene plan={customPlan} frame={frame}/>);
+    const speaking = custom(19), silent = custom(4), gesture = custom(24);
+    expect(validateCharacterDefinition(definition)).toEqual([]);
+    expect(speaking).toContain('data-rig-source="character-studio"');
+    expect(speaking).toContain('data-rig-revision="custom-pip-v2"');
+    expect(speaking).toContain('data-asset="mouthOpen"');
+    expect(speaking).toContain('<image href="/__character_assets/');
+    expect(speaking).toContain('data-rig-draft-id="character-draft-');
+    expect(silent).toContain('data-asset="mouthRest"');
+    expect(silent).not.toContain('data-asset="mouthOpen"');
+    expect(gesture).not.toEqual(speaking);
+    expect(speaking).toContain('data-rig-source="bundled"');
+    const portrait = {...customPlan,manifest:{...customPlan.manifest,width:1080,height:1920,preset:"youtube-shorts"}};
+    expect(renderToStaticMarkup(<PortraitGeneralExportScene plan={portrait} frame={19}/>))
+      .toContain('data-rig-revision="custom-pip-v2"');
   });
 });
