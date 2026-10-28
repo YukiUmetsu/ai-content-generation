@@ -166,6 +166,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [status,setStatus]=useState("");
   const [sampleMode,setSampleMode]=useState(false);
   const [stage,setStage]=useState<DirectorStage>("storyboard");
+  const [draftLaunchCount,setDraftLaunchCount]=useState(0);
   const [recheckToken,setRecheckToken]=useState(0);
   const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId||projectId?.startsWith("production-")));
   const [loadError,setLoadError]=useState("");
@@ -437,7 +438,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     return result;
   }
   async function apply(changed:Record<string,string|null|VisualElement[]|number|SceneMotion>){
-    if(!bundle||!dossier||!shot)return;
+    if(!bundle||!dossier||!shot)return false;
     setBusy(true);setStatus("");
     try{
       const result=await request("edit",{bundle,dossier,shotId:shot.id,changes:changed}) as unknown as Revision;
@@ -446,7 +447,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       setDraft(shotDraft(result.bundle,shot.id));
       setRevisions(prev=>[...prev,{shotId:shot.id,impacts:result.impacts}]);
       setStatus("Draft revised. Unchanged shots remain intact. Review before any regeneration or publishing.");
-    }catch(e){setStatus(e instanceof Error?e.message:"Revision rejected.");}
+      return true;
+    }catch(e){setStatus(e instanceof Error?e.message:"Revision rejected.");return false;}
     finally{setBusy(false);}
   }
   async function applyShotMotion(id:string,motion:SceneMotion):Promise<Bundle>{
@@ -491,11 +493,23 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     draft.sfxIntent!==(audio.sfxIntent??"")||draft.pauseAfterMs!==(audio.pauseAfterMs??160)||
     JSON.stringify(draft.motion)!==JSON.stringify(safeSceneMotion(shot.motion))||
     draft.visualElementsText.trim()!==visualTextSaved.trim());
-  function navigate(target:DirectorStage){
-    const result=resolveDirectorNavigation({current:stage,target,unsaved:dirty});
+  function navigate(target:DirectorStage,justSaved=false){
+    const result=resolveDirectorNavigation({current:stage,target,unsaved:dirty&&!justSaved});
     if(result.blocked){setStatus(result.message);return;}
     if(shouldInvalidateDirectorReadiness(stage,target))setRecheckToken(value=>value+1);
     setStage(result.stage as DirectorStage);setStatus("");
+  }
+  function launchDraft(justSaved=false){
+    setDraftLaunchCount(count=>count+1);
+    navigate("preview",justSaved);
+  }
+  function generateUpdatedDraft(){if(!busy&&!dirty)launchDraft();}
+  async function saveAndGenerateDraft(){
+    if(busy||!dirty)return;
+    let edits;
+    try{edits=changes();}
+    catch(error){setStatus(error instanceof Error?error.message:"Review the scene edit before rendering.");return;}
+    if(await apply(edits))launchDraft(true);
   }
   function discardEdits(){
     if(bundle)setDraft(shotDraft(bundle,shotId));
@@ -764,8 +778,14 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
                 </label>
               </div>
             </div>
-            <Button icon={<Save className="size-4"/>} disabled={busy||!dirty}
-              onClick={()=>{try{void apply(changes());}catch(error){setStatus(error instanceof Error?error.message:"Review the visual elements.");}}}>Apply selected-shot edit</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button icon={<Save className="size-4"/>} disabled={busy||!dirty}
+                onClick={()=>{try{void apply(changes());}catch(error){setStatus(error instanceof Error?error.message:"Review the visual elements.");}}}>Apply selected-shot edit</Button>
+              <Button variant="outline" disabled={busy} onClick={()=>{
+                if(dirty)void saveAndGenerateDraft();else generateUpdatedDraft();}}>
+                <Film className="mr-2 size-4"/>{dirty?"Save & generate draft":"Generate updated draft"}
+              </Button>
+            </div>
           </div>
         </Surface>
         <Surface header={<h2 className="font-medium">Optional · Explore creative alternatives</h2>}>
@@ -853,14 +873,18 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         <div className={stage==="preview"?"space-y-4":"hidden"} aria-hidden={stage!=="preview"}>
           {stage==="preview"&&<div><h2 className="text-lg font-semibold">Preview & produce your draft</h2>
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
-          <ProductionPanel key={dossier.id} dossier={dossier} bundle={bundle}
+          <ProductionPanel key={`${dossier.id}:${draftLaunchCount}`} dossier={dossier} bundle={bundle}
             onOpenJobs={onOpenJobs}
-            sourceRevision={sourceArtifactId??undefined} recheckToken={recheckToken}
+            // A saved script can have multiple applied scene edits. Keep the
+            // original source ID for its unedited plan, and scope edited MP4
+            // restoration to that exact plan rather than showing an old film.
+            sourceRevision={sourceArtifactId&&sourceBundle?.planSha256!==bundle.planSha256?
+              bundle.planSha256:sourceArtifactId??undefined} recheckToken={recheckToken}
             productionId={projectId?.startsWith("production-")?projectId:undefined}
             selectedShotId={shotId} onSelectShot={id=>chooseShot(id,true)}
             onApplyMotion={applyShotMotion} autoOpenSample={sampleMode}
             initialStage={focusStage==="audio"?"narration":focusStage==="export"?"export":"preview"}
-            autoStartDraft={focusStage==="draft"}
+            autoStartDraft={focusStage==="draft"||draftLaunchCount>0}
             autoOpenVisuals={focusStage==="visuals"}/>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-border bg-surface-subtle px-4 py-4">

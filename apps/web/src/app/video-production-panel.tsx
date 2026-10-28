@@ -369,18 +369,6 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     // scene settings need an explicit user retry after their first preflight.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoStartDraft]);
-  async function start(){
-    if(!ready)return;
-    setWorking("start");setNotice("");
-    try{
-      const r=await request("start",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
-      if(!r.started)throw Error("Studio did not confirm render startup.");
-      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
-      setReady(false);
-      setNotice("Render started. Only files in the new job-owned output folder will be written.");
-    }catch(error){setNotice(error instanceof Error?error.message:"Unable to start render.");}
-    finally{setWorking("");}
-  }
   async function cancel(){
     try{await request("cancel",{confirmed:true});setNotice("Cancellation requested. Finalizing owned scratch cleanup.");}
     catch(error){setNotice(error instanceof Error?error.message:"Could not cancel.");}
@@ -611,7 +599,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
             <Button disabled={!!working} onClick={()=>void generateDraft()}>
               <RefreshCw className="mr-2 size-4"/>{working==="auto"?"Checking recovery…":"Retry draft video"}
             </Button>:
-            <Button disabled={!ready||!!working||state.state==="rendering"} onClick={()=>void start()}>
+            <Button disabled={!ready||!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
               <Film className="mr-2 size-4"/>Render test MP4
             </Button>}
           {state.state==="rendering"&&<Button variant="outline" onClick={()=>void cancel()}><Square className="mr-2 size-4"/>Cancel render</Button>}

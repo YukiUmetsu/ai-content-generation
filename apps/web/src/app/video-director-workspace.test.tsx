@@ -114,6 +114,44 @@ describe("Video Director selected-shot workbench",()=>{
     expect(video).toHaveAttribute("src",`/api/contentgen-video/scene-clip/media/${previewId}/video.mp4`);
     expect(screen.getByText(/complete draft adds narration, sound/i)).toBeInTheDocument();
   });
+  it("opens the full narrated draft directly from a saved scene edit",async()=>{
+    const calls:string[]=[],starts:Array<Record<string,unknown>>=[];
+    const editedBundle={...bundle,plan:{...bundle.plan,shots:bundle.plan.shots.map((shot,index)=>
+      index===0?{...shot,onScreenText:"Why? today"}:shot)}};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const path=String(url);calls.push(path);
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(path.endsWith("/edit"))return new Response(JSON.stringify({kind:"preproduction-edit/v1",
+        bundle:editedBundle,impacts:{changedFields:["onScreenText"],speechRegenerate:[],visualRerender:["hook"],
+          sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+      if(path.endsWith("/plan"))return new Response(JSON.stringify({job:{beats:[{id:"beat-1",narration:"Hello"}]}}),{status:200});
+      if(path.endsWith("/check"))return new Response(JSON.stringify({report:{ready:true,findings:[]}}),{status:200});
+      if(path.endsWith("/start")){
+        starts.push(JSON.parse(String(opts?.body)) as Record<string,unknown>);
+        return new Response(JSON.stringify({started:true,jobId:"job-edited-film"}),{status:202});
+      }
+      if(path.endsWith("/status"))return new Response(JSON.stringify({state:"done",phase:"review",
+        message:"Narrated draft finished",jobId:"job-edited-film",
+        mediaUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4"}),{status:200});
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({kind:"live-renderer-preview/v1",
+        sourcePlanSha256:"a".repeat(64),plan:{chapters:[]},shotMap:[]}),{status:200});
+      throw Error("Unexpected request "+path+" "+String(opts?.method));
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scene-project.json",{type:"application/json"})]}});
+    await screen.findByRole("button",{name:"Generate updated draft"});
+    const text=screen.getByRole("textbox",{name:"Edit on-screen text"});
+    await user.type(text," today");
+    await user.click(screen.getByRole("button",{name:"Save & generate draft"}));
+    expect(screen.getByRole("heading",{name:"Preview & produce your draft"})).toBeInTheDocument();
+    await waitFor(()=>expect(calls.some(path=>path.endsWith("/plan"))).toBe(true));
+    expect(await screen.findByRole("link",{name:"Download MP4"})).toHaveAttribute("href",
+      "/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4");
+    expect(starts).toHaveLength(1);
+    expect((starts[0]?.bundle as typeof editedBundle).plan.shots[0].onScreenText).toBe("Why? today");
+    expect(calls.findIndex(path=>path.endsWith("/edit"))).toBeLessThan(calls.findIndex(path=>path.endsWith("/start")));
+  });
   it("opens an approved script's visual shortcut at the rendered scene editor",async()=>{
     const productionId="production-"+"b".repeat(24);
     sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
@@ -133,6 +171,42 @@ describe("Video Director selected-shot workbench",()=>{
     expect(await screen.findByRole("heading",{name:"Scene editor"})).toBeInTheDocument();
     expect(screen.getByRole("button",{name:/01 Storyboard/})).toHaveAttribute("aria-current","step");
     expect(screen.queryByRole("heading",{name:"Find the right visuals"})).not.toBeInTheDocument();
+    sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
+  });
+  it("binds a saved production's updated MP4 to the edited plan revision, not its earlier source",async()=>{
+    const productionId="production-"+"c".repeat(24);
+    const original={...bundle,researchSha256:"a".repeat(64),planSha256:"b".repeat(64)};
+    const edited={...original,planSha256:"c".repeat(64),plan:{...plan,
+      shots:plan.shots.map((shot,index)=>index===0?{...shot,onScreenText:"Why now?"}:shot)}};
+    sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
+      productionId,scriptRevision:"2026-10-28T00:00:00Z",sourcePrefix:"approved-script:",
+      dossier,bundle:original}));
+    const starts:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+      const path=String(input),catalog=localMediaCatalogResponse(input);
+      if(catalog)return catalog;
+      if(path.endsWith("/edit"))return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:edited,
+        impacts:{changedFields:["onScreenText"],speechRegenerate:[],visualRerender:["hook"],
+          sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({kind:"live-renderer-preview/v1",
+        sourcePlanSha256:"a".repeat(64),plan:{chapters:[]},shotMap:[]}),{status:200});
+      if(path.includes(`/status/${productionId}`))return new Response(JSON.stringify({state:"idle",phase:"idle",message:""}),{status:200});
+      if(path.endsWith(`/version-policy/${productionId}`))return new Response(JSON.stringify({requiresConfirmation:false,completedVersions:0}),{status:200});
+      if(path.endsWith("/plan"))return new Response(JSON.stringify({job:{beats:[{id:"beat-1",narration:"Hello"}]}}),{status:200});
+      if(path.endsWith("/check"))return new Response(JSON.stringify({report:{ready:true,findings:[]}}),{status:200});
+      if(path.endsWith("/start")){starts.push(JSON.parse(String(init?.body)) as Record<string,unknown>);
+        return new Response(JSON.stringify({started:true,jobId:"job-edited-plan"}),{status:202});}
+      if(path.endsWith("/status"))return new Response(JSON.stringify({state:"done",phase:"review",
+        message:"Narrated MP4 ready",mediaUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4"}),{status:200});
+      throw Error("Unexpected request "+path);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    const text=await screen.findByRole("textbox",{name:"Edit on-screen text"});
+    await user.type(text," now");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await user.click(await screen.findByRole("button",{name:"Generate updated draft"}));
+    await waitFor(()=>expect(starts).toHaveLength(1));
+    expect(starts[0]?.sourceRevision).toBe(edited.planSha256);
     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
   });
   it("rejects a saved project without any editable shots instead of crashing the scene editor",async()=>{

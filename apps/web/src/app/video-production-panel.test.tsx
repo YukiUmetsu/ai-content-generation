@@ -257,6 +257,32 @@ it("requires exactly one confirmation before regenerating an existing video vers
   expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
 });
 
+it("uses the same version confirmation from the manual Export render action",async()=>{
+  const productionId="production-"+"b".repeat(24),starts:Record<string,unknown>[]=[];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.includes(`/status/${productionId}`))return reply({state:"idle",phase:"idle",message:""});
+    if(path.endsWith(`/version-policy/${productionId}`))return reply({requiresConfirmation:true,completedVersions:1});
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start")){starts.push(JSON.parse(String(init?.body)));return reply({started:true,jobId:"job-manual-v2"});}
+    if(path.endsWith("/status"))return reply({state:"rendering",phase:"rendering",message:"Updated render underway"});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} productionId={productionId}
+    sourceRevision="updated-story" initialStage="review"/>);
+  await user.click(await screen.findByRole("button",{name:/Check readiness/i}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:/Continue to export/i})).toBeEnabled());
+  await user.click(screen.getByRole("button",{name:/Continue to export/i}));
+  await user.click(screen.getByRole("button",{name:/Render test MP4/i}));
+  expect(await screen.findByRole("button",{name:"Generate updated version"})).toBeEnabled();
+  expect(starts).toHaveLength(0);
+  await user.click(screen.getByRole("button",{name:"Generate updated version"}));
+  await waitFor(()=>expect(starts).toHaveLength(1));
+  expect(starts[0]?.confirmUpdatedVersion).toBe(true);
+});
+
 it("offers captions alongside the playable MP4 after a successful render",async()=>{
   const url="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4";
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
