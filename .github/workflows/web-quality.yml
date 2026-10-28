@@ -74,7 +74,7 @@ jobs:
       # Real media encoding, muxing and audio probes are local release gates.
       - name: Test video planning and mock production without media tools
         run: |
-          node --test \
+          node --test --test-concurrency=1 \
             scripts/video-production/cli.test.mjs \
             scripts/video-production/cli-signal.test.mjs \
             scripts/video-production/fish.test.mjs \
