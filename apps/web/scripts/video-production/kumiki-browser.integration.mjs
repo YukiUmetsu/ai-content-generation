@@ -75,6 +75,36 @@ try{
   assert.equal(stream.width,manifest.width);
   assert.equal(stream.height,manifest.height);
   assert.equal(Number(stream.nb_read_frames),12);
+  // The same real compositor must consume a frozen, verified CC0 photo; this
+  // guards the full automatic-media -> loopback asset -> Kumiki image boundary.
+  const photoFile=join(root,"commons-scene.jpg");
+  await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y","-f","lavfi",
+    "-i","color=c=blue:s=1280x720","-frames:v","1",photoFile],{timeout:30000});
+  const photoHash=sha(await readFile(photoFile));
+  const photoUrl=`/__video_media/${photoHash}.jpg`;
+  const enriched=structuredClone(plan);
+  enriched.chapters[0].visual.stockMedia={assetType:"photo",url:photoUrl,sha256:photoHash,
+    provider:"wikimedia-commons",rightsStatus:"draft-provider-license",
+    license:"CC0-1.0",licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",
+    assetId:"sample-scene",width:1280,height:720};
+  const mediaStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
+    validatedPlan:enriched,approvedMedia:[{url:photoUrl,path:photoFile,sha256:photoHash,assetType:"photo"}]});
+  try{
+    const mediaPage=await browser.newPage({viewport:{width:manifest.width,height:manifest.height}});
+    try{
+      await mediaPage.goto(mediaStage.url,{waitUntil:"networkidle",timeout:30000});
+      await mediaPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      await mediaPage.evaluate(()=>window.__kmVideoExport.seek(0));
+      const photo=mediaPage.locator("[data-contentgen-stock-photo]");
+      await photo.waitFor({timeout:10000});
+      await mediaPage.waitForFunction(()=>{
+        const image=document.querySelector("[data-contentgen-stock-photo]");
+        return Boolean(image?.complete&&image.naturalWidth===1280&&image.naturalHeight===720);
+      });
+      const seen=await mediaPage.locator("[data-km-video-capture]").screenshot();
+      assert.notEqual(sha(seen),screenshots[0],"verified Commons photo must visibly change the scene");
+    }finally{await mediaPage.close();}
+  }finally{await mediaStage.close();}
   const concepts=await generateProductionThumbnails(input,{outputDir:root});
   assert.equal(concepts.length,3);
   await page.setViewportSize({width:1920,height:1080});

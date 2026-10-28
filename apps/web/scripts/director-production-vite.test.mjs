@@ -185,7 +185,7 @@ test("a saved Fish key powers a draft without a browser key or Pexels API access
   const start=await invoke(server,"POST","/start",{...input,confirmRender:true});
   assert.equal(start.status,202,JSON.stringify(start.data));
   for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
-  assert.deepEqual(observed,[{fish:fishSecret,pexels:undefined,autoPrepareFreeMedia:false}]);
+  assert.deepEqual(observed,[{fish:fishSecret,pexels:undefined,autoPrepareFreeMedia:true}]);
   assert.deepEqual(requested,["fish","fish"]);
   assert.ok(!JSON.stringify(check.data).includes(fishSecret));
   assert.ok(!JSON.stringify(start.data).includes(fishSecret));
@@ -794,7 +794,7 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal((await invoke(restarted,"GET","/suggestions/../secrets")).status,404);
 });
 
-test("legacy auto-Pexels preferences cannot reactivate the retired API download path",async t=>{
+test("automatic free media uses no Pexels API key even when a legacy key exists in the environment",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-photo-consent-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   let received=null;
@@ -814,9 +814,9 @@ test("legacy auto-Pexels preferences cannot reactivate the retired API download 
   assert.equal((await invoke(server,"POST","/check",{...payload,searchFreeMedia:false})).status,200);
   assert.equal((await invoke(server,"POST","/check",{...payload,autoPrepareFreeMedia:"yes"})).status,422);
   assert.equal((await invoke(server,"POST","/check",payload)).status,200);
-  assert.equal((await invoke(server,"POST","/start",{...payload,autoPrepareFreeMedia:false,confirmRender:true})).status,202);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
   for(let i=0;i<60&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
-  assert.deepEqual(received,{enabled:false,key:undefined});
+  assert.deepEqual(received,{enabled:true,key:undefined});
   assert.doesNotMatch(JSON.stringify(server.status()),/old-unused-private-key/);
 });
 

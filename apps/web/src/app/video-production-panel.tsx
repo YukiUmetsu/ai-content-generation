@@ -527,7 +527,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
             <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
               checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
               onChange={event=>changeMediaSearch(event.target.checked)}/>
-            Search scene media while rendering (optional). Sends scene subjects to Poly Haven and Openverse. Images downloaded manually from Pexels can be imported in Director → Find the right visuals.
+            Find matching visual assets (optional). Searches Poly Haven and Openverse and automatically downloads up to three HD Wikimedia Commons photos only after their CC0 license is checked at the source. Other scenes use Kumiki visuals; Pexels website files can be imported in Director → Find the right visuals.
           </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}

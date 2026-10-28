@@ -335,57 +335,36 @@ test("download rejects untrusted URLs, redirects, oversized files and path trave
   assert.deepEqual(await listApprovedAssets({projectId:"project-1"},{root}),[]);
 });
 
-test("Pexels search is optional and never exposes the credential in the normalized response", async () => {
+test("a legacy Pexels search choice never contacts its retired API or exposes its key", async () => {
   const key="test-pexels-secret";
-  const fetchImpl=async (url, opts) => {
-    assert.equal(new URL(url).hostname,"api.pexels.com");
-    assert.equal(opts.headers.Authorization,key);
-    return response({photos:[{id:49,url:"https://www.pexels.com/photo/roof-49/",alt:"A roof",
-      photographer:"Photo Maker",src:{medium:"https://images.pexels.com/photos/49/roof.jpeg"}}]});
-  };
+  const fetchImpl=async()=>{throw Error("The retired Pexels API must never be called.");};
   const result=await discoverShotAssets({bundle,providers:["pexels"],allowExternalSearch:true},
     {fetchImpl,pexelsKey:key});
-  assert.equal(result.scenes[0].candidates[0].provider,"pexels");
+  assert.equal(result.scenes[0].candidates.length,0);
+  assert.match(result.warnings.join(" "),/Pexels API search has been retired/i);
   assert.doesNotMatch(JSON.stringify(result),/test-pexels-secret/);
 });
 
-test("Pexels footage search returns a short HD MP4 candidate without exposing its download URL",async()=>{
-  const calls=[];
-  const fetchImpl=async (url,opts)=>{
-    calls.push(String(url));assert.equal(opts.headers.Authorization,"private-key");
-    if(String(url).includes("/v1/videos/search"))return response({videos:[
-      {id:83,width:1920,height:1080,url:"https://www.pexels.com/video/roof-83/",
-        image:"https://images.pexels.com/videos/83/roof.jpg",duration:12,
-        user:{id:9,name:"Film Artist",url:"https://www.pexels.com/@artist"},
-        video_files:[{id:12,quality:"hd",file_type:"video/mp4",width:1280,height:720,
-          link:"https://player.vimeo.com/external/83.hd.mp4?sig=token"}]},
-      {id:84,url:"https://evil.test/clip/84",image:"https://images.pexels.com/videos/84/frame.jpg",
-        duration:8,video_files:[]},
-      {id:85,url:"https://www.pexels.com/video/long-85/",image:"https://images.pexels.com/videos/85/frame.jpg",
-        duration:999,video_files:[{quality:"hd",file_type:"video/mp4",width:1280,height:720,
-          link:"https://videos.pexels.com/video-files/85/clip.mp4"}]}]});
-    return response({photos:[]});
-  };
+test("retired Pexels footage API requests cannot be revived by old local credentials",async()=>{
+  let calls=0;
+  const fetchImpl=async()=>{calls++;throw Error("Do not contact a retired provider.");};
   const results=await discoverShotAssets({bundle,providers:["pexels"],allowExternalSearch:true},
     {fetchImpl,pexelsKey:"private-key"});
-  const clip=results.scenes[0].candidates.find(x=>x.assetType==="video");
-  assert.deepEqual({id:clip?.assetId,creator:clip?.creator,duration:clip?.durationSeconds},
-    {id:"83",creator:"Film Artist",duration:12});
-  assert.equal(clip.sourceUrl,"https://www.pexels.com/video/roof-83/");
-  assert.equal(clip.previewUrl,"https://images.pexels.com/videos/83/roof.jpg");
+  assert.equal(results.scenes[0].candidates.length,0);
   assert.doesNotMatch(JSON.stringify(results),/private-key|sig=token/);
-  assert.equal(results.scenes[0].candidates.filter(x=>x.assetType==="video").length,1);
-  assert.equal(calls.filter(x=>x.includes("/videos/search")).length,1);
+  assert.equal(calls,0);
 });
 
-test("Pexels photo suggestions survive a video endpoint error",async()=>{
-  const fetchImpl=async url=>String(url).includes("/videos/search")?response({error:"unavailable"},503):
-    response({photos:[{id:49,url:"https://www.pexels.com/photo/49/",alt:"Roof photo",
-      photographer:"Photographer",src:{medium:"https://images.pexels.com/photos/49/roof.jpg"}}]});
-  const results=await discoverShotAssets({bundle,providers:["pexels"],allowExternalSearch:true},
-    {fetchImpl,pexelsKey:"private-key"});
-  assert.equal(results.scenes[0].candidates[0].assetType,"photo");
-  assert.ok(results.warnings.some(x=>/video/i.test(x)));
+test("default scene discovery uses the no-key providers and never Pexels",async()=>{
+  const visited=[];
+  const results=await discoverShotAssets({bundle,allowExternalSearch:true},
+    {fetchImpl:async url=>{visited.push(new URL(String(url)).hostname);
+      return String(url).includes("polyhaven")?response(polyCatalog):response({results:[]});},
+    pexelsKey:"retired-private-key"});
+  assert.ok(visited.includes("api.polyhaven.com"));
+  assert.ok(visited.includes("api.openverse.org"));
+  assert.ok(!visited.includes("api.pexels.com"));
+  assert.doesNotMatch(JSON.stringify(results),/retired-private-key/);
 });
 
 test("approved Pexels video resolves its own provider ID and stores an MP4 with provenance",async t=>{
@@ -498,33 +477,31 @@ test("scene selection pins only an approved SHA, can be revised and detects a da
     {schemaVersion:1,kind:"contentgen-scene-media-selections",selections:[],invalidShots:[]});
 });
 
-test("portrait discovery uses script timing and returns an explainable strong video suggestion",async()=>{
+test("portrait discovery preserves measured scene timing with no-key Openverse suggestions",async()=>{
   const calls=[];
   const bundleWithSound={plan:{...bundle.plan,sound:[{shotId:"shot-house",narration:
     "A storm sends roof tiles sliding off the house while the owner watches.",pauseAfterMs:500}]}};
   const fetchImpl=async url=>{
     calls.push(String(url));
-    if(String(url).includes("/v1/videos/search"))return response({videos:[{
-      id:91,url:"https://www.pexels.com/video/roof-tiles-91/",image:"https://images.pexels.com/videos/91/frame.jpg",
-      duration:20,user:{name:"Video Artist"},video_files:[{quality:"hd",file_type:"video/mp4",width:720,height:1280,
-        link:"https://videos.pexels.com/video-files/91/portrait.mp4"}]}]});
-    return response({photos:[{id:92,url:"https://www.pexels.com/photo/roof-tiles-92/",alt:"Roof tiles",
-      photographer:"Photo Artist",width:1000,height:1800,
-      src:{medium:"https://images.pexels.com/photos/92/roof.jpeg"}}]});
+    assert.equal(new URL(String(url)).hostname,"api.openverse.org");
+    return response({results:[{id:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      title:"Storm damage roof tiles sliding from house",license:"cc0",filetype:"jpg",
+      foreign_landing_url:"https://commons.wikimedia.org/wiki/File:Storm_roof.jpg",
+      mature:false,watermarked:false,width:720,height:1280,
+      creator:"Photo Artist",provider:"wikimedia",tags:[{name:"storm"},{name:"roof tiles"}]}]});
   };
-  const result=await discoverShotAssets({bundle:bundleWithSound,providers:["pexels"],
+  const result=await discoverShotAssets({bundle:bundleWithSound,providers:["openverse"],
     destination:"portrait",sceneDurationsSeconds:{"shot-house":18},allowExternalSearch:true},
-    {fetchImpl,pexelsKey:"private-key"});
-  assert.ok(calls.every(url=>url.includes("orientation=portrait")));
+    {fetchImpl});
+  assert.ok(calls.every(url=>url.includes("license=cc0")));
   const scene=result.scenes[0];
   assert.deepEqual(scene.shotDuration,{seconds:18,source:"measured"});
-  assert.equal(scene.recommendedAssetKey,"pexels:video:91");
-  assert.equal(scene.candidates[0].assetType,"video");
+  assert.equal(scene.candidates[0].provider,"openverse");
+  assert.equal(scene.candidates[0].assetType,"photo");
   assert.equal(scene.candidates[0].width,720);
   assert.equal(scene.candidates[0].height,1280);
-  assert.equal(scene.candidates[0].match.grade,"strong");
-  assert.ok(scene.candidates[0].match.reasons.some(x=>/subject/i.test(x)));
-  assert.doesNotMatch(JSON.stringify(result),/private-key|portrait\.mp4/);
+  assert.equal(scene.candidates[0].rightsStatus,"needs-human-review");
+  assert.ok(scene.candidates[0].match.reasons.length>0);
 });
 
 test("invalid destination and timing override reject before any provider requests",async()=>{

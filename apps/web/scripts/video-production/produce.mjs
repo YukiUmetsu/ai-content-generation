@@ -21,7 +21,7 @@ import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
 import { buildQaReport } from "./report.mjs";
 import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
-import { prepareAutomaticDraftMedia } from "./automatic-draft-assets.mjs";
+import { prepareAutomaticCommonsMedia } from "./automatic-commons-assets.mjs";
 import { generateProductionThumbnails } from "./premium-thumbnails.mjs";
 
 const run = promisify(execFile);
@@ -112,7 +112,7 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,pexelsKey?:string,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,generateThumbnails?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -217,7 +217,7 @@ export async function produceVideo(candidate, options, deps = {}) {
         expectedFingerprint: options.expectedSceneMediaFingerprint, signal: options.signal,
         autoApprovedBundle:options.sceneAssetBundle,
       }, { ffprobe: options.ffprobe }) : { bindings: {}, assets: [] };
-    if(job.visualFamily==="general-explainer-v1"&&options.autoPrepareFreeMedia===true&&options.pexelsKey&&options.sceneShotMap&&
+    if(job.visualFamily==="general-explainer-v1"&&options.autoPrepareFreeMedia===true&&options.sceneShotMap&&
       options.prepareAssetSuggestions){
       let savedSuggestions=null;
       try{
@@ -229,16 +229,16 @@ export async function produceVideo(candidate, options, deps = {}) {
         }
       }catch(error){if(error?.code!=="ENOENT")throw error;}
       if(savedSuggestions){
-        sceneMedia=await (deps.prepareAutomaticDraftMedia ?? prepareAutomaticDraftMedia)({
+        sceneMedia=await (deps.prepareAutomaticCommonsMedia ?? prepareAutomaticCommonsMedia)({
           suggestions:savedSuggestions,shotMap:options.sceneShotMap,existing:sceneMedia,
           outputDir:join(out,".render","scene-media"),
           previousOutputDir:options.reuseSpeechCacheFrom?
             join(options.reuseSpeechCacheFrom,".render","scene-media"):undefined,
-          pexelsKey:options.pexelsKey,signal:options.signal,sceneJobs:options.sceneJobs,
+          signal:options.signal,sceneJobs:options.sceneJobs,
           ffprobe:options.ffprobe,
         });
         await options.onProgress?.({phase:"asset-prepared",autoMedia:sceneMedia.prepared,
-          message:sceneMedia.prepared?`${sceneMedia.prepared} original scene media items prepared; remaining visuals use Kumiki.`:
+          message:sceneMedia.prepared?`${sceneMedia.prepared} CC0 Commons scene images prepared; remaining visuals use Kumiki.`:
             "Using approved images and Kumiki visuals for the draft."});
       }
     }

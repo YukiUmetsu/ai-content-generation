@@ -197,7 +197,7 @@ export async function discoverShotAssets(input,opts={}){
     Object.entries(durations).some(([shotId,seconds])=>!needs.some(x=>x.shotId===shotId)||
       typeof seconds!=="number"||!Number.isFinite(seconds)||seconds<=0||seconds>600))
     throw Error("Invalid per-scene narration duration override.");
-  const providers=input.providers??["polyhaven","pexels","openverse"];
+  const providers=input.providers??["polyhaven","openverse"];
   if(!Array.isArray(providers)||providers.length>3||
     new Set(providers).size!==providers.length||providers.some(x=>!["polyhaven","pexels","openverse"].includes(x)))
     throw Error("Unknown asset search provider.");
@@ -214,25 +214,9 @@ export async function discoverShotAssets(input,opts={}){
     }catch(error){warnings.push("Poly Haven: "+visible(error.message,150));}
   }
   if(active.length&&providers.includes("pexels")){
-    if(!opts.pexelsKey)warnings.push("Pexels is disabled until PEXELS_API_KEY is configured locally.");
-    else{
-      const cache=new Map();
-      const queries=[...new Set(active.map(x=>x.query))].slice(0,12);
-      for(let start=0;start<queries.length;start+=3){
-        await Promise.all(queries.slice(start,start+3).map(async query=>{
-          const lookup={...opts,destination};
-          const [photos,videos]=await Promise.allSettled([
-            pexelsCandidates(query,lookup),pexelsVideoCandidates(query,lookup)]);
-          if(photos.status==="rejected")warnings.push(`Pexels photos ${query}: ${visible(photos.reason?.message,120)}`);
-          if(videos.status==="rejected")warnings.push(`Pexels videos ${query}: ${visible(videos.reason?.message,120)}`);
-          cache.set(query,[...(photos.status==="fulfilled"?photos.value:[]),
-            ...(videos.status==="fulfilled"?videos.value:[])]);
-        }));
-      }
-      for(const need of active)byShot.get(need.shotId).push(...(cache.get(need.query)??[]));
-      if(new Set(active.map(x=>x.query)).size>12)
-        warnings.push("Pexels requests were capped at 12 distinct subjects; use Poly Haven for remaining scenes.");
-    }
+    // Old saved UI search choices must not revive API credential collection
+    // or background extraction against a retired provider.
+    warnings.push("Pexels API search has been retired. Import an original from its website in Director.");
   }
   if(active.length&&providers.includes("openverse")){
     const cache=new Map(),queries=[...new Set(active.map(x=>x.query))].slice(0,8);

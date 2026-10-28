@@ -58,10 +58,10 @@ function mediaSearchChoice(input){
 function autoMediaChoice(input){
   if(input.autoPrepareFreeMedia!==undefined&&typeof input.autoPrepareFreeMedia!=="boolean")
     throw Error("Automatic draft media preference must be true or false.");
-  // No Pexels API workflow: site-downloaded media is imported and pinned by
-  // the creator. Keep existing scene manifests readable, but never use an old
-  // browser preference to contact a retired provider automatically.
-  return false;
+  // Searching is already a per-draft privacy choice. With search enabled,
+  // safely prepare only authoritative CC0 Commons originals; never revive
+  // the retired Pexels API workflow or trust Openverse index licenses.
+  return input.autoPrepareFreeMedia!==false;
 }
 const sampleExcerpt=text=>{
   const compact=String(text??"").replace(/\s+/gu," ").trim();
@@ -793,7 +793,7 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
-              autoPrepareFreeMedia:false,
+              autoPrepareFreeMedia,
               ...(tracker?{sceneJobs:tracker}:{}),
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
               sceneAssetBundle:input.bundle,
