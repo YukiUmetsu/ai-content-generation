@@ -88,10 +88,13 @@ jobs:
 
       # This uses local, original character ZIPs and synthetic narration timing.
       # No Fish Audio key, paid TTS or external asset retrieval is involved.
+      - name: Install Chromium and FFmpeg for visual animation QA
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get install -y ffmpeg
+
       - name: Verify saved Pip and Quill animation in real Chromium
         run: |
-          if command -v google-chrome >/dev/null && command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
-            CONTENTGEN_CHROMIUM_EXECUTABLE="$(command -v google-chrome)" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 pnpm test:video:browser
-          else
-            echo "::warning::Chrome or FFmpeg is unavailable on this runner; custom rig browser smoke was not executed."
-          fi
+          CHROME="$(node --input-type=module -e "import { chromium } from 'playwright-core'; process.stdout.write(chromium.executablePath())")"
+          test -x "$CHROME"
+          CONTENTGEN_CHROMIUM_EXECUTABLE="$CHROME" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 pnpm test:video:browser
