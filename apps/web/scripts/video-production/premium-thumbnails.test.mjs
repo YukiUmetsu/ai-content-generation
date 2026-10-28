@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename,join } from "node:path";
 import { generateProductionThumbnails, thumbnailCopy } from "./premium-thumbnails.mjs";
 
 const fixture = JSON.parse(readFileSync(new URL("../../../../examples/video-production-house-math-smoke.json",import.meta.url)));
@@ -103,7 +103,7 @@ test("independent thumbnail attempts run concurrently but settle before reportin
   const started=[],finished=[];
   const pending=generateProductionThumbnails(fixture,{outputDir,compose:async()=>source,
     convert:async(_svg,path)=>{
-      const name=path.split("/").at(-1);
+      const name=basename(path);
       started.push(name);
       if(name==="thumbnail-2.png")throw Error("isolated thumbnail conversion failed");
       await gate;
@@ -112,10 +112,11 @@ test("independent thumbnail attempts run concurrently but settle before reportin
     }});
   // Give the independent conversions a chance to start without needing the
   // first successful concept to complete. A serial loop cannot pass this.
+  let deadline;
   await Promise.race([
     (async()=>{while(started.length!==3)await new Promise(resolve=>setTimeout(resolve,5));})(),
-    new Promise((_,reject)=>setTimeout(()=>reject(Error("thumbnail workers did not start together")),2000))
-  ]).finally(unblock);
+    new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error("thumbnail workers did not start together")),2000);})
+  ]).finally(()=>{clearTimeout(deadline);unblock();});
   await assert.rejects(pending,/isolated thumbnail conversion failed/);
   assert.deepEqual(started.sort(),["thumbnail-1.png","thumbnail-2.png","thumbnail-3.png"]);
   assert.deepEqual(finished.sort(),["thumbnail-1.png","thumbnail-3.png"],

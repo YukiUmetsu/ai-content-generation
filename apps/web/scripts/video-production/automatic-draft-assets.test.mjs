@@ -79,9 +79,10 @@ test("independent scene downloads overlap while keeping a strict three-asset quo
     running.delete(id);
     return {bytes,meta:meta(id)};
   },probePhoto});
+  let deadline;
   try{
-    await Promise.race([ready,new Promise((_,reject)=>setTimeout(()=>reject(Error("Downloads did not overlap")),1500))]);
-  }finally{unblock();}
+    await Promise.race([ready,new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error("Downloads did not overlap")),1500);})]);
+  }finally{clearTimeout(deadline);unblock();}
   const result=await pending;
   assert.equal(maxConcurrency.value,2);
   assert.equal(result.prepared,3);
