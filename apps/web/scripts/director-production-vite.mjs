@@ -539,7 +539,7 @@ export function createDirectorProduction(deps={}){
         try {
           if(tracker){
             trackedJobId=await tracker.start({productionId:input.productionId,
-              revision:identity,runId});
+              revision:identity,runId,workerAbortController:abort});
           }
           if(abort.signal.aborted){
             // /cancel may have arrived before tracker.start acquired its ID.
@@ -698,9 +698,12 @@ export function createDirectorProduction(deps={}){
             // A deliberate cancellation can race a pending Jobs transition.
             // The scheduler may then reject that transition because the job
             // is already CANCELLED; that is not a new renderer failure.
-            const cancelled=abort.signal.aborted&&(!journalError||
-              abort.signal.reason?.message==="Cancelled by editor.");
-            const failure=journalError?{code:"jobs_unavailable",
+            const cancelled=abort.signal.aborted&&
+              abort.signal.reason?.message==="Cancelled by editor.";
+            const leaseLost=abort.signal.reason?.message?.startsWith("This worker lost its Jobs claim.");
+            const failure=leaseLost?{code:"jobs_lease_lost",
+              message:"Video generation was interrupted. Retry the draft; completed media will be checked and reused."}:
+              journalError?{code:"jobs_unavailable",
               message:"Jobs tracking stopped responding. Restart the local Rust server, then retry the draft."}:
               renderFailure(status.phase);
             if(tracker&&!cancelled){

@@ -414,6 +414,30 @@ test("a failed scene render records an actionable step error without leaking pro
   assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private-token-value/);
 });
 
+test("lost worker ownership is a retryable failure, never a user cancellation",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-lost-worker-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let abort,recorded;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async({workerAbortController})=>{
+      abort=workerAbortController;return "job-interrupted";},
+      advance:async()=>{},complete:async()=>{},fail:async(...args)=>{recorded=args;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      await options.onProgress({phase:"rendering",message:"Rendering a scene"});
+      abort.abort(Error("This worker lost its Jobs claim. Unsafe to continue."));
+      throw abort.signal.reason;
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(recorded?.[0],"jobs_lease_lost");
+  assert.match(server.status().message,/interrupted.*retry/i);
+  assert.doesNotMatch(server.status().message,/claim|worker ownership/i);
+});
+
 test("an opted-in draft saves scene-specific free media suggestions with Jobs provenance across restart",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-auto-assets-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));

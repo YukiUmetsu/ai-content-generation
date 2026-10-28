@@ -109,13 +109,15 @@ function validatedOutput(nodeKey,payload){
 }
 
 export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787",
-  fetcher=globalThis.fetch}={}){
+  fetcher=globalThis.fetch,heartbeatMs=20_000}={}){
   const server=new URL(origin);
   if(!["localhost","127.0.0.1"].includes(server.hostname)||server.protocol!=="http:"||
     server.username||server.password||server.pathname!=="/"||server.search||server.hash)
     throw Error("Production jobs require the local Rust server. Set CONTENTGEN_JOBS_ORIGIN to a loopback address.");
+  if(!Number.isSafeInteger(heartbeatMs)||heartbeatMs<10||heartbeatMs>120_000)
+    throw Error("Jobs heartbeat interval must be bounded.");
   let jobId=null,nodes=[],keys=PRODUCTION_NODES,active=-1,attemptId=null,terminal=null,priorRunId=null;
-  let sceneScope=null;
+  let sceneScope=null,abortController=null,leaseError=null,activeLease=null;
   const sceneAttempts=new Map();
   const priorLedgers=new Map();
   async function request(path,body){
@@ -132,24 +134,55 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       data.error?.message??`Jobs service returned HTTP ${response.status}.`);
     return data;
   }
+  function assertLease(){if(leaseError)throw leaseError;}
+  function stopLease(lease){
+    if(!lease)return;
+    lease.stopped=true;
+    clearInterval(lease.timer);
+  }
+  function startLease(ownerJobId,nodeId,ownerAttemptId){
+    const lease={stopped:false,busy:false,timer:null};
+    lease.timer=setInterval(async()=>{
+      if(lease.stopped||lease.busy||terminal)return;
+      lease.busy=true;
+      try{
+        const reply=await request(`/api/jobs/${ownerJobId}/nodes/${nodeId}/heartbeat`,
+          {attemptId:ownerAttemptId});
+        if(reply.alive!==true)throw Error("Jobs did not confirm the worker lease.");
+      }catch{
+        if(!lease.stopped&&!leaseError){
+          leaseError=Error("This worker lost its Jobs claim. Processing was stopped to avoid duplicate output; retry the draft.");
+          abortController?.abort(leaseError);
+        }
+        stopLease(lease);
+      }finally{lease.busy=false;}
+    },heartbeatMs);
+    lease.timer.unref?.();
+    return lease;
+  }
   async function begin(index){
+    assertLease();
     const node=nodes[index];
     if(!node)throw Error(`Missing production step ${PRODUCTION_NODES[index]}.`);
     const data=await request(`/api/jobs/${jobId}/nodes/${node.id}/start`,{});
     if(typeof data.attempt?.id!=="string")throw Error("Jobs service did not reserve a step attempt.");
     active=index;attemptId=data.attempt.id;
+    activeLease=startLease(jobId,node.id,attemptId);
   }
   async function succeed(output={completed:true}){
+    assertLease();
     const node=nodes[active];
     if(!node||!attemptId)throw Error("No production step is reserved.");
+    stopLease(activeLease);activeLease=null;
     await request(`/api/jobs/${jobId}/nodes/${node.id}/succeed`,{attemptId,output});
     attemptId=null;
   }
   return {
     get jobId(){return jobId;},
     get priorRunId(){return priorRunId;},
-    async start({productionId,revision,runId}){
+    async start({productionId,revision,runId,workerAbortController}){
       if(jobId)throw Error("Production job already started.");
+      abortController=workerAbortController??null;
       if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!RUN_ID.test(runId))
         throw Error("Production job requires a saved production, revision and run identity.");
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
@@ -159,6 +192,12 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
           // immutable content-addressed media can be reused after recovery.
           maxAttempts:3,input:{productionId,revision,runId},
           dependsOn:index?[PRODUCTION_NODES[index-1]]:[]}))});
+      if(data.created!==true&&data.job?.state==="RUNNING"&&
+        data.nodes?.some(node=>node.state==="RUNNING")){
+        // Do not steal a live claim. Rust re-arms only attempts whose persisted
+        // heartbeat is older than its fixed lease window.
+        data={...(await request(`/api/jobs/${data.job.id}/recover-stale`,{})),created:false};
+      }
       if(data.created!==true){
         if(["FAILED","CANCELLED"].includes(data.job?.state)&&typeof data.job.id==="string"){
           // Explicit retry is one SQLite transaction. Only one worker can
@@ -193,6 +232,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       return jobId;
     },
     async advance(phase,completedStepOutput){
+      assertLease();
       if(terminal)throw Error(`Production job has ${terminal}.`);
       // Older releases have a ten-step DAG. Keep that immutable history
       // resumable even though the new runner splits out additional milestones.
@@ -215,6 +255,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       while(active<target){await succeed(active===target-1?finalOutput:{completed:true});await begin(active+1);}
     },
     async complete(finalStepOutput){
+      assertLease();
       if(terminal)throw Error(`Production job has ${terminal}.`);
       if(active<0)throw Error("Production job was not started.");
       if(sceneAttempts.size)throw Error("Production cannot finish while scene work is still claimed.");
@@ -223,8 +264,16 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       await succeed(finalOutput);terminal="completed";
     },
     async fail(code="render_failed",detail="Video rendering failed"){
+      stopLease(activeLease);activeLease=null;
       if(terminal||!attemptId)return;
       terminal="failed";
+      const activeChildren=[...sceneAttempts.values()];
+      for(const attempt of activeChildren)stopLease(attempt.lease);
+      sceneAttempts.clear();
+      // A parent failure cannot leave child attempts actively claimed. Rust
+      // cancellation is idempotent; a child already succeeded stays intact.
+      await Promise.allSettled(activeChildren.map(attempt=>
+        request(`/api/jobs/${attempt.jobId}/cancel`,{})));
       await request(`/api/jobs/${jobId}/nodes/${nodes[active].id}/fail`,{
         attemptId,errorCode:code.slice(0,80),errorDetail:detail.slice(0,240)});
     },
@@ -232,6 +281,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
      * persisted attempt. An interrupted worker cannot complete another
      * worker's attempt; Rust atomically verifies every transition. */
     async beginScene({kind,sceneId,fingerprint}){
+      assertLease();
       if(terminal||!sceneScope||!jobId)throw Error("A production must be running before scene work starts.");
       if(!["asset-download","narration-scene","render-segment","thumbnail-concept"].includes(kind)||!BEAT_ID.test(sceneId))
         throw Error("Scene Jobs require a valid scene and operation.");
@@ -245,6 +295,10 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
         kind==="thumbnail-concept"?"video-thumbnail-concept":"video-render-segment";
       let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
         nodes:[{nodeKey:kind,nodeKind:`video.${kind}`,maxAttempts:3,input,dependsOn:[]}]});
+      if(data.created!==true&&data.job?.state==="RUNNING"&&
+        data.nodes?.some(node=>node.state==="RUNNING")){
+        data={...(await request(`/api/jobs/${data.job.id}/recover-stale`,{})),created:false};
+      }
       // Cancellation may race the HTTP submission. Do not leave a newly
       // created child job alive after its parent has already been cancelled.
       if(terminal){
@@ -268,15 +322,18 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
         await request(`/api/jobs/${data.job.id}/cancel`,{});
         throw Error("Scene work was cancelled before it could start.");
       }
-      sceneAttempts.set(key,{jobId:data.job.id,nodeId:node.id,attemptId:reservation.attempt.id});
+      sceneAttempts.set(key,{jobId:data.job.id,nodeId:node.id,attemptId:reservation.attempt.id,
+        lease:startLease(data.job.id,node.id,reservation.attempt.id)});
       return key;
     },
     async completeScene(key,{sha256,samples,frameCount,reused=false}){
+      assertLease();
       const attempt=sceneAttempts.get(key);
       if(!attempt||terminal)throw Error("No active scene attempt can be completed.");
       const output={sha256:hash(sha256),reused:reused===true};
       if(samples!==undefined)output.samples=integer(samples,{positive:true});
       if(frameCount!==undefined)output.frameCount=integer(frameCount,{positive:true});
+      stopLease(attempt.lease);
       await request(`/api/jobs/${attempt.jobId}/nodes/${attempt.nodeId}/succeed`,
         {attemptId:attempt.attemptId,output});
       sceneAttempts.delete(key);
@@ -284,6 +341,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
     async failScene(key,error){
       const attempt=sceneAttempts.get(key);
       if(!attempt)return;
+      stopLease(attempt.lease);
       // Provider failures may contain account tokens, voice text, or machine
       // paths. Jobs stores the safe failure category, not raw vendor output.
       const detail=error?.name==="AbortError"?
@@ -296,6 +354,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
     async cancel(){
       if(terminal||!jobId)return;
       terminal="cancelled";
+      stopLease(activeLease);activeLease=null;
+      for(const attempt of sceneAttempts.values())stopLease(attempt.lease);
       const sceneResults=await Promise.allSettled([...sceneAttempts.values()].map(attempt=>
         request(`/api/jobs/${attempt.jobId}/cancel`,{})));
       sceneAttempts.clear();

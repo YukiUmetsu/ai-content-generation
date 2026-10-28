@@ -170,3 +170,141 @@ async fn production_worker_attempts_are_durable_and_authorized() {
         "only a terminal job can be retried"
     );
 }
+
+#[tokio::test]
+async fn crashed_video_worker_is_recovered_only_after_its_lease_expires() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("jobs.sqlite");
+    let mut connection = db::open(&db_path).unwrap();
+    db::migrate(&mut connection).unwrap();
+    let app = build_router(AppState::new(db_path));
+    let (status, created) = call(
+        &app,
+        Method::POST,
+        "/api/jobs",
+        json!({"jobKind":"video-production","idempotencyKey":"lease-restart-test",
+          "nodes":[{"nodeKey":"scene-a","nodeKind":"video.render","maxAttempts":3,
+            "input":{},"dependsOn":[]}]}),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let job = created["job"]["id"].as_str().unwrap();
+    let node = created["nodes"][0]["id"].as_str().unwrap();
+    let start_path = format!("/api/jobs/{job}/nodes/{node}/start");
+    let (_, first) = call(&app, Method::POST, &start_path, json!({}), true).await;
+    let first_attempt = first["attempt"]["id"].as_str().unwrap();
+    let heartbeat_path = format!("/api/jobs/{job}/nodes/{node}/heartbeat");
+    let recover_path = format!("/api/jobs/{job}/recover-stale");
+
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &heartbeat_path,
+            json!({"attemptId":first_attempt}),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(&app, Method::POST, &recover_path, json!({}), false)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &heartbeat_path,
+            json!({"attemptId":"not-the-owner"}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+
+    // A live worker refreshes an outdated timestamp without losing the node.
+    connection
+        .execute(
+            "UPDATE job_nodes SET updated_at = '2000-01-01T00:00:00Z' WHERE id = ?1",
+            [node],
+        )
+        .unwrap();
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &heartbeat_path,
+            json!({"attemptId":first_attempt}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, healthy) = call(&app, Method::POST, &recover_path, json!({}), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(healthy["nodes"][0]["state"], "RUNNING");
+
+    // The worker is killed: after its lease expires, only its attempt is
+    // failed; its node becomes READY for a new worker. An old worker cannot
+    // commit output or renew ownership after that transactional recovery.
+    connection
+        .execute(
+            "UPDATE job_nodes SET updated_at = '2000-01-01T00:00:00Z' WHERE id = ?1",
+            [node],
+        )
+        .unwrap();
+    let (status, recovered) = call(&app, Method::POST, &recover_path, json!({}), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(recovered["nodes"][0]["state"], "READY");
+    assert_eq!(
+        recovered["attempts"][0]["errorCode"],
+        "worker_lease_expired"
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &heartbeat_path,
+            json!({"attemptId":first_attempt}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &format!("/api/jobs/{job}/nodes/{node}/succeed"),
+            json!({"attemptId":first_attempt,"output":{"incorrect":true}}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+
+    let (status, second) = call(&app, Method::POST, &start_path, json!({}), true).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_ne!(second["attempt"]["id"], first_attempt);
+    assert_eq!(
+        call(
+            &app,
+            Method::POST,
+            &heartbeat_path,
+            json!({"attemptId":second["attempt"]["id"]}),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}

@@ -157,6 +157,68 @@ test("an interrupted RUNNING production reclaims only the READY stage after reco
   assert.deepEqual(nodes.slice(0,5).map(node=>node.state),Array(5).fill("SUCCEEDED"));
 });
 
+test("worker startup recovers an expired claim but never starts a still-running node",async()=>{
+  const productionId="production-"+"a".repeat(24),revision="lease-r1",calls=[];
+  const nodes=PRODUCTION_NODES.map((nodeKey,index)=>({id:`node-${index}`,nodeKey,
+    input:{productionId,revision,runId:FIRST_RUN},state:index===0?"RUNNING":"PENDING"}));
+  const fetcher=async(url)=>{
+    const path=new URL(url).pathname;calls.push(path);
+    if(path==="/api/jobs")return Response.json({created:false,job:{id:"older",state:"RUNNING"},nodes});
+    if(path==="/api/jobs/older/recover-stale"){
+      nodes[0].state="READY";
+      return Response.json({job:{id:"older",state:"RUNNING"},nodes});
+    }
+    if(path.endsWith("/start"))return Response.json({attempt:{id:"new-owner"}});
+    if(path.endsWith("/cancel"))return Response.json({job:{id:"older",state:"CANCELLED"}});
+    throw Error(`Unexpected ${path}`);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  assert.equal(await tracker.start({productionId,revision,runId:RETRY_RUN}),"older");
+  assert.equal(tracker.priorRunId,FIRST_RUN);
+  assert.deepEqual(calls,["/api/jobs","/api/jobs/older/recover-stale",
+    "/api/jobs/older/nodes/node-0/start"]);
+  await tracker.cancel();
+
+  const stillRunning=createProductionJobTracker({fetcher:async url=>{
+    const path=new URL(url).pathname;
+    if(path==="/api/jobs")return Response.json({created:false,job:{id:"live",state:"RUNNING"},
+      nodes:[{...nodes[0],state:"RUNNING"},...nodes.slice(1)]});
+    if(path.endsWith("/recover-stale"))return Response.json({job:{id:"live",state:"RUNNING"},
+      nodes:[{...nodes[0],state:"RUNNING"},...nodes.slice(1)]});
+    throw Error("No second worker may claim live work");
+  }});
+  await assert.rejects(stillRunning.start({productionId,revision,runId:RETRY_RUN}),/already running/i);
+});
+
+test("a lost Jobs heartbeat aborts production and cannot be mistaken for a user cancellation",async()=>{
+  const scheduler=fakeScheduler(),events=[],abort=new AbortController();
+  let failHeartbeat=false;
+  const fetcher=async(url,init)=>{
+    const path=new URL(url).pathname;
+    if(path.endsWith("/heartbeat")){
+      events.push(path);
+      if(failHeartbeat)return Response.json({error:{message:"superseded worker"}},{status:409});
+      return Response.json({alive:true});
+    }
+    return scheduler.fetcher(url,init);
+  };
+  const tracker=createProductionJobTracker({fetcher,heartbeatMs:10});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"heartbeat-r1",
+    runId:FIRST_RUN,workerAbortController:abort});
+  await new Promise(resolve=>setTimeout(resolve,38));
+  assert.ok(events.length>0,"a long-running Jobs attempt must renew its lease");
+  assert.equal(abort.signal.aborted,false);
+  failHeartbeat=true;
+  await new Promise(resolve=>setTimeout(resolve,35));
+  assert.equal(abort.signal.aborted,true);
+  assert.match(abort.signal.reason.message,/lost its Jobs claim/i);
+  await assert.rejects(tracker.advance("narration"),/lost its Jobs claim/i);
+  await tracker.cancel();
+  const stopped=events.length;
+  await new Promise(resolve=>setTimeout(resolve,35));
+  assert.equal(events.length,stopped,"no heartbeat may run after cancellation");
+});
+
 test("only one competing worker can claim a recovered stage",async()=>{
   const productionId="production-"+"a".repeat(24),revision="race-1";
   const nodes=PRODUCTION_NODES.map((nodeKey,index)=>({id:`node-${index}`,nodeKey,

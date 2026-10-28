@@ -33,8 +33,16 @@ pub fn router() -> Router<AppState> {
             axum::routing::post(retry_video_job),
         )
         .route(
+            "/api/jobs/{job_id}/recover-stale",
+            axum::routing::post(recover_stale_video_job),
+        )
+        .route(
             "/api/jobs/{job_id}/nodes/{node_id}/start",
             axum::routing::post(start_attempt),
+        )
+        .route(
+            "/api/jobs/{job_id}/nodes/{node_id}/heartbeat",
+            axum::routing::post(heartbeat_attempt),
         )
         .route(
             "/api/jobs/{job_id}/nodes/{node_id}/succeed",
@@ -204,6 +212,19 @@ async fn retry_video_job(
     )))
 }
 
+async fn recover_stale_video_job(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Path(job_id): Path<String>,
+) -> Result<Json<JobView>, JobsError> {
+    require_worker(&headers)?;
+    let mut db = app_state.connect()?;
+    scheduler::reconcile_stale_video_attempts(&mut db, &job_id)?;
+    Ok(Json(JobView::from_snapshot(scheduler::snapshot(
+        &db, &job_id,
+    )?)))
+}
+
 /// The media worker runs in the same local installation, not in the browser.
 /// It never sends provider keys to the persisted Jobs service. Browsers from
 /// other origins cannot forge the custom worker header without CORS approval.
@@ -259,6 +280,30 @@ async fn start_attempt(
     let mut db = app_state.connect()?;
     let attempt = scheduler::begin_attempt(&mut db, &job_id, &node_id)?;
     Ok((StatusCode::CREATED, Json(StartedAttempt { attempt })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HeartbeatAttemptBody {
+    attempt_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct HeartbeatView {
+    alive: bool,
+}
+
+async fn heartbeat_attempt(
+    State(app_state): State<AppState>,
+    headers: HeaderMap,
+    Path((job_id, node_id)): Path<(String, String)>,
+    body: Result<Json<HeartbeatAttemptBody>, JsonRejection>,
+) -> Result<Json<HeartbeatView>, JobsError> {
+    require_worker(&headers)?;
+    let Json(body) = body.map_err(|error| JobsError::InvalidDocument(error.body_text()))?;
+    let mut db = app_state.connect()?;
+    scheduler::heartbeat_attempt(&mut db, &job_id, &node_id, &body.attempt_id)?;
+    Ok(Json(HeartbeatView { alive: true }))
 }
 
 #[derive(Debug, Deserialize)]
