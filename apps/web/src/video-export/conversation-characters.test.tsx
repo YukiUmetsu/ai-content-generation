@@ -104,7 +104,7 @@ describe("custom Character Studio rigs in exported conversation frames", () => {
     expect(silent).not.toContain('data-asset="mouthOpen"');
     expect(gesture).not.toEqual(speaking);
     expect(speaking).toContain('data-rig-source="bundled"');
-    const portrait = {...customPlan,manifest:{...customPlan.manifest,width:1080,height:1920,preset:"youtube-shorts"}};
+    const portrait = {...customPlan,manifest:{...customPlan.manifest,width:1080,height:1920,preset:"youtube-shorts" as const}};
     expect(renderToStaticMarkup(<PortraitGeneralExportScene plan={portrait} frame={19}/>))
       .toContain('data-rig-revision="custom-pip-v2"');
   });
