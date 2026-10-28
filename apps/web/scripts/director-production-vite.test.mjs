@@ -1613,7 +1613,9 @@ test("custom rig revisions are checked twice and frozen into the actual render r
   const dir=await mkdtemp(join(tmpdir(),"director-character-rig-test-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const project=inputs(),speaker={id:"pip",role:"character",provider:"local",voiceId:config.voiceId};
-  project.bundle.plan.sound[0].speaker=speaker;
+  const revised=structuredClone(project.bundle.plan);
+  revised.sound[0].speaker=speaker;
+  project.bundle=compilePreproductionBundle(project.dossier,revised);
   let archiveSha="a".repeat(64),renders=0,used=null,lookups=0;
   const server=createDirectorProduction({outputRoot:dir,build:async()=>{},findBrowser:async()=>"/mock/chromium",
     inspect:async()=>({ready:true,findings:[],tools:{}}),
