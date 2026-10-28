@@ -11,6 +11,9 @@ import { summarizeRigMetadata } from "./rig-metadata";
 import { RigCalibrationEditor } from "./RigCalibrationEditor";
 import type { Locale } from "@/features/registry";
 import { exampleCharacterJson, exampleCharacterZip } from "./example-character";
+import { readProjectVoices, type VoiceFavorite } from "@/app/project-voice-favorites";
+import { changeCharacterVoice, readCharacterVoiceBindings, saveCharacterVoiceBindings,
+  type CharacterVoiceBindings } from "./character-voice-bindings";
 
 const manifestFields = [
   { key: "schemaVersion / characterId / revision", en: "Required version 1, stable ID and editable revision string.", ja: "必須。バージョン 1、固定 ID、改訂番号。" },
@@ -38,6 +41,15 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const [saving, setSaving] = useState(false);
   const [drafts, setDrafts] = useState<CharacterDraft[]>([]);
   const [draftsError, setDraftsError] = useState("");
+  const [characterVoiceError, setCharacterVoiceError] = useState("");
+  const [favoriteOptions] = useState<{voices:VoiceFavorite[];error:string}>(() => {
+    try { return {voices:readProjectVoices(projectId).voices,error:""}; }
+    catch (caught) { return {voices:[],error:caught instanceof Error?caught.message:"Cannot load project voices."}; }
+  });
+  const [voiceBindings,setVoiceBindings] = useState<{registry:CharacterVoiceBindings|null;error:string}>(() => {
+    try { return {registry:readCharacterVoiceBindings(projectId),error:""}; }
+    catch (caught) { return {registry:null,error:caught instanceof Error?caught.message:"Cannot load character voices."}; }
+  });
   const [exampleDownloadError, setExampleDownloadError] = useState("");
   const [loadedProjectId, setLoadedProjectId] = useState("");
   const [lastSaved, setLastSaved] = useState("");
@@ -50,6 +62,22 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const rig = pack ? summarizeRigMetadata(pack.definition) : null;
   const urls = preview?.urls;
   const draftsLoading = loadedProjectId !== projectId;
+
+  function chooseCharacterVoice(draft:CharacterDraft,selected:string) {
+    if (!voiceBindings.registry) return;
+    const voice = selected === "" ? null : favoriteOptions.voices[Number(selected)-1];
+    if (selected !== "" && !voice) { setCharacterVoiceError("Unknown project voice. Reload Character Studio."); return; }
+    try {
+      if (voice && JSON.stringify(readProjectVoices(projectId).voices) !== JSON.stringify(favoriteOptions.voices))
+        throw Error("Project voice favorites changed in another tab. Reload before assigning a character voice.");
+      const next=changeCharacterVoice(voiceBindings.registry,draft,voice);
+      saveCharacterVoiceBindings(next,voiceBindings.registry);
+      setVoiceBindings({registry:next,error:""});
+      setCharacterVoiceError("");
+    } catch (caught) {
+      setCharacterVoiceError(caught instanceof Error?caught.message:"Could not save the character voice.");
+    }
+  }
 
   function downloadExample(format: "json" | "zip") {
     setExampleDownloadError("");
@@ -307,12 +335,33 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
       </div>
       {draftsLoading && <p role="status" className="text-sm text-muted-foreground">{ja ? "下書きを読み込み中…" : "Loading local drafts…"}</p>}
       {!draftsLoading && !!draftsError && <p role="alert" className="mb-3 text-sm text-danger">{draftsError}</p>}
+      {!!(favoriteOptions.error||voiceBindings.error||characterVoiceError)&&<p role="alert" className="mb-3 text-xs text-danger">{favoriteOptions.error||voiceBindings.error||characterVoiceError}</p>}
       {!draftsLoading && !draftsError && drafts.length === 0 && <p className="text-sm text-muted-foreground">{ja ? "まだ保存した下書きはありません。" : "No saved drafts yet. Import a ZIP and select Save draft locally."}</p>}
       {!draftsLoading && drafts.length > 0 && <ul className="space-y-2">
         {drafts.map(draft => <li key={draft.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface-subtle/50 px-4 py-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-foreground" title={draft.characterId}>{draft.characterId} <span className="text-xs font-normal text-muted-foreground">rev {draft.revision}</span></p>
             <p className="mt-1 text-xs text-muted-foreground">{ja ? "未検証" : "Unverified"} · {(draft.sizeBytes / 1024).toFixed(0)} KiB · {new Date(draft.createdAt).toLocaleDateString(locale === "ja" ? "ja-JP" : "en-US")}</p>
+            {voiceBindings.registry&&<div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-xs font-semibold text-foreground" htmlFor={`character-voice-${draft.id}`}>{ja ? "キャラクターの声" : "Character voice"}</label>
+              <select id={`character-voice-${draft.id}`} aria-label={`Voice for ${draft.characterId}, revision ${draft.revision}`}
+                className="max-w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                disabled={!!favoriteOptions.error}
+                value={(() => {const saved=voiceBindings.registry?.bindings.find(binding=>binding.draftId===draft.id);
+                  if(!saved)return "";
+                  const index=favoriteOptions.voices.findIndex(voice=>voice.provider===saved.voice.provider&&voice.voiceId===saved.voice.voiceId);
+                  return index>=0?String(index+1):"saved";})()}
+                onChange={event=>{if(event.target.value!=="saved")chooseCharacterVoice(draft,event.target.value);}}>
+                <option value="">{ja ? "未設定 · プロジェクトの候補を使用" : "Not assigned · use project suggestions"}</option>
+                {favoriteOptions.voices.map((voice,index)=><option key={`${voice.provider}:${voice.voiceId}`} value={String(index+1)}>
+                  {index===0?"Primary":index===1?"Secondary":`#${index+1}`} · {voice.name} ({voice.provider}, {voice.language})
+                </option>)}
+                {voiceBindings.registry.bindings.some(binding=>binding.draftId===draft.id&&
+                  !favoriteOptions.voices.some(voice=>voice.provider===binding.voice.provider&&voice.voiceId===binding.voice.voiceId))&&
+                  <option value="saved">{ja ? "保存した声（候補から削除済み）" : "Saved voice (no longer a favorite)"}</option>}
+              </select>
+              <span className="text-[11px] text-muted-foreground">{ja ? "このブラウザーに改訂別で保存。音声利用の許可は別途必要" : "Saved per revision in this browser; voice usage still needs approval"}</span>
+            </div>}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => void reopen(draft)}>{ja ? "再確認" : "Reopen ZIP"}</Button>

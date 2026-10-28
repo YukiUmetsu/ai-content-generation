@@ -44,6 +44,36 @@ afterEach(() => {
 });
 
 describe("CharacterPackInspector", () => {
+  it("binds a project favorite voice to a saved character revision without sending audio", async () => {
+    const projectId="character-voice-test";
+    const savedDraft={
+      id:"character-draft-"+"c".repeat(32),projectId,characterId:"pip",revision:"3",
+      archiveSha256:"a".repeat(64),sizeBytes:80,status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z",
+    };
+    vi.mocked(listCharacterDrafts).mockResolvedValue([savedDraft]);
+    try {
+      render(<CharacterPackInspector locale="en" projectId={projectId} />);
+      const select=await screen.findByRole("combobox",{name:"Voice for pip, revision 3"});
+      fireEvent.change(select,{target:{value:"1"}});
+      expect(select).toHaveValue("1");
+      const stored=JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null");
+      expect(stored.bindings).toMatchObject([{draftId:savedDraft.id,characterId:"pip",revision:"3",
+        voice:{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94"}}]);
+      fireEvent.change(select,{target:{value:""}});
+      expect(JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null").bindings).toEqual([]);
+      localStorage.setItem("contentgen:project-voice-favorites:v1:"+projectId,JSON.stringify({
+        schemaVersion:1,projectId,voices:[{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94",
+          name:"Changed in another tab",gender:"unspecified",situation:"narration",language:"und"}],
+      }));
+      fireEvent.change(select,{target:{value:"1"}});
+      expect(screen.getByRole("alert")).toHaveTextContent("changed in another tab");
+      expect(JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null").bindings).toEqual([]);
+    } finally {
+      localStorage.removeItem("contentgen:character-voices:v1:"+projectId);
+      localStorage.removeItem("contentgen:project-voice-favorites:v1:"+projectId);
+    }
+  });
+
   it("explains the real manifest schema and offers both importable ZIP and matching JSON downloads", () => {
     const clicked = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     try {
