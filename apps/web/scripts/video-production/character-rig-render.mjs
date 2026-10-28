@@ -217,7 +217,7 @@ export async function loadProjectCharacterRigs({ projectId, speakers, origin = p
     rigs[id] = { draftId: verified.draftId, archiveSha256: verified.archiveSha256,
       definition: verified.definition, assetUrls: verified.assetUrls };
     assets.push(...verified.assets);
-    identity.push({ speakerId: id, draftId: draft.id, archiveSha256: draft.archiveSha256 });
+    identity.push({ speakerId: id, draftId: draft.id, revision: draft.revision, archiveSha256: draft.archiveSha256 });
   }
   return { rigs, assets, identity };
 }
