@@ -65,9 +65,14 @@ const directorSessionKey=(projectId:string,artifactId:string,storyboardSha256:st
 function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle,
   storyboardSha256:string|null=null):
   {dossier:Dossier;bundle:Bundle}|null {
-  if(!projectId||typeof sessionStorage==="undefined"||!source.researchSha256)return null;
+  if(!projectId||typeof window==="undefined"||!source.researchSha256)return null;
   try{
-    const raw=sessionStorage.getItem(directorSessionKey(projectId,artifactId,storyboardSha256));
+    const key=directorSessionKey(projectId,artifactId,storyboardSha256);
+    // Migrate existing tab-scoped edits without breaking older saved sessions.
+    // Local storage retains the same source-bound draft after the tab closes.
+    let raw:string|null=null;
+    try{raw=sessionStorage.getItem(key);}catch{/* Try persistent storage. */}
+    if(!raw)try{raw=localStorage.getItem(key);}catch{/* Storage can be disabled. */}
     if(!raw||raw.length>900000)return null;
     const data=JSON.parse(raw) as {version?:number;artifactId?:string;dossier?:Dossier;bundle?:Bundle};
     if(data.version!==1||data.artifactId!==artifactId||data.dossier?.kind!=="research-dossier"||
@@ -203,16 +208,20 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   },[researchArtifactId,projectId,acceptProject]);
   useEffect(()=>{
     if(!projectId||!sourceArtifactId||!dossier||!bundle||
-      typeof sessionStorage==="undefined")return;
+      typeof window==="undefined")return;
     let warningTimer:ReturnType<typeof setTimeout>|undefined;
     try{
       // Only applied shot edits are saved here. Never store provider keys or voice permissions.
       const data=JSON.stringify({version:1,artifactId:sourceArtifactId,dossier,bundle});
       if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
-      sessionStorage.setItem(directorSessionKey(projectId,sourceArtifactId,sourceStoryboardSha),data);
+      const key=directorSessionKey(projectId,sourceArtifactId,sourceStoryboardSha);
+      let persistent=false;
+      try{localStorage.setItem(key,data);persistent=true;}catch{/* Try tab storage. */}
+      try{sessionStorage.setItem(key,data);}catch{/* Persistent storage may still have succeeded. */}
+      if(!persistent)throw Error("Persistent browser storage is unavailable.");
     }catch{
       // Storage failure is reported after the effect finishes, avoiding a cascading render.
-      warningTimer=setTimeout(()=>setStatus("Browser session draft could not be saved. Download Save project JSON before leaving Video Director."),0);
+      warningTimer=setTimeout(()=>setStatus("Scene edits could not be saved across browser restarts. Download Save project JSON before leaving Video Director."),0);
     }
     return ()=>{if(warningTimer!==undefined)clearTimeout(warningTimer);};
   },[projectId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);

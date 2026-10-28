@@ -18,7 +18,14 @@ function localMediaCatalogResponse(url:unknown):Response|null {
   return result?new Response(JSON.stringify(result),{status:200}):null;
 }
 
-afterEach(()=>{vi.restoreAllMocks();});
+afterEach(()=>{
+  vi.restoreAllMocks();
+  // Isolate durable Director drafts between tests without clearing unrelated app preferences.
+  for(let i=localStorage.length-1;i>=0;i--){
+    const key=localStorage.key(i);
+    if(key?.startsWith("contentgen:director-session:"))localStorage.removeItem(key);
+  }
+});
 describe("AI Prompt Studio",()=>{
   it("edits and saves a custom hook prompt while leaving all other stage overrides intact",async()=>{
     const actions:Array<{path:string;data:unknown}>=[];
@@ -418,6 +425,18 @@ describe("saved research to Video Director handoff",()=>{
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
     expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Approved local draft edit");
     sessionStorage.removeItem(sessionKey);
+  });
+  it("restores source-matched saved edits after tab-scoped storage is cleared",async()=>{
+    const key="contentgen:director-session:v1:project-demo:"+artifactId;
+    const revised=structuredClone(bundle);
+    revised.plan.shots[0].onScreenText="Persisted scene headline";
+    const savedBundle={...revised,researchSha256:"b".repeat(64),planSha256:"c".repeat(64)};
+    localStorage.setItem(key,JSON.stringify({version:1,artifactId,dossier,bundle:savedBundle}));
+    sessionStorage.removeItem(key);
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({artifactId,dossier,
+      bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)}}),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Persisted scene headline");
   });
   it("does not restore draft edits from a different research fingerprint",async()=>{
     const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
