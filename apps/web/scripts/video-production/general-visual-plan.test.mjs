@@ -99,3 +99,20 @@ test("measured dialogue audio drives exact per-turn actor frames; inconsistent v
   wrong[1].turns[1].samples-=480;
   assert.throws(()=>compileGeneralVisuals(job,measuredTimeline,wrong),/speech range|measured/u);
 });
+
+test("single character-speaker scenes animate the saved actor on measured speech frames", () => {
+  const job=structuredClone(source);
+  job.beats[1].speaker={id:"pip",role:"character",voiceId:"pip-local"};
+  const speech=job.beats.map(beat=>({id:beat.id,text:beat.narration,samples:4*48000,
+    speakerId:beat.speaker?.id??"narrator",speakerRole:beat.speaker?.role??"narrator",
+    voiceId:beat.speaker?.voiceId??job.voice.voiceId}));
+  const plan=compileGeneralVisuals(job,timeline,speech);
+  const turn=plan.chapters[1].dialogue?.turns[0];
+  assert.equal(turn?.speakerId,"pip");
+  assert.equal(turn?.startFrame,timeline.beats[1].startFrame);
+  assert.equal(turn?.endFrame,toFrame(timeline.beats[1].startSample+4*48000,job.destination.fps));
+  assert.equal(plan.chapters[0].dialogue,undefined);
+  const wrong=structuredClone(speech);
+  wrong[1].speakerId="quill";
+  assert.throws(()=>compileGeneralVisuals(job,timeline,wrong),/measured narration/);
+});
