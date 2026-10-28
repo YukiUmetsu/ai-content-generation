@@ -16,8 +16,13 @@ const plan={schemaVersion:1,kind:"preview",job:{beats:[{id:"beat1",narration:"Ex
 const reply=(payload:unknown)=>new Response(JSON.stringify(payload),{status:200});
 
 it("starts a new project's narrator on the requested Fish primary without TTS or consent",async()=>{
-  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     if(String(input).endsWith("/plan"))return reply(plan);
+    if(String(input).includes("/api/project-voices/")){
+      if(init?.method!=="PUT")return reply({revision:0,library:null});
+      const body=JSON.parse(String(init.body)) as {library:unknown};
+      return reply({revision:1,library:body.library});
+    }
     throw Error("No provider or other request was authorized: "+input);
   });
   render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
@@ -63,13 +68,23 @@ it("migrates an existing manually selected legacy voice to only the first opened
 });
 
 it("adds and ranks project voices, applies one narrator explicitly and isolates another project",async()=>{
-  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
-    if(String(input).endsWith("/plan"))return reply(plan);
+  const remote=new Map<string,{revision:number;library:unknown}>();
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.includes("/api/project-voices/")){
+      const id=path.split("/").at(-1)!;
+      if(init?.method!=="PUT")return reply(remote.get(id)??{revision:0,library:null});
+      const body=JSON.parse(String(init.body)) as {revision:number;library:unknown};
+      if(body.revision!==(remote.get(id)?.revision??0))return new Response(JSON.stringify({error:{message:"stale"}}),{status:409});
+      const saved={revision:body.revision+1,library:body.library};remote.set(id,saved);return reply(saved);
+    }
     throw Error("Unexpected request: "+input);
   });
   const user=userEvent.setup();
   const first=render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
   await screen.findByRole("textbox",{name:"Production voice ID"});
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Add voice"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"Add voice"}));
   await user.type(screen.getByRole("textbox",{name:"Voice ID"}),"b".repeat(32));
   await user.type(screen.getByRole("textbox",{name:"Display name"}),"Calm guide");
@@ -79,14 +94,15 @@ it("adds and ranks project voices, applies one narrator explicitly and isolates 
   await user.clear(screen.getByRole("textbox",{name:"Language code"}));
   await user.type(screen.getByRole("textbox",{name:"Language code"}),"en");
   await user.click(screen.getByRole("button",{name:"Save voice"}));
-  expect(readProjectVoices("project-one").voices[1]).toMatchObject({name:"Calm guide",gender:"female",situation:"conversation",language:"en"});
+  await waitFor(()=>expect(readProjectVoices("project-one").voices[1]).toMatchObject({name:"Calm guide",gender:"female",situation:"conversation",language:"en"}));
   await user.click(screen.getByRole("button",{name:"Make primary"}));
-  expect(readProjectVoices("project-one").voices[0].name).toBe("Calm guide");
+  await waitFor(()=>expect(readProjectVoices("project-one").voices[0].name).toBe("Calm guide"));
   await user.click(screen.getByRole("button",{name:"Use"}));
   expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("b".repeat(32));
   first.unmount();
   render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-two" initialStage="narration"/>);
   expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toHaveValue(DEFAULT_FISH_VOICE_ID);
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Add voice"})).toBeEnabled());
   expect(screen.queryByText("Calm guide")).not.toBeInTheDocument();
   expect(readProjectVoices("project-two").voices).toHaveLength(1);
 });
