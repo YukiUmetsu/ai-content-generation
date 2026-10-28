@@ -194,7 +194,7 @@ export async function loadProjectCharacterRigs({ projectId, speakers, origin = p
   const request = async (path, max) => {
     const url = new URL(path, base);
     const response = await fetchImpl(url, { headers: { Accept: path.includes("/archive") ? "application/zip" : "application/json" },
-      signal: AbortSignal.timeout(12000), cache: "no-store" });
+      signal: AbortSignal.timeout(12000), cache: "no-store", redirect: "error" });
     return boundedResponse(response, max);
   };
   let catalog;
