@@ -61,43 +61,64 @@ struct Snapshot {
 }
 
 fn invalid(message: &str) -> ApiError {
-    ApiError::InvalidDocument { message: message.into() }
+    ApiError::InvalidDocument {
+        message: message.into(),
+    }
 }
 
 fn unavailable() -> ApiError {
-    ApiError::Internal { message: "Project voice storage is unavailable".into() }
+    ApiError::Internal {
+        message: "Project voice storage is unavailable".into(),
+    }
 }
 
 pub(crate) fn valid_project(value: &str) -> bool {
     (1..=160).contains(&value.len())
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 pub(crate) fn valid_text(value: &str, max: usize) -> bool {
-    !value.is_empty() && value.len() <= max && value.trim() == value
+    !value.is_empty()
+        && value.len() <= max
+        && value.trim() == value
         && !value.chars().any(char::is_control)
 }
 
 fn valid_language(value: &str) -> bool {
-    if value == "und" { return true; }
+    if value == "und" {
+        return true;
+    }
     let mut subtags = value.split('-');
-    let Some(first) = subtags.next() else { return false; };
-    (2..=8).contains(&first.len()) && first.bytes().all(|byte| byte.is_ascii_alphabetic())
-        && subtags.all(|tag| (1..=8).contains(&tag.len()) && tag.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+    let Some(first) = subtags.next() else {
+        return false;
+    };
+    (2..=8).contains(&first.len())
+        && first.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && subtags.all(|tag| {
+            (1..=8).contains(&tag.len()) && tag.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
 }
 
 fn validate(project_id: &str, library: &Library) -> Result<(), ApiError> {
-    if !valid_project(project_id) || library.schema_version != 1 || library.project_id != project_id
+    if !valid_project(project_id)
+        || library.schema_version != 1
+        || library.project_id != project_id
         || library.voices.len() > 16
     {
-        return Err(invalid("Project voices contain an invalid project, version, or list size"));
+        return Err(invalid(
+            "Project voices contain an invalid project, version, or list size",
+        ));
     }
     let mut seen = HashSet::new();
     for voice in &library.voices {
         if !valid_favorite(voice)
             || !seen.insert((voice.provider.as_str(), voice.voice_id.as_str()))
         {
-            return Err(invalid("Project voices contain invalid or duplicate voice IDs or tags"));
+            return Err(invalid(
+                "Project voices contain invalid or duplicate voice IDs or tags",
+            ));
         }
     }
     Ok(())
@@ -106,10 +127,17 @@ fn validate(project_id: &str, library: &Library) -> Result<(), ApiError> {
 pub(crate) fn valid_favorite(voice: &Favorite) -> bool {
     matches!(voice.provider.as_str(), "fish" | "local")
         && valid_text(&voice.voice_id, 128)
-        && (voice.provider != "fish" || (voice.voice_id.len() == 32
-            && voice.voice_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())))
+        && (voice.provider != "fish"
+            || (voice.voice_id.len() == 32
+                && voice
+                    .voice_id
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())))
         && valid_text(&voice.name, 72)
-        && matches!(voice.gender.as_str(), "unspecified" | "female" | "male" | "nonbinary")
+        && matches!(
+            voice.gender.as_str(),
+            "unspecified" | "female" | "male" | "nonbinary"
+        )
         && valid_text(&voice.situation, 48)
         && valid_text(&voice.language, 35)
         && valid_language(&voice.language)
@@ -119,18 +147,31 @@ async fn load(
     State(state): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<Snapshot>, ApiError> {
-    if !valid_project(&project_id) { return Err(invalid("Invalid project ID")); }
-    let snapshot = tokio::task::spawn_blocking(move || -> Result<Snapshot, ApiError> {
-        let db = state.connect().map_err(|_| unavailable())?;
-        let row: Option<(i64, String)> = db.query_row(
+    if !valid_project(&project_id) {
+        return Err(invalid("Invalid project ID"));
+    }
+    let snapshot =
+        tokio::task::spawn_blocking(move || -> Result<Snapshot, ApiError> {
+            let db = state.connect().map_err(|_| unavailable())?;
+            let row: Option<(i64, String)> = db.query_row(
             "SELECT revision, library_json FROM project_voice_favorites WHERE project_id = ?1",
             [&project_id], |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional().map_err(|_| unavailable())?;
-        let Some((revision, json)) = row else { return Ok(Snapshot { revision: 0, library: None }); };
-        let library: Library = serde_json::from_str(&json).map_err(|_| unavailable())?;
-        validate(&project_id, &library).map_err(|_| unavailable())?;
-        Ok(Snapshot { revision, library: Some(library) })
-    }).await.map_err(|_| unavailable())??;
+            let Some((revision, json)) = row else {
+                return Ok(Snapshot {
+                    revision: 0,
+                    library: None,
+                });
+            };
+            let library: Library = serde_json::from_str(&json).map_err(|_| unavailable())?;
+            validate(&project_id, &library).map_err(|_| unavailable())?;
+            Ok(Snapshot {
+                revision,
+                library: Some(library),
+            })
+        })
+        .await
+        .map_err(|_| unavailable())??;
     Ok(Json(snapshot))
 }
 
@@ -140,11 +181,19 @@ async fn save(
     headers: HeaderMap,
     Json(request): Json<SaveRequest>,
 ) -> Result<(StatusCode, Json<Snapshot>), ApiError> {
-    if headers.get("x-contentgen-voices").and_then(|v| v.to_str().ok()) != Some("local-only") {
-        return Err(ApiError::Forbidden { message: "Project voice editing requires a local editor header".into() });
+    if headers
+        .get("x-contentgen-voices")
+        .and_then(|v| v.to_str().ok())
+        != Some("local-only")
+    {
+        return Err(ApiError::Forbidden {
+            message: "Project voice editing requires a local editor header".into(),
+        });
     }
     validate(&project_id, &request.library)?;
-    if !(0..2147483647).contains(&request.revision) { return Err(invalid("Invalid project voice revision")); }
+    if !(0..2147483647).contains(&request.revision) {
+        return Err(invalid("Invalid project voice revision"));
+    }
     let snapshot = tokio::task::spawn_blocking(move || {
         let db = state.connect().map_err(|_| unavailable())?;
         let json = serde_json::to_string(&request.library).map_err(|_| unavailable())?;

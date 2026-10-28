@@ -18,7 +18,10 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/scene-cast/{project_id}/{source_sha}", get(load).put(save))
+        .route(
+            "/api/scene-cast/{project_id}/{source_sha}",
+            get(load).put(save),
+        )
         .layer(DefaultBodyLimit::max(85 * 1024))
         .layer(middleware::from_fn(require_local_host))
 }
@@ -68,60 +71,91 @@ struct Snapshot {
 }
 
 fn invalid(message: &str) -> ApiError {
-    ApiError::InvalidDocument { message: message.into() }
+    ApiError::InvalidDocument {
+        message: message.into(),
+    }
 }
 
 fn unavailable() -> ApiError {
-    ApiError::Internal { message: "Scene cast storage is unavailable".into() }
+    ApiError::Internal {
+        message: "Scene cast storage is unavailable".into(),
+    }
 }
 
 fn valid_sha(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 fn valid_identifier(value: &str) -> bool {
-    (1..=80).contains(&value.len()) && value.bytes().all(|b|
-        b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    (1..=80).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 fn validate(project_id: &str, source_sha: &str, cast: &Cast) -> Result<(), ApiError> {
-    if !valid_project(project_id) || !valid_sha(source_sha) || cast.schema_version != 1
-        || cast.project_id != project_id || cast.source_plan_sha256 != source_sha
+    if !valid_project(project_id)
+        || !valid_sha(source_sha)
+        || cast.schema_version != 1
+        || cast.project_id != project_id
+        || cast.source_plan_sha256 != source_sha
         || cast.assignments.len() > 160
     {
-        return Err(invalid("Scene cast has an invalid project, source revision, version or size"));
+        return Err(invalid(
+            "Scene cast has an invalid project, source revision, version or size",
+        ));
     }
     let mut shots = HashSet::new();
     let mut speakers: HashMap<&str, (&str, &str, &str)> = HashMap::new();
     for assignment in &cast.assignments {
         let voice = &assignment.speaker;
-        if !valid_identifier(&assignment.shot_id) || !shots.insert(assignment.shot_id.as_str())
+        if !valid_identifier(&assignment.shot_id)
+            || !shots.insert(assignment.shot_id.as_str())
             || !valid_identifier(&voice.id)
             || !matches!(voice.role.as_str(), "narrator" | "character")
             || (voice.role == "narrator") != (voice.id == "narrator")
             || !matches!(voice.provider.as_str(), "local" | "fish")
             || !valid_text(&voice.voice_id, 128)
-            || (voice.provider == "fish" && !(voice.voice_id.len() == 32 && valid_sha_fragment(&voice.voice_id)))
+            || (voice.provider == "fish"
+                && !(voice.voice_id.len() == 32 && valid_sha_fragment(&voice.voice_id)))
         {
-            return Err(invalid("Scene cast contains invalid, duplicated or unauthorized speaker fields"));
+            return Err(invalid(
+                "Scene cast contains invalid, duplicated or unauthorized speaker fields",
+            ));
         }
-        let identity = (voice.role.as_str(), voice.provider.as_str(), voice.voice_id.as_str());
-        if speakers.insert(voice.id.as_str(), identity).is_some_and(|prior| prior != identity) {
-            return Err(invalid("A character cannot have inconsistent voices within one storyboard"));
+        let identity = (
+            voice.role.as_str(),
+            voice.provider.as_str(),
+            voice.voice_id.as_str(),
+        );
+        if speakers
+            .insert(voice.id.as_str(), identity)
+            .is_some_and(|prior| prior != identity)
+        {
+            return Err(invalid(
+                "A character cannot have inconsistent voices within one storyboard",
+            ));
         }
     }
     Ok(())
 }
 
 fn valid_sha_fragment(value: &str) -> bool {
-    value.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    value
+        .bytes()
+        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 async fn load(
     State(state): State<AppState>,
     Path((project_id, source_sha)): Path<(String, String)>,
 ) -> Result<Json<Snapshot>, ApiError> {
-    if !valid_project(&project_id) || !valid_sha(&source_sha) { return Err(invalid("Invalid scene cast identity")); }
+    if !valid_project(&project_id) || !valid_sha(&source_sha) {
+        return Err(invalid("Invalid scene cast identity"));
+    }
     let snapshot = tokio::task::spawn_blocking(move || -> Result<Snapshot, ApiError> {
         let db = state.connect().map_err(|_| unavailable())?;
         let row: Option<(i64, String)> = db.query_row(
@@ -142,11 +176,19 @@ async fn save(
     headers: HeaderMap,
     Json(request): Json<SaveRequest>,
 ) -> Result<(StatusCode, Json<Snapshot>), ApiError> {
-    if headers.get("x-contentgen-scene-cast").and_then(|v| v.to_str().ok()) != Some("local-only") {
-        return Err(ApiError::Forbidden { message: "Scene cast editing requires a local editor header".into() });
+    if headers
+        .get("x-contentgen-scene-cast")
+        .and_then(|v| v.to_str().ok())
+        != Some("local-only")
+    {
+        return Err(ApiError::Forbidden {
+            message: "Scene cast editing requires a local editor header".into(),
+        });
     }
     validate(&project_id, &source_sha, &request.cast)?;
-    if !(0..2147483647).contains(&request.revision) { return Err(invalid("Invalid scene cast revision")); }
+    if !(0..2147483647).contains(&request.revision) {
+        return Err(invalid("Invalid scene cast revision"));
+    }
     let snapshot = tokio::task::spawn_blocking(move || -> Result<Snapshot, ApiError> {
         let db = state.connect().map_err(|_| unavailable())?;
         let json = serde_json::to_string(&request.cast).map_err(|_| unavailable())?;
