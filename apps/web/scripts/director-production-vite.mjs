@@ -2,10 +2,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createReadStream, readFileSync } from "node:fs";
-import { link, lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants, createReadStream, readFileSync } from "node:fs";
+import { link, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { compilePreproductionRenderJob } from "./video-production/preproduction-render-bridge.mjs";
 import { resolveAndBindApprovedSfx } from "./video-production/sfx-render-bindings.mjs";
@@ -163,6 +163,54 @@ export function createDirectorProduction(deps={}){
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
   const mediaIndexPath=join(outputRoot,"production-media-index-v1.json");
   const mediaRecordsRoot=join(outputRoot,"production-media-records-v1");
+  const mediaDigests=new Map();
+  const releasedArtifactKeys={"video.mp4":"video","captions.srt":"captions",
+    "cover-still.png":"coverStill","thumbnail-1.png":"thumbnail-1",
+    "thumbnail-2.png":"thumbnail-2","thumbnail-3.png":"thumbnail-3",
+    "thumbnail-1.svg":"thumbnail-1.svg","thumbnail-2.svg":"thumbnail-2.svg",
+    "thumbnail-3.svg":"thumbnail-3.svg"};
+  async function verifiedReleaseFile(releaseDir,filename,manifestHash=null){
+    const path=join(releaseDir,filename),artifactKey=releasedArtifactKeys[filename];
+    if(!artifactKey)return false;
+    let file,manifestInfo;
+    try{file=await lstat(path);}catch(error){if(error?.code==="ENOENT")return false;throw error;}
+    if(!file.isFile()||file.isSymbolicLink()||file.size===0)return false;
+    try{manifestInfo=await lstat(join(releaseDir,"render-manifest.json"));}
+    catch(error){if(error?.code==="ENOENT")return !manifestHash;throw error;} // historical releases
+    if(!manifestInfo.isFile()||manifestInfo.isSymbolicLink()||
+      manifestInfo.size<40||manifestInfo.size>8*1024*1024)return false;
+    let manifest;
+    try{
+      const bytes=await readFile(join(releaseDir,"render-manifest.json"));
+      if(manifestHash&&createHash("sha256").update(bytes).digest("hex")!==manifestHash)return false;
+      manifest=JSON.parse(bytes.toString("utf8"));
+    }
+    catch{return false;}
+    const expected=manifest?.schemaVersion!==1?null:filename.endsWith(".svg")?
+      manifest.thumbnails?.find(item=>item.source===filename)?.sourceSha256:
+      manifest.artifacts?.[artifactKey];
+    if(typeof expected!=="string"||!/^[a-f0-9]{64}$/u.test(expected))return false;
+    const signature=[path,file.ino,file.size,file.mtimeMs,file.ctimeMs,manifestInfo.ino,
+      manifestInfo.size,manifestInfo.mtimeMs,manifestInfo.ctimeMs,manifestHash,expected].join(":");
+    if(mediaDigests.has(signature))return mediaDigests.get(signature);
+    let valid=false,descriptor;
+    try{
+      descriptor=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);
+      const before=await descriptor.stat();
+      if(before.ino!==file.ino||before.size!==file.size||before.mtimeMs!==file.mtimeMs||
+        before.ctimeMs!==file.ctimeMs)return false;
+      const digest=createHash("sha256");
+      for await(const chunk of descriptor.createReadStream({autoClose:false}))digest.update(chunk);
+      const after=await descriptor.stat();
+      valid=after.ino===file.ino&&after.size===file.size&&after.mtimeMs===file.mtimeMs&&
+        after.ctimeMs===file.ctimeMs&&
+        digest.digest("hex")===expected;
+    }catch{/* Corrupt or replaced releases must not be advertised or served. */}
+    finally{await descriptor?.close().catch(()=>{});}
+    if(mediaDigests.size>128)mediaDigests.clear();
+    mediaDigests.set(signature,valid);
+    return valid;
+  }
   const latestProductionJob=deps.latestProductionJob??(async productionId=>{
     const origin=new URL((deps.env??process.env).CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787");
     if(origin.protocol!=="http:"||!["localhost","127.0.0.1"].includes(origin.hostname)||
@@ -217,6 +265,8 @@ export function createDirectorProduction(deps={}){
       if(document?.version!==1||record?.runId!==match[1]||
         (record.productionId!==null&&!productionIdPattern.test(record.productionId))||
         !Number.isSafeInteger(record.createdAt)||
+        (record.manifestHash!==undefined&&record.manifestHash!==null&&
+          (typeof record.manifestHash!=="string"||!/^[a-f0-9]{64}$/u.test(record.manifestHash)))||
         (record.sourceRevision!==null&&(typeof record.sourceRevision!=="string"||
           record.sourceRevision.length>300||/[\u0000-\u001f]/u.test(record.sourceRevision))))
         throw Error("Saved media record is invalid; original output was not overwritten.");
@@ -226,7 +276,7 @@ export function createDirectorProduction(deps={}){
     for(const item of records)byRun.set(item.runId,item);
     return [...byRun.values()].sort((a,b)=>a.createdAt-b.createdAt||a.runId.localeCompare(b.runId)).slice(-100);
   }
-  async function recordMedia(runId,productionId,sourceRevision){
+  async function recordMedia(runId,productionId,sourceRevision,manifestHash){
     await readMediaIndex(); // Preserve invalid historical data; never overwrite it.
     await mkdir(outputRoot,{recursive:true,mode:0o700});
     await mkdir(mediaRecordsRoot,{recursive:true,mode:0o700});
@@ -235,7 +285,10 @@ export function createDirectorProduction(deps={}){
       throw Error("Production media records must be stored in an owned directory.");
     const temporary=join(mediaRecordsRoot,"."+randomUUID()+".tmp");
     try{
-      const record={runId,productionId,sourceRevision,createdAt:Date.now()};
+      if(manifestHash!==undefined&&manifestHash!==null&&
+        (typeof manifestHash!=="string"||!/^[a-f0-9]{64}$/u.test(manifestHash)))
+        throw Error("The finished video manifest has an invalid content hash.");
+      const record={runId,productionId,sourceRevision,createdAt:Date.now(),manifestHash:manifestHash??null};
       await writeFile(temporary,JSON.stringify({version:1,record})+"\n",{flag:"wx",mode:0o600});
       // Hard-link creation is atomic and refuses to overwrite an existing
       // UUID record, unlike rename. A crash leaves only an ignorable temp.
@@ -274,15 +327,13 @@ export function createDirectorProduction(deps={}){
   async function productionAssets(productionId){
     const records=(await readMediaIndex()).filter(item=>item.productionId===productionId);
     const assets=[];
-    for(const {runId,sourceRevision} of records){
-      const releaseDir=join(outputRoot,"draft-"+runId,"release");
+    for(const {runId,sourceRevision,manifestHash} of records){
+      const releaseDir=await releaseForRun(runId);
+      if(!releaseDir)continue;
       for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"],
         ["thumbnail-1.png","thumbnail"],["thumbnail-2.png","thumbnail"],
         ["thumbnail-3.png","thumbnail"],["cover-still.png","thumbnail"]]){
-        try{
-          const info=await lstat(join(releaseDir,file));
-          if(!info.isFile()||info.isSymbolicLink()||info.size===0)continue;
-        }catch(error){if(error?.code==="ENOENT")continue;throw error;}
+        if(!await verifiedReleaseFile(releaseDir,file,manifestHash))continue;
         assets.push({id:kind+"-"+runId+(file==="cover-still.png"||kind!=="thumbnail"?"":"-"+file),kind,platform:"youtube",filename:file,sourceRevision,
           downloadUrl:"/api/contentgen-video/media/"+runId+"/"+file});
       }
@@ -292,17 +343,20 @@ export function createDirectorProduction(deps={}){
   async function savedReleaseForProduction(productionId,sourceRevision){
     const records=(await readMediaIndex()).filter(item=>item.productionId===productionId&&
       item.sourceRevision===sourceRevision);
+    let integrityFailure=false;
     for(const record of records.reverse()){
       const base=join(outputRoot,"draft-"+record.runId);
       try{
         const [owned,release,video]=await Promise.all([
           lstat(base),lstat(join(base,"release")),lstat(join(base,"release","video.mp4"))]);
         if(owned.isDirectory()&&!owned.isSymbolicLink()&&release.isDirectory()&&
-          !release.isSymbolicLink()&&video.isFile()&&!video.isSymbolicLink()&&video.size>0)
-          return record;
+          !release.isSymbolicLink()&&video.isFile()&&!video.isSymbolicLink()&&video.size>0){
+          if(await verifiedReleaseFile(join(base,"release"),"video.mp4",record.manifestHash))return record;
+          if(record.manifestHash)integrityFailure=true;
+        }
       }catch(error){if(error?.code!=="ENOENT")throw error;}
     }
-    return null;
+    return integrityFailure?{integrityFailure:true}:null;
   }
   async function runMediaSuggestions(runId,productionId){
       if(!runIdPattern.test(runId))return {found:false};
@@ -380,6 +434,10 @@ export function createDirectorProduction(deps={}){
           respond(res,200,status);return;
         }
         const saved=await savedReleaseForProduction(productionId,sourceRevision);
+        if(saved?.integrityFailure){
+          respond(res,200,{state:"failed",phase:"review",progress:null,report:null,mediaUrl:null,
+            regeneration:null,message:"The saved video no longer matches its verified export. Generate the draft again; usable scenes and assets will be checked for reuse."});return;
+        }
         if(saved){
           respond(res,200,{state:"done",phase:"review",
             message:"Your saved draft is ready to review. Reopen it or export the publishing assets.",
@@ -427,6 +485,11 @@ export function createDirectorProduction(deps={}){
         if(!match||!runIdPattern.test(match[1])){respond(res,404,{error:"Media is unavailable."});return;}
         const releaseDir=await releaseForRun(match[1]);
         if(!releaseDir){respond(res,404,{error:"Media is unavailable."});return;}
+        const record=(await readMediaIndex()).find(item=>item.runId===match[1]);
+        if(match[2] in releasedArtifactKeys&&
+          !await verifiedReleaseFile(releaseDir,match[2],record?.manifestHash)){
+          respond(res,404,{error:"Media is missing or did not pass the saved export integrity check."});return;
+        }
         if(match[2]==="video.mp4")await deliverVideo(req,res,releaseDir);
         else {
           const mediaPath=join(releaseDir,match[2]);
@@ -794,8 +857,23 @@ export function createDirectorProduction(deps={}){
             if(journalError)throw journalError;
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
             let mediaWarning="";
-            try{await recordMedia(runId,input.productionId??null,input.sourceRevision??null);}
-            catch(error){mediaWarning=" Media index was not saved; keep your local release folder. "+
+            try{
+              if(typeof result.releaseDir!=="string"||resolve(result.releaseDir)!==resolve(join(out,"release")))
+                throw Error("The renderer returned a release directory outside this production.");
+              const [runInfo,releaseInfo]=await Promise.all([lstat(out),lstat(result.releaseDir)]);
+              if(!runInfo.isDirectory()||runInfo.isSymbolicLink()||
+                !releaseInfo.isDirectory()||releaseInfo.isSymbolicLink())
+                throw Error("The renderer release directory is not an owned directory.");
+              if(result.manifestHash){
+                for(const file of ["video.mp4","captions.srt","cover-still.png",
+                  "thumbnail-1.png","thumbnail-2.png","thumbnail-3.png"]){
+                  if(!await verifiedReleaseFile(result.releaseDir,file,result.manifestHash))
+                    throw Error("The exported "+file+" no longer matches its verified manifest.");
+                }
+              }
+              await recordMedia(runId,input.productionId??null,input.sourceRevision??null,result.manifestHash);
+            }
+            catch(error){mediaWarning=" Export integrity or media registration failed; keep your local release folder. "+
               String(error?.message??"Index error").slice(0,140);}
             // Publish the recoverable release pointer before committing the
             // durable Jobs success. A process exit between these two writes

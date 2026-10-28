@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -246,6 +247,7 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   const dir=await mkdtemp(join(tmpdir(),"director-tracked-test-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const events=[];
+  let exportedManifestHash,exportedVideoHash,exportedCaptionsHash;
   const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
     build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
     jobTracker:()=>({start:async input=>{events.push(["start",input.productionId]);return "job-persisted";},
@@ -254,10 +256,25 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
       cancel:async()=>events.push(["cancel"])}),
     produce:async (_job,opts)=>{
       const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
-      await writeFile(join(releaseDir,"video.mp4"),"mock media");
+      const digest=value=>createHash("sha256").update(value).digest("hex");
+      const files={"video.mp4":"mock media","captions.srt":"mock captions",
+        "cover-still.png":"mock cover","thumbnail-1.png":"mock concept 1",
+        "thumbnail-2.png":"mock concept 2","thumbnail-3.png":"mock concept 3"};
+      const keys={"video.mp4":"video","captions.srt":"captions","cover-still.png":"coverStill",
+        "thumbnail-1.png":"thumbnail-1","thumbnail-2.png":"thumbnail-2","thumbnail-3.png":"thumbnail-3"};
+      const artifacts={};
+      for(const [file,contents] of Object.entries(files)){
+        await writeFile(join(releaseDir,file),contents);
+        artifacts[keys[file]]=digest(contents);
+      }
+      const manifest=JSON.stringify({schemaVersion:1,artifacts});
+      await writeFile(join(releaseDir,"render-manifest.json"),manifest);
+      exportedManifestHash=digest(manifest);exportedVideoHash=artifacts.video;
+      exportedCaptionsHash=artifacts.captions;
       opts.onProgress({phase:"narration"});opts.onProgress({phase:"rendering",completedFrames:12,totalFrames:12,
         artifactLedger:{kind:"sound-mix",masterSha256:"a".repeat(64),samples:96000}});
-      return {releaseDir,manifestHash:"b".repeat(64),artifactHashes:{video:"c".repeat(64),captions:"d".repeat(64)}};
+      return {releaseDir,manifestHash:exportedManifestHash,
+        artifactHashes:{video:exportedVideoHash,captions:exportedCaptionsHash}};
     }});
   const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24),sourceRevision:"r1"};
   assert.equal((await invoke(server,"POST","/check",payload)).status,200);
@@ -268,8 +285,11 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   assert.equal(server.status().jobId,"job-persisted");
   assert.deepEqual(events.map(e=>e[0]),["start","advance","advance","complete"]);
   assert.equal(events[2][2].artifactLedger.masterSha256,"a".repeat(64));
-  assert.deepEqual(events[3][1],{artifactLedger:{kind:"export-package",manifestHash:"b".repeat(64),
-    artifacts:{video:"c".repeat(64),captions:"d".repeat(64)}}});
+  assert.deepEqual(events[3][1],{artifactLedger:{kind:"export-package",manifestHash:exportedManifestHash,
+    artifacts:{video:exportedVideoHash,captions:exportedCaptionsHash}}});
+  const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  assert.equal((await invoke(restarted,"GET",`/status/${payload.productionId}?sourceRevision=r1`)).data.state,"done");
+  assert.equal((await invoke(restarted,"GET",`/assets/${payload.productionId}`)).data.assets.length,6);
 });
 
 test("a restarted failed production locates its original narration cache from the durable Jobs input",async t=>{
@@ -520,6 +540,29 @@ test("a damaged media index never lets Rust Jobs commit an undiscoverable releas
     "unreadable existing production history must not be overwritten");
 });
 
+test("Jobs cannot commit success when a renderer's claimed artifact hash is not on disk",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-unverified-export-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let completed=0,failed=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-integrity",advance:async()=>{},
+      complete:async()=>{completed++;},fail:async()=>{failed++;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"present but never verified");
+      return {releaseDir,manifestHash:"a".repeat(64)};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(completed,0);
+  assert.equal(failed,1);
+  assert.deepEqual((await invoke(server,"GET",`/assets/${payload.productionId}`)).data.assets,[]);
+});
+
 test("saved media links never follow a symlinked release folder or thumbnail",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-media-link-safety-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
@@ -589,6 +632,54 @@ test("legacy production-media-index entries remain readable and untouched after 
   assert.equal((await invoke(server,"GET","/assets/"+productionId)).data.assets[0].kind,"video");
   assert.equal((await invoke(server,"GET",`/status/${productionId}?sourceRevision=old-script`)).data.state,"done");
   assert.equal(await readFile(path,"utf8"),legacy);
+});
+
+test("restart and media links reject a changed release artifact and a missing export manifest",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-media-integrity-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const runId="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",productionId="production-"+"f".repeat(24);
+  const release=join(dir,"draft-"+runId,"release");
+  const records=join(dir,"production-media-records-v1");
+  await mkdir(release,{recursive:true});await mkdir(records);
+  const digest=value=>createHash("sha256").update(value).digest("hex");
+  const original=Buffer.from("completed video contents"),thumbnail=Buffer.from("verified thumbnail contents");
+  const source=Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+  await writeFile(join(release,"video.mp4"),original);
+  await writeFile(join(release,"thumbnail-1.png"),thumbnail);
+  await writeFile(join(release,"thumbnail-1.svg"),source);
+  const manifest=Buffer.from(JSON.stringify({schemaVersion:1,
+    artifacts:{video:digest(original),"thumbnail-1":digest(thumbnail)},
+    thumbnails:[{source:"thumbnail-1.svg",sourceSha256:digest(source)}]}));
+  await writeFile(join(release,"render-manifest.json"),manifest);
+  await writeFile(join(records,runId+".json"),JSON.stringify({version:1,record:{runId,productionId,
+    sourceRevision:"revision-1",createdAt:Date.now(),manifestHash:digest(manifest)}}));
+  const server=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  const statusPath=`/status/${productionId}?sourceRevision=revision-1`;
+  assert.equal((await invoke(server,"GET",statusPath)).data.state,"done");
+  assert.equal((await invoke(server,"GET",`/assets/${productionId}`)).data.assets.length,2);
+  assert.equal((await audioResponse(server,`/media/${runId}/thumbnail-1.png`)).bytes.toString(),thumbnail.toString());
+  assert.equal((await audioResponse(server,`/media/${runId}/thumbnail-1.svg`)).bytes.toString(),source.toString());
+
+  await writeFile(join(release,"video.mp4"),"altered, invalid and longer video bytes");
+  const damaged=await invoke(server,"GET",statusPath);
+  assert.equal(damaged.data.state,"failed",
+    "a nonempty but changed MP4 must not be advertised as a completed production");
+  assert.match(damaged.data.message,/no longer matches.*generate the draft again/i);
+  assert.equal((await invoke(server,"GET",`/media/${runId}/video.mp4`)).status,404);
+  assert.deepEqual((await invoke(server,"GET",`/assets/${productionId}`)).data.assets.map(item=>item.filename),
+    ["thumbnail-1.png"],"an unaffected verified thumbnail remains available");
+  await writeFile(join(release,"video.mp4"),Buffer.alloc(original.length,0x41));
+  assert.equal((await invoke(server,"GET",statusPath)).data.state,"failed",
+    "a same-size in-place rewrite must invalidate cached file verification");
+
+  await writeFile(join(release,"thumbnail-1.png"),"corrupt thumbnail bytes of a different size");
+  assert.equal((await invoke(server,"GET",`/media/${runId}/thumbnail-1.png`)).status,404);
+  await writeFile(join(release,"thumbnail-1.svg"),"tampered composition");
+  assert.equal((await invoke(server,"GET",`/media/${runId}/thumbnail-1.svg`)).status,404);
+  await writeFile(join(release,"video.mp4"),original);
+  await rm(join(release,"render-manifest.json"));
+  assert.equal((await invoke(server,"GET",statusPath)).data.state,"failed",
+    "a modern release cannot bypass its integrity proof by deleting the manifest");
 });
 
 test("an opted-in draft saves scene-specific free media suggestions with Jobs provenance across restart",async t=>{
