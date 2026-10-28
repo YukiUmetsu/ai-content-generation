@@ -77,6 +77,23 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("uses an embedded region and notifies Production before a scene edit can be lost",async()=>{
+    const productionId="production-"+"f".repeat(24);
+    sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
+      productionId,scriptRevision:"2026-10-28T00:00:00Z",sourcePrefix:"approved-script:",
+      dossier,bundle:{...bundle,researchSha256:"a".repeat(64),planSha256:"b".repeat(64)}}));
+    const changed=vi.fn();
+    const view=render(<VideoDirectorWorkspace locale="en" projectId={productionId} embedded onUnsavedChange={changed}/>);
+    const field=await screen.findByRole("textbox",{name:"Edit on-screen text"});
+    expect(screen.getByRole("region",{name:"Video editing"})).toBeInTheDocument();
+    expect(screen.queryByRole("heading",{name:"Video Director"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Start another project"})).not.toBeInTheDocument();
+    fireEvent.change(field,{target:{value:"Why does the price change?"}});
+    await waitFor(()=>expect(changed).toHaveBeenCalledWith(true));
+    view.unmount();
+    expect(changed).toHaveBeenLastCalledWith(false);
+    sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
+  });
   it("renders only the selected saved scene as a playable silent MP4",async()=>{
     const requests:Array<{url:string;body:Record<string,unknown>}> = [];
     const previewId="123e4567-e89b-42d3-a456-426614174000";

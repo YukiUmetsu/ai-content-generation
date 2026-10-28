@@ -141,11 +141,12 @@ function shotDraft(bundle:Bundle,id:string){
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"",
     motion:safeSceneMotion(shot?.motion)};
 }
-type DirectorWorkspaceProps={locale:Locale;projectId?:string;voiceProjectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void};
+type DirectorWorkspaceProps={locale:Locale;projectId?:string;voiceProjectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void;
+  embedded?:boolean;onUnsavedChange?:(unsaved:boolean)=>void};
 export function VideoDirectorWorkspace(props:DirectorWorkspaceProps){
   return <VideoDirectorWorkspaceContent key={`${props.voiceProjectId??""}:${props.projectId??""}:${props.researchArtifactId??""}`} {...props}/>;
 }
-function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,researchArtifactId,focusStage,onOpenJobs}:DirectorWorkspaceProps){
+function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,researchArtifactId,focusStage,onOpenJobs,embedded=false,onUnsavedChange}:DirectorWorkspaceProps){
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
@@ -493,6 +494,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
     draft.sfxIntent!==(audio.sfxIntent??"")||draft.pauseAfterMs!==(audio.pauseAfterMs??160)||
     JSON.stringify(draft.motion)!==JSON.stringify(safeSceneMotion(shot.motion))||
     draft.visualElementsText.trim()!==visualTextSaved.trim());
+  useEffect(()=>{onUnsavedChange?.(dirty);},[dirty,onUnsavedChange]);
+  useEffect(()=>()=>onUnsavedChange?.(false),[onUnsavedChange]);
   function navigate(target:DirectorStage,justSaved=false){
     const result=resolveDirectorNavigation({current:stage,target,unsaved:dirty&&!justSaved});
     if(result.blocked){setStatus(result.message);return;}
@@ -535,9 +538,12 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
     sfx:new Set(revisions.flatMap(x=>x.impacts.sfxRemix)),
     shifted:new Set(revisions.flatMap(x=>x.impacts.downstreamRetiming)),
   };
-  return <main id="workspace" className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6" aria-label="Video director">
-    <div className="mx-auto flex max-w-7xl flex-col gap-5 pb-12">
-      <div className="flex items-start gap-4">
+  const Root=embedded?"div":"main";
+  return <Root id={embedded?undefined:"workspace"} role={embedded?"region":undefined}
+    className={embedded?"min-w-0 w-full":"min-h-0 flex-1 overflow-y-auto p-4 lg:p-6"}
+    aria-label={embedded?"Video editing":"Video director"}>
+    <div className={embedded?"flex min-w-0 flex-col gap-4 pb-6":"mx-auto flex max-w-7xl flex-col gap-5 pb-12"}>
+      {!embedded&&<div className="flex items-start gap-4">
         <div className="flex size-12 shrink-0 items-center justify-center rounded-surface bg-primary/10 text-primary">
           <Film className="size-6"/>
         </div>
@@ -548,12 +554,14 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
             Build a video from its story to its final draft. Each step saves to the same project; review your work before rendering.
           </p>
         </div>
-      </div>
+      </div>}
       {loadError&&<p role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm">{loadError} Review the storyboard or open a saved project manually; no source was overwritten.</p>}
       {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening your saved scenes and compatible edits…</p>}
-      {!usable&&!loadingSaved&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
+      {!usable&&!loadingSaved&&(embedded?
+        <p role="status" className="rounded-control border border-border bg-surface p-4 text-sm text-muted-foreground">No editable scenes are available for this production. Finish the YouTube script in Script, then choose Generate draft video or Edit video scenes again.</p>:
+        <NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>)}
       {usable&&syncReport&&<div role="status" className="rounded-surface border border-primary/30 bg-surface-subtle p-4 text-sm">
-        <p className="font-semibold">Saved storyboard → Director</p>
+        <p className="font-semibold">Saved storyboard → {embedded?"Create Video":"Director"}</p>
         <p className="mt-1">{syncReport.applied.length} narration, screen-text, or visual-action change(s) applied to a new draft bundle. Immutable research remains unchanged.</p>
         {syncReport.manualReview.length>0&&<ul className="mt-2 list-disc space-y-1 pl-5 text-status-warning">
           {syncReport.manualReview.map((warning,i)=><li key={i}>{warning}</li>)}</ul>}
@@ -568,7 +576,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" icon={<Download className="size-4"/>} disabled={dirty||busy}
             onClick={()=>downloadJson("contentgen-project.json",{dossier,bundle})}>Save project</Button>
-          <Button variant="outline" disabled={dirty||busy} onClick={()=>{
+          {!embedded&&<Button variant="outline" disabled={dirty||busy} onClick={()=>{
                if(projectId&&sourceArtifactId){
                  try{sessionStorage.removeItem(directorSessionKey(projectId,sourceArtifactId,sourceStoryboardSha));
                    if(sourceArtifactId.startsWith("approved-script:"))
@@ -578,10 +586,10 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
                setDossier(null);setBundle(null);setShotId("");setStage("storyboard");setSampleMode(false);setSourceArtifactId(null);setSourceStoryboardSha(null);setSyncReport(null);setLoadError("");setStatus("");
              }}>
             Start another project
-          </Button>
+          </Button>}
         </div>
       </div>}
-      {!usable&&!loadingSaved&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
+      {!embedded&&!usable&&!loadingSaved&&<Surface header={<h2 className="font-medium">Or open an existing project</h2>}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <label className={header}>Open saved project (.json)
             <input type="file" className={field+" mt-2"} accept=".json" aria-label="Saved ContentGen project"
@@ -602,23 +610,23 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
       </Surface>}
       {!usable&&status&&<p role="status" className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm">{status}</p>}
       {usable&&<>
-        <nav aria-label="Video production steps" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <nav aria-label="Video production steps" className={embedded?"flex flex-wrap gap-2":"grid gap-2 sm:grid-cols-2 xl:grid-cols-4"}>
           {directorStages.map(item=>{
             const StepIcon=stageIcons[item.id as DirectorStage];
             const active=item.id===stage;
             return <button key={item.id} type="button" aria-label={`${item.number} ${item.label}`}
               aria-current={active?"step":undefined}
               onClick={()=>navigate(item.id as DirectorStage)}
-              className={`group flex min-w-0 items-start gap-3 rounded-surface border px-4 py-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${active?
+              className={`group flex min-w-0 items-start gap-3 rounded-surface border text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${embedded?"items-center px-3 py-2.5":"px-4 py-4"} ${active?
                 "border-primary bg-primary/10 shadow-sm":"border-border bg-surface hover:border-primary/40 hover:bg-surface-subtle"}`}>
-              <span className={`flex size-10 shrink-0 items-center justify-center rounded-control ${active?
+              <span className={`flex shrink-0 items-center justify-center rounded-control ${embedded?"size-7":"size-10"} ${active?
                 "bg-primary text-primary-foreground":"bg-surface-subtle text-muted-foreground"}`}>
-                <StepIcon className="size-5"/>
+                <StepIcon className={embedded?"size-4":"size-5"}/>
               </span>
               <span className="min-w-0">
-                <span className="block text-xs font-semibold text-muted-foreground">{item.number} · {active?"Current step":"Production step"}</span>
-                <span className="mt-0.5 block text-sm font-semibold">{item.label}</span>
-                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{item.detail}</span>
+                {!embedded&&<span className="block text-xs font-semibold text-muted-foreground">{item.number} · {active?"Current step":"Production step"}</span>}
+                <span className="block text-sm font-semibold">{item.label}</span>
+                {!embedded&&<span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{item.detail}</span>}
               </span>
             </button>;
           })}
@@ -902,7 +910,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
       </>}
       <p className="text-xs text-muted-foreground">{ja?"すべての変更は下書きです。":"Every edit remains an unapproved draft. Source research, claims, voice permissions, and final export QA are never bypassed."}</p>
     </div>
-  </main>;
+  </Root>;
 }
 
 

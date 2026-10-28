@@ -44,6 +44,7 @@ describe("Studio shell", () => {
     expect(screen.getByRole("region", { name: "Guided production" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Production stages" })).toBeInTheDocument();
+    expect(screen.queryByRole("link",{name:"Video Director"})).not.toBeInTheDocument();
   });
 
   it("opens a dedicated Character Studio directly from navigation", async () => {

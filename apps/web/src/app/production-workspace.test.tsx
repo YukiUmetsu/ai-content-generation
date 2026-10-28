@@ -20,6 +20,33 @@ const stageButton=(label:string)=>within(screen.getByRole("navigation",{name:"Pr
 describe("Production eight-step workspace",()=>{
   afterEach(()=>{localStorage.clear();sessionStorage.clear();vi.unstubAllGlobals();});
 
+  it("keeps Director inside Create Video and preserves its mounted workspace across Production steps",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>Response.json({productions:[],ideas:[],items:[]})));
+    render(<ProductionWorkspace {...props} directorEntry={{projectId:"project-demo",stage:"visuals"}}/>);
+    const editor=await screen.findByRole("region",{name:"Video editing"});
+    expect(stageButton("Create Video")).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("navigation",{name:"Production stages"})).toBeInTheDocument();
+    expect(screen.queryByRole("main",{name:"Video director"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading",{name:"Video Director"})).not.toBeInTheDocument();
+    fireEvent.click(stageButton("Export"));
+    expect(stageButton("Export")).toHaveAttribute("aria-current","step");
+    expect(editor.parentElement).toHaveAttribute("inert");
+    expect(editor.parentElement).toHaveAttribute("aria-hidden","true");
+    fireEvent.click(stageButton("Create Video"));
+    expect(stageButton("Create Video")).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("region",{name:"Video editing"})).toBe(editor);
+  });
+
+  it("blocks Production step changes when the embedded scene still has unsaved edits",async()=>{
+    vi.stubGlobal("fetch",vi.fn(async()=>Response.json({productions:[],ideas:[],items:[]})));
+    render(<ProductionWorkspace {...props} directorEntry={{projectId:"project-demo",stage:"visuals"}}
+      directorDirty/>);
+    await screen.findByRole("region",{name:"Video editing"});
+    fireEvent.click(stageButton("Export"));
+    expect(stageButton("Create Video")).toHaveAttribute("aria-current","step");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Save or discard the edited scene/);
+  });
+
   it("always exposes every stage, highlights the current one and starts with Project",()=>{
     render(<ProductionWorkspace {...props}/>);
     expect(screen.getByRole("navigation",{name:"Production stages"})).toBeInTheDocument();

@@ -7,7 +7,6 @@ import {
   ListChecks,
   Package,
   PenTool,
-  Clapperboard,
   Workflow,
   Search,
   Settings,
@@ -20,7 +19,6 @@ export type SectionId =
   | "projects"
   | "research"
   | "create"
-  | "video-director"
   | "content"
   | "assets"
   | "characters"
@@ -34,7 +32,6 @@ export const SECTIONS: { id: SectionId; label: Record<Locale, string>; icon: Rea
   { id: "projects", label: { en: "Projects", ja: "プロジェクト" }, icon: <Folder aria-hidden className="size-5" /> },
   { id: "research", label: { en: "Research", ja: "調査" }, icon: <Search aria-hidden className="size-5" /> },
   { id: "create", label: { en: "Create", ja: "作成" }, icon: <PenTool aria-hidden className="size-5" /> },
-  { id: "video-director", label: { en: "Video Director", ja: "動画ディレクター" }, icon: <Clapperboard aria-hidden className="size-5" /> },
   { id: "content", label: { en: "Content", ja: "コンテンツ" }, icon: <FileText aria-hidden className="size-5" /> },
   { id: "assets", label: { en: "Assets", ja: "アセット" }, icon: <Image aria-hidden className="size-5" /> },
   { id: "characters", label: { en: "Character Studio", ja: "キャラクター制作" }, icon: <PawPrint aria-hidden className="size-5" /> },
