@@ -59,6 +59,80 @@ test("automatic draft images honor manually pinned scenes and avoid duplicate ph
   assert.equal(calls.length,2,"verified cache reuse does not duplicate a completed scene Job");
 });
 
+test("an unsuitable first provider asset retries one different ranked candidate in its own durable Jobs attempt",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-auto-alternate-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const calls=[];
+  const sceneJobs={beginScene:async({sceneId,fingerprint})=>{
+    calls.push(["begin",sceneId,fingerprint]);return fingerprint;},
+  completeScene:async(id)=>calls.push(["complete",id]),
+  failScene:async(id)=>calls.push(["fail",id])};
+  const result=await prepareAutomaticDraftMedia({suggestions:suggestions([
+    {shotId:"shot-a",candidates:[candidate("71"),candidate("72")]}]),
+    shotMap,existing:existing(),outputDir:out,pexelsKey:"test",sceneJobs},
+  {downloadPhoto:async id=>{
+    calls.push(["download",id]);
+    if(id==="71")throw Error("Pexels original unavailable");
+    return {bytes,meta:meta(id)};
+  },probePhoto});
+  assert.equal(result.prepared,1);
+  assert.equal(result.bindings["beat-a"].assetId,"72");
+  assert.deepEqual(calls.filter(entry=>entry[0]==="download").map(entry=>entry[1]),["71","72"]);
+  assert.equal(calls.filter(entry=>entry[0]==="begin").length,2);
+  assert.equal(new Set(calls.filter(entry=>entry[0]==="begin").map(entry=>entry[2])).size,2);
+  assert.equal(calls.filter(entry=>entry[0]==="fail").length,1);
+  assert.equal(calls.filter(entry=>entry[0]==="complete").length,1);
+  assert.match(result.warnings.join(" "),/one suggested Pexels asset was unavailable/i);
+});
+
+test("a speculative backup never takes the only suitable original from another scene",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-auto-fair-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const attempts=[];
+  const result=await prepareAutomaticDraftMedia({suggestions:suggestions([
+    {shotId:"shot-a",candidates:[candidate("71"),candidate("72")]},scene("shot-b","72")]),
+    shotMap,existing:existing(),outputDir:out,pexelsKey:"test"},
+  {downloadPhoto:async id=>{
+    attempts.push(id);
+    if(id==="71")throw Error("First original unavailable");
+    return {bytes,meta:meta(id)};
+  },probePhoto});
+  assert.equal(result.prepared,1);
+  assert.equal(result.bindings["beat-a"],undefined);
+  assert.equal(result.bindings["beat-b"].assetId,"72");
+  assert.deepEqual(attempts.sort(),["71","72"],"a candidate is never downloaded twice across scenes");
+});
+
+test("failed provider requests have a whole-production budget even across many scenes",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-auto-attempt-budget-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const map=Array.from({length:12},(_,i)=>({shotId:`shot-${i}`,beatId:`beat-${i}`}));
+  const proposals=map.map(({shotId},i)=>({shotId,
+    candidates:[candidate(String(i*2+100)),candidate(String(i*2+101))]}));
+  const attempted=[];
+  const result=await prepareAutomaticDraftMedia({suggestions:suggestions(proposals),shotMap:map,
+    existing:existing(),outputDir:out,pexelsKey:"test"},{downloadPhoto:async id=>{
+    attempted.push(id);throw Error("Provider temporarily unavailable");
+  },probePhoto});
+  assert.equal(result.prepared,0);
+  assert.equal(attempted.length,6,"unavailable providers cannot trigger 24 retries for a large storyboard");
+  assert.match(result.warnings.join(" "),/automatic original-media download limit reached/i);
+  assert.equal(Object.keys(result.bindings).length,0,"no unverified remote media is selected");
+});
+
+test("lost Jobs completion ownership aborts media preparation instead of silently picking another asset",async t=>{
+  const out=await mkdtemp(join(tmpdir(),"contentgen-auto-lost-claim-"));
+  t.after(()=>rm(out,{recursive:true,force:true}));
+  const attempted=[];
+  const sceneJobs={beginScene:async()=>"claim",completeScene:async()=>{throw Error("Jobs lease lost");},
+    failScene:async()=>{}};
+  await assert.rejects(prepareAutomaticDraftMedia({suggestions:suggestions([
+    {shotId:"shot-a",candidates:[candidate("71"),candidate("72")]}]),
+    shotMap,existing:existing(),outputDir:out,pexelsKey:"test",sceneJobs},
+  {downloadPhoto:async id=>{attempted.push(id);return {bytes,meta:meta(id)};},probePhoto}),/Jobs lease lost/);
+  assert.deepEqual(attempted,["71"],"a failed ownership transition cannot silently start a second download");
+});
+
 test("independent scene downloads overlap while keeping a strict three-asset quota",async t=>{
   const out=await mkdtemp(join(tmpdir(),"contentgen-auto-overlap-"));
   t.after(()=>rm(out,{recursive:true,force:true}));

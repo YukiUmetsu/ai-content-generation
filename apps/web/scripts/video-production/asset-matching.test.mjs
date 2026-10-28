@@ -63,3 +63,14 @@ test("trusted provider subject tags can rescue a generic 3D model title",()=>{
   assert.equal(ranked.recommendedAssetKey,"polyhaven:model:shingles");
   assert.equal(ranked.candidates[0].match.grade,"strong");
 });
+
+test("combined provider catalogs remain bounded for safe restart persistence",()=>{
+  const candidates=Array.from({length:16},(_,i)=>({
+    ...media(i+10,i===15?"Roof tiles after storm":"Unrelated stock scene",1280,720),
+    provider:i<8?"pexels":i<12?"polyhaven":"openverse"}));
+  const ranked=rankShotCandidates({shot,narration,candidates});
+  assert.equal(ranked.candidates.length,12);
+  assert.equal(ranked.candidates[0].assetId,"25",
+    "the strongest match survives the persisted catalog size limit");
+  assert.equal(new Set(ranked.candidates.map(item=>item.assetId)).size,12);
+});

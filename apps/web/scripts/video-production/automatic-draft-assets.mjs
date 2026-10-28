@@ -15,7 +15,10 @@ const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u;
 const DIGEST=/^[a-f0-9]{64}$/u;
 const PHOTO_ID=/^[1-9][0-9]{0,15}$/u;
 const LIMIT=80*1024*1024;
-const MAX_AUTOMATIC=3; // at most 240 MB of downloaded photo/video media per production
+const MAX_AUTOMATIC=3; // at most 240 MB of successful photo/video media retained per production
+const MAX_SCENE_CANDIDATES=2; // one independent verified fallback, never an unbounded search/download loop
+const MAX_DOWNLOAD_ATTEMPTS=6; // bounds failed remote transfers, even for a 60-scene storyboard
+const MAX_WARNINGS=16;
 const generic=/^(?:image|photo|stock|footage|video|pexels|beautiful|people|happy|nature)(?:\b|$)/iu;
 
 async function probeJpeg(path,{ffprobe="ffprobe",signal}={}){
@@ -136,19 +139,37 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
   const used=new Set(Object.values(result.bindings).filter(item=>item.provider==="pexels")
     .map(item=>`${item.assetType}:${item.assetId}`));
   const pending=[];
+  let downloadAttempts=0;
+  function reserve(scene,candidate,options){
+    const key=`${candidate?.assetType}:${candidate?.assetId}`;
+    if(!eligible(candidate)||used.has(key))return false;
+    used.add(key);
+    const identity=sha(JSON.stringify({provider:"pexels",shotId:scene.shotId,
+      assetId:candidate.assetId,license:"Pexels License",
+      ...(candidate.assetType==="video"?{assetType:"video"}:{})}));
+    options.push({candidate,identity});
+    return true;
+  }
+  // First assign a distinct best match to *each* scene. Reserve alternatives
+  // only afterward, so a speculative backup cannot starve another scene's
+  // sole suitable original image.
   for(const scene of suggestions.scenes){
     if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
     const beatId=shots.get(scene?.shotId);
     if(!beatId||result.bindings[beatId]||!Array.isArray(scene.candidates))continue;
-    const candidate=scene.candidates.find(item=>eligible(item)&&!used.has(`${item.assetType}:${item.assetId}`));
-    if(!candidate)continue;
-    used.add(`${candidate.assetType}:${candidate.assetId}`);
-    const identity=sha(JSON.stringify({provider:"pexels",shotId:scene.shotId,
-      assetId:candidate.assetId,license:"Pexels License",
-      ...(candidate.assetType==="video"?{assetType:"video"}:{})}));
-    pending.push({scene,beatId,candidate,identity});
+    const options=[];
+    for(const candidate of scene.candidates){
+      if(reserve(scene,candidate,options))break;
+    }
+    if(options.length)pending.push({scene,beatId,options});
   }
-  async function prepareOne({scene,beatId,candidate,identity}){
+  for(const task of pending){
+    if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
+    for(const candidate of task.scene.candidates){
+      if(reserve(task.scene,candidate,task.options)||task.options.length===MAX_SCENE_CANDIDATES)break;
+    }
+  }
+  async function prepareCandidate({scene,beatId,candidate,identity}){
     const warnings=[];
     let attempt=null,temporary=null,jobClaimFailed=false;
     try{
@@ -169,6 +190,14 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
       }
       if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
       if(!cached){
+        // Count attempted remote transfers, not just successful imports.
+        // Increment synchronously before any claim/await: concurrent scenes
+        // cannot exceed the shared six-request production budget.
+        if(downloadAttempts>=MAX_DOWNLOAD_ATTEMPTS){
+          warnings.push(`Scene ${scene.shotId}: automatic original-media download limit reached.`);
+          return {warnings};
+        }
+        downloadAttempts++;
         try{attempt=await sceneJobs?.beginScene({kind:"asset-download",sceneId:beatId,fingerprint:identity});}
         catch(error){jobClaimFailed=true;throw error;}
       }
@@ -218,7 +247,10 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
       }finally{await rm(tempRecord,{force:true});}
       }
       if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
-      if(attempt)await sceneJobs.completeScene(attempt,{sha256:digest,reused:false});
+      if(attempt){
+        try{await sceneJobs.completeScene(attempt,{sha256:digest,reused:false});}
+        catch(error){jobClaimFailed=true;throw error;}
+      }
       const url=`/__video_media/${digest}.${candidate.assetType==="photo"?"jpg":"mp4"}`;
       const binding={assetType:candidate.assetType,url,sha256:digest,provider:"pexels",
         assetId:candidate.assetId,sourceUrl:source.sourceUrl,license:source.license,
@@ -231,9 +263,21 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
       if(signal?.aborted||jobClaimFailed)throw error;
       // A provider outage must not prevent Kumiki from rendering the scene.
       // Never persist third-party error bodies: they can include secrets.
-      warnings.push(`Scene ${scene.shotId}: original media unavailable; using Kumiki visuals.`);
+      warnings.push(`Scene ${scene.shotId}: one suggested Pexels asset was unavailable or unsuitable.`);
       return {warnings};
     }finally{if(temporary)await rm(temporary,{force:true});}
+  }
+  async function prepareOne({scene,beatId,options}){
+    const warnings=[];
+    for(const option of options){
+      if(signal?.aborted)throw signal.reason??Error("Draft media preparation cancelled.");
+      const outcome=await prepareCandidate({scene,beatId,...option});
+      warnings.push(...outcome.warnings);
+      if(outcome.binding)return {...outcome,warnings};
+    }
+    if(warnings.length)warnings[warnings.length-1]+=" Using Kumiki visuals for this scene.";
+    else warnings.push(`Scene ${scene.shotId}: no suitable original media; using Kumiki visuals.`);
+    return {warnings};
   }
   // At most two independently claimed downloads run together. Each batch
   // reserves no more than the remaining successful-media quota, so concurrency
@@ -246,7 +290,7 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
     const outcomes=await Promise.allSettled(batch.map(prepareOne));
     for(const outcome of outcomes){
       if(outcome.status==="rejected")continue;
-      result.warnings.push(...outcome.value.warnings);
+      result.warnings.push(...outcome.value.warnings.slice(0,MAX_WARNINGS-result.warnings.length));
       if(outcome.value.binding){
         result.bindings[outcome.value.beatId]=outcome.value.binding;
         result.assets.push(outcome.value.asset);

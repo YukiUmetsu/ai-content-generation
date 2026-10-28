@@ -514,7 +514,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
             <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
               checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
               onChange={event=>changeMediaSearch(event.target.checked)}/>
-            Search free scene media while rendering (optional). Sends scene subjects to Poly Haven and optional Pexels; results stay suggestions unless automatic preparation below is enabled.
+            Search scene media while rendering (optional). Sends scene subjects to Poly Haven, Openverse, and Pexels when configured. Openverse results are reference-only; eligible Pexels media can be prepared automatically below.
           </label>
           <label className="ml-5 flex items-start gap-2 rounded-control border border-border/70 bg-surface/70 p-3 text-xs text-muted-foreground">
             <input type="checkbox" className="mt-0.5" aria-label="Automatically prepare suitable licensed draft media"

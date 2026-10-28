@@ -73,7 +73,8 @@ export function rankShotCandidates({shot,narration,query="",candidates=[],destin
       score>=30&&framing>-30&&duration>-26?"strong":"review";
     return {...asset,match:{score,grade,breakdown:{semantic,framing,duration},reasons}};
   }).sort((a,b)=>b.match.score-a.match.score||
-    `${a.provider}:${a.assetType}:${a.assetId}`.localeCompare(`${b.provider}:${b.assetType}:${b.assetId}`));
+    `${a.provider}:${a.assetType}:${a.assetId}`.localeCompare(`${b.provider}:${b.assetType}:${b.assetId}`))
+    .slice(0,12); // Keep saved/reloaded catalogs inside the durable 12-per-scene boundary.
   const best=ranked[0];
   return {shotDuration:timing,candidates:ranked,
     recommendedAssetKey:best?.match.grade==="strong"?`${best.provider}:${best.assetType}:${best.assetId}`:null};
