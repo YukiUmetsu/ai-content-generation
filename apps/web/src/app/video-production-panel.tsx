@@ -109,13 +109,16 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const initialEntry=useRef(false);
   const startedAutomaticDraft=useRef(false);
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
+  const [confirmUpdatedVersion,setConfirmUpdatedVersion]=useState(false);
+  const updatedVersionButton=useRef<HTMLButtonElement>(null);
+  useEffect(()=>{if(confirmUpdatedVersion)updatedVersionButton.current?.focus();},[confirmUpdatedVersion]);
   const [sfxSummary,setSfxSummary]=useState<SfxSummary|null>(null);
   useEffect(()=>{
     if(!productionId)return;
     let active=true;
     const source=sourceRevision===undefined?"":`?sourceRevision=${encodeURIComponent(sourceRevision)}`;
     void request(`status/${encodeURIComponent(productionId)}${source}`).then(result=>{
-      if(!active||!result||!["done","failed","cancelled"].includes(String(result.state))||
+      if(!active||!result||!["rendering","done","failed","cancelled"].includes(String(result.state))||
         typeof result.message!=="string")return;
       // A delayed recovery request must never overwrite a render, readiness
       // check or newer user action started after the panel mounted.
@@ -306,7 +309,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     }catch(error){setNotice(error instanceof Error?error.message:"Local readiness check failed.");}
     finally{setWorking("");}
   }
-  async function generateDraft(){
+  async function generateDraft(confirmedUpdate=false){
     if(autoBusy.current||state.state==="rendering")return;
     autoBusy.current=true;
     const revision=inputRevision.current;
@@ -314,6 +317,16 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     setReady(false);
     setState({state:"checking",phase:"preflight",message:"Preparing scenes and checking your narrator, FFmpeg and Chromium…"});
     try{
+      if(productionId){
+        const policy=await request(`version-policy/${encodeURIComponent(productionId)}`);
+        if(typeof policy.requiresConfirmation!=="boolean")throw Error("The Studio returned an invalid video version policy.");
+        if(policy.requiresConfirmation&&!confirmedUpdate){
+          setState({state:"confirming",phase:"preflight",message:"An updated version needs confirmation before generation."});
+          setConfirmUpdatedVersion(true);
+          return;
+        }
+      }
+      setConfirmUpdatedVersion(false);
       if(!preview){
         const result=await request("plan",payload) as unknown as Preview;
         if(!Array.isArray(result.job?.beats)||!result.job.beats.length)
@@ -333,7 +346,8 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
         message:report.ready?"Starting your video…":"Resolve these requirements and retry.",report});
       if(!report.ready){setNotice("Your work is saved. Resolve the requirements below and retry.");return;}
-      const result=await request("start",{...requestInput,confirmRender:true});
+      const result=await request("start",{...requestInput,confirmRender:true,
+        ...(confirmedUpdate?{confirmUpdatedVersion:true}:{})});
       if(result.started!==true)throw Error("The local renderer did not confirm startup.");
       setStage("export");setReady(false);
       setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Keep the local Studio running.",report,
@@ -401,14 +415,16 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     let mounted=true;
     const poll=async()=>{
       try{
-        const next=await request("status") as unknown as Status;
+        const scoped=productionId&&state.phase==="recovering"?
+          `status/${encodeURIComponent(productionId)}${sourceRevision===undefined?"":`?sourceRevision=${encodeURIComponent(sourceRevision)}`}`:"status";
+        const next=await request(scoped) as unknown as Status;
         if(mounted)setState(next);
       }catch(error){if(mounted)setNotice(error instanceof Error?error.message:"Progress connection interrupted.");}
     };
     void poll();
     const timer=window.setInterval(()=>void poll(),1800);
     return ()=>{mounted=false;window.clearInterval(timer);};
-  },[state.state]);
+  },[state.state,state.phase,productionId,sourceRevision]);
   const progress=state.progress;
   const pct=progress?.totalFrames&&progress?.completedFrames!==undefined
     ?Math.min(100,Math.round(100*progress.completedFrames/progress.totalFrames)):null;
@@ -423,6 +439,15 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       {state.state==="checking"&&<div role="status" className="flex items-start gap-3 rounded-control border border-primary/30 bg-primary/5 p-4">
         <RefreshCw aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin"/>
         <div><p className="font-semibold">Preparing your draft video</p><p className="mt-1 text-xs text-muted-foreground">{state.message} This can take a few minutes on the first run.</p></div>
+      </div>}
+      {confirmUpdatedVersion&&<div role="group" aria-label="Confirm updated draft generation"
+        className="rounded-control border border-primary/35 bg-primary/5 p-4 space-y-3">
+        <div><p className="font-semibold">Generate an updated video?</p>
+          <p className="mt-1 text-sm text-muted-foreground">An updated version needs confirmation. Changed scenes may require new narration or provider usage. Verified speech and video segments will be reused when possible.</p></div>
+        <div className="flex flex-wrap gap-2">
+          <Button ref={updatedVersionButton} onClick={()=>void generateDraft(true)}>Generate updated version</Button>
+          <Button variant="outline" onClick={()=>{setConfirmUpdatedVersion(false);setState({state:"idle",phase:"idle",message:"Existing video was kept."});}}>Keep current video</Button>
+        </div>
       </div>}
       {state.state==="blocked"&&stage!=="export"&&<div role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-4">
         <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4"/>Draft needs setup</p>

@@ -212,6 +212,51 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
   expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
 });
 
+it("restores an active production and keeps its durable Jobs link visible",async()=>{
+  const productionId="production-"+"a".repeat(24);
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.includes(`/status/${productionId}`))return reply({state:"rendering",phase:"recovering",
+      message:"Draft is recovering from Jobs",jobId:"job-still-running"});
+    if(path.endsWith("/status"))return reply({state:"idle",phase:"idle",message:"No local worker"});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup(),onOpenJobs=vi.fn();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} productionId={productionId}
+    sourceRevision="rev1" initialStage="export" onOpenJobs={onOpenJobs}/>);
+  expect(await screen.findByText(/Draft is recovering from Jobs/i)).toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"View in Jobs"}));
+  expect(onOpenJobs).toHaveBeenCalledOnce();
+  expect(screen.queryByText("No local worker")).not.toBeInTheDocument();
+});
+
+it("requires exactly one confirmation before regenerating an existing video version",async()=>{
+  const productionId="production-"+"b".repeat(24),requests:Array<{path:string;body:Record<string,unknown>}> = [];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const path=String(input),body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
+    requests.push({path,body});
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith(`/version-policy/${productionId}`))return reply({requiresConfirmation:true,completedVersions:1});
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true,jobId:"job-updated-version"});
+    if(path.endsWith("/status"))return reply({state:"rendering",phase:"rendering",message:"Rendering updated video"});
+    if(path.includes(`/status/${productionId}`))return reply({state:"idle",message:""});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} productionId={productionId}
+    sourceRevision="edited-revision" initialStage="narration"/>);
+  await user.click(await screen.findByRole("button",{name:/Generate draft video/i}));
+  expect(await screen.findByText(/updated version.*confirmation/i)).toBeInTheDocument();
+  expect(requests.some(item=>item.path.endsWith("/check"))).toBe(false);
+  expect(requests.some(item=>item.path.endsWith("/start"))).toBe(false);
+  await user.click(screen.getByRole("button",{name:"Generate updated version"}));
+  await waitFor(()=>expect(requests.filter(item=>item.path.endsWith("/start"))).toHaveLength(1));
+  expect(requests.find(item=>item.path.endsWith("/start"))?.body.confirmUpdatedVersion).toBe(true);
+  expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
+});
+
 it("offers captions alongside the playable MP4 after a successful render",async()=>{
   const url="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4";
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
@@ -257,6 +302,7 @@ it("passes the optional online media-search choice to both readiness and render 
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     const path=String(input),body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
     requests.push({path,body});
+    if(path.includes("/version-policy/"))return reply({requiresConfirmation:false,completedVersions:0});
     if(path.endsWith("/plan"))return reply(plan);
     if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
     if(path.endsWith("/start"))return reply({started:true});
@@ -279,6 +325,7 @@ it("automatically begins the saved production when invoked from Generate draft v
   const paths:string[]=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
     const path=String(input);paths.push(path);
+    if(path.includes("/version-policy/"))return reply({requiresConfirmation:false,completedVersions:0});
     if(path.endsWith("/plan"))return reply(plan);
     if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
     if(path.endsWith("/start"))return reply({started:true,jobId:"job-production-1"});

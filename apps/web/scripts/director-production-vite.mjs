@@ -48,9 +48,23 @@ const failureRecovery={
   qa:["technical_qa_failed","Video quality checks failed. Review the media and audio requirements, then retry."],
   review:["export_failed","Final export failed. Check the local output directory and retry."],
 };
-function renderFailure(phase){
+function renderFailure(phase,error){
+  // Diagnostic strings can contain provider responses, script text, local
+  // paths or credentials. Only recognize a small set of safe machine errors.
+  if(/\bENOSPC\b|no space left on device/iu.test(String(error?.message??"")))
+    return{code:"disk_full",message:"Local disk space is exhausted. Free disk space, then retry the draft; verified scenes can be reused."};
   const [code,message]=failureRecovery[phase]??["render_failed","Draft production failed. Open Jobs for the failed step, check local tools and retry."];
   return{code,message};
+}
+function persistedFailure(job){
+  const failing=job?.nodes?.find(node=>node.state==="FAILED"&&typeof node.errorCode==="string");
+  if(failing?.errorCode==="disk_full")return renderFailure("",Error("ENOSPC"));
+  for(const [phase,[code,message]] of Object.entries(failureRecovery)){
+    if(failing?.errorCode===code)return{code,message,phase};
+  }
+  if(failing?.errorCode==="jobs_unavailable")return{code:"jobs_unavailable",
+    message:"Jobs tracking stopped responding. Restart the local Rust server, then retry the draft."};
+  return{code:"render_failed",message:"The draft stopped before completion. Inspect the failed step in Jobs and retry."};
 }
 function mediaSearchChoice(input){
   if(input.searchFreeMedia!==undefined&&typeof input.searchFreeMedia!=="boolean")
@@ -387,6 +401,14 @@ export function createDirectorProduction(deps={}){
     }
     return assets;
   }
+  async function versionPolicy(productionId){
+    // Immutable release records are written only after a complete export.
+    // Even if a historical file is later damaged, it was still a completed
+    // version and must not silently waive confirmation for new voice usage.
+    const completedVersions=(await readMediaIndex())
+      .filter(item=>item.productionId===productionId).length;
+    return{requiresConfirmation:completedVersions>0,completedVersions};
+  }
   async function savedReleaseForProduction(productionId,sourceRevision){
     const records=(await readMediaIndex()).filter(item=>item.productionId===productionId&&
       item.sourceRevision===sourceRevision);
@@ -482,6 +504,13 @@ export function createDirectorProduction(deps={}){
           note:"Synthetic example only. No factual claims are verified."});return;
       }
       if(req.method==="GET"&&route==="/status"){respond(res,200,status);return;}
+      if(req.method==="GET"&&route.startsWith("/version-policy/")){
+        const productionId=route.slice("/version-policy/".length);
+        if(!/^production-[a-f0-9]{24}$/u.test(productionId)){
+          respond(res,404,{error:"Unknown production."});return;
+        }
+        respond(res,200,await versionPolicy(productionId));return;
+      }
       if(req.method==="GET"&&route.startsWith("/status/")){
         const productionId=route.slice("/status/".length);
         if(!/^production-[a-f0-9]{24}$/u.test(productionId)){
@@ -521,8 +550,10 @@ export function createDirectorProduction(deps={}){
           state:"cancelled",message:"The previous draft was cancelled. Generate a new draft to continue."}:
           state==="SUCCEEDED"?{
             state:"failed",message:"The last draft finished, but its saved video could not be found. Check your local output folder in Jobs."}:
-          {state:"failed",message:"A previous draft was interrupted or is still in progress elsewhere. Check Jobs, then retry to reuse completed scenes."};
-        respond(res,200,{...recovery,phase:"production",progress:null,report:null,
+          state==="RUNNING"?{
+            state:"rendering",message:"A previous draft is tracked in Jobs and recovering after interruption. Check Jobs for the current stage."}:
+          {state:"failed",message:persistedFailure(persisted).message};
+        respond(res,200,{...recovery,phase:state==="RUNNING"?"recovering":"production",progress:null,report:null,
           jobId:persisted.job.id,mediaUrl:null,regeneration:null});return;
       }
       if(req.method==="GET"&&route==="/narration-sample/status"){
@@ -863,9 +894,19 @@ export function createDirectorProduction(deps={}){
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
         }
+        // Reserve the local slot before reading the release index: otherwise
+        // concurrent Start requests can both pass the initial busy check.
+        busy=true;
+        let requiresConfirmation=false;
+        try{requiresConfirmation=Boolean(input.productionId&&
+          (await versionPolicy(input.productionId)).requiresConfirmation);}
+        catch(error){busy=false;throw error;}
+        if(requiresConfirmation&&input.confirmUpdatedVersion!==true){
+          busy=false;
+          respond(res,409,{error:"Confirm generation of the updated video version before rendering."});return;
+        }
         // Reserve the local slot before the first asynchronous Jobs request.
         // Otherwise two rapid clicks can both create/claim a persistent run.
-        busy=true;
         const runId=randomUUID(),out=join(outputRoot,"draft-"+runId),abort=new AbortController();
         // Real productions must acquire a persisted DAG before doing paid/network
         // work. Demo fixtures without a production ID retain their isolated mode.
@@ -1050,7 +1091,7 @@ export function createDirectorProduction(deps={}){
                 (assetSearchSummary?.status==="fallback"?" Optional media search unavailable; use scene search to retry.":"")+mediaWarning,
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
               regeneration:result.regeneration??null};
-          }catch{
+          }catch(error){
             await journal;
             // Journal failures also abort the renderer, but they are not user
             // cancellations. Try to persist a terminal failure if Jobs came
@@ -1065,7 +1106,7 @@ export function createDirectorProduction(deps={}){
               message:"Video generation was interrupted. Retry the draft; completed media will be checked and reused."}:
               journalError?{code:"jobs_unavailable",
               message:"Jobs tracking stopped responding. Restart the local Rust server, then retry the draft."}:
-              renderFailure(status.phase);
+              renderFailure(status.phase,error);
             if(tracker&&!cancelled){
               try{await tracker.fail(failure.code,failure.message);}
               catch(journalFailure){status={...status,message:"Jobs failed to record the renderer error: "+String(journalFailure?.message??"unknown")};}

@@ -461,6 +461,53 @@ test("a restarted failed production locates its original narration cache from th
   assert.equal(passedRenderCache,join(dir,"draft-"+oldRun),"retry can use verified segments from the failed run");
 });
 
+test("only an already completed video requires a second-version confirmation",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-version-confirm-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"a".repeat(24),base={...inputs(),settings:config,productionId};
+  let produced=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-version",advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      produced++;
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"verified version "+produced);
+      return{releaseDir};
+    }});
+  assert.deepEqual((await invoke(server,"GET",`/version-policy/${productionId}`)).data,
+    {requiresConfirmation:false,completedVersions:0});
+  await invoke(server,"POST","/check",{...base,sourceRevision:"revision-1"});
+  assert.equal((await invoke(server,"POST","/start",{...base,sourceRevision:"revision-1",confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"done");
+  assert.deepEqual((await invoke(server,"GET",`/version-policy/${productionId}`)).data,
+    {requiresConfirmation:true,completedVersions:1});
+  await invoke(server,"POST","/check",{...base,sourceRevision:"revision-2"});
+  const denied=await invoke(server,"POST","/start",{...base,sourceRevision:"revision-2",confirmRender:true});
+  assert.equal(denied.status,409);
+  assert.match(denied.data.error,/confirm.*updated.*video/i);
+  assert.equal(produced,1);
+  assert.equal((await invoke(server,"POST","/start",{...base,sourceRevision:"revision-2",
+    confirmRender:true,confirmUpdatedVersion:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"done");assert.equal(produced,2);
+});
+
+test("an unsuccessful first video is not counted as a completed version",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-failed-first-version-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"b".repeat(24),payload={...inputs(),settings:config,productionId};
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-failed-first",advance:async()=>{},complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async()=>{throw Error("Simulated failed first video");}});
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"failed");
+  assert.deepEqual((await invoke(server,"GET",`/version-policy/${productionId}`)).data,
+    {requiresConfirmation:false,completedVersions:0});
+});
+
 test("render identity tracks user-selected visual media and passes exact shot bindings to the renderer", async t => {
   const dir = await mkdtemp(join(tmpdir(), "director-selected-media-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -579,6 +626,30 @@ test("a failed scene render records an actionable step error without leaking pro
   assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private-token-value/);
 });
 
+test("a full draft disk-space failure exposes the specific recoverable cause in Jobs",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-disk-failure-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let failed;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-disk-full",advance:async()=>{},complete:async()=>{},
+      fail:async(...args)=>{failed=args;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      await options.onProgress({phase:"rendering",message:"Encoding the edited scene"});
+      throw Error("ENOSPC: no space left on device, write /private-token-value");
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"e".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(failed?.[0],"disk_full");
+  assert.match(failed?.[1],/disk space/i);
+  assert.match(server.status().message,/disk space/i);
+  assert.equal(server.status().jobId,"job-disk-full");
+  assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private-token-value/);
+});
+
 test("lost worker ownership is a retryable failure, never a user cancellation",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-lost-worker-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
@@ -652,16 +723,34 @@ test("restart reports the matching durable video job without inventing completed
     nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"revision-2"}}]});
   const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob});
   const recovered=await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-2");
-  assert.equal(recovered.status,200);assert.equal(recovered.data.state,"failed");
+  assert.equal(recovered.status,200);assert.equal(recovered.data.state,"rendering");
   assert.equal(recovered.data.jobId,"job-persisted");
-  assert.match(recovered.data.message,/previous draft.*Jobs.*retry/i);
+  assert.match(recovered.data.message,/previous draft.*Jobs.*recover/i);
   assert.doesNotMatch(recovered.data.message,/worker ownership|stale revision|fingerprint/i);
   assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-3")).data.state,"idle");
   assert.equal((await invoke(restarted,"GET","/status/../../invalid")).status,404);
   assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=bad%0Avalue")).status,422);
 });
 
-test("a damaged media index never lets Rust Jobs commit an undiscoverable release",async t=>{
+test("restart shows the exact safe failed Jobs step rather than a generic interruption",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-restart-failed-step-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"d".repeat(24);
+  const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>({
+    job:{id:"job-failed-disk",jobKind:"video-production",state:"FAILED"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"revision-1"}},
+      {id:"node-render",nodeKey:"scene-render",state:"FAILED",errorCode:"disk_full"}],
+    attempts:[{nodeId:"node-render",state:"FAILED",errorCode:"disk_full",
+      errorDetail:"Local disk space is exhausted. Free space and retry the draft."}]
+  })});
+  const restored=await invoke(restarted,"GET",`/status/${productionId}?sourceRevision=revision-1`);
+  assert.equal(restored.data.state,"failed");
+  assert.equal(restored.data.jobId,"job-failed-disk");
+  assert.match(restored.data.message,/disk space/i);
+  assert.match(restored.data.message,/retry/i);
+});
+
+test("a damaged media index blocks another version before Jobs can start",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-recovery-index-failure-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   await writeFile(join(dir,"production-media-index-v1.json"),"{invalid json");
@@ -676,11 +765,11 @@ test("a damaged media index never lets Rust Jobs commit an undiscoverable releas
     }});
   const payload={...inputs(),settings:config,productionId:"production-"+"b".repeat(24)};
   await invoke(server,"POST","/check",payload);
-  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
-  for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
-  assert.equal(server.status().state,"failed");
+  const attempt=await invoke(server,"POST","/start",{...payload,confirmRender:true});
+  assert.equal(attempt.status,422);
+  assert.match(attempt.data.error,/saved media index is invalid/i);
   assert.equal(completed,0);
-  assert.equal(failed,1);
+  assert.equal(failed,0);
   assert.equal(await readFile(join(dir,"production-media-index-v1.json"),"utf8"),"{invalid json",
     "unreadable existing production history must not be overwritten");
 });
