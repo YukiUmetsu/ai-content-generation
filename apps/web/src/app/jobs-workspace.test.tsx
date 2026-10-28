@@ -36,6 +36,36 @@ const marketProviderHealth = {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); window.localStorage.removeItem("contentgen.jobs.list-width"); });
 
 describe("Jobs & QA discovery visibility", () => {
+  it("names video production child Jobs by the work they perform and shows the affected scene",async()=>{
+    const jobs=["video-production","video-asset-download","video-thumbnail-concept"].map((jobKind,index)=>({
+      ...pipelineJob,id:`job-video-${index}`,jobKind,updatedAt:`2026-10-25T09:0${index}:00Z`}));
+    vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+      const path=String(input);
+      if(path==="/api/jobs")return new Response(JSON.stringify({jobs}));
+      const job=jobs.find(item=>path===`/api/jobs/${item.id}`);
+      if(job)return new Response(JSON.stringify({job,nodes:[{
+        schemaVersion:1,id:`node-${job.id}`,jobId:job.id,
+        idempotencyKey:`node-${job.id}`,createdAt:job.createdAt,updatedAt:job.updatedAt,
+        nodeKey:job.jobKind==="video-asset-download"?"asset-download":"thumbnail-concept",
+        state:"SUCCEEDED",nodeKind:"video.asset-download",input:{sceneId:"beat-opening"},
+        attemptCount:1,maxAttempts:3,errorCode:null}],edges:[],attempts:[],
+        progress:{total:1,pending:0,ready:0,running:0,succeeded:1,failed:0,cancelled:0}}));
+      throw Error(`Unexpected Jobs request: ${path}`);
+    });
+    const view=render(<JobsWorkspace locale="en"/>);
+    const list=await screen.findByRole("list",{name:"Jobs"});
+    expect(await within(list).findByText("Create draft video")).toBeInTheDocument();
+    expect(within(list).getByText("Prepare scene media")).toBeInTheDocument();
+    expect(within(list).getByText("Create thumbnail concept")).toBeInTheDocument();
+    fireEvent.click(within(list).getByRole("button",{name:/Prepare scene media/i}));
+    expect(await screen.findByRole("heading",{name:"Prepare scene media"})).toBeInTheDocument();
+    expect(screen.getByText("Scene: beat-opening")).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox",{name:"Search jobs"}),{target:{value:"Prepare scene"}});
+    expect(within(list).getAllByRole("button")).toHaveLength(1);
+    fireEvent.change(screen.getByRole("searchbox",{name:"Search jobs"}),{target:{value:""}});
+    view.rerender(<JobsWorkspace locale="ja"/>);
+    expect(within(list).getByText("シーン素材を準備")).toBeInTheDocument();
+  });
   it("shows structured YouTube and Google Trends health without crashing the discovery details", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
       const path = String(input);

@@ -101,8 +101,18 @@ function initialListWidth(): number {
   return DEFAULT_LIST_WIDTH;
 }
 
-function monitorName(entry: MonitorEntry): string {
-  return entry.kind === "discovery" ? entry.session.name : humanize(entry.job.jobKind);
+const videoJobNames:Record<string,[string,string]>={
+  "video-production":["Create draft video","下書き動画を生成"],
+  "video-asset-download":["Prepare scene media","シーン素材を準備"],
+  "video-narration-scene":["Narrate one scene","シーンの音声を作成"],
+  "video-render-segment":["Render one scene","シーン映像を作成"],
+  "video-thumbnail-concept":["Create thumbnail concept","サムネイル案を作成"],
+};
+function jobName(kind:string,locale:Locale):string{
+  return videoJobNames[kind]?.[locale==="ja"?1:0]??humanize(kind);
+}
+function monitorName(entry: MonitorEntry,locale:Locale): string {
+  return entry.kind === "discovery" ? entry.session.name : jobName(entry.job.jobKind,locale);
 }
 
 function monitorStatus(entry: MonitorEntry, locale: Locale): string {
@@ -407,10 +417,10 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
       const content = entry.kind === "discovery"
         ? [entry.session.name, entry.projectName, entry.session.lastRun?.stage,
           humanize(entry.session.lastRun?.stage ?? ""), entry.session.lastRun?.id]
-        : [entry.job.jobKind, humanize(entry.job.jobKind), entry.job.id];
+        : [entry.job.jobKind, humanize(entry.job.jobKind),jobName(entry.job.jobKind,locale), entry.job.id];
       return content.some(value => value?.toLocaleLowerCase().includes(search));
     });
-  }, [entries, filter, searchQuery]);
+  }, [entries, filter, searchQuery, locale]);
   const selectedEntry = filteredEntries.find(entry => entry.key === selectedEntryKey) ?? filteredEntries[0] ?? null;
   const selectedJobId = selectedEntry?.kind === "pipeline" ? selectedEntry.job.id : null;
   const selectedJobView = selectedJobId && jobView?.job.id === selectedJobId ? jobView : null;
@@ -746,7 +756,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                       : <ListChecks aria-hidden className="size-[18px]" />}
                   </span>
                   <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block truncate text-sm font-semibold text-foreground" title={monitorName(entry)}>{monitorName(entry)}</span>
+                    <span className="block truncate text-sm font-semibold text-foreground" title={monitorName(entry,locale)}>{monitorName(entry,locale)}</span>
                     <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
                     <span className="flex min-w-0 items-center gap-2 pt-1">
                       <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${monitorBadgeClasses(entry)}`}>
@@ -813,7 +823,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   {locale === "ja" ? "パイプラインジョブ" : "Pipeline job"}
                 </p>
-                <h2 className="font-serif text-3xl leading-tight text-foreground">{humanize(selectedJobView.job.jobKind)}</h2>
+                <h2 className="font-serif text-3xl leading-tight text-foreground">{jobName(selectedJobView.job.jobKind,locale)}</h2>
                 <p className="mt-1 break-all font-mono text-xs text-muted-foreground" title={selectedJobView.job.id}>
                   {compactId(selectedJobView.job.id)}
                 </p>
