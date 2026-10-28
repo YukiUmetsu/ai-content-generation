@@ -202,7 +202,7 @@ export function parsePreproductionPlan(plan,dossier){
   for(const pair of boundaries)if(!seen.has(pair))v.add("missing-transition","continuity","Missing boundary "+pair);
   const sounded=new Set(),speakerVoices=new Map();
   v.items(plan.sound,"sound",160,(s,p)=>{
-    if(!v.fields(s,p,["shotId","narration","delivery","energy","pauseAfterMs","sfxIntent","speaker"]))return;
+    if(!v.fields(s,p,["shotId","narration","delivery","energy","pauseAfterMs","sfxIntent","speaker","speechTurns"]))return;
     if(!shotIds.has(s.shotId))v.add("missing-shot",p+".shotId","Unknown shot.");
     if(sounded.has(s.shotId))v.add("duplicate-audio",p+".shotId","Only one base performance plan per shot.");
     sounded.add(s.shotId);
@@ -211,6 +211,39 @@ export function parsePreproductionPlan(plan,dossier){
     if(!["calm","focused","energetic"].includes(s.energy))v.add("energy",p+".energy","Unsupported energy.");
     if(!Number.isSafeInteger(s.pauseAfterMs)||s.pauseAfterMs<0||s.pauseAfterMs>3000)v.add("pause",p+".pauseAfterMs","Pause must be 0–3000ms.");
     if(s.sfxIntent!==null&&s.sfxIntent!==undefined)v.requireText(s.sfxIntent,p+".sfxIntent",250);
+    if(s.speechTurns!==undefined){
+      if(s.speaker!==undefined)v.add("ambiguous-dialogue-speaker",p,"Use per-turn speakers instead of an additional scene-wide speaker.");
+      if(!Array.isArray(s.speechTurns)||s.speechTurns.length<2||s.speechTurns.length>16)
+        v.add("invalid-dialogue-turns",p+".speechTurns","A scene needs 2–16 ordered speech turns.");
+      else {
+        const seen=new Set();
+        let sceneProvider=null;
+        for(const [index,turn] of s.speechTurns.entries()){
+          const at=p+".speechTurns["+index+"]";
+          if(!v.fields(turn,at,["id","narration","speaker","pauseAfterMs"]))continue;
+          if(!id(turn.id)||seen.has(turn.id))v.add("duplicate-dialogue-turn",at+".id","Speech turn IDs must be stable and unique within a scene.");
+          seen.add(turn.id);
+          v.requireText(turn.narration,at+".narration",2000);
+          if(!Number.isSafeInteger(turn.pauseAfterMs)||turn.pauseAfterMs<0||turn.pauseAfterMs>3000)
+            v.add("dialogue-turn-pause",at+".pauseAfterMs","Speech turn pause must be 0–3,000 ms.");
+          if(turn.speaker!==undefined){
+            if(!isProductionSpeaker(turn.speaker))v.add("invalid-dialogue-speaker",at+".speaker","Assign an authorized-looking opaque provider voice ID and character.");
+            else {
+              if(sceneProvider!==null&&sceneProvider!==turn.speaker.provider)
+                v.add("dialogue-provider-mismatch",at+".speaker.provider","One scene can only use one speech provider.");
+              sceneProvider=turn.speaker.provider;
+              const prior=speakerVoices.get(turn.speaker.id);
+              if(prior&&(prior.provider!==turn.speaker.provider||prior.voiceId!==turn.speaker.voiceId||prior.role!==turn.speaker.role))
+                v.add("speaker-identity-changed",at+".speaker","A character must use one voice in this storyboard.");
+              speakerVoices.set(turn.speaker.id,turn.speaker);
+            }
+          }
+        }
+        if(s.speechTurns.every(turn=>typeof turn?.narration==="string")&&
+          s.narration!==s.speechTurns.map(turn=>turn.narration.trim()).join(" "))
+          v.add("dialogue-transcript-mismatch",p+".narration","Scene transcript must exactly match its sequential speech turns.");
+      }
+    }
     if(s.speaker!==undefined){
       if(!isProductionSpeaker(s.speaker))v.add("invalid-speaker",p+".speaker","Choose a character, provider and saved voice ID, or use the default narrator.");
       else {

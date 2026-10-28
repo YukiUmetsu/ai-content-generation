@@ -20,6 +20,7 @@ import { localSpeechEndpoint } from "./video-production/local.mjs";
 import { researchVideoTopic } from "./video-production/research-agent.mjs";
 import { generatePreproductionPlan } from "./video-production/preproduction-generator.mjs";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
+import { createConversationNarrationTemplate } from "./video-production/conversation-template.mjs";
 import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 import { synthesizeNarration } from "./video-production/speech.mjs";
@@ -135,18 +136,28 @@ export function configureRenderJob(job,settings){
  */
 function resolveCastVoiceIds(compiled,bundle,settings,consent,selectedBeatIds=null){
   if(consent!==undefined&&typeof consent!=="boolean")throw Error("Cast voice permission must be explicitly checked or unchecked.");
-  const byShot=new Map(bundle.plan.sound.map(sound=>[sound.shotId,sound.speaker]));
+  const byShot=new Map(bundle.plan.sound.map(sound=>[sound.shotId,sound]));
   const additional=new Set();
   for(const shot of compiled.shotMap){
     if(selectedBeatIds&&!selectedBeatIds.has(shot.beatId))continue;
-    const speaker=byShot.get(shot.shotId);
-    if(!speaker)continue;
-    if(speaker.provider!==settings.provider)
-      throw Error(`Scene ${shot.shotId} uses ${speaker.provider} for ${speaker.id}. Choose the same provider as the main narrator, or change the scene voice.`);
+    const sound=byShot.get(shot.shotId);
     const beat=compiled.job.beats.find(item=>item.id===shot.beatId);
-    if(!beat?.speaker||beat.speaker.voiceId!==speaker.voiceId)
-      throw Error("Scene cast changed during compilation. Reopen the storyboard before generating speech.");
-    if(speaker.voiceId!==settings.voiceId)additional.add(speaker.voiceId);
+    const sourceSpeakers=sound?.speechTurns? sound.speechTurns.map(turn=>turn.speaker):[sound?.speaker];
+    const renderedSpeakers=beat?.speechTurns?beat.speechTurns.map(turn=>turn.speaker):[beat?.speaker];
+    if(sourceSpeakers.length!==renderedSpeakers.length)
+      throw Error("Scene dialogue changed during compilation. Reopen the storyboard before generating speech.");
+    for(let i=0;i<sourceSpeakers.length;i++){
+      const speaker=sourceSpeakers[i],rendered=renderedSpeakers[i];
+      if(!speaker){
+        if(rendered)throw Error("Scene speaker changed during compilation.");
+        continue;
+      }
+      if(speaker.provider!==settings.provider)
+        throw Error(`Scene ${shot.shotId} uses ${speaker.provider} for ${speaker.id}. Choose the same provider as the main narrator, or change the scene voice.`);
+      if(!rendered||rendered.id!==speaker.id||rendered.role!==speaker.role||rendered.voiceId!==speaker.voiceId)
+        throw Error("Scene cast changed during compilation. Reopen the storyboard before generating speech.");
+      if(speaker.voiceId!==settings.voiceId)additional.add(speaker.voiceId);
+    }
   }
   if(additional.size>16)throw Error("The video exceeds the 16-voice cast authorization limit.");
   if(additional.size&&consent!==true)
@@ -583,11 +594,13 @@ export function createDirectorProduction(deps={}){
     const remember=key=>{if(typeof key==="string"&&key.length>=8)secrets.push(key);};
     const redact=value=>secrets.reduce((message,secret)=>message.replaceAll(secret,"[redacted]"),String(value));
     try{
-      if(req.method==="GET"&&route==="/demo"){
+      if(req.method==="GET"&&(route==="/demo"||route==="/demo-conversation")){
         const dossier=JSON.parse(readFileSync(new URL("../../../examples/preproduction-research-smoke.json",import.meta.url),"utf8"));
         const plan=JSON.parse(readFileSync(new URL("../../../examples/preproduction-plan-smoke.json",import.meta.url),"utf8"));
-        respond(res,200,{dossier,bundle:compilePreproductionBundle(dossier,plan),
-          note:"Synthetic example only. No factual claims are verified."});return;
+        const source=compilePreproductionBundle(dossier,plan);
+        const bundle=route==="/demo-conversation"?createConversationNarrationTemplate(dossier,source):source;
+        respond(res,200,{dossier,bundle,
+          note:"Synthetic example only. No factual claims are verified. Character voice IDs in the conversation demo are starter placeholders and must be reviewed."});return;
       }
       if(req.method==="GET"&&route==="/status"){respond(res,200,status);return;}
       if(req.method==="GET"&&route.startsWith("/version-policy/")){
@@ -829,7 +842,10 @@ export function createDirectorProduction(deps={}){
         const selectedBeat=scene?job.beats.find(item=>item.id===scene.beatId):job.beats[0];
         if(!selectedBeat)throw Error("The chosen scene has no narration to preview.");
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent,new Set([selectedBeat.id]));
-        job.beats=[{...selectedBeat,narration:sampleExcerpt(selectedBeat.narration)}];
+        const firstTurn=selectedBeat.speechTurns?.[0];
+        job.beats=[firstTurn?{...selectedBeat,speechTurns:undefined,
+          narration:sampleExcerpt(firstTurn.narration),speaker:firstTurn.speaker,pauseAfterMs:0}:
+          {...selectedBeat,narration:sampleExcerpt(selectedBeat.narration)}];
         const id=randomUUID(),abort=new AbortController();
         sampleController=abort;busy=true;
         sampleStatus={state:"generating",message:scene?

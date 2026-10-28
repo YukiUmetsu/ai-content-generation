@@ -68,6 +68,27 @@ test("surgical narration change invalidates one speech beat, retimes downstream,
   assert.equal(result.impacts.externalActionsPerformed.length,0);
   assert.deepEqual(b.plan.sound[0].narration,fixture("preproduction-plan-smoke.json").sound[0].narration);
 });
+test("a dialogue-turn edit regenerates one scene's speech, preserves unrelated visuals and requires review",()=>{
+  const d=source(),b=bundle(),shot=b.plan.shots[1].id;
+  const speechTurns=[
+    {id:"pip-question",narration:"Pip asks how this monthly cost changes over time.",
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:"a".repeat(32)},pauseAfterMs:100},
+    {id:"narrator-response",narration:"The chart continues while the narrator explains the assumptions.",pauseAfterMs:0},
+  ];
+  const changed=editPreproductionShot(d,b,{shotId:shot,changes:{speechTurns}});
+  assert.deepEqual(changed.bundle.plan.sound[1].speechTurns,speechTurns);
+  assert.equal(changed.bundle.plan.sound[1].narration,speechTurns.map(turn=>turn.narration).join(" "));
+  assert.deepEqual(changed.bundle.plan.shots,b.plan.shots);
+  assert.deepEqual(changed.impacts.speechRegenerate,[shot]);
+  assert.equal(changed.impacts.visualRerender.length,0);
+  assert.equal(changed.reviewRequired,true);
+  assert.equal(b.plan.sound[1].speechTurns,undefined,"the source storyboard is not mutated");
+  const reduced=editPreproductionShot(d,changed.bundle,{shotId:shot,changes:{speechTurns:null}});
+  assert.equal(reduced.bundle.plan.sound[1].speechTurns,undefined);
+  assert.equal(reduced.bundle.plan.sound[1].narration,changed.bundle.plan.sound[1].narration);
+  assert.deepEqual(reduced.impacts.speechRegenerate,[shot]);
+  assert.deepEqual(reduced.impacts.visualRerender,[]);
+});
 test("scene-cast edit is saved in the versioned preproduction bundle and rendered with the pinned voice",()=>{
   const d=source(),before=bundle(),id=before.plan.shots[1].id;
   const speaker={id:"pip",role:"character",provider:"fish",voiceId:"b".repeat(32)};

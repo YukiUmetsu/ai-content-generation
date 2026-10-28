@@ -75,6 +75,31 @@ export async function synthesizeNarration(job, options) {
   }
   if (job.approval === "approved" && (voice.licenseStatus !== "verified" || job.policy?.commercialRightsVerified !== true)) fail("approved narration requires verified commercial voice rights");
 
+  // A visual beat remains one continuous scene. Its speech turns have their
+  // own stable cache/Jobs identities and are assembled into one scene audio
+  // range only after all provider results have been checked.
+  const units=[];
+  for(const beat of job.beats){
+    if(beat.speechTurns===undefined){units.push(beat);continue;}
+    if(beat.speaker!==undefined||!Array.isArray(beat.speechTurns)||
+      beat.speechTurns.length<2||beat.speechTurns.length>16)
+      fail("multi-speaker scenes require 2–16 explicitly ordered turns and no scene-wide voice");
+    const seen=new Set();
+    for(const turn of beat.speechTurns){
+      if(!turn||typeof turn!=="object"||Array.isArray(turn)||
+        Object.keys(turn).some(key=>!["id","narration","speaker","pauseAfterMs"].includes(key))||
+        typeof turn.id!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(turn.id)||
+        beat.id.length+turn.id.length+1>127||seen.has(turn.id)||
+        !valid(turn.narration)||turn.narration.length>2000||/[\u0000-\u001f\u007f]/u.test(turn.narration)||
+        !Number.isSafeInteger(turn.pauseAfterMs)||turn.pauseAfterMs<0||turn.pauseAfterMs>3000)
+        fail("invalid dialogue turn identity, text or pause; reopen the scene editor");
+      seen.add(turn.id);
+      units.push({...turn,id:`${beat.id}.${turn.id}`,eventIds:[]});
+    }
+    if(beat.speechTurns.map(turn=>turn.narration.trim()).join(" ")!==beat.narration?.trim())
+      fail("scene narration differs from the approved dialogue turn transcript");
+  }
+
   // Non-default cast voices require separate, explicit authorization. Validate
   // ALL beats before any TTS or cache reuse so a late unauthorized character
   // cannot leave earlier provider requests half-completed.
@@ -84,7 +109,7 @@ export async function synthesizeNarration(job, options) {
           id.length > 128 || id.trim() !== id || /[\u0000-\u001f\u007f]/u.test(id))))
     fail("authorized cast voice IDs must be a bounded list of nonsecret provider references");
   const authorized = new Set(options.authorizedVoiceIds ?? []);
-  for (const beat of job.beats) {
+  for (const beat of units) {
     if (beat?.speaker === undefined) continue;
     const speaker = beat.speaker;
     if (!speaker || typeof speaker !== "object" || Array.isArray(speaker) ||
@@ -117,7 +142,7 @@ export async function synthesizeNarration(job, options) {
     }, { signal: options.signal }));
 
   const outputs = [];
-  for (const beat of job.beats) {
+  for (const beat of units) {
     if (options.signal?.aborted) fail("narration synthesis cancelled");
     if (!valid(beat?.id) || !valid(beat?.narration)) fail("each beat needs an ID and nonempty narration");
     const selectedVoiceId = beat.speaker?.voiceId ?? voice.voiceId;
@@ -237,5 +262,18 @@ export async function synthesizeNarration(job, options) {
       throw error;
     }
   }
-  return outputs;
+  const completed=new Map(outputs.map(unit=>[unit.id,unit]));
+  return job.beats.map(beat=>{
+    if(beat.speechTurns===undefined)return completed.get(beat.id);
+    const turns=beat.speechTurns.map(turn=>completed.get(`${beat.id}.${turn.id}`));
+    const samples=turns.reduce((total,turn)=>total+turn.samples+turn.pauseAfterMs*48,0);
+    if(!Number.isSafeInteger(samples)||samples<1)fail("scene speech exceeds safe sample count");
+    // An exact composite manifest hash; the audio writer independently checks
+    // every turn's WAV hash and measured samples before creating the stem.
+    const sha256Composite=sha256(JSON.stringify({kind:"scene-speech-turns/v1",
+      turns:turns.map(turn=>({id:turn.id,sha256:turn.sha256,samples:turn.samples,
+        pauseAfterMs:turn.pauseAfterMs}))}));
+    return {id:beat.id,text:beat.narration,samples,sha256:sha256Composite,
+      pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds??[],turns};
+  });
 }

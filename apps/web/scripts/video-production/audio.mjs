@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join, parse, resolve } from "node:path";
 import { probeNormalizedWav } from "./speech.mjs";
-import { writeSrt } from "./timeline.mjs";
+import { writeSceneSpeechSrt } from "./timeline.mjs";
 
 const run = promisify(execFile);
 const SAMPLE_RATE = 48000;
@@ -61,23 +61,44 @@ async function saveVoiceStem(beats, timeline, outputPath) {
     await handle.writeFile(pcmHeader(timeline.totalSamples));
     for (const range of timeline.beats) {
       const beat = byId.get(range.id);
-      if (!beat || !beat.wavPath) fail(`missing WAV speech for beat ${range.id}`);
-      let bytes;
-      try { bytes = await readFile(beat.wavPath); }
-      catch { fail(`missing or unreadable WAV speech for beat ${range.id}`); }
-      if (hash(bytes) !== beat.sha256) fail(`corrupt WAV speech hash for beat ${range.id}`);
-      const data = readPcmData(bytes);
-      if (data.length / 2 !== range.endSample - range.startSample || beat.samples !== data.length / 2) {
+      if (!beat) fail(`missing WAV speech for beat ${range.id}`);
+      const composite=Array.isArray(beat.turns);
+      const segments=composite?beat.turns:[beat];
+      if(!segments.length)fail(`scene ${range.id} has no speech turns`);
+      if(composite){
+        const expected=hash(Buffer.from(JSON.stringify({kind:"scene-speech-turns/v1",
+          turns:segments.map(turn=>({id:turn.id,sha256:turn.sha256,samples:turn.samples,
+            pauseAfterMs:turn.pauseAfterMs}))})));
+        if(expected!==beat.sha256)fail(`scene ${range.id} speech manifest changed after synthesis`);
+      }
+      let measuredSamples=0;
+      for(const segment of segments){
+        if(!segment.wavPath)fail(`missing WAV for ${segment.id}`);
+        let bytes;
+        try { bytes = await readFile(segment.wavPath); }
+        catch { fail(`missing or unreadable WAV speech for ${segment.id}`); }
+        if (hash(bytes) !== segment.sha256) fail(`corrupt WAV speech hash for ${segment.id}`);
+        const data = readPcmData(bytes);
+        if (segment.samples !== data.length / 2) fail(`measured speech samples changed for ${segment.id}`);
+        let hasSignal = false;
+        for (let i = 0; i < data.length; i += 2) {
+          const value = data.readInt16LE(i);
+          if (Math.abs(value) >= 32766) fail(`clipping in generated speech beat ${segment.id}`);
+          if (value !== 0) hasSignal = true;
+        }
+        if (!hasSignal) fail(`unexpected silence in generated narration beat ${segment.id}`);
+        await handle.writeFile(data);
+        measuredSamples+=segment.samples;
+        if(composite){
+          if(!Number.isSafeInteger(segment.pauseAfterMs)||segment.pauseAfterMs<0||segment.pauseAfterMs>3000)
+            fail(`invalid speech turn pause in ${segment.id}`);
+          const innerPause=segment.pauseAfterMs*48;
+          measuredSamples+=innerPause;
+          if(innerPause)await handle.writeFile(Buffer.alloc(innerPause*2));
+        }
+      }
+      if(measuredSamples!==range.endSample-range.startSample||measuredSamples!==beat.samples)
         fail(`measured speech sample count mismatch for beat ${range.id}`);
-      }
-      let hasSignal = false;
-      for (let i = 0; i < data.length; i += 2) {
-        const value = data.readInt16LE(i);
-        if (Math.abs(value) >= 32766) fail(`clipping in generated speech beat ${range.id}`);
-        if (value !== 0) hasSignal = true;
-      }
-      if (!hasSignal) fail(`unexpected silence in generated narration beat ${range.id}`);
-      await handle.writeFile(data);
       const pauseSamples = range.pauseEndSample - range.endSample;
       if (pauseSamples > 0) await handle.writeFile(Buffer.alloc(pauseSamples * 2));
     }
@@ -176,8 +197,7 @@ export async function renderMasterAudio(input, config) {
   }
   await mkdir(dir, { recursive: true });
   await saveVoiceStem(beats, timeline, voiceStemPath);
-  const captions = Object.fromEntries(beats.map((beat) => [beat.id, beat.text]));
-  const srtText = writeSrt(timeline, captions);
+  const srtText = writeSceneSpeechSrt(timeline, beats);
   await writeFile(srtPath, srtText, { flag: "wx" });
 
   for (const [index, effect] of sfx.entries()) {

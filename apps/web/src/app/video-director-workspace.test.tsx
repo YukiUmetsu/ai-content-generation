@@ -78,6 +78,39 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("authors three sequential dialogue beats over one existing scene and sends one surgical edit",async()=>{
+    const edits:Array<{shotId:string;changes:Record<string,unknown>}> = [];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(String(url).endsWith("/edit")){
+        const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;shotId:string;changes:Record<string,unknown>};
+        edits.push({shotId:body.shotId,changes:body.changes});
+        const updated=structuredClone(body.bundle);
+        const sound=updated.plan.sound.find(entry=>entry.shotId===body.shotId)! as Record<string,unknown>;
+        sound.speechTurns=body.changes.speechTurns;
+        sound.narration=(body.changes.speechTurns as Array<{narration:string}>).map(turn=>turn.narration).join(" ");
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:updated,
+          impacts:{changedFields:["speechTurns"],speechRegenerate:[body.shotId],visualRerender:[],
+            sfxRemix:[],downstreamRetiming:[],timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+      }
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No preview in this test"}),{status:503});
+      throw Error("Unexpected request "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"conversation.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    await user.click(screen.getByRole("button",{name:"Conversation + narration"}));
+    expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
+    await user.clear(screen.getByRole("textbox",{name:"Dialogue line 2"}));
+    await user.type(screen.getByRole("textbox",{name:"Dialogue line 2"}),"Let me describe the second step.");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toHaveLength(1));
+    expect(edits[0].shotId).toBe("middle");
+    expect(Object.keys(edits[0].changes)).toEqual(["speechTurns"]);
+    expect((edits[0].changes.speechTurns as Array<{narration:string}>)[1].narration).toBe("Let me describe the second step.");
+    expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
+  });
   it("writes scene cast to SQLite-backed project storage and reloads the same speaker without a browser draft",async()=>{
     const productionId="production-"+"7".repeat(24),sourceHash="b".repeat(64);
     const original={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sourceHash};

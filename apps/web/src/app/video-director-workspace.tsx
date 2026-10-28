@@ -23,7 +23,8 @@ const RendererScene=lazy(()=>import("./live-renderer-scene"));
 
 type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[];motion?:SceneMotion};
 type SpeakerAssignment={id:string;role:"character"|"narrator";provider:"local"|"fish";voiceId:string};
-type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number;speaker?:SpeakerAssignment};
+type DialogueTurn={id:string;narration:string;pauseAfterMs:number;speaker?:SpeakerAssignment};
+type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number;speaker?:SpeakerAssignment;speechTurns?:DialogueTurn[]};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
 type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string;researchSha256?:string};
@@ -161,7 +162,7 @@ function shotDraft(bundle:Bundle,id:string){
   return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",family:shot?.family??"process",
     visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
     sfxIntent:audio?.sfxIntent??"",pauseAfterMs:audio?.pauseAfterMs??160,
-    speaker:audio?.speaker??null,
+    speaker:audio?.speaker??null,speechTurns:audio?.speechTurns?structuredClone(audio.speechTurns):null,
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"",
     motion:safeSceneMotion(shot?.motion)};
 }
@@ -176,7 +177,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const [bundle,setBundle]=useState<Bundle|null>(null);
   const [sourceBundle,setSourceBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
-  const [draft,setDraft]=useState<ReturnType<typeof shotDraft>>({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,speaker:null,visualElementsText:"",motion:normalizedSceneMotion()});
+  const [draft,setDraft]=useState<ReturnType<typeof shotDraft>>({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,speaker:null,speechTurns:null,visualElementsText:"",motion:normalizedSceneMotion()});
   const currentDraftRef=useRef(draft),currentShotRef=useRef(shotId);
   const [castVoices,setCastVoices]=useState<{voices:VoiceFavorite[];characters:CharacterVoiceBinding[];error:string}>({voices:[],characters:[],error:""});
   const [castSync,setCastSync]=useState<CastSync>({key:"",status:"idle",revision:0,remote:null,error:""});
@@ -328,15 +329,66 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
     catch(error){setCastVoices({voices:[],characters:[],error:error instanceof Error?error.message:"Could not read saved cast voices."});}
   },[voiceProjectId,projectId,bundle,stage]);
   const characterOptions=[...new Set(["pip","quill",...castVoices.characters.map(item=>item.characterId),
-    ...(draft.speaker?.role==="character"?[draft.speaker.id]:[])])].filter(id=>/^[a-zA-Z0-9_-]{1,80}$/u.test(id));
-  function chooseSceneSpeaker(id:string){
-    if(!id){setDraft(current=>({...current,speaker:null}));return;}
+    ...(draft.speaker?.role==="character"?[draft.speaker.id]:[]),
+    ...(draft.speechTurns??[]).flatMap(turn=>turn.speaker?.role==="character"?[turn.speaker.id]:[])])]
+    .filter(id=>/^[a-zA-Z0-9_-]{1,80}$/u.test(id));
+  const allSavedVoices=[...new Map([...castVoices.voices,...castVoices.characters.map(binding=>binding.voice)]
+    .map(voice=>[`${voice.provider}:${voice.voiceId}`,voice] as const)).values()];
+  function suggestedSpeaker(id:string):SpeakerAssignment|null{
     const saved=castVoices.characters.find(item=>item.characterId===id)?.voice;
     const suggestion=id==="pip"?castVoices.voices[1]??castVoices.voices[0]:
       id==="quill"?castVoices.voices[2]??castVoices.voices[1]??castVoices.voices[0]:castVoices.voices[1]??castVoices.voices[0];
     const voice=saved??suggestion;
-    if(!voice){setStatus("Save a project voice in Narration before assigning a character.");return;}
-    setDraft(current=>({...current,speaker:{id,role:"character",provider:voice.provider,voiceId:voice.voiceId}}));
+    return voice?{id,role:"character",provider:voice.provider,voiceId:voice.voiceId}:null;
+  }
+  function chooseSceneSpeaker(id:string){
+    if(!id){setDraft(current=>({...current,speaker:null}));return;}
+    const speaker=suggestedSpeaker(id);
+    if(!speaker){setStatus("Save a project voice in Narration before assigning a character.");return;}
+    setDraft(current=>({...current,speaker}));
+  }
+  function setDialogueTurns(turns:DialogueTurn[]|null){
+    setDraft(current=>({...current,speechTurns:turns,speaker:turns?null:current.speaker,
+      narration:turns?turns.map(turn=>turn.narration.trim()).join(" "):current.narration}));
+  }
+  function dialogueTemplate(){
+    const first="What should we notice about this scene?";
+    const second="Let's follow what the picture is showing.";
+    if(draft.narration.trim().length+first.length+second.length+2>2000){
+      setStatus("This scene is too long for a three-voice template. Shorten its narration first.");return;
+    }
+    const pip=suggestedSpeaker("pip"),quill=suggestedSpeaker("quill");
+    setDialogueTurns([
+      {id:"pip-question",narration:first,pauseAfterMs:180,...(pip?{speaker:pip}:{})},
+      {id:"quill-reply",narration:second,pauseAfterMs:180,...(quill?{speaker:quill}:{})},
+      {id:"narrator-explains",narration:draft.narration.trim(),pauseAfterMs:0}
+    ]);
+    setStatus(!pip||!quill?"Conversation template added. Assign saved voices to Pip and Quill before rendering distinct character voices.":
+      "Conversation template added. Edit any line, assign voices, then Save & generate draft.");
+  }
+  function addDialogueTurn(role:"character"|"narrator"){
+    if(!draft.speechTurns||draft.speechTurns.length>=16)return;
+    const used=new Set(draft.speechTurns.map(turn=>turn.id));
+    let index=1;while(used.has(`line-${index}`))index++;
+    const assigned=role==="character"?suggestedSpeaker("pip"):null;
+    setDialogueTurns([...draft.speechTurns,{id:`line-${index}`,narration:"New line to record.",pauseAfterMs:0,
+      ...(assigned?{speaker:assigned}:{})}]);
+  }
+  function changeDialogueTurn(index:number,updated:Partial<DialogueTurn>){
+    if(!draft.speechTurns)return;
+    setDialogueTurns(draft.speechTurns.map((turn,i)=>i===index?{...turn,...updated}:turn));
+  }
+  function chooseDialogueSpeaker(index:number,id:string){
+    if(!draft.speechTurns)return;
+    const speaker=id?suggestedSpeaker(id):null;
+    if(id&&!speaker){setStatus("Save a project voice in Narration before assigning a character.");return;}
+    const next=draft.speechTurns.map((turn,i)=>{
+      if(i!==index)return turn;
+      const changed={...turn};delete changed.speaker;
+      if(speaker)changed.speaker=speaker;
+      return changed;
+    });
+    setDialogueTurns(next);
   }
   async function renderSceneClip(){
     if(!dossier||!bundle||!shotId||dirty)return;
@@ -563,9 +615,11 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   }
   function changes(){
     if(!shot||!audio)return {};
-    const result:Record<string,string|null|VisualElement[]|number|SceneMotion|SpeakerAssignment>={};
-    if(draft.narration!==audio.narration)result.narration=draft.narration;
-    if(JSON.stringify(draft.speaker)!==JSON.stringify(audio.speaker??null))result.speaker=draft.speaker;
+    const result:Record<string,string|null|VisualElement[]|number|SceneMotion|SpeakerAssignment|DialogueTurn[]>={};
+    const dialogueChanged=JSON.stringify(draft.speechTurns)!==JSON.stringify(audio.speechTurns??null);
+    if(dialogueChanged)result.speechTurns=draft.speechTurns;
+    if(!draft.speechTurns&&draft.narration!==audio.narration)result.narration=draft.narration;
+    if(!draft.speechTurns&&JSON.stringify(draft.speaker)!==JSON.stringify(audio.speaker??null))result.speaker=draft.speaker;
     if(draft.family!==(shot.family??"process"))result.family=draft.family;
     if(draft.onScreenText!==shot.onScreenText)result.onScreenText=draft.onScreenText;
     if(draft.visualChange!==shot.visualChange)result.visualChange=draft.visualChange;
@@ -578,7 +632,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
       result.visualElements=parseElementsInput(draft.visualElementsText);
     return result;
   }
-  async function apply(changed:Record<string,string|null|VisualElement[]|number|SceneMotion|SpeakerAssignment>){
+  async function apply(changed:Record<string,string|null|VisualElement[]|number|SceneMotion|SpeakerAssignment|DialogueTurn[]>){
     if(!bundle||!dossier||!shot)return false;
     setBusy(true);setStatus("");
     try{
@@ -637,6 +691,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const visualTextSaved=shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
   const dirty=!!shot&&!!audio&&(
     draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
+    JSON.stringify(draft.speechTurns)!==JSON.stringify(audio.speechTurns??null)||
     JSON.stringify(draft.speaker)!==JSON.stringify(audio.speaker??null)||
     draft.family!==(shot.family??"process")||
     draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
@@ -882,7 +937,65 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
             </label>
             <div className="grid gap-3 lg:grid-cols-2">
               <div className="space-y-3">
-                <label className={header}>Narration or dialogue<textarea className={field+" mt-2"} rows={6} maxLength={2000} aria-label="Edit narration" value={draft.narration} onChange={e=>setDraft({...draft,narration:e.target.value})}/></label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><p className={header}>Scene voices & timing</p>
+                    <p className="mt-1 text-xs text-muted-foreground">One moving picture can contain several character lines and narration.</p></div>
+                  {draft.speechTurns?<Button size="sm" variant="outline" onClick={()=>setDialogueTurns(null)}>
+                    Switch to single narrator
+                  </Button>:<Button size="sm" variant="outline" onClick={dialogueTemplate}>
+                    <WandSparkles className="mr-2 size-4"/>Conversation + narration
+                  </Button>}
+                </div>
+                {draft.speechTurns?<div className="space-y-3" aria-label="Ordered dialogue beats">
+                  {draft.speechTurns.map((turn,index)=><div key={turn.id} className="rounded-control border border-primary/25 bg-surface-subtle p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold">{index+1}. {turn.speaker?.role==="character"?turn.speaker.id:"Narrator"}</span>
+                      <Button size="sm" variant="outline" disabled={draft.speechTurns!.length<=2} onClick={()=>setDialogueTurns(draft.speechTurns!.filter((_,i)=>i!==index))}>
+                        Remove beat
+                      </Button>
+                    </div>
+                    <label className={header}>Line {index+1}
+                      <textarea className={field+" mt-1"} rows={3} maxLength={2000} aria-label={`Dialogue line ${index+1}`}
+                        value={turn.narration} onChange={event=>changeDialogueTurn(index,{narration:event.target.value})}/>
+                    </label>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className={header}>Speaker
+                        <select className={field+" mt-1"} aria-label={`Dialogue speaker ${index+1}`}
+                          value={turn.speaker?.role==="character"?turn.speaker.id:""}
+                          onChange={event=>chooseDialogueSpeaker(index,event.target.value)}>
+                          <option value="">Narrator · primary voice</option>
+                          {characterOptions.map(id=><option key={id} value={id}>{id==="pip"?"Pip":id==="quill"?"Quill":id}</option>)}
+                        </select>
+                      </label>
+                      <label className={header}>Pause after · milliseconds
+                        <input type="number" className={field+" mt-1"} aria-label={`Pause after line ${index+1}`}
+                          min={0} max={3000} step={50} value={turn.pauseAfterMs}
+                          onChange={event=>changeDialogueTurn(index,{pauseAfterMs:Number(event.target.value)})}/>
+                      </label>
+                    </div>
+                    {turn.speaker&&<label className={header}>Character voice
+                      <select className={field+" mt-1"} aria-label={`Dialogue voice ${index+1}`}
+                        value={`${turn.speaker.provider}:${turn.speaker.voiceId}`}
+                        onChange={event=>{
+                          const selected=allSavedVoices.find(voice=>`${voice.provider}:${voice.voiceId}`===event.target.value);
+                          if(selected)changeDialogueTurn(index,{speaker:{...turn.speaker!,provider:selected.provider,voiceId:selected.voiceId}});
+                        }}>
+                        {!allSavedVoices.some(voice=>voice.provider===turn.speaker?.provider&&voice.voiceId===turn.speaker?.voiceId)&&
+                          <option value={`${turn.speaker.provider}:${turn.speaker.voiceId}`}>Current · {turn.speaker.voiceId}</option>}
+                        {allSavedVoices.map((voice,voiceIndex)=><option key={`${voice.provider}:${voice.voiceId}`} value={`${voice.provider}:${voice.voiceId}`}>
+                          {voice.name} · {voice.provider}{voiceIndex===0?" · primary":voiceIndex===1?" · secondary":""}
+                        </option>)}
+                      </select>
+                    </label>}
+                  </div>)}
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" disabled={draft.speechTurns.length>=16} onClick={()=>addDialogueTurn("character")}>Add character line</Button>
+                    <Button size="sm" variant="outline" disabled={draft.speechTurns.length>=16} onClick={()=>addDialogueTurn("narrator")}>Add narration</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Lines play in order without cutting the scene. Narrator uses the Production primary voice. Every assigned character voice requires authorization before generating speech. The finished captions identify the speaker.</p>
+                  <p className="text-xs text-muted-foreground">Combined transcript: {draft.narration.length}/2000 characters</p>
+                </div>:<>
+                  <label className={header}>Narration or dialogue<textarea className={field+" mt-2"} rows={6} maxLength={2000} aria-label="Edit narration" value={draft.narration} onChange={e=>setDraft({...draft,narration:e.target.value})}/></label>
                 <div className="grid gap-3 rounded-control border border-border bg-surface-subtle p-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                   <label className={header}>Who speaks?
                     <select aria-label="Scene speaker" className={field+" mt-2"}
@@ -916,6 +1029,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
                   </p>
                   {castVoices.error&&<p role="alert" className="text-xs font-normal normal-case tracking-normal text-danger sm:col-span-2 lg:col-span-1 xl:col-span-2">{castVoices.error}</p>}
                 </div>
+                </>}
               </div>
               <label className={header}>Visible explanation / motion intent<textarea className={field+" mt-2"} rows={6} maxLength={650} aria-label="Edit visual action" value={draft.visualAction} onChange={e=>setDraft({...draft,visualAction:e.target.value})}/></label>
               <label className={header}>What the viewer actually sees and learns

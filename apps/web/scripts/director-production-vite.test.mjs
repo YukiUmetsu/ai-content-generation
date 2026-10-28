@@ -1732,6 +1732,21 @@ test("one-click sample works without a configured research model, external netwo
   assert.equal(sideEffects,0);
 });
 
+test("one-click conversation demo serves a valid, single-scene Pip/Quill/narrator sequence without provider calls",async()=>{
+  let providerCalls=0;
+  const server=createDirectorProduction({readModel:async()=>{providerCalls++;throw Error("No model allowed");},
+    produce:async()=>{providerCalls++;throw Error("No TTS or render allowed");}});
+  const response=await invoke(server,"GET","/demo-conversation");
+  assert.equal(response.status,200);
+  const sound=response.data.bundle.plan.sound[1];
+  assert.deepEqual(sound.speechTurns.map(turn=>turn.speaker?.id??"narrator"),["pip","quill","narrator"]);
+  const bridged=await invoke(server,"POST","/plan",{dossier:response.data.dossier,bundle:response.data.bundle});
+  assert.equal(bridged.status,200);
+  assert.equal(bridged.data.job.beats.length,3);
+  assert.equal(bridged.data.job.beats[1].speechTurns.length,3);
+  assert.equal(providerCalls,0);
+});
+
 
 test("actual renderer preview is identical to the edit plan and never starts voice/build/video jobs",async()=>{
  let calls=0;

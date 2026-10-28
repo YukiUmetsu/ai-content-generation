@@ -152,6 +152,22 @@ describe("topic-first production workflow",()=>{
 });
 
 describe("zero-setup sample onboarding",()=>{
+  it("opens a conversation-and-narration video template in one click without a research model",async()=>{
+    const sample={dossier:{kind:"research-dossier",id:"demo",topic:{title:"Example",audience:"Everyone"}},
+      bundle:{kind:"preproduction-bundle",researchId:"demo",plan:{shots:[{id:"hook"}],sound:[{
+        shotId:"hook",speechTurns:[{id:"pip-question"},{id:"quill-reply"},{id:"narrator-explains"}]}]}}};
+    const calls:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+      calls.push(String(url));
+      if(String(url).endsWith("/demo-conversation"))return new Response(JSON.stringify(sample),{status:200});
+      throw Error("Conversation template attempted unexpected network requests");
+    });
+    const create=vi.fn(),user=userEvent.setup();
+    render(<NewVideoSetup onGenerated={create}/>);
+    await user.click(screen.getByRole("button",{name:"Open conversation video template"}));
+    expect(create).toHaveBeenCalledWith(sample.dossier,sample.bundle,"sample");
+    expect(calls).toEqual(["/api/contentgen-video/demo-conversation"]);
+  });
   it("loads the built-in sample with one click and requires no files, voice or research settings",async()=>{
     const sample={dossier:{kind:"research-dossier",id:"demo",topic:{title:"Example",audience:"Everyone"}},
       bundle:{kind:"preproduction-bundle",researchId:"demo",plan:{shots:[{id:"hook"}]}}};

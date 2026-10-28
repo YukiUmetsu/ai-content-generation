@@ -259,11 +259,52 @@ export function parseVideoProductionJob(input) {
       }
     }
   };
-  const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual", "speaker"]);
+  const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual", "speaker", "speechTurns"]);
   if (beats.length === 0) add("empty-narration", "beats", "At least one narrated beat is required.");
   const speakerVoices = new Map();
   for (const [index, beat] of beats.entries()) {
     text(beat.narration, `beats[${index}].narration`);
+    if (has(beat, "speechTurns")) {
+      const path=`beats[${index}].speechTurns`,turns=beat.speechTurns;
+      if (has(beat,"speaker"))add("ambiguous-scene-speaker",path,
+        "A scene with multiple speech turns has speakers on the turns, not a second scene-wide speaker.");
+      if (!Array.isArray(turns)||turns.length<2||turns.length>16) {
+        add("invalid-speech-turns",path,"Use 2–16 sequential dialogue or narration turns in a scene.");
+      } else {
+        const seen=new Set();
+        for (const [turnIndex,turn] of turns.entries()) {
+          const at=`${path}[${turnIndex}]`;
+          if (!fields(turn,at,["id","narration","speaker","pauseAfterMs"]))continue;
+          if(typeof turn.id!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(turn.id)||
+            (typeof beat.id==="string"&&beat.id.length+turn.id.length+1>127)||seen.has(turn.id))
+            add("invalid-speech-turn-id",at+".id","Use unique bounded IDs for each scene speech turn.");
+          seen.add(turn.id);
+          if(typeof turn.narration!=="string"||!turn.narration.trim()||turn.narration.length>2000||
+            /[\u0000-\u001f\u007f]/u.test(turn.narration))
+            add("invalid-speech-turn-text",at+".narration","Each spoken line must be nonempty, bounded and one line.");
+          if(!integer(turn.pauseAfterMs,0)||turn.pauseAfterMs>3000)
+            add("invalid-speech-turn-pause",at+".pauseAfterMs","Use a 0–3,000 ms pause after this speaker.");
+          if(has(turn,"speaker")&&fields(turn.speaker,at+".speaker",["id","role","voiceId"])){
+            const speaker=turn.speaker;
+            if(typeof speaker.id!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(speaker.id)||
+              !["narrator","character"].includes(speaker.role)||
+              (speaker.id==="narrator")!==(speaker.role==="narrator")||
+              typeof speaker.voiceId!=="string"||!speaker.voiceId.trim()||speaker.voiceId.length>128||
+              speaker.voiceId.trim()!==speaker.voiceId||/[\u0000-\u001f\u007f]/u.test(speaker.voiceId))
+              add("invalid-speech-turn-speaker",at+".speaker","Choose a named character and saved voice or the narrator.");
+            else {
+              const prior=speakerVoices.get(speaker.id);
+              if(prior&&(prior.role!==speaker.role||prior.voiceId!==speaker.voiceId))
+                add("speaker-identity-changed",at+".speaker","A character must keep one voice throughout the video.");
+              speakerVoices.set(speaker.id,speaker);
+            }
+          }
+        }
+        if(turns.every(turn=>typeof turn?.narration==="string")&&
+          turns.map(turn=>turn.narration.trim()).join(" ")!==beat.narration?.trim())
+          add("speech-turn-transcript-mismatch",path,"The scene narration must exactly match its ordered speech turns.");
+      }
+    }
     if (has(beat, "speaker") && fields(beat.speaker, `beats[${index}].speaker`, ["id", "role", "voiceId"])) {
       const speaker = beat.speaker;
       if (typeof speaker.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/u.test(speaker.id) ||

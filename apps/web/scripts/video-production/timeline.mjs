@@ -92,3 +92,39 @@ export function writeSrt(timeline, beatTexts) {
     return `${index + 1}\n${timecode(beat.startSample)} --> ${timecode(beat.endSample)}\n${safeText}\n`;
   }).join("\n");
 }
+
+/** A scene remains one visual chapter while its separately timed voices get
+ * accurate, speaker-labeled captions. Legacy single-speaker scenes keep their
+ * previous SRT bytes and numbering through the same writeSrt function. */
+export function writeSceneSpeechSrt(timeline, speech) {
+  if(!Array.isArray(speech)||!Array.isArray(timeline?.beats))fail("scene speech and timeline are required");
+  const byId=new Map(speech.map(beat=>[beat.id,beat]));
+  if(byId.size!==speech.length)fail("scene speech IDs must be unique");
+  const cues=[],texts=Object.create(null);
+  for(const range of timeline.beats){
+    const scene=byId.get(range.id);
+    if(!scene)fail(`missing caption scene ${range.id}`);
+    if(!Array.isArray(scene.turns)){
+      cues.push(range);texts[range.id]=scene.text;continue;
+    }
+    if(!scene.turns.length)fail(`scene ${range.id} has no caption turns`);
+    let cursor=range.startSample;
+    for(const turn of scene.turns){
+      if(typeof turn.id!=="string"||!turn.id.trim()||
+        !validInteger(turn.samples,1)||!validInteger(turn.pauseAfterMs,0)||turn.pauseAfterMs>3000)
+        fail(`scene ${range.id} has an invalid caption turn`);
+      const end=cursor+turn.samples;
+      if(!Number.isSafeInteger(end)||end>range.endSample)fail(`scene ${range.id} caption exceeds speech time`);
+      const name=turn.speakerRole==="character"&&typeof turn.speakerId==="string"&&
+        /^[a-zA-Z0-9_-]{1,80}$/u.test(turn.speakerId)?
+        turn.speakerId[0].toUpperCase()+turn.speakerId.slice(1):"Narrator";
+      const cueId=`${range.id}.${turn.id}`;
+      if(Object.hasOwn(texts,cueId))fail(`duplicate caption turn ${cueId}`);
+      texts[cueId]=`${name}: ${turn.text}`;
+      cues.push({id:cueId,startSample:cursor,endSample:end});
+      cursor=end+turn.pauseAfterMs*48;
+    }
+    if(cursor!==range.endSample)fail(`scene ${range.id} captions disagree with measured speech`);
+  }
+  return writeSrt({beats:cues},texts);
+}

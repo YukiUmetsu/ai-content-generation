@@ -251,7 +251,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     await options.onProgress?.({ phase: "narration",
       ...(selectedSceneMedia.length?{artifactLedger:{kind:"asset-preparation",
         fingerprint:sceneMedia.fingerprint,selected:selectedSceneMedia}}:{}),
-      message: `Generating ${job.beats.length} authorized narration beats…` });
+      message: `Generating ${job.beats.reduce((count,beat)=>count+(beat.speechTurns?.length??1),0)} authorized speech turns…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
       reuseCacheRoot:previous?.cacheRoot??interruptedCache,
@@ -409,10 +409,17 @@ export async function produceVideo(candidate, options, deps = {}) {
       voiceId: beat.voiceId, speakerId: beat.speakerId, speakerRole: beat.speakerRole,
       licenseStatus: beat.licenseStatus ?? job.voice.licenseStatus,
       commercialRightsVerified: beat.commercialRightsVerified === true,
+      ...(beat.turns?{kind:"scene-speech-turns/v1",turns:beat.turns.map(turn=>({
+        id:turn.id,sha256:turn.sha256,samples:turn.samples,pauseAfterMs:turn.pauseAfterMs,
+        provider:turn.provider,modelId:turn.modelId,providerRevision:turn.providerRevision,
+        voiceId:turn.voiceId,speakerId:turn.speakerId,speakerRole:turn.speakerRole,
+        licenseStatus:turn.licenseStatus,commercialRightsVerified:turn.commercialRightsVerified===true
+      }))}:{})
     }));
+    const speechUnitCount=speech.reduce((count,beat)=>count+(beat.turns?.length??1),0);
     const regeneration = { previousOutputUsed: !!previous,
       interruptedSegmentCacheFound: !!interruptedVisual,
-      reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
+      reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:speechUnitCount-reusedSpeechIds.length,
       reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
     const soundEffects=job.sounds.map(({id,eventId,licenseStatus,assetSha256,kind,offsetMs,gainDb,fadeInMs,fadeOutMs})=>({

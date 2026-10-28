@@ -16,6 +16,35 @@ const mechanic=()=>({version:1,operator:"accumulate",subjectId:"house",actors:[
   {id:"total",label:"Total cost",role:"result",claimIds:["claim_illustrative"]}],
   operands:["tax","insurance"],outcomeId:"total"});
 
+test("three character and narration turns belong to one uncut, exportable scene",()=>{
+  const d=dossier(),p=plan();
+  const voice="6ab4c6b0f37f4243a99046478647be94";
+  const turns=[
+    {id:"pip-question",narration:"Pip asks which monthly bills are included in the budget.",
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:voice},pauseAfterMs:120},
+    {id:"quill-answer",narration:"Quill answers that taxes and insurance recur over time.",
+      speaker:{id:"quill",role:"character",provider:"fish",voiceId:"b".repeat(32)},pauseAfterMs:140},
+    {id:"narrator-explains",narration:"The diagram continues showing those categories while the narrator connects the costs.",pauseAfterMs:0},
+  ];
+  p.sound[1].speechTurns=turns;
+  p.sound[1].narration=turns.map(turn=>turn.narration).join(" ");
+  const result=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  assert.equal(result.job.beats.length,p.shots.length,"dialogue must not duplicate the visual scene");
+  assert.deepEqual(result.job.beats[1].speechTurns,turns.map(turn=>({
+    id:turn.id,narration:turn.narration,pauseAfterMs:turn.pauseAfterMs,
+    ...(turn.speaker?{speaker:{id:turn.speaker.id,role:turn.speaker.role,voiceId:turn.speaker.voiceId}}:{})
+  })));
+  assert.equal(parseVideoProductionJob(result.job).ok,true);
+  for(const invalid of [
+    turns.map((turn,index)=>index===1?{...turn,id:turns[0].id}:turn),
+    turns.map((turn,index)=>index===1?{...turn,startMs:100}:turn),
+    turns.map((turn,index)=>index===1?{...turn,speaker:{...turn.speaker,provider:"local"}}:turn),
+  ]){
+    const bad=structuredClone(p);bad.sound[1].speechTurns=invalid;
+    assert.throws(()=>compilePreproductionBundle(d,bad),/turn|speaker|provider|dialogue|unknown-field/i);
+  }
+});
+
 test("semantic research mechanic projects unchanged into the three technical phases",()=>{
   const d=dossier(),p=plan();p.shots.forEach(s=>delete s.sceneRecipe);
   p.teachingSequences[0].visualMechanic=mechanic();

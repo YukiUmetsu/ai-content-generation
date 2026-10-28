@@ -8,8 +8,10 @@ import { projectNarratorSettingsKey, readProjectVoices, type VoiceFavorite } fro
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
+type CastSpeaker={id:string;role:"narrator"|"character";provider:"local"|"fish";voiceId:string};
 type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>;
-  sound?:Array<{shotId:string;speaker?:{id:string;role:"narrator"|"character";provider:"local"|"fish";voiceId:string}}>}};
+  sound?:Array<{shotId:string;speaker?:CastSpeaker;
+    speechTurns?:Array<{id:string;narration:string;pauseAfterMs:number;speaker?:CastSpeaker}>}>}};
 type Preview = {schemaVersion:number;kind:string;job:{beats:Array<{id:string;narration:string;visual:{headline:string;subhead:string;items:string[]}}>};
   shotMap:Array<{shotId:string;beatId:string;visualAction:string}>;
   warnings:string[];editorialStatus:string};
@@ -109,7 +111,10 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   // Cast authorization is deliberately ephemeral: a saved voice ID is not permission
   // to synthesize it. A new session, scene edit or narrator change needs consent.
   const [castVoiceConsent,setCastVoiceConsent]=useState(false);
-  const sceneCast=(bundle.plan.sound??[]).filter((sound):sound is typeof sound & {speaker:NonNullable<typeof sound.speaker>}=>Boolean(sound.speaker));
+  const sceneCast=(bundle.plan.sound??[]).flatMap(sound=>sound.speechTurns?
+    sound.speechTurns.flatMap((turn,index)=>turn.speaker?[{shotId:sound.shotId,
+      label:`${sound.shotId} · line ${index+1}`,speaker:turn.speaker}]:[]):
+    sound.speaker?[{shotId:sound.shotId,label:sound.shotId,speaker:sound.speaker}]:[]);
   const extraCast=sceneCast.filter(item=>item.speaker.voiceId!==settings.voiceId);
   const extraVoices=[...new Set(extraCast.map(item=>`${item.speaker.provider}:${item.speaker.voiceId}`))];
   const mismatchedCast=sceneCast.filter(item=>item.speaker.provider!==settings.provider);
@@ -573,10 +578,10 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
           </div>}
         </div>
         {sceneCast.length>0&&<div className="space-y-3 rounded-control border border-border p-4" aria-label="Scene cast voices">
-          <div><p className="font-semibold">Scene cast <span className="font-normal text-muted-foreground">· {sceneCast.length} assigned {sceneCast.length===1?"scene":"scenes"}</span></p>
-            <p className="mt-1 text-xs text-muted-foreground">Your saved scene speaker choices will travel with the production job. Change them in the Scene editor above; other scenes still use your main narrator.</p></div>
-          <ul className="grid gap-2 sm:grid-cols-2">{sceneCast.map(({shotId,speaker})=><li key={shotId} className="min-w-0 rounded-control bg-surface-subtle px-3 py-2 text-xs">
-            <span className="block font-semibold text-foreground">{speaker.id==="pip"?"Pip":speaker.id==="quill"?"Quill":speaker.id} <span className="font-normal text-muted-foreground">· {shotId}</span></span>
+          <div><p className="font-semibold">Scene cast <span className="font-normal text-muted-foreground">· {sceneCast.length} assigned {sceneCast.length===1?"voice role":"voice roles"}</span></p>
+            <p className="mt-1 text-xs text-muted-foreground">Saved speakers are bound per dialogue line or scene. All lines in the same scene play over one continuous shot; unassigned lines use the narrator.</p></div>
+          <ul className="grid gap-2 sm:grid-cols-2">{sceneCast.map(({label,speaker},index)=><li key={`${label}:${index}`} className="min-w-0 rounded-control bg-surface-subtle px-3 py-2 text-xs">
+            <span className="block font-semibold text-foreground">{speaker.id==="pip"?"Pip":speaker.id==="quill"?"Quill":speaker.id} <span className="font-normal text-muted-foreground">· {label}</span></span>
             <span className="mt-1 block break-all text-muted-foreground">{speaker.provider} · {speaker.voiceId}</span>
           </li>)}</ul>
           {mismatchedCast.length>0&&<p role="alert" className="flex items-start gap-2 text-xs text-danger"><AlertCircle className="size-4 shrink-0"/>
@@ -625,7 +630,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
           <div className="rounded-control border border-border p-3"><p className="text-xs text-muted-foreground">Voice audition</p><p className="mt-1 font-medium">{sampleStatus.state==="done"?"Sample available":"Optional · not generated"}</p></div>
         </div>
         {sceneCast.length>0&&<p className="rounded-control border border-border bg-surface-subtle p-3 text-xs text-muted-foreground" role="status">
-          {sceneCast.length} scenes have explicit speaker voices; {extraVoices.length} additional voices require permission. {extraVoices.length>0?(castVoiceConsent?"Cast voice permission is checked for this session.":"Return to Narration to authorize these voices."):"All assigned voices use the selected narrator voice."}
+          {sceneCast.length} assigned speaker roles across the scenes; {extraVoices.length} additional voices require permission. {extraVoices.length>0?(castVoiceConsent?"Cast voice permission is checked for this session.":"Return to Narration to authorize these voices."):"All assigned voices use the selected narrator voice."}
         </p>}
         {preview&&<details className="rounded-control border border-border p-3">
           <summary className="cursor-pointer font-medium">Review all scene narration ({preview.job.beats.length})</summary>
