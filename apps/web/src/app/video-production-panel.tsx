@@ -348,7 +348,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     const revision=inputRevision.current;
     setWorking("check");setNotice("");setReady(false);
     try{
-      const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,...(voiceProjectId?{characterProjectId:voiceProjectId}:{}),...(productionId?{productionId,sourceRevision}:{})});
       if(revision!==inputRevision.current){setNotice("Scene, voice or consent changed during readiness. Check again for the new version.");return;}
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
@@ -385,7 +385,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
         setPreview(result);
       }
       setState({state:"checking",phase:"preflight",message:"Checking voice permissions, installed tools and scene assets…"});
-      const requestInput={...payload,settings,castVoiceConsent,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
+      const requestInput={...payload,settings,castVoiceConsent,searchFreeMedia,...(voiceProjectId?{characterProjectId:voiceProjectId}:{}),...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
