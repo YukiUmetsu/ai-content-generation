@@ -405,6 +405,11 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
     }catch(error){setWarning(error instanceof Error?error.message:"Unable to add the selected image.");}
   }
   const chosenCover = artwork.find((art) => art.id === `cover-${platform}${coverLayouts.find((option) => option.id === activeCover.layout)?.suffix ?? ""}`) ?? artwork[0];
+  const renderedThumbnails=platform==="youtube"?(input.assets??[]).filter(asset=>
+    asset.kind==="thumbnail"&&asset.platform==="youtube"&&
+    /^thumbnail-[123]\.png$/u.test(asset.filename??"")&&
+    asset.downloadUrl?.startsWith("/api/contentgen-video/media/"))
+    .sort((a,b)=>(a.filename??"").localeCompare(b.filename??"")):[];
   const artApproved = Boolean(platform && canExportPlatformArtwork(input, platform));
   const showUploadTitle = platform !== "instagram" && platform !== "tiktok";
   const review = useMemo(() => pkg ? reviewPlatformPackage(pkg, availableInput) : null, [pkg, availableInput]);
@@ -587,6 +592,31 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
 
           <div className={`${cardClass} space-y-4`}>
             <SectionHeading note="Made locally with Kumiki">{isBlog(platform) ? "Article illustrations" : "Thumbnail designer"}</SectionHeading>
+            {renderedThumbnails.length>0&&<section className="space-y-3" aria-label="Rendered video thumbnails">
+              <div className="space-y-1">
+                <h4 className="text-sm font-semibold">Ready-to-use thumbnails from your video</h4>
+                <p className="text-xs text-muted-foreground">Choose the PNG for your publishing package. Each concept is saved separately.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {renderedThumbnails.map((asset,index)=><div key={asset.id} className="min-w-0 space-y-2 rounded-xl border border-border p-2.5">
+                  <button type="button" aria-pressed={pkg.assetIds.thumbnail===asset.id}
+                    aria-label={`Use rendered thumbnail concept ${index+1}`}
+                    onClick={()=>changeAsset("thumbnail",asset.id)}
+                    className="w-full rounded-lg border border-transparent text-left outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/10">
+                    <img src={asset.downloadUrl} alt={`Rendered thumbnail concept ${index+1}`}
+                      className="aspect-video w-full rounded-md bg-muted object-cover" loading="lazy"/>
+                    <span className="block px-2 py-1.5 text-xs font-semibold">
+                      Concept {index+1}{pkg.assetIds.thumbnail===asset.id?" · Selected":""}
+                    </span>
+                  </button>
+                  <a className="inline-flex items-center gap-1 text-xs font-medium text-primary underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    href={asset.downloadUrl} download={asset.filename}>
+                    <Download className="size-3" aria-hidden/>Download PNG
+                  </a>
+                </div>)}
+              </div>
+              <p className="text-xs text-muted-foreground">The designer below creates a new edited alternative; it does not overwrite these finished PNGs.</p>
+            </section>}
             {artwork.length === 0 ? <p className="text-sm text-muted-foreground">Write a section for {PLATFORM_NAMES[platform]} to generate local draft artwork. Approval is only needed for publication.</p> :
               isBlog(platform) ? <div className="grid gap-3 sm:grid-cols-2">{artwork.map((art) => <div key={art.id} className="min-w-0 rounded-xl border border-border p-2.5">
                 <img src={art.preview} alt={`${art.label}: outline of the current script`} className="aspect-video w-full rounded-lg bg-muted object-contain" />

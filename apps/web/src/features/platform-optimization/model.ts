@@ -259,7 +259,22 @@ export function sourceSignature(input: PlatformOptimizationInput, target?: Platf
   return `source-v1-${hash.toString(16).padStart(8, "0")}`;
 }
 
+function renderedYoutubeThumbnail(input: PlatformOptimizationInput, target: PlatformTarget): string | null {
+  if(target!=="youtube")return null;
+  // Actual video-production concepts take precedence over the incidental
+  // cover-still.png and browser-only artwork. Prefer the first concept as a
+  // stable default; switching concepts explicitly becomes a saved manual edit.
+  const candidates=(input.assets??[]).filter(asset=>asset.kind==="thumbnail"&&
+    asset.platform==="youtube"&&/^thumbnail-[123]\.png$/u.test(asset.filename??"")&&
+    asset.downloadUrl?.startsWith("/api/contentgen-video/media/"));
+  return [...candidates].sort((a,b)=>(a.filename??"").localeCompare(b.filename??""))[0]?.id??null;
+}
+
 function suitableAsset(input: PlatformOptimizationInput, target: PlatformTarget, kind: AssetKind): string | null {
+  if(kind==="thumbnail"){
+    const rendered=renderedYoutubeThumbnail(input,target);
+    if(rendered)return rendered;
+  }
   const assets = (input.assets ?? []).filter((asset) => asset.kind === kind);
   const latest = [...assets].reverse();
   const exact = latest.find((asset) => asset.platform?.trim().toLowerCase() === target);
@@ -296,11 +311,16 @@ function addSuggestedArtwork(pkg: PlatformPackage, input: PlatformOptimizationIn
 
 function currentArtworkSelection(pkg: PlatformPackage, input: PlatformOptimizationInput, kind: "thumbnail" | "hero"): string | null {
   const selected = pkg.assetIds[kind];
+  const userChoseCover=pkg.revisions.some(item=>item.reason==="asset-changed"&&item.field===kind);
+  if(kind==="thumbnail"&&pkg.status!=="approved"&&!userChoseCover){
+    const rendered=renderedYoutubeThumbnail(input,pkg.platform);
+    if(rendered)return rendered;
+  }
   if (selected?.startsWith("kumiki-art-")) {
     // Old, now-unapproved art must never masquerade as the current export.
     return input.assets?.some((asset) => asset.id === selected) ? selected : suitableAsset(input, pkg.platform, kind);
   }
-  if (selected || pkg.revisions.some((item) => item.reason === "asset-changed" && item.field === kind)) return selected;
+  if (selected || userChoseCover) return selected;
   return suitableAsset(input, pkg.platform, kind);
 }
 

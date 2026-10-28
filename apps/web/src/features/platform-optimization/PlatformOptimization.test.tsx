@@ -26,6 +26,27 @@ describe("PlatformOptimization", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
+  it("shows all three real production PNGs and persists the selected publishing thumbnail", () => {
+    const media="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/";
+    const withRenders={...input,assets:[...input.assets!,
+      ...[1,2,3].map(i=>({id:`rendered-${i}`,kind:"thumbnail" as const,platform:"youtube",
+        filename:`thumbnail-${i}.png`,downloadUrl:media+`thumbnail-${i}.png`})),
+      {id:"still",kind:"thumbnail" as const,platform:"youtube",filename:"cover-still.png",
+        downloadUrl:media+"cover-still.png"}]};
+    const view=render(<PlatformOptimization input={withRenders}/>);
+    expect(screen.getAllByRole("img",{name:/Rendered thumbnail concept [123]/})).toHaveLength(3);
+    const picker=screen.getByRole("combobox",{name:"Thumbnail / cover"});
+    expect(picker).toHaveValue("rendered-1");
+    fireEvent.click(screen.getByRole("button",{name:"Use rendered thumbnail concept 3"}));
+    expect(picker).toHaveValue("rendered-3");
+    expect(screen.getByRole("button",{name:"Use rendered thumbnail concept 3"})).toHaveAttribute("aria-pressed","true");
+    expect(screen.getAllByRole("link",{name:/Download PNG/})).toHaveLength(3);
+    view.unmount();
+    render(<PlatformOptimization input={{...withRenders,title:"A rewritten script",sourceRevision:"script-2"}}/>);
+    // Manual thumbnail choice survives reopening and script regeneration.
+    expect(screen.getByRole("combobox",{name:"Thumbnail / cover"})).toHaveValue("rendered-3");
+  });
+
   it("auto-prepares metadata per destination and preserves manual edits across tabs and reopen", () => {
     const view = render(<PlatformOptimization input={input} />);
     const title = screen.getByLabelText("Upload title") as HTMLInputElement;

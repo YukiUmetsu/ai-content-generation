@@ -6,6 +6,7 @@ import {
   resetPlatformField,
   reconcilePlatformOptimizationManifest,
   reviewPlatformPackage,
+  updatePlatformAsset,
   updatePlatformField,
   type PlatformOptimizationInput,
 } from "./model";
@@ -33,6 +34,24 @@ const input: PlatformOptimizationInput = {
 };
 
 describe("platform optimization authoring", () => {
+  it("defaults to the first actual rendered thumbnail without replacing manual or approved selections", () => {
+    const path="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/";
+    const released={...input,platforms:["youtube"],assets:[
+      ...input.assets!,
+      ...[1,2,3].map(i=>({id:`rendered-${i}`,kind:"thumbnail" as const,platform:"youtube",
+        filename:`thumbnail-${i}.png`,downloadUrl:path+`thumbnail-${i}.png`})),
+      {id:"cover-still",kind:"thumbnail" as const,platform:"youtube",
+        filename:"cover-still.png",downloadUrl:path+"cover-still.png"},
+    ]};
+    expect(createPlatformOptimizationManifest(released).packages[0].assetIds.thumbnail).toBe("rendered-1");
+    const before=createPlatformOptimizationManifest({...input,platforms:["youtube"]});
+    // Previously automatic browser artwork upgrades to the finished PNG.
+    expect(reconcilePlatformOptimizationManifest(before,released).packages[0].assetIds.thumbnail).toBe("rendered-1");
+    const manuallyPinned=updatePlatformAsset(before,"youtube","thumbnail","user-chosen-cover");
+    // Explicitly pinned artwork stays untouched when a new release appears.
+    expect(reconcilePlatformOptimizationManifest(manuallyPinned,released).packages[0].assetIds.thumbnail)
+      .toBe("user-chosen-cover");
+  });
   it("prepares distinct, source-derived metadata for requested platforms without inventing timestamps", () => {
     const result = createPlatformOptimizationManifest(input);
     expect(result.packages.map((item) => item.platform)).toEqual(["youtube", "tiktok", "instagram", "facebook", "blog"]);
