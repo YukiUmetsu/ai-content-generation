@@ -120,3 +120,23 @@ test("abandoning a long MP4 request does not delay stage shutdown", async t => {
     })]);
   } finally { clearTimeout(timeout); }
 });
+
+test("custom character raster layers are checksum-pinned, private, and same-origin only", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-rig-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "video-export.html"), "rig");
+  const bytes = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1]);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const url = `/__character_assets/${digest}.png`;
+  const server = await startLocalStageServer({distRoot:root,validatedPlan:{schemaVersion:1},
+    characterAssets:[{url,sha256:digest,mediaType:"image/png",bytes}]});
+  t.after(()=>server.close());
+  const response=await fetch(new URL(url,server.url));
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("content-type"),"image/png");
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+  assert.equal((await fetch(new URL("/__character_assets/other.png",server.url))).status,404);
+  assert.equal((await fetch(new URL(url,server.url),{method:"POST"})).status,405);
+  await assert.rejects(startLocalStageServer({distRoot:root,validatedPlan:{schemaVersion:1},
+    characterAssets:[{url,sha256:"0".repeat(64),mediaType:"image/png",bytes}]}),/invalid|checksum/i);
+});
