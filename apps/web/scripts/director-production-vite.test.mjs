@@ -1609,6 +1609,39 @@ test("changing a checked setting demands a fresh preflight; revoked local voice 
   assert.equal((await invoke(server,"POST","/start",{...p,settings:{...config,localVoiceAuthorized:false},confirmRender:true})).status,422);
   assert.equal(calls,0);
 });
+test("custom rig revisions are checked twice and frozen into the actual render request",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-character-rig-test-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const project=inputs(),speaker={id:"pip",role:"character",provider:"local",voiceId:config.voiceId};
+  project.bundle.plan.sound[0].speaker=speaker;
+  let archiveSha="a".repeat(64),renders=0,used=null,lookups=0;
+  const server=createDirectorProduction({outputRoot:dir,build:async()=>{},findBrowser:async()=>"/mock/chromium",
+    inspect:async()=>({ready:true,findings:[],tools:{}}),
+    loadCharacterRigs:async ({projectId,speakers})=>{
+      lookups++;
+      assert.equal(projectId,"project-custom-rigs");
+      assert.deepEqual(speakers,["pip"]);
+      const identity=[{speakerId:"pip",draftId:"character-draft-"+"b".repeat(32),
+        archiveSha256:archiveSha,revision:"custom-v2"}];
+      return {identity,rigs:{pip:{draftId:identity[0].draftId,
+        archiveSha256:archiveSha,definition:{characterId:"pip",revision:"custom-v2"},assetUrls:{}}},assets:[]};
+    },
+    produce:async(_job,options)=>{renders++;used=options.characterRigPacks;throw Error("intentional fixture stop");}});
+  const payload={...project,settings:config,characterProjectId:"project-custom-rigs"};
+  const checked=await invoke(server,"POST","/check",payload);
+  assert.equal(checked.status,200);
+  assert.equal(checked.data.characterRigs[0].revision,"custom-v2");
+  archiveSha="c".repeat(64);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,409,
+    "a different saved rig must require fresh readiness rather than substituting artwork");
+  assert.equal(renders,0);
+  archiveSha="a".repeat(64);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<20&&!renders;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(renders,1);
+  assert.equal(used.identity[0].archiveSha256,"a".repeat(64));
+  assert.ok(lookups>=3);
+});
 test("readiness and export bind reviewed SFX to the same measured beat events, and recheck after changes",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-reviewed-sfx-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const project=inputs();
