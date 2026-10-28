@@ -1,10 +1,106 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {execFile} from "node:child_process";
+import {promisify} from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { approveAsset, clearSelectedSceneAsset, discoverShotAssets, listApprovedAssets,
-  listSelectedSceneAssets, planSceneAssetNeeds, selectApprovedSceneAsset } from "./asset-discovery.mjs";
+  listSelectedSceneAssets, planSceneAssetNeeds, selectApprovedSceneAsset,
+  importDownloadedPexelsAsset, importPexelsPhotoPage } from "./asset-discovery.mjs";
+
+const exec=promisify(execFile);
+
+test("site-downloaded Pexels JPEG is checked, hashed, reusable, and explicitly pinnable",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"pexels-website-upload-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const image=Buffer.alloc(512);image.set([0xff,0xd8,0xff]);
+  const input={projectId:"project-1",shotId:"shot-house",assetType:"photo",sourceUrl:
+    "https://www.pexels.com/photo/a-house-in-sunlight-123456/",creator:"Example Artist",confirmRights:true};
+  const opts={root,probe:async()=>({stdout:JSON.stringify({streams:[{codec_name:"mjpeg",width:1920,height:1080}]})})};
+  const saved=await importDownloadedPexelsAsset(input,image,opts);
+  assert.equal(saved.provider,"pexels");
+  assert.equal(saved.acquisition,"user-downloaded-from-website");
+  assert.equal(saved.creator,"Example Artist");
+  assert.equal(saved.sha256.length,64);
+  assert.equal((await listApprovedAssets({projectId:input.projectId},{root})).length,1);
+  const pinned=await selectApprovedSceneAsset({projectId:input.projectId,shotId:input.shotId,
+    provider:"pexels",assetId:"123456",sha256:saved.sha256},{root});
+  assert.equal(pinned.localPath,saved.localPath);
+  const again=await importDownloadedPexelsAsset(input,image,opts);
+  assert.equal(again.localPath,saved.localPath);
+  await writeFile(saved.localPath,Buffer.alloc(512,1));
+  await assert.rejects(importDownloadedPexelsAsset(input,image,opts),/changed or damaged/);
+  assert.equal((await listApprovedAssets({projectId:input.projectId},{root})).length,0);
+  await assert.rejects(importDownloadedPexelsAsset({...input,sourceUrl:"https://evil.example/photo/a-123456/"},image,opts),/Pexels source page/);
+  await assert.rejects(importDownloadedPexelsAsset({...input,sourceUrl:"https://www.pexels.com/video/a-123456/"},image,opts),/must match/);
+  await assert.rejects(importDownloadedPexelsAsset({...input,confirmRights:false},image,opts),/Review/);
+  await assert.rejects(importDownloadedPexelsAsset(input,Buffer.alloc(512),opts),/JPEG/);
+  await assert.rejects(importDownloadedPexelsAsset({...input,shotId:"../secret"},image,opts),/identifier/);
+});
+
+test("website imports reject a symlinked project directory before writing any files",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"pexels-site-symlink-"));
+  const outside=await mkdtemp(join(tmpdir(),"pexels-site-outside-"));
+  t.after(()=>Promise.all([rm(root,{recursive:true,force:true}),rm(outside,{recursive:true,force:true})]));
+  await symlink(outside,join(root,"project-1"));
+  const jpg=Buffer.alloc(512);jpg.set([0xff,0xd8,0xff]);
+  await assert.rejects(importDownloadedPexelsAsset({projectId:"project-1",shotId:"shot-1",
+    sourceUrl:"https://www.pexels.com/photo/roof-12345/",assetType:"photo",confirmRights:true},jpg,
+  {root,probe:async()=>({stdout:JSON.stringify({streams:[{codec_name:"mjpeg",width:1280,height:720}]})})}),
+  /real local directory/);
+  assert.deepEqual(await readdir(outside),[],"no output may be written through a symlinked project folder");
+});
+
+test("real FFmpeg media probes accept a compatible website JPEG and H.264 MP4",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"pexels-ffprobe-upload-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const jpg=join(root,"sample.jpg"),mp4=join(root,"sample.mp4");
+  await exec("ffmpeg",["-hide_banner","-loglevel","error","-f","lavfi","-i","color=c=blue:s=1280x720",
+    "-frames:v","1","-threads","1","-y",jpg],{timeout:30000});
+  await exec("ffmpeg",["-hide_banner","-loglevel","error","-f","lavfi","-i","color=c=blue:s=1280x720:r=15",
+    "-t","1","-c:v","libx264","-threads","1","-pix_fmt","yuv420p","-y",mp4],{timeout:30000});
+  const input={projectId:"project-1",shotId:"shot-house",confirmRights:true};
+  const photo=await importDownloadedPexelsAsset({...input,assetType:"photo",
+    sourceUrl:"https://www.pexels.com/photo/blue-sky-11111/"},await readFile(jpg),{root});
+  const video=await importDownloadedPexelsAsset({...input,assetType:"video",
+    sourceUrl:"https://www.pexels.com/video/blue-ocean-22222/"},await readFile(mp4),{root});
+  assert.equal(photo.width,1280);
+  assert.equal(video.width,1280);
+  assert.equal(video.height,720);
+  assert.ok(video.durationSeconds>0&&video.durationSeconds<=90);
+  assert.equal((await listApprovedAssets({projectId:"project-1"},{root})).length,2);
+});
+
+test("one selected Pexels photo page downloads one verified image without an API key or crawling",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"pexels-page-photo-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const page="https://www.pexels.com/photo/landscape-99111/";
+  const cdn="https://images.pexels.com/photos/99111/pexels-photo-99111.jpeg";
+  const bytes=Buffer.alloc(512);bytes.set([0xff,0xd8,0xff]);
+  const seen=[];
+  const fetchImpl=async(url,options)=>{
+    seen.push({url,options});
+    if(url===page)return new Response(`<html><meta property="og:image" content="${cdn}"></html>`,
+      {status:200,headers:{"content-type":"text/html"}});
+    if(url===cdn)return new Response(bytes,{status:200,headers:{"content-type":"image/jpeg"}});
+    throw Error("Untrusted request: "+url);
+  };
+  const input={projectId:"project-1",shotId:"shot-house",assetType:"photo",sourceUrl:page,confirmRights:true};
+  const opts={root,fetchImpl,probe:async()=>({stdout:JSON.stringify({streams:[{codec_name:"mjpeg",width:1920,height:1080}]})})};
+  const imported=await importPexelsPhotoPage(input,opts);
+  assert.equal(imported.assetId,"99111");
+  assert.equal(imported.acquisition,"website-page-download");
+  assert.deepEqual(seen.map(entry=>entry.url),[page,cdn]);
+  assert.ok(seen.every(entry=>entry.options.redirect==="error"&&!entry.options.headers.Authorization));
+  await assert.rejects(importPexelsPhotoPage({...input,sourceUrl:"https://evil.example/photo/a-99111/"},opts),/direct Pexels/);
+  assert.equal(seen.length,2);
+  const deny=async()=>new Response("Forbidden",{status:403,headers:{"content-type":"text/html"}});
+  await assert.rejects(importPexelsPhotoPage(input,{...opts,fetchImpl:deny}),/did not allow/);
+  await assert.rejects(importPexelsPhotoPage(input,{...opts,fetchImpl:async()=>new Response(
+    `<meta property="og:image" content="https://evil.example/photos/99111/a.jpeg">`,
+    {headers:{"content-type":"text/html"}})}),/not available/);
+});
 
 const bundle = { plan: { shots: [
   { id: "shot-house", purpose: "Show the roof", visualChange: "Camera reveals roof damage", onScreenText: "Roof replacement", visualElements: [{ label: "Roof", detail: "Roof replacement costs" }] },

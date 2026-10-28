@@ -26,6 +26,7 @@ import { createProductionJobTracker } from "./video-production/production-jobs.m
 import { discoverShotAssets, listApprovedAssets, listSelectedSceneAssets } from "./video-production/asset-discovery.mjs";
 import { selectedMediaFingerprint } from "./video-production/render-scene-media.mjs";
 import { withAutomaticApprovedMedia } from "./video-production/automatic-approved-assets.mjs";
+import { productionProviderKey } from "./video-production/provider-keychain.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -57,9 +58,10 @@ function mediaSearchChoice(input){
 function autoMediaChoice(input){
   if(input.autoPrepareFreeMedia!==undefined&&typeof input.autoPrepareFreeMedia!=="boolean")
     throw Error("Automatic draft media preference must be true or false.");
-  if(input.autoPrepareFreeMedia===true&&input.searchFreeMedia!==true)
-    throw Error("Automatic draft media requires the enabled provider search preference.");
-  return input.autoPrepareFreeMedia===true;
+  // No Pexels API workflow: site-downloaded media is imported and pinned by
+  // the creator. Keep existing scene manifests readable, but never use an old
+  // browser preference to contact a retired provider automatically.
+  return false;
 }
 const sampleExcerpt=text=>{
   const compact=String(text??"").replace(/\s+/gu," ").trim();
@@ -82,8 +84,8 @@ function validateSettings(x){
       x.modelId.length>180)throw Error("Choose your installed local TTS model and authorize this voice.");
     localSpeechEndpoint(x.endpoint);
   }else if(x.voiceConsent!==true||x.transmitText!==true||
-      typeof x.apiKey!=="string"||!x.apiKey.trim())
-    throw Error("Fish requires an API key plus explicit voice and text-transmission consent.");
+      (x.apiKey!==undefined&&typeof x.apiKey!=="string"))
+    throw Error("Fish Audio requires voice permission and explicit text-transmission consent.");
   return {...x,voiceId:x.voiceId.trim(),providerRevision:x.providerRevision.trim()};
 }
 export function configureRenderJob(job,settings){
@@ -147,6 +149,7 @@ export function createDirectorProduction(deps={}){
   const loadModel=deps.readModel??resolveModelForTask;
   const searchEndpoint=deps.searchEndpoint??configuredSearchEndpoint;
   const searchAssets=deps.searchAssets??discoverShotAssets;
+  const providerKey=deps.providerKey??productionProviderKey;
   const listSelections=deps.listSelections??listSelectedSceneAssets;
   const listApproved=deps.listApproved??listApprovedAssets;
   async function sceneMediaIdentity(compiled,dossier,bundle){
@@ -396,6 +399,17 @@ export function createDirectorProduction(deps={}){
     return {found:false};
   }
   const env=deps.env??process.env;
+  async function resolvedVoiceSettings(input,remember=()=>{}){
+    const settings=validateSettings(input);
+    if(settings.provider!=="fish")return settings;
+    // Never require the browser to read a Keychain secret. Inline keys from
+    // older Studio sessions remain usable only for their current request.
+    const key=await providerKey("fish",{env})||settings.apiKey||"";
+    if(!key)throw Error("Fish Audio API key is missing. Save it in Settings → Connections, then retry.");
+    remember(key);
+    if(settings.apiKey)remember(settings.apiKey);
+    return {...settings,apiKey:key};
+  }
   const newJobTracker=deps.jobTracker??(()=>createProductionJobTracker());
   let busy=false,checked=null,controller=null,lastOutput=null,preview=null;
   let activeJobTracker=null;
@@ -411,6 +425,9 @@ export function createDirectorProduction(deps={}){
   async function handle(req,res){
     if(!authorize(req,res))return;
     const route=(req.url||"/").split("?")[0];
+    const secrets=[];
+    const remember=key=>{if(typeof key==="string"&&key.length>=8)secrets.push(key);};
+    const redact=value=>secrets.reduce((message,secret)=>message.replaceAll(secret,"[redacted]"),String(value));
     try{
       if(req.method==="GET"&&route==="/demo"){
         const dossier=JSON.parse(readFileSync(new URL("../../../examples/preproduction-research-smoke.json",import.meta.url),"utf8"));
@@ -537,7 +554,7 @@ export function createDirectorProduction(deps={}){
       }
       if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
       if(route==="/narration-sample"){
-        const input=await readBody(req),settings=validateSettings(input.settings);
+        const input=await readBody(req),settings=await resolvedVoiceSettings(input.settings,remember);
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const job=configureRenderJob(compiled.job,settings);
         if(!job.beats?.length)throw Error("Add a narrated scene before auditioning a voice.");
@@ -661,7 +678,7 @@ export function createDirectorProduction(deps={}){
         if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
           throw Error("Invalid source revision.");
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
-        const settings=validateSettings(input.settings);
+        const settings=await resolvedVoiceSettings(input.settings,remember);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
         const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
@@ -680,7 +697,10 @@ export function createDirectorProduction(deps={}){
             textTransmissionApproved:settings.transmitText===true,
             env:{...env,FISH_AUDIO_API_KEY:settings.apiKey||env.FISH_AUDIO_API_KEY||""}
           };
-          const report=await inspect(job,options);
+          const inspected=await inspect(job,options);
+          // Provider diagnostics are untrusted and may embed the submitted key.
+          const report=JSON.parse(JSON.stringify(inspected,(_field,value)=>
+            typeof value==="string"?redact(value):value));
           checked=report.ready?{identity}:null;
           status={...status,state:report.ready?"ready":"blocked",phase:"preflight",
             message:report.ready?"Ready to render an unverified test draft.":"Resolve the readiness findings below.",report};
@@ -698,7 +718,7 @@ export function createDirectorProduction(deps={}){
         if(input.sourceRevision!==undefined&&(typeof input.sourceRevision!=="string"||input.sourceRevision.length>300||/[\u0000-\u001f]/u.test(input.sourceRevision)))
           throw Error("Invalid source revision.");
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
-        const settings=validateSettings(input.settings);
+        const settings=await resolvedVoiceSettings(input.settings,remember);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
         const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
@@ -773,7 +793,7 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
-              autoPrepareFreeMedia,pexelsKey:autoPrepareFreeMedia?env.PEXELS_API_KEY:undefined,
+              autoPrepareFreeMedia:false,
               ...(tracker?{sceneJobs:tracker}:{}),
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
               sceneAssetBundle:input.bundle,
@@ -808,8 +828,8 @@ export function createDirectorProduction(deps={}){
                   const deadline=AbortSignal.timeout(35000);
                   const searchSignal=signal?AbortSignal.any([signal,deadline]):deadline;
                   const suggestions=await searchAssets({bundle:input.bundle,destination:"landscape",
-                    providers:["polyhaven","pexels","openverse"],allowExternalSearch:true},
-                  {pexelsKey:env.PEXELS_API_KEY,signal:searchSignal});
+                    providers:["polyhaven","openverse"],allowExternalSearch:true},
+                  {signal:searchSignal});
                   if(signal?.aborted)throw Error("Media search cancelled.");
                   if(deadline.aborted)throw Error("Media search timed out; use scene search to retry.");
                   if(suggestions?.kind!=="contentgen-scene-asset-suggestions"||
@@ -925,7 +945,7 @@ export function createDirectorProduction(deps={}){
     }catch(error){
       if(route==="/check"){checked=null;status={...status,state:"failed",phase:"preflight",
         message:"Readiness failed. Check Chrome, FFmpeg and pnpm."};busy=false;}
-      respond(res,422,{error:String(error?.message||"Production request failed").slice(0,280)});
+      respond(res,422,{error:redact(error?.message||"Production request failed").slice(0,280)});
     }
   }
   return {handle,status:()=>status};

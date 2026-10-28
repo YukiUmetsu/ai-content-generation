@@ -158,6 +158,65 @@ test("a provider failure never repeats the API key in voice audition status",asy
   assert.equal(result.message.includes(secret),false);
   assert.match(result.message,/Voice sample failed/);
 });
+
+test("a saved Fish key powers a draft without a browser key or Pexels API access",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-settings-keys-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const fishSecret="fish-native-secret-123";
+  const requested=[],observed=[];
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",build:async()=>{},
+    providerKey:async provider=>{requested.push(provider);return fishSecret;},
+    jobTracker:()=>({start:async()=>"saved-job",advance:async()=>{},complete:async()=>{},fail:async()=>{}}),
+    inspect:async(_job,opts)=>{
+      assert.equal(opts.env.FISH_AUDIO_API_KEY,fishSecret);
+      return {ready:true,findings:[]};
+    },
+    produce:async(_job,opts)=>{
+      observed.push({fish:opts.apiKey,pexels:opts.pexelsKey,autoPrepareFreeMedia:opts.autoPrepareFreeMedia});
+      const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock video media");
+      return {releaseDir};
+    },
+    searchAssets:async()=>({kind:"contentgen-scene-asset-suggestions",scenes:[],warnings:[]})});
+  const input={...inputs(),productionId:"production-"+"a".repeat(24),settings:{provider:"fish",voiceId:"licensed-voice",providerRevision:"v1",
+    apiKey:"",voiceConsent:true,transmitText:true},searchFreeMedia:true,autoPrepareFreeMedia:true};
+  const check=await invoke(server,"POST","/check",input);
+  assert.equal(check.status,200,JSON.stringify(check.data));
+  const start=await invoke(server,"POST","/start",{...input,confirmRender:true});
+  assert.equal(start.status,202,JSON.stringify(start.data));
+  for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.deepEqual(observed,[{fish:fishSecret,pexels:undefined,autoPrepareFreeMedia:false}]);
+  assert.deepEqual(requested,["fish","fish"]);
+  assert.ok(!JSON.stringify(check.data).includes(fishSecret));
+  assert.ok(!JSON.stringify(start.data).includes(fishSecret));
+});
+
+test("missing stored Fish key returns a safe, actionable Settings instruction",async()=>{
+  const server=createDirectorProduction({providerKey:async()=>"",build:async()=>{throw Error("build must not run");}});
+  const result=await invoke(server,"POST","/check",{...inputs(),settings:{provider:"fish",
+    voiceId:"licensed-voice",providerRevision:"v1",voiceConsent:true,transmitText:true,apiKey:""}});
+  assert.equal(result.status,422);
+  assert.match(result.data.error,/Settings → Connections/);
+});
+
+test("provider diagnostics never expose a stored Fish key in preflight errors or findings",async()=>{
+  const secret="native-fish-secret-diagnostic";
+  const settings={provider:"fish",voiceId:"licensed-voice",providerRevision:"v1",voiceConsent:true,
+    transmitText:true,apiKey:""};
+  const server=createDirectorProduction({providerKey:async()=>secret,build:async()=>{},
+    findBrowser:async()=>"/mock/chromium",inspect:async()=>({ready:false,
+      findings:[{severity:"error",code:"provider",message:"Provider denied "+secret}]})});
+  const checked=await invoke(server,"POST","/check",{...inputs(),settings});
+  assert.equal(checked.status,200);
+  assert.ok(!JSON.stringify(checked.data).includes(secret));
+  assert.match(checked.data.report.findings[0].message,/\[redacted\]/);
+  const bad=createDirectorProduction({providerKey:async()=>secret,build:async()=>{},
+    findBrowser:async()=>"/mock/chromium",inspect:async()=>{throw Error("Token failed: "+secret);}});
+  const failed=await invoke(bad,"POST","/check",{...inputs(),settings});
+  assert.equal(failed.status,422);
+  assert.match(failed.data.error,/\[redacted\]/);
+  assert.ok(!JSON.stringify(failed.data).includes(secret));
+});
 test("editor bridge is viewable without generating audio, and preview creates an offline rough cut",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-server-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let toolCalls=0;
@@ -719,6 +778,7 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal(server.status().state,"done");
   assert.equal(searchCalls.length,1);
   assert.equal(searchCalls[0].input.allowExternalSearch,true);
+  assert.deepEqual(searchCalls[0].input.providers,["polyhaven","openverse"]);
   assert.equal(searchCalls[0].options.pexelsKey,undefined);
   assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","asset-preparation","narration","complete"]);
   assert.equal(events[2][1].assetSearch.status,"partial");
@@ -734,11 +794,11 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal((await invoke(restarted,"GET","/suggestions/../secrets")).status,404);
 });
 
-test("automatic draft photos require their own opt-in and pass Pexels credentials only to the backend",async t=>{
+test("legacy auto-Pexels preferences cannot reactivate the retired API download path",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-photo-consent-"));
   t.after(()=>rm(dir,{recursive:true,force:true}));
   let received=null;
-  const server=createDirectorProduction({outputRoot:dir,env:{PEXELS_API_KEY:"test-private-key"},
+  const server=createDirectorProduction({outputRoot:dir,env:{PEXELS_API_KEY:"old-unused-private-key"},
     findBrowser:async()=>"/mock/chromium",build:async()=>{},
     inspect:async()=>({ready:true,findings:[]}),
     searchAssets:async()=>({kind:"contentgen-scene-asset-suggestions",warnings:[],scenes:[]}),
@@ -751,15 +811,13 @@ test("automatic draft photos require their own opt-in and pass Pexels credential
     }});
   const payload={...inputs(),settings:config,productionId:"production-"+"c".repeat(24),
     searchFreeMedia:true,autoPrepareFreeMedia:true};
-  assert.equal((await invoke(server,"POST","/check",{...payload,searchFreeMedia:false})).status,422);
+  assert.equal((await invoke(server,"POST","/check",{...payload,searchFreeMedia:false})).status,200);
   assert.equal((await invoke(server,"POST","/check",{...payload,autoPrepareFreeMedia:"yes"})).status,422);
   assert.equal((await invoke(server,"POST","/check",payload)).status,200);
-  assert.equal((await invoke(server,"POST","/start",{...payload,autoPrepareFreeMedia:false,confirmRender:true})).status,409,
-    "changing automatic download settings invalidates the readiness identity");
-  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  assert.equal((await invoke(server,"POST","/start",{...payload,autoPrepareFreeMedia:false,confirmRender:true})).status,202);
   for(let i=0;i<60&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
-  assert.deepEqual(received,{enabled:true,key:"test-private-key"});
-  assert.doesNotMatch(JSON.stringify(server.status()),/test-private-key/);
+  assert.deepEqual(received,{enabled:false,key:undefined});
+  assert.doesNotMatch(JSON.stringify(server.status()),/old-unused-private-key/);
 });
 
 test("retry reuses the interrupted run's intact scene catalog without another provider request",async t=>{

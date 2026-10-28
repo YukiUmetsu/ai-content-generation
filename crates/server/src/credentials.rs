@@ -6,10 +6,29 @@ use std::sync::Arc;
 use serde::Serialize;
 
 const YOUTUBE_ENV: &str = "CONTENTGEN_YOUTUBE_API_KEY";
+const FISH_ENV: &str = "FISH_AUDIO_API_KEY";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderId {
     Youtube,
+    Fish,
+}
+
+impl ProviderId {
+    pub fn from_slug(value: &str) -> Option<Self> {
+        match value {
+            "youtube" => Some(Self::Youtube),
+            "fish" => Some(Self::Fish),
+            _ => None,
+        }
+    }
+
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Youtube => "youtube",
+            Self::Fish => "fish",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -51,6 +70,7 @@ pub struct ConnectionStatus {
 pub struct ProviderCredentials {
     store: Arc<dyn CredentialStore>,
     env_key: Option<Arc<str>>,
+    fish_env: Option<Arc<str>>,
 }
 
 impl std::fmt::Debug for ProviderCredentials {
@@ -58,16 +78,23 @@ impl std::fmt::Debug for ProviderCredentials {
         fmt.debug_struct("ProviderCredentials")
             .field("store", &"native/injected")
             .field("env_fallback_configured", &self.env_key.is_some())
+            .field("fish_env_configured", &self.fish_env.is_some())
             .finish()
     }
 }
 
 impl ProviderCredentials {
     pub fn system() -> Self {
-        Self::new(
+        let mut credentials = Self::new(
             Arc::new(SystemCredentialStore),
             std::env::var(YOUTUBE_ENV).ok(),
-        )
+        );
+        credentials.fish_env = Self::clean_env(std::env::var(FISH_ENV).ok());
+        credentials
+    }
+
+    fn clean_env(value: Option<String>) -> Option<Arc<str>> {
+        value.filter(|key| !key.trim().is_empty()).map(Arc::from)
     }
 
     pub fn new(store: Arc<dyn CredentialStore>, env_key: Option<String>) -> Self {
@@ -76,35 +103,46 @@ impl ProviderCredentials {
             env_key: env_key
                 .filter(|value| !value.trim().is_empty())
                 .map(Arc::from),
+            fish_env: None,
         }
     }
 
-    pub fn youtube_key(&self) -> Result<String, CredentialError> {
-        match self.store.read(ProviderId::Youtube) {
+    fn environment(&self, provider: ProviderId) -> Option<&Arc<str>> {
+        match provider {
+            ProviderId::Youtube => self.env_key.as_ref(),
+            ProviderId::Fish => self.fish_env.as_ref(),
+        }
+    }
+
+    pub fn key(&self, provider: ProviderId) -> Result<String, CredentialError> {
+        match self.store.read(provider) {
             Ok(Some(key)) if !key.trim().is_empty() => Ok(key),
             Ok(Some(_)) => Err(CredentialError::Other),
             Ok(None) | Err(CredentialError::Unavailable) => self
-                .env_key
-                .as_ref()
+                .environment(provider)
                 .map(|key| key.to_string())
                 .ok_or(CredentialError::Missing),
             Err(error) => Err(error),
         }
     }
 
-    pub fn youtube_status(&self) -> ConnectionStatus {
-        let source = match self.store.read(ProviderId::Youtube) {
+    pub fn youtube_key(&self) -> Result<String, CredentialError> {
+        self.key(ProviderId::Youtube)
+    }
+
+    pub fn status(&self, provider: ProviderId) -> ConnectionStatus {
+        let source = match self.store.read(provider) {
             Ok(Some(key)) if !key.trim().is_empty() => ConnectionSource::Keychain,
             Ok(Some(_)) => ConnectionSource::Error,
             Ok(None) => {
-                if self.env_key.is_some() {
+                if self.environment(provider).is_some() {
                     ConnectionSource::Environment
                 } else {
                     ConnectionSource::Missing
                 }
             }
             Err(CredentialError::Unavailable) => {
-                if self.env_key.is_some() {
+                if self.environment(provider).is_some() {
                     ConnectionSource::Environment
                 } else {
                     ConnectionSource::Unavailable
@@ -113,13 +151,25 @@ impl ProviderCredentials {
             Err(_) => ConnectionSource::Error,
         };
         ConnectionStatus {
-            id: "youtube",
+            id: provider.slug(),
             configured: matches!(
                 source,
                 ConnectionSource::Keychain | ConnectionSource::Environment
             ),
             source,
         }
+    }
+
+    pub fn youtube_status(&self) -> ConnectionStatus {
+        self.status(ProviderId::Youtube)
+    }
+
+    pub fn put_key(&self, provider: ProviderId, key: &str) -> Result<(), CredentialError> {
+        self.store.put(provider, key)
+    }
+
+    pub fn delete_key(&self, provider: ProviderId) -> Result<(), CredentialError> {
+        self.store.delete(provider)
     }
 
     pub fn put_youtube_key(&self, key: &str) -> Result<(), CredentialError> {
@@ -142,6 +192,7 @@ mod native {
     fn account(provider: ProviderId) -> &'static str {
         match provider {
             ProviderId::Youtube => "youtube-data-api-v3",
+            ProviderId::Fish => "fish-audio-api",
         }
     }
 

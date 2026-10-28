@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deleteYoutubeKey, loadProviderConnections, saveYoutubeKey } from "./provider-credentials";
+import { deleteProviderKey, deleteYoutubeKey, loadProviderConnections, saveProviderKey, saveYoutubeKey } from "./provider-credentials";
+
+const otherProviders = [
+  { id: "fish", configured: false, source: "missing" },
+];
 
 const realFetch = globalThis.fetch;
 
@@ -19,12 +23,12 @@ describe("local provider credentials API", () => {
 
   it("reads configuration status without expecting secret material", async () => {
     const call = vi.fn(async () => jsonResponse({
-      providers: [{ id: "youtube", configured: true, source: "keychain" }],
+      providers: [{ id: "youtube", configured: true, source: "keychain" },...otherProviders],
     }));
     globalThis.fetch = call;
 
     expect(await loadProviderConnections()).toEqual([
-      { id: "youtube", configured: true, source: "keychain" },
+      { id: "youtube", configured: true, source: "keychain" },...otherProviders,
     ]);
     expect(call).toHaveBeenCalledWith("/api/settings/providers", expect.objectContaining({ method: "GET" }));
   });
@@ -70,6 +74,21 @@ describe("local provider credentials API", () => {
     expect(calls[1].init.headers).toEqual(expect.objectContaining({
       "X-Contentgen-Settings": "CSRF-delete",
     }));
+  });
+
+  it("uses the same one-time session for each provider write, never returns key material",async()=>{
+    const calls: string[]=[];
+    globalThis.fetch=vi.fn(async(path:RequestInfo|URL)=>{
+      const url=String(path);calls.push(url);
+      if(url.endsWith("/session"))return jsonResponse({token:"single-use-token"});
+      if(url.endsWith("/key"))return jsonResponse({id:url.includes("/fish/")?"fish":"pexels",configured:true,source:"keychain"});
+      throw Error("unexpected route");
+    });
+    expect((await saveProviderKey("fish","private-fish-key")).id).toBe("fish");
+    await deleteProviderKey("fish");
+    expect(calls).toEqual(["/api/settings/session","/api/settings/providers/fish/key",
+      "/api/settings/session","/api/settings/providers/fish/key"]);
+    expect(localStorage.length).toBe(0);
   });
 
   it("rejects unexpected status, missing session and secret-shaped provider errors", async () => {

@@ -88,15 +88,15 @@ it("remembers only nonsecret narrator preferences, never provider credentials or
   const first=render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
   await user.selectOptions(screen.getByRole("combobox",{name:"Production voice provider"}),"fish");
   await user.type(screen.getByRole("textbox",{name:"Production voice ID"}),"authorized-voice");
-  await user.type(screen.getByLabelText("Fish Audio key"),"secret-api-key");
+  expect(screen.getByText(/Save your Fish Audio API key once/i)).toBeInTheDocument();
   const saved=localStorage.getItem("contentgen:production-voice-profile:v1")??"";
   expect(saved).toContain("authorized-voice");
-  expect(saved).not.toContain("secret-api-key");
+  expect(saved).not.toContain("apiKey");
   expect(saved).not.toContain("voiceConsent");
   first.unmount();
   render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
   expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("authorized-voice");
-  expect(screen.getByLabelText("Fish Audio key")).toHaveValue("");
+  expect(screen.queryByLabelText("Fish Audio key")).not.toBeInTheDocument();
 });
 
 it("auditions a voice only on request and hides stale audio when provider settings change",async()=>{
@@ -189,7 +189,7 @@ it("keeps voice controls usable when the local scene planner is unavailable",asy
   vi.spyOn(globalThis,"fetch").mockRejectedValue(Error("Local director is offline"));
   render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
   expect(screen.getByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
-  expect(await screen.findByText(/Local director is offline/)).toBeInTheDocument();
+  expect(await screen.findByText(/Cannot reach local video production/)).toBeInTheDocument();
   expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
 });
 
@@ -290,6 +290,20 @@ it("automatically begins the saved production when invoked from Generate draft v
   await waitFor(()=>expect(paths.filter(path=>path.endsWith("/start"))).toHaveLength(1));
   expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
   expect(screen.getByRole("button",{name:"View in Jobs"})).toBeEnabled();
+});
+
+it("shows a missing narrator as an actionable error when auto-started from the script",async()=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    if(String(input).endsWith("/plan"))return reply(plan);
+    if(String(input).endsWith("/check"))return new Response(JSON.stringify({error:
+      "Choose a voice provider, authorized voice ID and pinned engine revision."}),{status:422});
+    throw Error("Unexpected draft request: "+input);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} autoStartDraft/>);
+  expect(await screen.findByText(/Choose a voice provider, authorized voice ID/)).toBeInTheDocument();
+  expect(screen.getByRole("tab",{name:/Narration/})).toHaveAttribute("aria-selected","true");
+  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
 });
 
 it("explains failed preflight without starting a render or disabling retry",async()=>{

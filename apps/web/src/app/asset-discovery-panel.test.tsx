@@ -32,9 +32,59 @@ it("restores auto-searched scene media without downloading or selecting it",asyn
   expect(await screen.findByText("Residential porch")).toBeInTheDocument();
   expect(screen.getByText(/Draft media suggestions loaded/)).toBeInTheDocument();
   expect(screen.getByRole("link",{name:/View original/})).toHaveAttribute("href",suggestions.scenes[0].candidates[0].sourceUrl);
-  expect(screen.getByRole("button",{name:"Review before import"})).toBeEnabled();
+  expect(screen.queryByRole("button",{name:"Review before import"})).not.toBeInTheDocument();
+  expect(screen.getByText(/Pexels API search is retired/)).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:"Import downloaded Pexels file"})).toBeDisabled();
   expect(paths.some(path=>path.includes("/suggestions/"+productionId))).toBe(true);
   expect(paths.every(path=>!path.endsWith("/approve")&&!path.endsWith("/select"))).toBe(true);
+});
+
+it("imports a website-downloaded Pexels file with explicit source and rights without any API key",async()=>{
+  const calls:Array<{url:string;init?:RequestInit}>=[];
+  const saved={shotId:"scene-1",provider:"pexels",assetType:"photo",assetId:"42",sha256:"a".repeat(64),
+    title:"Residential porch",license:"Pexels License",sizeBytes:512,localPath:"/approved/photo.jpg"};
+  let uploaded=false;
+  vi.stubGlobal("fetch",vi.fn(async(url:string,init?:RequestInit)=>{
+    const path=String(url);calls.push({url:path,init});
+    if(path.includes("/import-downloaded?")){uploaded=true;return {ok:true,json:async()=>({sha256:saved.sha256})};}
+    return {ok:true,json:async()=>path.includes("/approved?")?{assets:uploaded?[saved]:[]}:
+      {selections:[],invalidShots:[]}};
+  }));
+  const user=userEvent.setup();
+  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1"/>);
+  await screen.findByText(/Add an image or video from Pexels/);
+  await user.type(screen.getByLabelText("Pexels source page URL"),"https://www.pexels.com/photo/porch-42/");
+  const file=new File([new Uint8Array(512)],"porch.jpg",{type:"image/jpeg"});
+  await user.upload(screen.getByLabelText("Pexels downloaded file"),file);
+  await user.click(screen.getByRole("checkbox",{name:/I reviewed this Pexels page/}));
+  await user.click(screen.getByRole("button",{name:"Import downloaded Pexels file"}));
+  await waitFor(()=>expect(calls.some(item=>item.url.includes("/import-downloaded?"))).toBe(true));
+  const upload=calls.find(item=>item.url.includes("/import-downloaded?"))!;
+  const url=new URL(upload.url,"http://127.0.0.1:5173");
+  expect(url.searchParams.get("sourceUrl")).toBe("https://www.pexels.com/photo/porch-42/");
+  expect(url.searchParams.get("shotId")).toBe("scene-1");
+  expect(upload.init?.headers).toMatchObject({"Content-Type":"application/octet-stream"});
+  expect(upload.init?.body).toBe(file);
+  expect(await screen.findByText(/download verified, saved with its source/)).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:"Use in next draft"})).toBeEnabled();
+});
+
+it("downloads a single chosen Pexels photo page without submitting any API credential",async()=>{
+  const calls:Array<{path:string;body?:string}>=[];
+  vi.stubGlobal("fetch",vi.fn(async(url:string,init?:RequestInit)=>{
+    const path=String(url);calls.push({path,body:typeof init?.body==="string"?init.body:undefined});
+    return {ok:true,json:async()=>path.includes("/approved?")?{assets:[]}:
+      path.endsWith("/import-from-page")?{assetId:"42",provider:"pexels"}:{selections:[],invalidShots:[]}};
+  }));
+  const user=userEvent.setup();
+  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1"/>);
+  await user.type(screen.getByLabelText("Pexels source page URL"),"https://www.pexels.com/photo/porch-42/");
+  await user.click(screen.getByRole("checkbox",{name:/I reviewed this Pexels page/}));
+  await user.click(screen.getByRole("button",{name:"Download photo from Pexels page"}));
+  await waitFor(()=>expect(calls.some(item=>item.path.endsWith("/import-from-page"))).toBe(true));
+  const sent=calls.find(item=>item.path.endsWith("/import-from-page"))!;
+  expect(sent.body).toContain("https://www.pexels.com/photo/porch-42/");
+  expect(sent.body).not.toContain("apiKey");
 });
 
 it("shows Openverse CC0 search leads as references without offering an unsupported importer",async()=>{

@@ -38,11 +38,17 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const [siteUpload,setSiteUpload]=useState<{shotId:string;file:File}|null>(null);
+  const [siteUploadRevision,setSiteUploadRevision]=useState(0);
+  const [siteUrl,setSiteUrl]=useState("");
+  const [siteCreator,setSiteCreator]=useState("");
+  const [siteReviewedShotId,setSiteReviewedShotId]=useState<string|null>(null);
   const [savedSearchRefresh,setSavedSearchRefresh]=useState(0);
   const [framing,setFraming]=useState<{shotId:string;sha256:string;x:number;y:number}|null>(null);
   const results=search?.bundle===bundle&&search.destination===destination?search.data:null;
   const review=pending?.bundle===bundle&&pending.shotId===selectedShotId?pending.asset:null;
   const scene=results?.scenes.find(x=>x.shotId===selectedShotId);
+  const siteReviewed=siteReviewedShotId===selectedShotId;
   const sceneApproved=approved.filter(x=>x.shotId===selectedShotId);
   const sceneSelected=selected.selections.find(x=>x.shotId===selectedShotId);
   const currentFraming=sceneSelected?(framing?.shotId===selectedShotId&&framing.sha256===sceneSelected.sha256?
@@ -88,7 +94,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
     setBusy("search");setNotice("");setPending(null);
     try{
       // This button is the user-facing opt-in to public-provider requests.
-      const result=await localAssets("suggest",{bundle,destination,providers:["polyhaven","pexels","openverse"],allowExternalSearch:true});
+      const result=await localAssets("suggest",{bundle,destination,providers:["polyhaven","openverse"],allowExternalSearch:true});
       setSearch({bundle,destination,data:result as unknown as Results});
       setNotice("Ranked search suggestions only—no files were downloaded or selected. Check original sources and rights before importing; some providers offer reference links only.");
     }catch(error){setNotice(error instanceof Error?error.message:"Asset search failed.");}
@@ -105,6 +111,41 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
       setNotice("Asset imported with source, license and SHA-256 provenance. Choose 'Use in scene' to pin it for a future render.");
       setPending(null);setAcknowledged(false);
     }catch(error){setNotice(error instanceof Error?error.message:"Asset could not be imported.");}
+    finally{setBusy("");}
+  }
+  async function importSiteFile(){
+    if(busy||!siteUpload||siteUpload.shotId!==selectedShotId||!siteReviewed)return;
+    setBusy("site-upload");setNotice("");
+    try{
+      const file=siteUpload.file;
+      if(file.size<128||file.size>80*1024*1024)throw Error("Choose a Pexels download between 128 bytes and 80 MB.");
+      const assetType=/\.mp4$/iu.test(file.name)?"video":/\.jpe?g$/iu.test(file.name)?"photo":null;
+      if(!assetType)throw Error("Choose a .jpg or .mp4 downloaded from Pexels.");
+      const query=new URLSearchParams({projectId,shotId:selectedShotId,sourceUrl:siteUrl.trim(),
+        assetType,creator:siteCreator.trim(),confirmRights:"yes"});
+      const response=await fetch("/api/contentgen-assets/import-downloaded?"+query,{
+        method:"POST",cache:"no-store",headers:{"Content-Type":"application/octet-stream",
+          "X-Contentgen-Director":"local-only"},body:file,signal:AbortSignal.timeout(90000)});
+      const result=await response.json() as {error?:string};
+      if(!response.ok)throw Error(result.error??`Import failed (HTTP ${response.status}).`);
+      const updated=await localAssets("approved?projectId="+encodeURIComponent(projectId));
+      setApproved(updated.assets as Approved[]);
+      setSiteUpload(null);setSiteReviewedShotId(null);setSiteUploadRevision(value=>value+1);
+      setNotice("Pexels download verified, saved with its source and SHA-256 hash. Choose Use in next draft to pin it to this scene.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not import downloaded Pexels media.");}
+    finally{setBusy("");}
+  }
+  async function downloadSitePhoto(){
+    if(busy||!siteReviewed||!siteUrl.trim())return;
+    setBusy("site-photo");setNotice("");
+    try{
+      await localAssets("import-from-page",{projectId,shotId:selectedShotId,sourceUrl:siteUrl.trim(),
+        assetType:"photo",creator:siteCreator.trim(),confirmRights:true});
+      const updated=await localAssets("approved?projectId="+encodeURIComponent(projectId));
+      setApproved(updated.assets as Approved[]);
+      setSiteReviewedShotId(null);
+      setNotice("Pexels photo downloaded and verified. Select Use in next draft to include it in this scene.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Pexels could not provide this photo automatically. Download the JPG manually and import it below.");}
     finally{setBusy("");}
   }
   async function choose(asset:Approved){
@@ -143,7 +184,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
     <Search className="size-4"/>Scene asset discovery</h2>}>
     <div className="space-y-4 text-sm">
       <p className="text-muted-foreground">Find relevant video footage, photos, 3D models and materials for each storyboard scene.
-        Search powered by <a href="https://polyhaven.com/" className="underline" target="_blank" rel="noopener noreferrer">Poly Haven</a> and optional <a href="https://www.pexels.com/" className="underline" target="_blank" rel="noopener noreferrer">Pexels</a> metadata; nothing is imported without your approval.</p>
+        Search uses <a href="https://polyhaven.com/" className="underline" target="_blank" rel="noopener noreferrer">Poly Haven</a> and Openverse. For Pexels, download directly from its website and import the file below—no API key needed.</p>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1" role="group" aria-label="Target video orientation">
           <Button variant={destination==="landscape"?"primary":"outline"} size="sm" disabled={!!busy}
@@ -156,7 +197,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
         </Button>
         {productionId&&<Button size="sm" variant="outline" disabled={!!busy}
           onClick={()=>setSavedSearchRefresh(value=>value+1)}>Load draft suggestions</Button>}
-        <p className="text-xs text-muted-foreground">Uses network on click · no local AI workload · Pexels needs PEXELS_API_KEY</p>
+        <p className="text-xs text-muted-foreground">Searches on click · no Pexels API key, bulk scraping, or dataset collection</p>
       </div>
       <div className="rounded-control border border-border bg-surface-subtle p-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected scene · {selectedShotId}</p>
@@ -193,7 +234,9 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
                 <a href={asset.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline">View original <ExternalLink className="inline size-3"/></a>
                 <a href={asset.licenseUrl} target="_blank" rel="noopener noreferrer" className="underline">{asset.license} terms</a>
               </div>
-              {asset.provider==="openverse"?<p className="text-xs text-muted-foreground">
+              {asset.provider==="pexels"?<p className="text-xs text-muted-foreground">
+                Pexels API search is retired. Open its source page, download the file yourself, and use Import downloaded Pexels file below.
+              </p>:asset.provider==="openverse"?<p className="text-xs text-muted-foreground">
                 Search reference only. Openverse indexes third-party CC0 claims; verify the original source before using it. Automatic import is not available for this provider.
               </p>:<Button size="sm" variant="outline" disabled={!!busy||existing}
                 onClick={()=>{setPending({asset,bundle,shotId:selectedShotId});setAcknowledged(false);}}>
@@ -203,6 +246,38 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
           </div>;
         })}
       </div>}
+      <div className="space-y-3 rounded-control border border-border bg-surface-subtle p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div><p className="font-semibold">Add an image or video from Pexels</p>
+            <p className="mt-1 text-xs text-muted-foreground">For scene {selectedShotId}. No API key needed. A single public photo page can be downloaded automatically; videos and unavailable photos can be uploaded as files.</p></div>
+          <a className="inline-flex items-center gap-1 text-xs font-semibold text-primary underline" href="https://www.pexels.com/" target="_blank" rel="noopener noreferrer">Browse Pexels <ExternalLink className="size-3"/></a>
+        </div>
+        <label className="block text-xs font-medium">Original Pexels photo or video page URL
+          <input type="url" aria-label="Pexels source page URL" value={siteUrl} onChange={event=>{setSiteUrl(event.target.value);setSiteReviewedShotId(null);}}
+            placeholder="https://www.pexels.com/photo/example-123456/" className="mt-1 w-full rounded-control border border-input bg-surface px-3 py-2"/>
+        </label>
+        <label className="block text-xs font-medium">Downloaded JPG or MP4 (up to 80 MB)
+          <input key={selectedShotId+":"+siteUploadRevision} type="file" accept=".jpg,.jpeg,.mp4,image/jpeg,video/mp4" aria-label="Pexels downloaded file"
+            className="mt-1 block w-full text-xs file:mr-3 file:rounded-control file:border file:border-border file:bg-surface file:px-3 file:py-2"
+            onChange={event=>{const file=event.target.files?.[0];setSiteUpload(file?{shotId:selectedShotId,file}:null);setSiteReviewedShotId(null);}}/>
+        </label>
+        <label className="block text-xs font-medium">Photographer or creator (optional)
+          <input value={siteCreator} aria-label="Pexels creator" maxLength={100} onChange={event=>setSiteCreator(event.target.value)}
+            placeholder="As listed on the Pexels page" className="mt-1 w-full rounded-control border border-input bg-surface px-3 py-2"/>
+        </label>
+        <label className="flex items-start gap-2 text-xs"><input type="checkbox" className="mt-0.5" checked={siteReviewed}
+          onChange={event=>setSiteReviewedShotId(event.target.checked?selectedShotId:null)}/>
+          I reviewed this Pexels page, license, people, and brand restrictions and authorize this scene's download or import.
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={!!busy||!siteReviewed||!siteUrl.trim()} onClick={()=>void downloadSitePhoto()}>
+            <Download className="mr-1 size-4"/>{busy==="site-photo"?"Downloading photo…":"Download photo from Pexels page"}
+          </Button>
+          <Button size="sm" variant="outline" disabled={!!busy||!siteReviewed||!siteUpload||siteUpload.shotId!==selectedShotId||!siteUrl.trim()}
+            onClick={()=>void importSiteFile()}><Download className="mr-1 size-4"/>{busy==="site-upload"?"Verifying file…":"Import downloaded Pexels file"}</Button>
+        </div>
+        <p className="text-xs text-muted-foreground">ContentGen checks the JPEG/MP4 format, codec, resolution, duration, and file hash. Imported media remains unselected until you explicitly pin it to a scene.</p>
+      </div>
       {review&&<div className="space-y-3 rounded-control border border-primary/40 bg-surface-subtle p-4">
         <p className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4"/>Approve this asset</p>
         <p><strong>{review.title}</strong> · {review.provider} · {review.assetType}</p>

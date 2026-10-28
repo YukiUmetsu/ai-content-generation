@@ -32,15 +32,10 @@ const defaults:Settings={provider:"local",voiceId:"",providerRevision:"",modelId
   endpoint:"http://127.0.0.1:8765",apiKey:"",localVoiceAuthorized:false,voiceConsent:false,transmitText:false};
 const voiceProfileKey="contentgen:production-voice-profile:v1";
 const freeMediaKey="contentgen:production-free-media:v1";
-const automaticMediaKey="contentgen:production-auto-media:v1";
 function savedFreeMediaPreference():boolean{
   // Scene descriptions can reveal private research. Never contact public
   // stock-media providers until the user explicitly enables the search.
   try{return localStorage.getItem(freeMediaKey)==="enabled";}catch{return false;}
-}
-function savedAutomaticMediaPreference():boolean{
-  // An older search-only opt-in is never silently upgraded to downloads.
-  try{return localStorage.getItem(automaticMediaKey)==="enabled";}catch{return false;}
 }
 function savedVoiceSettings():Settings{
   try{
@@ -57,14 +52,24 @@ function savedVoiceSettings():Settings{
 }
 async function request(path:string,payload?:unknown){
   const isPost=payload!==undefined;
-  const response=await fetch("/api/contentgen-video/"+path,{
-    method:isPost?"POST":"GET",cache:"no-store",
-    headers:isPost?{"Content-Type":"application/json","X-Contentgen-Director":"local-only"}:undefined,
-    ...(isPost?{body:JSON.stringify(payload)}:{}),
-    signal:AbortSignal.timeout(path==="check"?360000:16000)
-  });
-  const data=await response.json() as Record<string,unknown>;
-  if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
+  let response:Response;
+  try{
+    response=await fetch("/api/contentgen-video/"+path,{
+      method:isPost?"POST":"GET",cache:"no-store",
+      headers:isPost?{"Content-Type":"application/json","X-Contentgen-Director":"local-only"}:undefined,
+      ...(isPost?{body:JSON.stringify(payload)}:{}),
+      signal:AbortSignal.timeout(path==="check"?360000:path==="start"?60000:16000)
+    });
+  }catch(error){
+    throw Error(error instanceof Error&&error.name==="TimeoutError"
+      ?"Local production did not respond in time. Check the Studio terminal and Jobs, then retry."
+      :"Cannot reach local video production. Start the Studio development server and retry.");
+  }
+  let data:Record<string,unknown>;
+  try{data=await response.json() as Record<string,unknown>;}
+  catch{throw Error(`Local video service returned an invalid response (HTTP ${response.status}). Check the Studio terminal.`);}
+  if(!response.ok)throw Error(typeof data.error==="string"?data.error.slice(0,280):
+    `Local production failed (HTTP ${response.status}). Check the Studio terminal.`);
   return data;
 }
 export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
@@ -72,7 +77,6 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const [stage,setStage]=useState<Stage>(initialStage);
   const [settings,setSettings]=useState<Settings>(savedVoiceSettings);
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
-  const [autoPrepareFreeMedia,setAutoPrepareFreeMedia]=useState(savedAutomaticMediaPreference);
   useEffect(()=>{
     try{localStorage.setItem(voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
       providerRevision:settings.providerRevision,modelId:settings.modelId,endpoint:settings.endpoint}));}
@@ -151,19 +155,10 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const changeMediaSearch=(enabled:boolean)=>{
     inputRevision.current++;
     setSearchFreeMedia(enabled);setReady(false);
-    if(!enabled)setAutoPrepareFreeMedia(false);
     try{localStorage.setItem(freeMediaKey,enabled?"enabled":"disabled");}
     catch{/* The choice still applies to this render when storage is unavailable. */}
-    if(!enabled){try{localStorage.setItem(automaticMediaKey,"disabled");}catch{/* Private mode. */}}
     setState(current=>["rendering","done"].includes(current.state)?current:
       {state:"idle",phase:"idle",message:"Media search preference changed; check again before rendering."});
-  };
-  const changeAutomaticMedia=(enabled:boolean)=>{
-    inputRevision.current++;
-    setAutoPrepareFreeMedia(enabled);setReady(false);
-    try{localStorage.setItem(automaticMediaKey,enabled?"enabled":"disabled");}catch{/* Private mode. */}
-    setState(current=>["rendering","done"].includes(current.state)?current:
-      {state:"idle",phase:"idle",message:"Scene media preference changed; check again before rendering."});
   };
   const payload={dossier,bundle};
   useEffect(()=>{
@@ -301,7 +296,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   async function check(){
     setWorking("check");setNotice("");setReady(false);
     try{
-      const response=await request("check",{...payload,settings,searchFreeMedia,autoPrepareFreeMedia:searchFreeMedia&&autoPrepareFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
@@ -315,7 +310,9 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     if(autoBusy.current||state.state==="rendering")return;
     autoBusy.current=true;
     const revision=inputRevision.current;
-    setWorking("auto");setNotice("Checking narration and local render requirements…");
+    setStage("narration");setWorking("auto");setNotice("");
+    setReady(false);
+    setState({state:"checking",phase:"preflight",message:"Preparing scenes and checking your narrator, FFmpeg and Chromium…"});
     try{
       if(!preview){
         const result=await request("plan",payload) as unknown as Preview;
@@ -324,7 +321,8 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         if(revision!==inputRevision.current)return;
         setPreview(result);
       }
-      const requestInput={...payload,settings,searchFreeMedia,autoPrepareFreeMedia:searchFreeMedia&&autoPrepareFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
+      setState({state:"checking",phase:"preflight",message:"Checking voice permissions, installed tools and scene assets…"});
+      const requestInput={...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
@@ -342,7 +340,10 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         jobId:typeof result.jobId==="string"?result.jobId:null});
       setNotice("Visuals, narration, sound and MP4 rendering are now running. This does not publish anything.");
     }catch(reason){
-      setNotice(reason instanceof Error?reason.message:"Could not generate the draft video.");
+      const message=reason instanceof Error?reason.message:"Could not generate the draft video.";
+      setReady(false);
+      setState({state:"blocked",phase:"preflight",message,report:null});
+      setNotice("Your script and scene edits are safe. Fix the issue below and select Generate draft video again.");
     }finally{autoBusy.current=false;setWorking("");}
   }
   useEffect(()=>{
@@ -358,7 +359,7 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     if(!ready)return;
     setWorking("start");setNotice("");
     try{
-      const r=await request("start",{...payload,settings,searchFreeMedia,autoPrepareFreeMedia:searchFreeMedia&&autoPrepareFreeMedia,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
+      const r=await request("start",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
       if(!r.started)throw Error("Studio did not confirm render startup.");
       setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
       setReady(false);
@@ -394,7 +395,9 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     return ()=>{active=false;};
   },[autoOpenSample,sampleAutoLoaded,dossier,bundle]);
   useEffect(()=>{
-    if(state.state!=="rendering"&&state.state!=="checking")return;
+    // Preflight is owned by the pending /check request. Polling /status before
+    // that request acquires the worker would overwrite the visible progress.
+    if(state.state!=="rendering")return;
     let mounted=true;
     const poll=async()=>{
       try{
@@ -416,6 +419,16 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       {state.state==="done"&&stage!=="export"&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
         <p className="text-sm font-medium">Your saved draft video is available.</p>
         <Button variant="outline" size="sm" onClick={()=>setStage("export")}>Review saved video</Button>
+      </div>}
+      {state.state==="checking"&&<div role="status" className="flex items-start gap-3 rounded-control border border-primary/30 bg-primary/5 p-4">
+        <RefreshCw aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin"/>
+        <div><p className="font-semibold">Preparing your draft video</p><p className="mt-1 text-xs text-muted-foreground">{state.message} This can take a few minutes on the first run.</p></div>
+      </div>}
+      {state.state==="blocked"&&stage!=="export"&&<div role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-4">
+        <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4"/>Draft needs setup</p>
+        <p className="mt-2 text-sm">{state.message}</p>
+        {state.report?.findings.map((finding,index)=><p key={index} className="mt-1 text-xs text-muted-foreground">{finding.message}</p>)}
+        <p className="mt-2 text-xs text-muted-foreground">Choose a narrator below, or set Fish Audio credentials in Settings → Connections. Then retry the draft.</p>
       </div>}
       {["failed","cancelled"].includes(state.state)&&stage!=="export"&&state.jobId&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
         <p className="text-sm font-medium">An earlier draft needs attention.</p>
@@ -479,9 +492,9 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
               value={settings.modelId} onChange={e=>change({modelId:e.target.value})} placeholder="Your local TTS model"/></label>
             <label className={inputLabel}>Local speech server<input className={field} aria-label="Local speech server URL"
               value={settings.endpoint} onChange={e=>change({endpoint:e.target.value})}/></label>
-          </>:<label className={inputLabel}>Fish Audio API key<input type="password" autoComplete="off" className={field}
-            aria-label="Fish Audio key" value={settings.apiKey} onChange={e=>change({apiKey:e.target.value})}
-            placeholder="Sent to the local render process only"/></label>}
+          </>:<div className="rounded-control border border-border bg-surface-subtle p-3 text-xs text-muted-foreground sm:col-span-2">
+            Save your Fish Audio API key once in <strong className="text-foreground">Settings → Connections</strong>. The local render worker reads it securely; you do not need to paste it here.
+          </div>}
         </div>
         <div className="rounded-control border border-border bg-surface-subtle p-3">
           {settings.provider==="local"?<label className="flex items-start gap-2 text-xs">
@@ -514,21 +527,11 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
             <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
               checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
               onChange={event=>changeMediaSearch(event.target.checked)}/>
-            Search scene media while rendering (optional). Sends scene subjects to Poly Haven, Openverse, and Pexels when configured. Openverse results are reference-only; eligible Pexels media can be prepared automatically below.
-          </label>
-          <label className="ml-5 flex items-start gap-2 rounded-control border border-border/70 bg-surface/70 p-3 text-xs text-muted-foreground">
-            <input type="checkbox" className="mt-0.5" aria-label="Automatically prepare suitable licensed draft media"
-              checked={searchFreeMedia&&autoPrepareFreeMedia} disabled={!searchFreeMedia||!!working||state.state==="rendering"}
-              onChange={event=>changeAutomaticMedia(event.target.checked)}/>
-            Prepare suitable Pexels photos or short HD footage for the draft. ContentGen verifies each item with Pexels, checks image/video integrity and keeps manually selected scenes unchanged. Review rights and visual accuracy before publishing. Requires a locally configured Pexels API key.
+            Search scene media while rendering (optional). Sends scene subjects to Poly Haven and Openverse. Images downloaded manually from Pexels can be imported in Director → Find the right visuals.
           </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}
           </Button>
-          {state.state==="blocked"&&state.report&&<div role="alert" className="rounded-lg border border-status-warning/30 bg-surface p-3 text-xs">
-            <p className="font-semibold">Before the video can start</p>
-            {state.report.findings.map((finding,index)=><p key={index} className="mt-1">{finding.message}</p>)}
-          </div>}
         </div>
         <div className="flex items-center justify-between gap-2"><Button variant="outline" onClick={()=>void navigate("preview")}><ArrowLeft className="mr-2 size-4"/>Preview</Button>
           <Button onClick={()=>void navigate("review")}>Continue to final review <ArrowRight className="ml-2 size-4"/></Button></div>
