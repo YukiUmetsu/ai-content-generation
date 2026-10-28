@@ -412,9 +412,10 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
     // "Edit video scenes" must open the editable shot controls. Voice and
     // export deep links open rendering controls; the preview stays one click
     // away without forcing an unnecessary render during editing.
-    setStage(source==="sample"||(focusStage&&focusStage!=="visuals")?"preview":"storyboard");
+    const conversationScene=b.plan.sound.find(sound=>sound.speechTurns?.length)?.shotId;
+    setStage(conversationScene?"storyboard":source==="sample"||(focusStage&&focusStage!=="visuals")?"preview":"storyboard");
     setRecheckToken(0);
-    const first=b.plan.shots[0]?.id??"";
+    const first=conversationScene??b.plan.shots[0]?.id??"";
     setShotId(first);setDraft(shotDraft(b,first));
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
     setStatus("Storyboard ready. Review and edit individual shots, then preview the renderable scenes below.");

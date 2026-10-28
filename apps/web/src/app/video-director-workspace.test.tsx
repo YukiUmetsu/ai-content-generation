@@ -579,6 +579,33 @@ describe("Video Director selected-shot workbench",()=>{
 });
 
 describe("first-run complete Studio demo",()=>{
+  it("opens the conversation template directly on its editable middle scene without an extra preview hop",async()=>{
+    const d={kind:"research-dossier",id:"conv",topic:{title:"Dialogue demo",audience:"Everyone"}};
+    const turns=[{id:"pip-question",narration:"What do you see?",pauseAfterMs:180},
+      {id:"quill-reply",narration:"A moving diagram.",pauseAfterMs:180},
+      {id:"narrator-explains",narration:"This illustrates one simple flow.",pauseAfterMs:0}];
+    const b={kind:"preproduction-bundle",researchId:"conv",plan:{shots:[
+      {id:"hook",purpose:"hook",visualChange:"Show question",onScreenText:"Why?"},
+      {id:"middle",purpose:"explain",visualChange:"Show diagram",onScreenText:"Conversation"},
+      {id:"end",purpose:"payoff",visualChange:"End",onScreenText:"Answer"}],
+      sound:[{shotId:"hook",narration:"Opening",sfxIntent:null,pauseAfterMs:0},
+        {shotId:"middle",narration:turns.map(turn=>turn.narration).join(" "),speechTurns:turns,sfxIntent:null,pauseAfterMs:0},
+        {shotId:"end",narration:"Ending",sfxIntent:null,pauseAfterMs:0}],
+      teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Question"},
+        {shotId:"middle",kind:"mechanism",visualAction:"Talk"},
+        {shotId:"end",kind:"payoff",visualAction:"Answer"}]}],story:{question:"Why?"}}};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+      if(String(url).endsWith("/demo-conversation"))return new Response(JSON.stringify({dossier:d,bundle:b}),{status:200});
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"Renderer not installed"}),{status:503});
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      throw Error("Unexpected service request: "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    await user.click(screen.getByRole("button",{name:"Open conversation video template"}));
+    expect(await screen.findByRole("combobox",{name:"Selected video shot"})).toHaveValue("middle");
+    expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
+    expect(screen.getByRole("heading",{name:"Scene editor"})).toBeInTheDocument();
+  });
   it("opens sample animations automatically, exposes a timeline, and does not ask for a JSON file or voice",async()=>{
     const sampleDossier={kind:"research-dossier",id:"demo-id",topic:{title:"Home cost demo",audience:"Homeowners"}};
     const sampleBundle={kind:"preproduction-bundle",researchId:"demo-id",plan:{
