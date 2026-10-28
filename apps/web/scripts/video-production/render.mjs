@@ -261,7 +261,8 @@ export async function renderVideoSegments(options, dependencies = {}) {
           // only this chunk; all verified siblings remain unchanged.
           if (hasVideo) await quarantineInterruptedFile(path);
           if (hasMeta) await quarantineInterruptedFile(metadataPath);
-          options.onProgress?.({phase:"segment-repair",startFrame,frameCount,chapterIndex});
+          options.onProgress?.({phase:"rendering",message:"Restoring an interrupted scene; finished scenes are preserved.",
+            startFrame,frameCount,chapterIndex});
         }
       }
       // Reuse unchanged, identical-timeline chapters from the previous render
@@ -375,7 +376,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
           if (hasImage) await quarantineInterruptedFile(path);
           if (hasMetadata) await quarantineInterruptedFile(metadataPath);
           digest = undefined;
-          options.onProgress?.({phase:"still-repair",frame});
+          options.onProgress?.({phase:"rendering",message:"Restoring a damaged video preview image.",frame});
         }
       }
       if (!digest) {
@@ -420,7 +421,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
     if (damaged) {
       if (hasFinal) await quarantineInterruptedFile(videoOnlyPath);
       if (hasFinalMeta) await quarantineInterruptedFile(finalMetadataPath);
-      options.onProgress?.({phase:"assembly-repair",message:"Resuming interrupted video assembly…"});
+      options.onProgress?.({phase:"rendering",message:"Resuming the video assembly without recapturing completed scenes."});
     }
   }
   if (!finalVerified) {

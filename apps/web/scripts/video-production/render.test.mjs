@@ -164,12 +164,15 @@ test("an interrupted concat is rebuilt from intact segments, and unsafe symlinks
   await renderVideoSegments(config(dir,151),dependencies);
   const before=stats();
   await rm(join(dir,"video-only.mp4.json"));
-  const result=await renderVideoSegments(config(dir,151),dependencies);
+  const updates=[];
+  const result=await renderVideoSegments({...config(dir,151),onProgress:event=>updates.push(event)},dependencies);
   assert.equal(result.renderedSegmentCount,0);
   assert.equal(stats().encoded,before.encoded);
   assert.equal(stats().concatCalls,before.concatCalls+1);
   assert.equal((await readdir(dir)).some(name=>name.startsWith(".recovery-")&&
     name.endsWith("video-only.mp4")),true);
+  assert.ok(updates.some(event=>event.phase==="rendering"&&
+    event.message?.includes("without recapturing")),"recovery reports a clear user-facing status");
   await rm(join(dir,"segments","segment-00000.mp4"));
   await symlink(join(dir,"video-only.mp4"),join(dir,"segments","segment-00000.mp4"));
   await assert.rejects(renderVideoSegments(config(dir,151),dependencies),/unsafe|regular file/i);
