@@ -13,11 +13,14 @@ import {
 import { loadPlatformOptimization, savePlatformOptimization } from "./storage";
 import { artworkPng, canExportPlatformArtwork, generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog,
   suggestCoverHeadlinesFor } from "./generated-art";
+import { regenerateCoverHeadline } from "./generated-art";
 
 type CoverLayout = "story" | "tiles" | "editorial";
 type CoverColors = {primary:string;background:string;accent:string};
 type CoverDraft = { key: string; headline: string; headlineEdited:boolean; layout: CoverLayout; colors:CoverColors|null;
-  imageDataUri?:string; variantHeadlines:Partial<Record<CoverLayout,string>>; blocked:boolean };
+  imageDataUri?:string; variantHeadlines:Partial<Record<CoverLayout,string>>;
+  variantColors:Partial<Record<CoverLayout,CoverColors|null>>;
+  variantIterations:Partial<Record<CoverLayout,number>>; blocked:boolean };
 const hex = (value:unknown):value is string => typeof value === "string" && /^#[a-f0-9]{6}$/iu.test(value);
 const coverPresets:{name:string;colors:CoverColors|null}[]=[
   {name:"Brand colors",colors:null},
@@ -31,7 +34,8 @@ const coverLayouts: readonly { id: CoverLayout; name: string; suffix: string }[]
   { id: "editorial", name: "Editorial layout", suffix: "-editorial" },
 ];
 function loadCoverDraft(key: string, initialHeadline: string, previousRevisionKey?:string): CoverDraft {
-  const fallback: CoverDraft = { key, headline: initialHeadline, headlineEdited:false, layout: "story",colors:null,variantHeadlines:{},blocked:false };
+  const fallback: CoverDraft = { key, headline: initialHeadline, headlineEdited:false, layout: "story",colors:null,
+    variantHeadlines:{},variantColors:{},variantIterations:{},blocked:false };
   if (!key) return fallback;
   try {
     const saved=localStorage.getItem(key);
@@ -56,6 +60,29 @@ function loadCoverDraft(key: string, initialHeadline: string, previousRevisionKe
     const colors=stored.colors&&typeof stored.colors==="object"&&
       hex((stored.colors as Record<string,unknown>).primary)&&hex((stored.colors as Record<string,unknown>).background)&&
       hex((stored.colors as Record<string,unknown>).accent)?stored.colors as CoverColors:null;
+    const variantColors:CoverDraft["variantColors"]={};
+    const candidateColors=stored.variantColors;
+    if(candidateColors!==undefined){
+      if(!candidateColors||typeof candidateColors!=="object"||Array.isArray(candidateColors))
+        return {...fallback,blocked:true};
+      for(const [name,value] of Object.entries(candidateColors)){
+        if(!coverLayouts.some(option=>option.id===name)||value!==null&&(
+          typeof value!=="object"||Array.isArray(value)||!hex((value as CoverColors).primary)||
+          !hex((value as CoverColors).background)||!hex((value as CoverColors).accent)))
+          return {...fallback,blocked:true};
+        variantColors[name as CoverLayout]=value as CoverColors|null;
+      }
+    }
+    const variantIterations:CoverDraft["variantIterations"]={};
+    if(stored.variantIterations!==undefined){
+      if(!stored.variantIterations||typeof stored.variantIterations!=="object"||Array.isArray(stored.variantIterations))
+        return {...fallback,blocked:true};
+      for(const [name,value] of Object.entries(stored.variantIterations)){
+        if(!coverLayouts.some(option=>option.id===name)||!Number.isSafeInteger(value)||
+          (value as number)<1||(value as number)>1000)return {...fallback,blocked:true};
+        variantIterations[name as CoverLayout]=value as number;
+      }
+    }
     const imageDataUri=typeof stored.imageDataUri==="string"&&stored.imageDataUri.length<=1_450_000&&
       /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(stored.imageDataUri)?stored.imageDataUri:undefined;
     // Older revisions did not track manual copy. Conservatively keep their
@@ -68,7 +95,7 @@ function loadCoverDraft(key: string, initialHeadline: string, previousRevisionKe
       try{localStorage.setItem(key,legacy);}catch{/* Old draft remains intact for manual recovery. */}
     }
     return { key, headline: stored.headline, headlineEdited, layout: stored.layout as CoverLayout,colors,imageDataUri,
-      variantHeadlines,blocked:false };
+      variantHeadlines,variantColors,variantIterations,blocked:false };
   } catch { return {...fallback,blocked:true}; }
 }
 
@@ -300,17 +327,20 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
     [input.title,input.title,input.title] as [string,string,string],[input,platform]);
   const headlineAt=(layout:CoverLayout)=>storedCover.variantHeadlines[layout]??
     suggestedCoverHeadlines[coverLayouts.findIndex(option=>option.id===layout)];
-  const activeCover={...storedCover,headline:headlineAt(storedCover.layout)};
+  const colorAt=(layout:CoverLayout)=>Object.hasOwn(storedCover.variantColors,layout)?
+    storedCover.variantColors[layout]??null:storedCover.colors;
+  const activeCover={...storedCover,headline:headlineAt(storedCover.layout),colors:colorAt(storedCover.layout)};
   const updateCover = (update: Partial<Omit<CoverDraft,"key">>) => {
     if(activeCover.blocked){setWarning("Recover the previous thumbnail before editing.");return;}
     const variantHeadlines=update.variantHeadlines??(update.headline===undefined?activeCover.variantHeadlines:
       {...activeCover.variantHeadlines,[activeCover.layout]:update.headline});
-    const next = {...activeCover,...update,variantHeadlines,
+    const next = {...storedCover,...update,headline:update.headline??activeCover.headline,variantHeadlines,
       headlineEdited:Object.keys(variantHeadlines).length>0};
     setCoverDraft(next);
     try {localStorage.setItem(coverKey,JSON.stringify({headline:next.headline,layout:next.layout,
       colors:next.colors,imageDataUri:next.imageDataUri,headlineEdited:next.headlineEdited,
-      variantHeadlines:next.variantHeadlines}));}
+      variantHeadlines:next.variantHeadlines,variantColors:next.variantColors,
+      variantIterations:next.variantIterations}));}
     catch(error){setWarning(error instanceof Error?`Cover is not saved: ${error.message}`:"Cover could not be saved locally.");}
   };
   function recoverCover(){
@@ -322,20 +352,33 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
         localStorage.setItem(backupKey,saved);
       }
       const fresh:CoverDraft={key:coverKey,headline:input.title,headlineEdited:false,layout:"story",colors:null,
-        variantHeadlines:{},blocked:false};
+        variantHeadlines:{},variantColors:{},variantIterations:{},blocked:false};
       localStorage.setItem(coverKey,JSON.stringify(fresh));
       setCoverDraft(fresh);setWarning(null);
     }catch(error){setWarning(error instanceof Error?error.message:"Could not back up the previous thumbnail.");}
   }
-  const coverInput=useMemo<PlatformOptimizationInput>(()=>storedCover.colors?{...input,brandColors:{
-    primary:storedCover.colors.primary,background:storedCover.colors.background,accent:storedCover.colors.accent,
-    secondary:input.brandColors?.secondary??"#4D807A",text:input.brandColors?.text??"#122A32"}}:input,
-  [input,storedCover.colors]);
+  const variantPalette=useMemo(()=>coverLayouts.map(option=>{
+    const choice=Object.hasOwn(storedCover.variantColors,option.id)?
+      storedCover.variantColors[option.id]??null:storedCover.colors;
+    const colors=choice;
+    return colors?{primary:colors.primary,background:colors.background,accent:colors.accent,
+      secondary:input.brandColors?.secondary??"#4D807A",text:input.brandColors?.text??"#122A32"}:input.brandColors;
+  }),[storedCover.variantColors,storedCover.colors,input.brandColors]);
   const coverHeadlines=useMemo(()=>coverLayouts.map((option,index)=>storedCover.variantHeadlines[option.id]??
     suggestedCoverHeadlines[index]) as [string,string,string],[storedCover.variantHeadlines,suggestedCoverHeadlines]);
-  const artwork = useMemo(() => platform ? generatePlatformArtwork(coverInput,platform,input.title,
-    platform === "blog"?{}:{imageDataUri:storedCover.imageDataUri,headlines:coverHeadlines}) : [],
-  [coverInput,platform,input.title,storedCover.imageDataUri,coverHeadlines]);
+  const artwork = useMemo(() => platform ? generatePlatformArtwork(input,platform,input.title,
+    platform === "blog"?{}:{imageDataUri:storedCover.imageDataUri,headlines:coverHeadlines,
+      variantColors:variantPalette}) : [],
+  [input,platform,storedCover.imageDataUri,coverHeadlines,variantPalette]);
+  function regenerateSelectedCover(){
+    const iteration=Math.min(1000,(activeCover.variantIterations[activeCover.layout]??0)+1);
+    const otherHeadlines=coverLayouts.filter(option=>option.id!==activeCover.layout)
+      .map(option=>headlineAt(option.id));
+    const headline=regenerateCoverHeadline(input,platform!,iteration,[...otherHeadlines,activeCover.headline]);
+    const selected=coverPresets[iteration%coverPresets.length].colors;
+    updateCover({headline,variantColors:{...storedCover.variantColors,[activeCover.layout]:selected},
+      variantIterations:{...storedCover.variantIterations,[activeCover.layout]:iteration}});
+  }
   async function uploadCoverImage(file:File|undefined){
     if(!file)return;
     if(!["image/png","image/jpeg","image/webp"].includes(file.type)||file.size>1_000_000||file.size<1){
@@ -572,7 +615,7 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                   <div className="flex flex-wrap gap-2" role="group" aria-label="Thumbnail color presets">
                     {coverPresets.map(preset=><button key={preset.name} type="button"
                       aria-pressed={JSON.stringify(activeCover.colors)===JSON.stringify(preset.colors)}
-                      onClick={()=>updateCover({colors:preset.colors})}
+                      onClick={()=>updateCover({variantColors:{...storedCover.variantColors,[activeCover.layout]:preset.colors}})}
                       className="rounded-lg border border-border px-3 py-2 text-xs font-medium transition-colors duration-[var(--km-duration-short)] hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/10">
                       {preset.name}</button>)}
                   </div>
@@ -582,9 +625,10 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                         value={(activeCover.colors?.[key]??(key==="primary"?input.brandColors?.primary:
                           key==="background"?input.brandColors?.background:input.brandColors?.accent)??
                           (key==="primary"?"#152d36":key==="background"?"#f8f4ec":"#f6bb57")).toLowerCase()}
-                        onChange={event=>updateCover({colors:{primary:activeCover.colors?.primary??input.brandColors?.primary??"#152D36",
+                        onChange={event=>updateCover({variantColors:{...storedCover.variantColors,
+                          [activeCover.layout]:{primary:activeCover.colors?.primary??input.brandColors?.primary??"#152D36",
                           background:activeCover.colors?.background??input.brandColors?.background??"#F8F4EC",
-                          accent:activeCover.colors?.accent??input.brandColors?.accent??"#F6BB57",[key]:event.target.value}})}/>
+                          accent:activeCover.colors?.accent??input.brandColors?.accent??"#F6BB57",[key]:event.target.value}}})}/>
                       {label}
                     </label>)}
                   </div>
@@ -615,6 +659,10 @@ function PlatformOptimizationEditor({ input, onManifestChange }: PlatformOptimiz
                 <button type="button" className="text-xs font-medium text-primary underline" onClick={()=>updateCover({
                   layout:coverLayouts[(coverLayouts.findIndex(option=>option.id===activeCover.layout)+1)%coverLayouts.length].id
                 })}>Try another design</button>
+                <button type="button" className="inline-flex items-center gap-2 rounded-lg border border-primary/35 bg-primary/5 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={regenerateSelectedCover}>
+                  <RefreshCcw className="size-3.5" aria-hidden/> Regenerate selected concept
+                </button>
                 <button type="button" disabled={!chosenCover||!!exportingArt} onClick={()=>chosenCover&&void downloadArt(chosenCover.id)}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
                   <Download className="size-4" aria-hidden /> {exportingArt ? "Rendering PNG…" : "Download selected thumbnail"}

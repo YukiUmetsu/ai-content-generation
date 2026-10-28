@@ -127,15 +127,17 @@ function upright(variant:number,w:number,h:number,title:string,heads:string[],p:
 
 export function createCoverArtwork(title:string,sections:readonly PlatformScriptSection[],profile:OutputProfileId,
   colors:PlatformBrandColors|undefined,target:string,filenameBase:string,imageDataUri?:string,
-  variantHeadlines?:readonly [string,string,string]):GeneratedArtwork[]{
+  variantHeadlines?:readonly [string,string,string],
+  variantColors?:readonly (PlatformBrandColors|undefined)[]):GeneratedArtwork[]{
   if(!sections.length)return [];
   const {width,height}=getOutputProfile(profile);
-  const p=palette(colors),portrait=height>=width;
+  const portrait=height>=width;
   const heads=sections.slice(0,3).map(section=>clipText(section.heading,45));
   const ids=["","-tiles","-editorial"] as const;
   const labels=["Story layout","Tile layout","Editorial layout"] as const;
   return ids.map((suffix,index)=>{
     const headline=clipText(variantHeadlines?.[index]??title,110);
+    const p=palette(variantColors?.[index]??colors);
     const base=portrait?upright(index,width,height,headline,heads,p):landscape(index,width,height,headline,heads,p);
     // The replacement photo is an actual Kumiki media layer. Data URLs make
     // both SVG previews and PNG exports self-contained and offline; the browser

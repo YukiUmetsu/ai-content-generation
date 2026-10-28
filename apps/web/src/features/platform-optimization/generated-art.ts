@@ -12,7 +12,7 @@ import type { MediaDocument } from "@/components/media/document";
 import { createCoverArtwork } from "./cover-art";
 import type { InfographicLayout, InfographicSource, OutputProfileId, ProcessStep, TemplateId } from "@/components/infographic/types";
 import { normalizeTarget, platformSlug, sourceSignature,
-  type PlatformAsset, type PlatformOptimizationInput, type PlatformScriptSection, type PlatformTarget } from "./model";
+  type PlatformAsset, type PlatformBrandColors, type PlatformOptimizationInput, type PlatformScriptSection, type PlatformTarget } from "./model";
 
 export interface GeneratedArtwork {
   id: string;
@@ -48,7 +48,8 @@ export function canExportPlatformArtwork(input: PlatformOptimizationInput, targe
   return sectionsFor(input,target).some(section=>section.text.trim().length>0);
 }
 
-export interface CoverArtOptions {imageDataUri?:string;headlines?:readonly [string,string,string]}
+export interface CoverArtOptions {imageDataUri?:string;headlines?:readonly [string,string,string];
+  variantColors?:readonly (PlatformBrandColors|undefined)[]}
 function validateCoverImage(uri:string|undefined):void{
   if(uri!==undefined && (uri.length>1_450_000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(uri)))
     throw Error("Thumbnail image must be an embedded PNG, JPEG or WebP under 1 MB.");
@@ -86,6 +87,20 @@ export function suggestCoverHeadlines(title:string,sections:readonly PlatformScr
 }
 export function suggestCoverHeadlinesFor(input:PlatformOptimizationInput,platform:PlatformTarget):[string,string,string]{
   return suggestCoverHeadlines(input.title,sectionsFor(input,platform));
+}
+
+/** Deterministic alternative copy from actual script sections only. One concept
+ * can advance without modifying the other two or introducing invented facts. */
+export function regenerateCoverHeadline(input:PlatformOptimizationInput,platform:PlatformTarget,
+  iteration:number,otherHeadlines:readonly string[]):string{
+  const sections=sectionsFor(input,platform);
+  const pool=[...sections.map(section=>section.heading),...sections.map(section=>section.text),
+    input.title,`Inside: ${input.title}`,`A closer look: ${input.title}`]
+    .map(value=>excerpt(value,52).trim()).filter(Boolean);
+  const distinct=[...new Map(pool.map(value=>[value.toLocaleLowerCase(),value])).values()]
+    .filter(value=>!otherHeadlines.some(other=>other.toLocaleLowerCase()===value.toLocaleLowerCase()));
+  if(!distinct.length)return excerpt(input.title,52);
+  return distinct[(iteration-1)%distinct.length];
 }
 
 function sourceFor(title: string, sections: readonly PlatformScriptSection[], id: string, language: string,
@@ -138,7 +153,7 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
     typeof headline!=="string"||!headline.trim()||headline.length>110)))
     throw Error("Three nonempty thumbnail headlines under 110 characters are required.");
   if (!canExportPlatformArtwork(input, target)) return [];
-  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}:${imageIdentity(options.imageDataUri)}:${JSON.stringify(options.headlines??null)}`;
+  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}:${imageIdentity(options.imageDataUri)}:${JSON.stringify(options.headlines??null)}:${JSON.stringify(options.variantColors??null)}`;
   const cached = artworkCache.get(key);
   if (cached) return cached;
   const sections = sectionsFor(input, target).filter((section) => section.text.trim());
@@ -149,7 +164,7 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
   if (target !== "blog") {
     const headlines=options.headlines??suggestCoverHeadlines(title,sections);
     const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName,
-      options.imageDataUri,headlines);
+      options.imageDataUri,headlines,options.variantColors);
     artworkCache.set(key, result);
     if (artworkCache.size > 16) artworkCache.delete(artworkCache.keys().next().value!);
     return result;

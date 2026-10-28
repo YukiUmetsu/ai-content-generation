@@ -153,6 +153,39 @@ describe("PlatformOptimization", () => {
     expect(screen.getByRole("button",{name:"Editorial layout"})).toHaveAttribute("aria-pressed","true");
   });
 
+  it("regenerates one thumbnail's script-grounded copy and palette without changing the other two",()=>{
+    const view=render(<PlatformOptimization input={input}/>);
+    const preview=screen.getByRole("img",{name:"Selected thumbnail preview"});
+    const storyBefore=preview.getAttribute("src");
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    const tilesBefore=preview.getAttribute("src");
+    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
+    const editorialBefore=preview.getAttribute("src");
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    fireEvent.click(screen.getByRole("button",{name:"Regenerate selected concept"}));
+    const tilesAfter=preview.getAttribute("src");
+    const headlineAfter=(screen.getByRole("textbox",{name:"Thumbnail headline"}) as HTMLInputElement).value;
+    expect(tilesAfter).not.toBe(tilesBefore);
+    expect(headlineAfter.length).toBeGreaterThan(4);
+    fireEvent.click(screen.getByRole("button",{name:"Story layout"}));
+    expect(preview.getAttribute("src")).toBe(storyBefore);
+    fireEvent.click(screen.getByRole("button",{name:"Editorial layout"}));
+    expect(preview.getAttribute("src")).toBe(editorialBefore);
+    view.unmount();
+    const reopened=render(<PlatformOptimization input={input}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    expect(screen.getByRole("img",{name:"Selected thumbnail preview"}).getAttribute("src")).toBe(tilesAfter);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue(headlineAfter);
+    const revised={...input,title:"Updated source title",sourceRevision:"another-script",
+      scriptSections:[{id:"new-scene",heading:"New perspective",text:"A rewritten explanation."}]};
+    const savedTileColor=(screen.getByLabelText("Thumbnail accent color") as HTMLInputElement).value;
+    reopened.unmount();
+    render(<PlatformOptimization input={revised}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Tile layout"}));
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue(headlineAfter);
+    expect(screen.getByLabelText("Thumbnail accent color")).toHaveValue(savedTileColor);
+  });
+
   it("offers different editable headlines per concept and preserves the chosen concept after reopening",()=>{
     const view=render(<PlatformOptimization input={{...input,scriptSections:[
       {id:"one",heading:"Taxes and upkeep",text:"Property taxes and repairs add to cost."},
