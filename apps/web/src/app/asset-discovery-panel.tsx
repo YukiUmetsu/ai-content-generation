@@ -14,7 +14,7 @@ type Scene={shotId:string;query:string;strategy:"search"|"kumiki";reason:string;
 type Results={scenes:Scene[];warnings:string[]};
 type Approved={shotId:string;assetId:string;provider:string;assetType:string;title:string;license:string;
   sourceUrl:string;localPath:string;sha256:string;sizeBytes:number;durationSeconds?:number};
-type Selected={selections:Approved[];invalidShots:string[]};
+type Selected={selections:Array<Approved&{focalPoint?:{x:number;y:number}}> ;invalidShots:string[]};
 
 async function localAssets(path:string,body?:unknown){
   const response=await fetch("/api/contentgen-assets/"+path,{
@@ -39,11 +39,16 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
   const [savedSearchRefresh,setSavedSearchRefresh]=useState(0);
+  const [framing,setFraming]=useState<{shotId:string;sha256:string;x:number;y:number}|null>(null);
   const results=search?.bundle===bundle&&search.destination===destination?search.data:null;
   const review=pending?.bundle===bundle&&pending.shotId===selectedShotId?pending.asset:null;
   const scene=results?.scenes.find(x=>x.shotId===selectedShotId);
   const sceneApproved=approved.filter(x=>x.shotId===selectedShotId);
   const sceneSelected=selected.selections.find(x=>x.shotId===selectedShotId);
+  const currentFraming=sceneSelected?(framing?.shotId===selectedShotId&&framing.sha256===sceneSelected.sha256?
+    framing:{shotId:selectedShotId,sha256:sceneSelected.sha256,
+      x:Math.round((sceneSelected.focalPoint?.x??.5)*100),
+      y:Math.round((sceneSelected.focalPoint?.y??.5)*100)}):null;
 
   useEffect(()=>{
     let active=true;
@@ -119,6 +124,19 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
       setSelected(await localAssets("selected?projectId="+encodeURIComponent(projectId)) as unknown as Selected);
       setNotice("Scene selection cleared; imported assets remain available.");
     }catch(error){setNotice(error instanceof Error?error.message:"Could not clear scene selection.");}
+    finally{setBusy("");}
+  }
+  async function saveFraming(){
+    if(!sceneSelected||!currentFraming)return;
+    setBusy("framing");setNotice("");
+    try{
+      await localAssets("select",{projectId,shotId:selectedShotId,provider:sceneSelected.provider,
+        assetId:sceneSelected.assetId,sha256:sceneSelected.sha256,
+        focalPoint:{x:currentFraming.x/100,y:currentFraming.y/100}});
+      const refreshed=await localAssets("selected?projectId="+encodeURIComponent(projectId));
+      setSelected(refreshed as unknown as Selected);
+      setNotice("Image position saved. Only this scene's framing needs a new render.");
+    }catch(error){setNotice(error instanceof Error?error.message:"Could not save scene framing.");}
     finally{setBusy("");}
   }
   return <Surface header={<h2 className="flex items-center gap-2 font-medium">
@@ -216,6 +234,31 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
         <span>Selected: <strong>{sceneSelected.title}</strong> · {sceneSelected.assetType}</span>
         <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void clearSelection()}>Clear selection</Button>
       </div>}
+      {sceneSelected&&currentFraming&&["photo","video"].includes(sceneSelected.assetType)&&
+        <div className="space-y-3 rounded-control border border-primary/20 bg-primary/5 p-3 text-xs">
+          <div><p className="font-semibold text-foreground">Position image in scene</p>
+            <p className="mt-1 text-muted-foreground">Choose which part stays in focus when the image fills its frame. Your selection is saved for this scene only.</p></div>
+          <label className="flex flex-col gap-2 font-medium">Horizontal focus · {currentFraming.x}%
+            <input type="range" min={0} max={100} step={1} aria-label="Image horizontal focus"
+              value={currentFraming.x} disabled={!!busy}
+              onChange={event=>setFraming({...currentFraming,x:Number(event.target.value)})}/>
+          </label>
+          <label className="flex flex-col gap-2 font-medium">Vertical focus · {currentFraming.y}%
+            <input type="range" min={0} max={100} step={1} aria-label="Image vertical focus"
+              value={currentFraming.y} disabled={!!busy}
+              onChange={event=>setFraming({...currentFraming,y:Number(event.target.value)})}/>
+          </label>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Default center: 50% / 50%</span>
+            <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" disabled={!!busy||currentFraming.x===50&&currentFraming.y===50}
+              onClick={()=>setFraming({...currentFraming,x:50,y:50})}>Center</Button>
+            <Button size="sm" disabled={!!busy||currentFraming.x===Math.round((sceneSelected.focalPoint?.x??.5)*100)&&
+              currentFraming.y===Math.round((sceneSelected.focalPoint?.y??.5)*100)}
+              onClick={()=>void saveFraming()}>Save scene framing</Button>
+            </div>
+          </div>
+        </div>}
       {selected.invalidShots.includes(selectedShotId)&&<p role="status" className="rounded-control border border-destructive/40 p-3 text-xs">
         The saved scene reference is missing or modified. Import the asset again to restore the reference.</p>}
       {results?.warnings?.map((warning,index)=><p className="text-xs text-muted-foreground" key={index}>{warning}</p>)}

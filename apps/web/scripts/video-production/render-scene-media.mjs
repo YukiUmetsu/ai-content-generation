@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { DEFAULT_ROOT, listApprovedAssets, listSelectedSceneAssets } from "./asset-discovery.mjs";
+import { DEFAULT_ROOT, isMediaFocalPoint, listApprovedAssets, listSelectedSceneAssets } from "./asset-discovery.mjs";
 import { withAutomaticApprovedMedia } from "./automatic-approved-assets.mjs";
 
 const exec = promisify(execFile);
@@ -30,8 +30,11 @@ export function selectedMediaFingerprint(selected, shotMap) {
       typeof s.sourceUrl !== "string" || !s.sourceUrl.startsWith("https://www.pexels.com/") ||
       s.license !== "Pexels License" || s.licenseUrl !== "https://www.pexels.com/license/")
       fail("unsupported or unreviewed selected media; choose a reviewed Pexels photograph or video");
+    if(s.focalPoint!==undefined&&!isMediaFocalPoint(s.focalPoint))
+      fail("selected scene media framing is invalid; choose a focal position between 0 and 100 percent");
   }
-  return hash(JSON.stringify(selections.map(s => [s.shotId, s.provider, s.assetType, s.assetId, s.sha256])));
+  return hash(JSON.stringify(selections.map(s => [s.shotId, s.provider, s.assetType, s.assetId, s.sha256,
+    ...(s.focalPoint===undefined?[]:[s.focalPoint.x,s.focalPoint.y])])));
 }
 
 /** FFprobe is mandatory for MP4 codec, dimensions and measured duration. */
@@ -115,7 +118,8 @@ export async function prepareApprovedSceneMedia({ projectId, shotMap, outputDir,
     const url = `/__video_media/${filename}`;
     bindings[map.get(asset.shotId)] = { assetType: asset.assetType, url, sha256: asset.sha256,
       provider: asset.provider, assetId: asset.assetId, sourceUrl: asset.sourceUrl,
-      license: asset.license, licenseUrl: asset.licenseUrl, creator: asset.creator ?? "", ...details };
+      license: asset.license, licenseUrl: asset.licenseUrl, creator: asset.creator ?? "",
+      ...(asset.focalPoint===undefined?{}:{focalPoint:asset.focalPoint}),...details };
     assets.push({ url, path: destination, sha256: asset.sha256, assetType: asset.assetType });
   }
   return { fingerprint, bindings, assets };

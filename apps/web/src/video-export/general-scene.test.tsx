@@ -33,6 +33,23 @@ describe("generic deterministic explainer scene", () => {
     expect(first).not.toEqual(last);
   });
 
+  it("uses an edited per-scene focal position in the actual photo and footage layer",()=>{
+    const base={url:`/__video_media/${"f".repeat(64)}.jpg`,sha256:"f".repeat(64),
+      provider:"pexels" as const,assetId:"49",sourceUrl:"https://www.pexels.com/photo/roof-49/",
+      license:"Pexels License" as const,licenseUrl:"https://www.pexels.com/license/",creator:"Artist",
+      focalPoint:{x:.2,y:.75}};
+    const photoPlan:GeneralVisualPlan={...plan,chapters:plan.chapters.map(chapter=>chapter.id==="path"?
+      {...chapter,visual:{...chapter.visual,stockMedia:{...base,assetType:"photo"}}}:chapter)};
+    const rendered=renderToStaticMarkup(<GeneralExportScene plan={photoPlan} frame={65}/>);
+    expect(rendered).toContain("object-position:20.0% 75.0%");
+    expect(rendered).toContain("transform-origin:20.0% 75.0%");
+    const videoPlan:GeneralVisualPlan={...plan,chapters:plan.chapters.map(chapter=>chapter.id==="path"?
+      {...chapter,visual:{...chapter.visual,stockMedia:{...base,assetType:"video",durationSeconds:10,
+        width:1280,height:720,url:`/__video_media/${"f".repeat(64)}.mp4`}}}:chapter)};
+    expect(renderToStaticMarkup(<GeneralExportScene plan={videoPlan} frame={65}/>))
+      .toContain("object-position:20.0% 75.0%");
+  });
+
   it("fades the complete photo-and-typography composition during Kumiki scene transitions", () => {
     const photo = { assetType: "photo" as const, url: `/__video_media/${"e".repeat(64)}.jpg`,
       sha256: "e".repeat(64), provider: "pexels" as const, assetId: "49",

@@ -209,17 +209,19 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     {!stockMedia&&transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
       fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
-  {stockMedia && <div data-contentgen-stock-frame="" role="img" aria-label={`Reviewed ${stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
+  {stockMedia && <div data-contentgen-stock-frame="" role="img" aria-label={`Illustrative ${stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
     style={{position:"absolute",left:1040,top:230,width:760,height:650,overflow:"hidden",borderRadius:28,
       background:"#142431",border:"2px solid #526b73",boxShadow:"0 28px 95px #07131c80"}}>
     {stockMedia.assetType === "photo"
       ? <img data-contentgen-stock-photo="" src={stockMedia.url} alt="" decoding="async"
         style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`,
           transform:`scale(${(1.03+0.065*state.progress).toFixed(5)}) translate3d(${(12-24*state.progress).toFixed(3)}px,${(6-12*state.progress).toFixed(3)}px,0)`,
-          transformOrigin:"50% 50%"}}/>
+          transformOrigin:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`}}/>
       : <video data-contentgen-stock-video="" data-media-time={mediaTime.toFixed(6)}
         src={stockMedia.url} preload="auto" muted playsInline aria-hidden="true"
-        style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}} />}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`}} />}
   </div>}
   {!stockMedia && chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />

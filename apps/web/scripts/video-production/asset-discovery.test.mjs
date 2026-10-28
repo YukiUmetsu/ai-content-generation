@@ -275,6 +275,13 @@ test("approved Pexels video resolves its own provider ID and stores an MP4 with 
   assert.deepEqual(calls,["https://api.pexels.com/v1/videos/videos/83",
     "https://videos.pexels.com/video-files/83/720.mp4"]);
   assert.doesNotMatch(JSON.stringify(saved),/private-key|evil\.test|token=abc/);
+  const ref={projectId:"project-1",shotId:"shot-house",provider:"pexels",assetId:"83",sha256:saved.sha256};
+  await assert.rejects(selectApprovedSceneAsset({...ref,focalPoint:{x:1.1,y:.4}},{root}),/framing/i);
+  await assert.rejects(selectApprovedSceneAsset({...ref,focalPoint:{x:.5,y:.4,inject:true}},{root}),/framing/i);
+  const selected=await selectApprovedSceneAsset({...ref,focalPoint:{x:.15,y:.82}},{root});
+  assert.deepEqual(selected.focalPoint,{x:.15,y:.82});
+  assert.deepEqual((await listSelectedSceneAssets({projectId:"project-1"},{root})).selections[0].focalPoint,
+    {x:.15,y:.82});
 });
 
 test("Pexels video import refuses forged hosts and non-MP4 download payloads",async t=>{
@@ -331,6 +338,8 @@ test("scene selection pins only an approved SHA, can be revised and detects a da
   await assert.rejects(selectApprovedSceneAsset({...ref,sha256:"a".repeat(64)},{root}),/approved/i);
   await assert.rejects(selectApprovedSceneAsset({...ref,shotId:"shot-cost"},{root}),/approved/i);
   await assert.rejects(selectApprovedSceneAsset({...ref,shotId:"../bad"},{root}),/identifier/i);
+  await assert.rejects(selectApprovedSceneAsset({...ref,focalPoint:{x:.2,y:.8}},{root}),/framing/i,
+    "non-renderable textures must not accept video framing controls");
   const saved=await selectApprovedSceneAsset(ref,{root});
   assert.equal(saved.shotId,"shot-house");
   const first=await listSelectedSceneAssets({projectId:"project-1"},{root});

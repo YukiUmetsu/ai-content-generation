@@ -416,6 +416,12 @@ export async function listApprovedAssets({projectId},{root=DEFAULT_ROOT}={}){
 }
 
 const SELECTION_FILE="scene-media-selection.json";
+export function isMediaFocalPoint(value){
+  return value!==null&&typeof value==="object"&&!Array.isArray(value)&&
+    Object.keys(value).length===2&&Object.keys(value).every(key=>["x","y"].includes(key))&&
+    [value.x,value.y].every(number=>typeof number==="number"&&Number.isFinite(number)&&
+      number>=0&&number<=1&&Math.abs(number*1000-Math.round(number*1000))<1e-9);
+}
 /** Pin an approved content hash, never a client URL or filesystem path. */
 export async function selectApprovedSceneAsset(input,opts={}){
   const projectId=ident(input?.projectId,"project"),shotId=ident(input?.shotId,"scene"),
@@ -425,17 +431,22 @@ export async function selectApprovedSceneAsset(input,opts={}){
   const approved=(await listApprovedAssets({projectId},opts)).find(x=>x.shotId===shotId&&
     x.provider===input.provider&&x.assetId===assetId&&x.sha256===input.sha256);
   if(!approved)throw Error("Cannot select an asset that is not currently approved and hash-verified for this scene.");
+  if(input.focalPoint!==undefined&&(!isMediaFocalPoint(input.focalPoint)||
+    !["photo","video"].includes(approved.assetType)))
+    throw Error("Media framing must be an exact 0–100% horizontal and vertical focal position for a photo or video.");
   const root=resolve(opts.root??DEFAULT_ROOT),sceneDir=join(root,projectId,shotId);
   const selection={schemaVersion:1,kind:"contentgen-scene-media-selection",
     projectId,shotId,provider:approved.provider,assetId,assetType:approved.assetType,
-    sha256:approved.sha256,selectedAt:(opts.now??(()=>new Date()))().toISOString()};
+    sha256:approved.sha256,selectedAt:(opts.now??(()=>new Date()))().toISOString(),
+    ...(input.focalPoint===undefined?{}:{focalPoint:input.focalPoint})};
   const temp=await mkdtemp(join(sceneDir,".selection-"));
   try{
     const stage=join(temp,SELECTION_FILE);
     await writeFile(stage,JSON.stringify(selection,null,2)+"\n",{flag:"wx",mode:0o600});
     await rename(stage,join(sceneDir,SELECTION_FILE));
   }finally{await rm(temp,{recursive:true,force:true});}
-  return {...approved,selectedAt:selection.selectedAt};
+  return {...approved,selectedAt:selection.selectedAt,
+    ...(selection.focalPoint?{focalPoint:selection.focalPoint}:{})};
 }
 
 /** Invalidated selections remain visible as review-required, never accepted as media. */
@@ -451,11 +462,14 @@ export async function listSelectedSceneAssets({projectId},{root=DEFAULT_ROOT}={}
     try{record=JSON.parse(await readFile(join(base,shot.name,SELECTION_FILE),"utf8"));}
     catch(e){if(e.code==="ENOENT")continue;invalidShots.push(shot.name);continue;}
     if(record?.kind!=="contentgen-scene-media-selection"||record.schemaVersion!==1||
-      record.projectId!==projectId||record.shotId!==shot.name){invalidShots.push(shot.name);continue;}
+      record.projectId!==projectId||record.shotId!==shot.name||
+      record.focalPoint!==undefined&&!isMediaFocalPoint(record.focalPoint)){
+      invalidShots.push(shot.name);continue;}
     const valid=approved.find(x=>x.shotId===shot.name&&x.provider===record.provider&&
       x.assetId===record.assetId&&x.assetType===record.assetType&&x.sha256===record.sha256);
     if(!valid){invalidShots.push(shot.name);continue;}
-    selections.push({...valid,selectedAt:record.selectedAt});
+    selections.push({...valid,selectedAt:record.selectedAt,
+      ...(record.focalPoint===undefined?{}:{focalPoint:record.focalPoint})});
   }
   return {schemaVersion:1,kind:"contentgen-scene-media-selections",selections,invalidShots};
 }

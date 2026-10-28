@@ -13,6 +13,7 @@ export type ReviewedStockMedia = {
   assetType: "photo" | "video";
   url: string; sha256: string; provider: "pexels"; assetId: string;
   sourceUrl: string; license: "Pexels License"; licenseUrl: string; creator: string;
+  focalPoint?: {x:number;y:number};
 } & ({ assetType: "photo" } | { assetType: "video"; durationSeconds: number; width: number; height: number });
 
 export interface GeneralVisualPlan {

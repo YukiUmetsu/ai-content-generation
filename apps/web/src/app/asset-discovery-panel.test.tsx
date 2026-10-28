@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from "vitest";
-import {render,screen,waitFor} from "@testing-library/react";
+import {fireEvent,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {AssetDiscoveryPanel} from "./asset-discovery-panel";
 
@@ -73,4 +73,35 @@ it("marks Pexels selections as usable in the next video and keeps unsupported mo
   expect(await screen.findByText("Residential porch",{selector:"strong"})).toBeInTheDocument();
   expect(screen.getByText(/included in the next draft video/i)).toBeInTheDocument();
   expect(screen.getByRole("button",{name:/3D models are not yet rendered/i})).toBeDisabled();
+});
+
+it("lets the editor position an individual pinned photo and persists only its focal point",async()=>{
+  const selectedPhoto={shotId:"scene-1",provider:"pexels",assetType:"photo",assetId:"42",sha256:"a".repeat(64),
+    rightsStatus:"user-reviewed",title:"Residential porch",license:"Pexels License",sizeBytes:1200,
+    localPath:"/approved/photo.jpg"};
+  const changes:unknown[]=[];
+  let saved={...selectedPhoto,focalPoint:{x:.5,y:.5}};
+  vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
+    const path=String(url);
+    if(path.endsWith("/select")){
+      const body=JSON.parse(String(options?.body));changes.push(body);
+      saved={...selectedPhoto,focalPoint:body.focalPoint};
+    }
+    const data=path.includes("/approved?")?{assets:[selectedPhoto]}:
+      path.includes("/selected?")?{selections:[saved],invalidShots:[]}:{ok:true};
+    return {ok:true,json:async()=>data};
+  }));
+  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1"/>);
+  const horizontal=await screen.findByLabelText("Image horizontal focus");
+  fireEvent.change(horizontal,{target:{value:"20"}});
+  fireEvent.change(screen.getByLabelText("Image vertical focus"),{target:{value:"75"}});
+  await userEvent.setup().click(screen.getByRole("button",{name:"Save scene framing"}));
+  await waitFor(()=>expect(changes).toHaveLength(1));
+  expect(changes[0]).toMatchObject({projectId:"director-demo",shotId:"scene-1",assetId:"42",
+    focalPoint:{x:.2,y:.75}});
+  await waitFor(()=>expect(screen.getByRole("button",{name:"Save scene framing"})).toBeDisabled());
+  expect(screen.getByText(/only this scene.s framing needs a new render/i)).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole("button",{name:"Center"}));
+  expect(screen.getByLabelText("Image horizontal focus")).toHaveValue("50");
+  expect(screen.getByRole("button",{name:"Save scene framing"})).toBeEnabled();
 });

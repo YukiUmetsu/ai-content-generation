@@ -45,6 +45,24 @@ test("selected approved Pexels photo is frozen and bound to its exact storyboard
   assert.deepEqual(again.bindings, prepared.bindings, "retries reuse an intact frozen artifact");
 });
 
+test("changing only a scene photo's focal position changes its render identity but keeps the same verified bytes",async t=>{
+  const ctx=await setupPhoto(t);
+  const before=await listSelectedSceneAssets({projectId:ctx.projectId},{root:ctx.root});
+  const oldFingerprint=selectedMediaFingerprint(before,shots);
+  await selectApprovedSceneAsset({projectId:ctx.projectId,shotId:"scene-roof",provider:"pexels",
+    assetId:"49",sha256:ctx.approved.sha256,focalPoint:{x:.2,y:.75}},{root:ctx.root});
+  const changed=await listSelectedSceneAssets({projectId:ctx.projectId},{root:ctx.root});
+  const fingerprint=selectedMediaFingerprint(changed,shots);
+  assert.notEqual(fingerprint,oldFingerprint);
+  await assert.rejects(prepareApprovedSceneMedia({projectId:ctx.projectId,shotMap:shots,
+    outputDir:ctx.outputDir,expectedFingerprint:oldFingerprint},{root:ctx.root}),/changed after readiness/i);
+  const output=await prepareApprovedSceneMedia({projectId:ctx.projectId,shotMap:shots,
+    outputDir:ctx.outputDir,expectedFingerprint:fingerprint},{root:ctx.root});
+  assert.deepEqual(output.bindings["beat-01"].focalPoint,{x:.2,y:.75});
+  assert.equal(output.bindings["beat-01"].sha256,ctx.approved.sha256);
+  assert.deepEqual(await readFile(output.assets[0].path),photo);
+});
+
 test("changed and unsupported selections fail before any narration can be synthesized", async t => {
   const ctx = await setupPhoto(t);
   const original = await listSelectedSceneAssets({ projectId: ctx.projectId }, { root: ctx.root });
