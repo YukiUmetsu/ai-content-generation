@@ -55,6 +55,12 @@ function renderFailure(phase,error){
   // paths or credentials. Only recognize a small set of safe machine errors.
   if(/\bENOSPC\b|no space left on device/iu.test(String(error?.message??"")))
     return{code:"disk_full",message:"Local disk space is exhausted. Free disk space, then retry the draft; verified scenes can be reused."};
+  if(/^Scene review coverage invalid: review still storage exceeds the 256 MiB budget/u.test(String(error?.message??"")))
+    return{code:"review_still_storage_limit",message:"Scene review captures exceeded the 256 MiB safety budget. Shorten the storyboard, then retry; verified segments can be reused."};
+  if(/^Scene review coverage invalid: .*64.*scene|^Scene review coverage invalid: .*64.*still/iu.test(String(error?.message??"")))
+    return{code:"scene_review_limit",message:"This draft exceeds the 64-scene review evidence limit. Split the storyboard before generating narration."};
+  if(error?.message==="QA_REPORT_INTEGRITY_FAILED")
+    return{code:"qa_integrity_failed",message:"The QA report was missing or changed during export. No completed Jobs release was recorded. Check local storage, then retry the draft."};
   const [code,message]=failureRecovery[phase]??["render_failed","Draft production failed. Open Jobs for the failed step, check local tools and retry."];
   return{code,message};
 }
@@ -62,6 +68,9 @@ function persistedFailure(job){
   const failing=job?.nodes?.find(node=>["FAILED","READY"].includes(node.state)&&
     typeof node.errorCode==="string");
   if(failing?.errorCode==="disk_full")return renderFailure("",Error("ENOSPC"));
+  if(failing?.errorCode==="review_still_storage_limit")return renderFailure("",Error("Scene review coverage invalid: review still storage exceeds the 256 MiB budget"));
+  if(failing?.errorCode==="scene_review_limit")return renderFailure("",Error("Scene review coverage invalid: the 64-still limit supports at most 64 narrated scenes"));
+  if(failing?.errorCode==="qa_integrity_failed")return renderFailure("",Error("QA_REPORT_INTEGRITY_FAILED"));
   for(const [phase,[code,message]] of Object.entries(failureRecovery)){
     if(failing?.errorCode===code)return{code,message,phase};
   }
@@ -229,6 +238,7 @@ export function createDirectorProduction(deps={}){
   const mediaRecordsRoot=join(outputRoot,"production-media-records-v1");
   const mediaDigests=new Map();
   const releasedArtifactKeys={"video.mp4":"video","captions.srt":"captions",
+    "qa-report.json":"qaReport",
     "cover-still.png":"coverStill","thumbnail-1.png":"thumbnail-1",
     "thumbnail-2.png":"thumbnail-2","thumbnail-3.png":"thumbnail-3",
     "thumbnail-1.svg":"thumbnail-1.svg","thumbnail-2.svg":"thumbnail-2.svg",
@@ -415,6 +425,33 @@ export function createDirectorProduction(deps={}){
       .filter(item=>item.productionId===productionId).length;
     return{requiresConfirmation:completedVersions>0,completedVersions};
   }
+  async function verifiedSavedSceneCoverage(record,releaseDir){
+    const file=join(releaseDir,"qa-report.json");
+    let qaExpected=false;
+    try{
+      const manifest=JSON.parse(await readFile(join(releaseDir,"render-manifest.json"),"utf8"));
+      qaExpected=Object.hasOwn(manifest?.artifacts??{},"qaReport");
+      if(!qaExpected)return{visualCoverage:null,qaIntegrityFailure:false}; // Pre-evidence historical release.
+      const info=await lstat(file);
+      if(!info.isFile()||info.isSymbolicLink()||info.size<40||info.size>256_000||
+        !await verifiedReleaseFile(releaseDir,"qa-report.json",record.manifestHash))
+        return{visualCoverage:null,qaIntegrityFailure:true};
+      const coverage=JSON.parse(await readFile(file,"utf8"))?.visualCoverage;
+      const counts=coverage?.mediaDeclarationCounts;
+      const integer=value=>Number.isSafeInteger(value)&&value>=0&&value<=64;
+      if(!integer(coverage?.sceneCount)||coverage.sceneCount===0||
+        !integer(coverage.reviewStillCount)||coverage.reviewStillCount<coverage.sceneCount||
+        !integer(counts?.stockVideo)||!integer(counts?.stockPhoto)||!integer(counts?.kumikiOnly)||
+        counts.stockVideo+counts.stockPhoto+counts.kumikiOnly!==coverage.sceneCount||
+        !Array.isArray(coverage.scenesWithoutStockVideo)||
+        coverage.scenesWithoutStockVideo.length!==counts.stockPhoto+counts.kumikiOnly||
+        coverage.scenesWithoutStockVideo.some(id=>typeof id!=="string"||id.length>160))
+        return{visualCoverage:null,qaIntegrityFailure:true};
+      return{visualCoverage:{sceneCount:coverage.sceneCount,reviewStillCount:coverage.reviewStillCount,
+        mediaDeclarationCounts:{stockVideo:counts.stockVideo,stockPhoto:counts.stockPhoto,kumikiOnly:counts.kumikiOnly},
+        scenesWithoutStockVideo:coverage.scenesWithoutStockVideo},qaIntegrityFailure:false};
+    }catch{return{visualCoverage:null,qaIntegrityFailure:qaExpected};}
+  }
   async function savedReleaseForProduction(productionId,sourceRevision){
     const records=(await readMediaIndex()).filter(item=>item.productionId===productionId&&
       item.sourceRevision===sourceRevision);
@@ -426,7 +463,8 @@ export function createDirectorProduction(deps={}){
           lstat(base),lstat(join(base,"release")),lstat(join(base,"release","video.mp4"))]);
         if(owned.isDirectory()&&!owned.isSymbolicLink()&&release.isDirectory()&&
           !release.isSymbolicLink()&&video.isFile()&&!video.isSymbolicLink()&&video.size>0){
-          if(await verifiedReleaseFile(join(base,"release"),"video.mp4",record.manifestHash))return record;
+          if(await verifiedReleaseFile(join(base,"release"),"video.mp4",record.manifestHash))
+            return{...record,...await verifiedSavedSceneCoverage(record,join(base,"release"))};
           if(record.manifestHash)integrityFailure=true;
         }
       }catch(error){if(error?.code!=="ENOENT")throw error;}
@@ -538,8 +576,10 @@ export function createDirectorProduction(deps={}){
         }
         if(saved){
           respond(res,200,{state:"done",phase:"review",
-            message:"Your saved draft is ready to review. Reopen it or export the publishing assets.",
-            progress:null,report:null,runId:saved.runId,mediaUrl:
+            message:saved.qaIntegrityFailure?
+              "Saved MP4 is playable, but the QA report is missing or changed. Generate an updated draft to restore verifiable scene evidence; do not publish this version.":
+              "Your saved draft is ready to review. Reopen it or export the publishing assets.",
+            progress:null,report:null,visualCoverage:saved.visualCoverage,runId:saved.runId,mediaUrl:
               `/api/contentgen-video/media/${saved.runId}/video.mp4`,regeneration:null});return;
         }
         // The Rust DAG is authoritative for interrupted work. This endpoint
@@ -603,7 +643,7 @@ export function createDirectorProduction(deps={}){
         res.end(preview.html);return;
       }
       if(req.method==="GET"&&route.startsWith("/media/")){
-        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt|cover-still\.png|thumbnail-[123]\.png|thumbnail-[123]\.svg)$/u.exec(route);
+        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt|qa-report\.json|cover-still\.png|thumbnail-[123]\.png|thumbnail-[123]\.svg)$/u.exec(route);
         if(!match||!runIdPattern.test(match[1])){respond(res,404,{error:"Media is unavailable."});return;}
         const releaseDir=await releaseForRun(match[1]);
         if(!releaseDir){respond(res,404,{error:"Media is unavailable."});return;}
@@ -621,9 +661,9 @@ export function createDirectorProduction(deps={}){
           }
           const bytes=await readFile(mediaPath);
           res.writeHead(200,{...headers,"Content-Type":match[2].endsWith(".png")?"image/png":
-            match[2].endsWith(".svg")?"image/svg+xml":"text/plain; charset=utf-8",
-            ...(match[2].endsWith(".svg")?{"Content-Security-Policy":"default-src 'none'; sandbox"}:{}),
-            "Content-Length":bytes.length,"Content-Disposition":`attachment; filename="${match[2]}"`});
+            match[2].endsWith(".svg")?"image/svg+xml":match[2].endsWith(".json")?"application/json; charset=utf-8":"text/plain; charset=utf-8",
+            ...(match[2].endsWith(".svg")||match[2].endsWith(".json")?{"Content-Security-Policy":"default-src 'none'; sandbox"}:{}),
+            "Content-Length":bytes.length,"Content-Disposition":`${match[2].endsWith(".json")?"inline":"attachment"}; filename="${match[2]}"`});
           res.end(bytes);
         }
         return;
@@ -1073,7 +1113,7 @@ export function createDirectorProduction(deps={}){
             await journal;
             if(journalError)throw journalError;
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
-            let mediaWarning="";
+            let mediaWarning="",qaIntegrityFailed=false;
             try{
               if(typeof result.releaseDir!=="string"||resolve(result.releaseDir)!==resolve(join(out,"release")))
                 throw Error("The renderer returned a release directory outside this production.");
@@ -1082,7 +1122,7 @@ export function createDirectorProduction(deps={}){
                 !releaseInfo.isDirectory()||releaseInfo.isSymbolicLink())
                 throw Error("The renderer release directory is not an owned directory.");
               if(result.manifestHash){
-                for(const file of ["video.mp4","captions.srt","cover-still.png",
+                for(const file of ["video.mp4","captions.srt","qa-report.json","cover-still.png",
                   "thumbnail-1.png","thumbnail-2.png","thumbnail-3.png"]){
                   if(!await verifiedReleaseFile(result.releaseDir,file,result.manifestHash))
                     throw Error("The exported "+file+" no longer matches its verified manifest.");
@@ -1090,12 +1130,13 @@ export function createDirectorProduction(deps={}){
               }
               await recordMedia(runId,input.productionId??null,input.sourceRevision??null,result.manifestHash);
             }
-            catch(error){mediaWarning=" Export integrity or media registration failed; keep your local release folder. "+
+            catch(error){qaIntegrityFailed=String(error?.message??"")==="The exported qa-report.json no longer matches its verified manifest.";
+              mediaWarning=" Export integrity or media registration failed; keep your local release folder. "+
               String(error?.message??"Index error").slice(0,140);}
             // Publish the recoverable release pointer before committing the
             // durable Jobs success. A process exit between these two writes
             // must not produce a SUCCEEDED job whose media cannot be found.
-            if(tracker&&mediaWarning)throw Error("Could not persist the media index before completing Jobs.");
+            if(tracker&&mediaWarning)throw Error(qaIntegrityFailed?"QA_REPORT_INTEGRITY_FAILED":"Could not persist the media index before completing Jobs.");
             if(tracker)await tracker.complete(result.manifestHash&&result.artifactHashes?.video?
               {artifactLedger:{kind:"export-package",manifestHash:result.manifestHash,
                 artifacts:{video:result.artifactHashes.video,
@@ -1110,6 +1151,11 @@ export function createDirectorProduction(deps={}){
                   assetSearchSummary?.candidates?` ${assetSearchSummary.candidates} media suggestions saved for scene review.`:"")+
                 (assetSearchSummary?.status==="fallback"?" Optional media search unavailable; use scene search to retry.":"")+mediaWarning,
               mediaUrl:"/api/contentgen-video/media/"+runId+"/video.mp4",
+              visualCoverage:result.qa?.visualCoverage?{
+                sceneCount:result.qa.visualCoverage.sceneCount,
+                reviewStillCount:result.qa.visualCoverage.reviewStillCount,
+                mediaDeclarationCounts:result.qa.visualCoverage.mediaDeclarationCounts,
+                scenesWithoutStockVideo:result.qa.visualCoverage.scenesWithoutStockVideo}:null,
               regeneration:result.regeneration??null};
           }catch(error){
             await journal;

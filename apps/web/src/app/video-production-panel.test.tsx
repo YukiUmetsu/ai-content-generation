@@ -301,6 +301,28 @@ it("offers captions alongside the playable MP4 after a successful render",async(
     url.replace("/video.mp4","/captions.srt"));
 });
 
+it("shows scene-by-scene visual proof and outstanding footage coverage next to the exported MP4",async()=>{
+  const url="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4";
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true});
+    if(path.endsWith("/status"))return reply({state:"done",phase:"review",message:"Draft rendered",mediaUrl:url,
+      visualCoverage:{sceneCount:3,reviewStillCount:5,
+        mediaDeclarationCounts:{stockVideo:1,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"]}});
+    throw Error("Unexpected production request: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  expect(await screen.findByText(/3 of 3 scenes have captured review stills/i)).toBeInTheDocument();
+  expect(screen.getByText(/1 stock video · 1 stock photo · 1 Kumiki graphic/i)).toBeInTheDocument();
+  expect(screen.getByText(/2 scenes still lack stock footage/i)).toBeInTheDocument();
+  expect(screen.getByRole("link",{name:"Review technical QA report"})).toHaveAttribute("href",
+    url.replace("/video.mp4","/qa-report.json"));
+});
+
 it("shows one recovery action that rechecks and retries a failed draft without losing narration setup",async()=>{
   let checks=0,starts=0;
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{

@@ -404,9 +404,11 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
       const releaseDir=join(opts.out,"release");await mkdir(releaseDir,{recursive:true});
       const digest=value=>createHash("sha256").update(value).digest("hex");
       const files={"video.mp4":"mock media","captions.srt":"mock captions",
+        "qa-report.json":JSON.stringify({technicalPass:true,visualCoverage:{sceneCount:2,reviewStillCount:4,
+          mediaDeclarationCounts:{stockVideo:0,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"]}}),
         "cover-still.png":"mock cover","thumbnail-1.png":"mock concept 1",
         "thumbnail-2.png":"mock concept 2","thumbnail-3.png":"mock concept 3"};
-      const keys={"video.mp4":"video","captions.srt":"captions","cover-still.png":"coverStill",
+      const keys={"video.mp4":"video","captions.srt":"captions","qa-report.json":"qaReport","cover-still.png":"coverStill",
         "thumbnail-1.png":"thumbnail-1","thumbnail-2.png":"thumbnail-2","thumbnail-3.png":"thumbnail-3"};
       const artifacts={};
       for(const [file,contents] of Object.entries(files)){
@@ -420,6 +422,8 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
       opts.onProgress({phase:"narration"});opts.onProgress({phase:"rendering",completedFrames:12,totalFrames:12,
         artifactLedger:{kind:"sound-mix",masterSha256:"a".repeat(64),samples:96000}});
       return {releaseDir,manifestHash:exportedManifestHash,
+        qa:{visualCoverage:{sceneCount:2,reviewStillCount:4,
+          mediaDeclarationCounts:{stockVideo:0,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"]}},
         artifactHashes:{video:exportedVideoHash,captions:exportedCaptionsHash}};
     }});
   const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24),sourceRevision:"r1"};
@@ -429,6 +433,26 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   for(let i=0;i<30&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
   assert.equal(server.status().state,"done");
   assert.equal(server.status().jobId,"job-persisted");
+  assert.equal(server.status().visualCoverage?.mediaDeclarationCounts.stockPhoto,1);
+  const runId=server.status().mediaUrl.split("/").at(-2);
+  const reportUrl=`/media/${runId}/qa-report.json`;
+  const qaDownload=await audioResponse(server,reportUrl);
+  assert.equal(qaDownload.status,200);
+  assert.match(qaDownload.headers["Content-Type"],/application\/json/);
+  assert.match(qaDownload.headers["Content-Disposition"],/^inline;/);
+  assert.match(qaDownload.headers["Content-Security-Policy"],/default-src 'none'/);
+  assert.equal(JSON.parse(qaDownload.bytes.toString("utf8")).visualCoverage.sceneCount,2);
+  const resumed=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>null});
+  const reopened=await invoke(resumed,"GET",`/status/${payload.productionId}?sourceRevision=r1`);
+  assert.equal(reopened.data.state,"done");
+  assert.equal(reopened.data.visualCoverage?.mediaDeclarationCounts.stockPhoto,1,
+    "scene coverage should survive restarting the Director process");
+  await writeFile(join(dir,"draft-"+runId,"release","qa-report.json"),"tampered QA");
+  assert.equal((await audioResponse(server,reportUrl)).status,404,"tampered QA must never be served");
+  const reopenedTampered=await invoke(resumed,"GET",`/status/${payload.productionId}?sourceRevision=r1`);
+  assert.equal(reopenedTampered.data.state,"done","a damaged QA should not destroy the playable video");
+  assert.equal(reopenedTampered.data.visualCoverage,null,"do not claim saved scene proof from damaged QA");
+  assert.match(reopenedTampered.data.message,/QA report.*missing or changed|verifiable scene evidence/i);
   assert.deepEqual(events.map(e=>e[0]),["start","advance","advance","complete"]);
   assert.equal(events[2][2].artifactLedger.masterSha256,"a".repeat(64));
   assert.deepEqual(events[3][1],{artifactLedger:{kind:"export-package",manifestHash:exportedManifestHash,
@@ -649,6 +673,29 @@ test("a full draft disk-space failure exposes the specific recoverable cause in 
   assert.match(server.status().message,/disk space/i);
   assert.equal(server.status().jobId,"job-disk-full");
   assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private-token-value/);
+});
+
+test("an excessive scene-review PNG budget reports an actionable Jobs step without publishing",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-review-budget-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let failed,completed=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-review-budget",advance:async()=>{},
+      complete:async()=>{completed++;},fail:async(...args)=>{failed=args;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      await options.onProgress({phase:"rendering",message:"Capturing scene review frames"});
+      throw Error("Scene review coverage invalid: review still storage exceeds the 256 MiB budget or has an invalid byte count; shorten the storyboard");
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"e".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(server.status().jobId,"job-review-budget");
+  assert.equal(failed?.[0],"review_still_storage_limit");
+  assert.match(server.status().message,/256 MiB.*budget/i);
+  assert.equal(completed,0);
 });
 
 test("lost worker ownership is a retryable failure, never a user cancellation",async t=>{
@@ -988,6 +1035,42 @@ test("Jobs cannot commit success when a renderer's claimed artifact hash is not 
   assert.equal(completed,0);
   assert.equal(failed,1);
   assert.deepEqual((await invoke(server,"GET",`/assets/${payload.productionId}`)).data.assets,[]);
+});
+
+test("Jobs cannot succeed when final QA evidence is damaged even if the MP4 hashes correctly",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-damaged-qa-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let completed=0,failed=0,failedCode="";
+  const digest=value=>createHash("sha256").update(value).digest("hex");
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-qa-integrity",advance:async()=>{},
+      complete:async()=>{completed++;},fail:async(code)=>{failed++;failedCode=code;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      const files={"video.mp4":"rendered video","captions.srt":"captions",
+        "cover-still.png":"cover","thumbnail-1.png":"cover 1","thumbnail-2.png":"cover 2","thumbnail-3.png":"cover 3"};
+      const keys={"video.mp4":"video","captions.srt":"captions","cover-still.png":"coverStill",
+        "thumbnail-1.png":"thumbnail-1","thumbnail-2.png":"thumbnail-2","thumbnail-3.png":"thumbnail-3"};
+      const artifacts={};
+      for(const [file,bytes] of Object.entries(files)){
+        await writeFile(join(releaseDir,file),bytes);artifacts[keys[file]]=digest(bytes);
+      }
+      artifacts.qaReport=digest("correct report");
+      await writeFile(join(releaseDir,"qa-report.json"),"report was corrupted after export");
+      const manifest=JSON.stringify({schemaVersion:1,artifacts});
+      await writeFile(join(releaseDir,"render-manifest.json"),manifest);
+      return {releaseDir,manifestHash:digest(manifest),artifactHashes:{video:artifacts.video}};
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<50&&server.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(server.status().state,"failed");
+  assert.match(server.status().message,/qa report|qa-report\.json|integrity|media/i);
+  assert.equal(completed,0);
+  assert.equal(failed,1);
+  assert.equal(failedCode,"qa_integrity_failed");
 });
 
 test("saved media links never follow a symlinked release folder or thumbnail",async t=>{

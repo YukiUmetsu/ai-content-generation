@@ -11,10 +11,13 @@ type Preview = {schemaVersion:number;kind:string;job:{beats:Array<{id:string;nar
   shotMap:Array<{shotId:string;beatId:string;visualAction:string}>;
   warnings:string[];editorialStatus:string};
 type Report = {ready:boolean;findings:Array<{severity:string;code:string;message:string}>};
+type VisualCoverage={sceneCount:number;reviewStillCount:number;
+  mediaDeclarationCounts:{stockVideo:number;stockPhoto:number;kumikiOnly:number};scenesWithoutStockVideo:string[]};
 type Status = {state:string;phase:string;message:string;report?:Report|null;
   jobId?:string|null;
   progress?:{phase:string;completedFrames?:number;totalFrames?:number}|null;
-  mediaUrl?:string|null;regeneration?:{reusedSpeechBeatIds:string[];reusedVideoSegments:number;newlyEncodedVideoSegments:number|null}|null};
+  mediaUrl?:string|null;visualCoverage?:VisualCoverage|null;
+  regeneration?:{reusedSpeechBeatIds:string[];reusedVideoSegments:number;newlyEncodedVideoSegments:number|null}|null};
 type Settings = {provider:"local"|"fish";voiceId:string;providerRevision:string;modelId:string;endpoint:string;
   apiKey:string;localVoiceAuthorized:boolean;voiceConsent:boolean;transmitText:boolean};
 type Stage="preview"|"narration"|"review"|"export";
@@ -616,12 +619,22 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         {state.state==="done"&&state.mediaUrl&&<div className="space-y-3 rounded-control border border-border p-3">
           <p className="font-semibold">Your test video is ready — watch it before publishing</p>
           <video key={state.mediaUrl} src={state.mediaUrl} controls playsInline className="aspect-video w-full rounded-control bg-black" aria-label="Rendered ContentGen draft video"/>
+          {state.visualCoverage&&<div className="space-y-1 rounded-control border border-border bg-surface-subtle p-3" role="status">
+            <p className="text-sm font-semibold">{state.visualCoverage.sceneCount} of {state.visualCoverage.sceneCount} scenes have captured review stills</p>
+            <p className="text-xs text-muted-foreground">{state.visualCoverage.mediaDeclarationCounts.stockVideo} stock video · {state.visualCoverage.mediaDeclarationCounts.stockPhoto} stock photo · {state.visualCoverage.mediaDeclarationCounts.kumikiOnly} Kumiki graphic</p>
+            <p className="text-xs text-muted-foreground">{state.visualCoverage.scenesWithoutStockVideo.length} scenes still lack stock footage. Inspect actual playback and media rights before publishing.</p>
+          </div>}
           <div className="flex flex-wrap gap-2">
             <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline" href={state.mediaUrl} download="contentgen-draft.mp4">Download MP4</a>
             {/^\/api\/contentgen-video\/media\/[a-f0-9-]+\/video\.mp4$/u.test(state.mediaUrl)&&
-              <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline"
-                href={state.mediaUrl.replace(/\/video\.mp4$/u,"/captions.srt")}
-                download="contentgen-captions.srt">Download captions (SRT)</a>}
+              <>
+                <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline"
+                  href={state.mediaUrl.replace(/\/video\.mp4$/u,"/captions.srt")}
+                  download="contentgen-captions.srt">Download captions (SRT)</a>
+                {state.visualCoverage&&<a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline"
+                  href={state.mediaUrl.replace(/\/video\.mp4$/u,"/qa-report.json")}
+                  target="_blank" rel="noopener noreferrer">Review technical QA report</a>}
+              </>}
           </div>
           {state.regeneration&&<p className="text-xs text-muted-foreground">Reused {state.regeneration.reusedSpeechBeatIds?.length??0} prior speech beats and {state.regeneration.reusedVideoSegments??0} verified video segments.</p>}
         </div>}
