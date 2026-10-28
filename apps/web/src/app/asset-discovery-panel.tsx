@@ -29,7 +29,7 @@ const fmt=(bytes:number)=>bytes<1024*1024?`${Math.round(bytes/1024)} KB`:`${(byt
 const key=(asset:Candidate)=>`${asset.provider}:${asset.assetType}:${asset.assetId}`;
 
 /** Optional per-scene visual ingredients; does not alter the approved storyboard or renderer. */
-export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionId}:{bundle:Bundle;projectId:string;selectedShotId:string;productionId?:string}){
+export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionId,onOpenJobs}:{bundle:Bundle;projectId:string;selectedShotId:string;productionId?:string;onOpenJobs?:()=>void}){
   const [destination,setDestination]=useState<"landscape"|"portrait">("landscape");
   const [search,setSearch]=useState<{bundle:Bundle;destination:"landscape"|"portrait";data:Results}|null>(null);
   const [approved,setApproved]=useState<Approved[]>([]);
@@ -38,6 +38,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
   const [acknowledged,setAcknowledged]=useState(false);
   const [busy,setBusy]=useState("");
   const [notice,setNotice]=useState("");
+  const [lastImportJobId,setLastImportJobId]=useState<string|null>(null);
   const [siteUpload,setSiteUpload]=useState<{shotId:string;file:File}|null>(null);
   const [siteUploadRevision,setSiteUploadRevision]=useState(0);
   const [siteUrl,setSiteUrl]=useState("");
@@ -115,7 +116,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
   }
   async function importSiteFile(){
     if(busy||!siteUpload||siteUpload.shotId!==selectedShotId||!siteReviewed)return;
-    setBusy("site-upload");setNotice("");
+    setBusy("site-upload");setNotice("");setLastImportJobId(null);
     try{
       const file=siteUpload.file;
       if(file.size<128||file.size>80*1024*1024)throw Error("Choose a Pexels download between 128 bytes and 80 MB.");
@@ -126,25 +127,29 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
       const response=await fetch("/api/contentgen-assets/import-downloaded?"+query,{
         method:"POST",cache:"no-store",headers:{"Content-Type":"application/octet-stream",
           "X-Contentgen-Director":"local-only"},body:file,signal:AbortSignal.timeout(90000)});
-      const result=await response.json() as {error?:string};
+      const result=await response.json() as {error?:string;jobId?:string;reused?:boolean};
       if(!response.ok)throw Error(result.error??`Import failed (HTTP ${response.status}).`);
       const updated=await localAssets("approved?projectId="+encodeURIComponent(projectId));
       setApproved(updated.assets as Approved[]);
       setSiteUpload(null);setSiteReviewedShotId(null);setSiteUploadRevision(value=>value+1);
-      setNotice("Pexels download verified, saved with its source and SHA-256 hash. Choose Use in next draft to pin it to this scene.");
+      setLastImportJobId(result.jobId??null);
+      setNotice(result.reused?"Existing verified media reused. Choose Use in next draft to include it in this scene.":
+        "Pexels download verified, saved with its source and SHA-256 hash. Choose Use in next draft to pin it to this scene.");
     }catch(error){setNotice(error instanceof Error?error.message:"Could not import downloaded Pexels media.");}
     finally{setBusy("");}
   }
   async function downloadSitePhoto(){
     if(busy||!siteReviewed||!siteUrl.trim())return;
-    setBusy("site-photo");setNotice("");
+    setBusy("site-photo");setNotice("");setLastImportJobId(null);
     try{
-      await localAssets("import-from-page",{projectId,shotId:selectedShotId,sourceUrl:siteUrl.trim(),
+      const imported=await localAssets("import-from-page",{projectId,shotId:selectedShotId,sourceUrl:siteUrl.trim(),
         assetType:"photo",creator:siteCreator.trim(),confirmRights:true});
       const updated=await localAssets("approved?projectId="+encodeURIComponent(projectId));
       setApproved(updated.assets as Approved[]);
       setSiteReviewedShotId(null);
-      setNotice("Pexels photo downloaded and verified. Select Use in next draft to include it in this scene.");
+      setLastImportJobId(typeof imported.jobId==="string"?imported.jobId:null);
+      setNotice(imported.reused===true?"Previously verified photo reused. Select Use in next draft to include it in this scene.":
+        "Pexels photo downloaded and verified. Select Use in next draft to include it in this scene.");
     }catch(error){setNotice(error instanceof Error?error.message:"Pexels could not provide this photo automatically. Download the JPG manually and import it below.");}
     finally{setBusy("");}
   }
@@ -340,6 +345,9 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
         The saved scene reference is missing or modified. Import the asset again to restore the reference.</p>}
       {results?.warnings?.map((warning,index)=><p className="text-xs text-muted-foreground" key={index}>{warning}</p>)}
       {notice&&<p role="status" className="rounded-control border border-border p-3 text-xs">{notice}</p>}
+      {lastImportJobId&&onOpenJobs&&<Button size="sm" variant="outline" onClick={onOpenJobs}>
+        View media preparation in Jobs
+      </Button>}
       <p className="text-xs text-muted-foreground">Reviewed Pexels photos and compatible H.264 footage appear in the next draft video with Kumiki.
         Existing videos are unchanged. Imported 3D models, textures and HDRIs are saved for future scene support.</p>
     </div>

@@ -2,6 +2,8 @@
 import {approveAsset, clearSelectedSceneAsset, discoverShotAssets, listApprovedAssets,
   listSelectedSceneAssets, selectApprovedSceneAsset, importDownloadedPexelsAsset,
   importPexelsPhotoPage} from "./video-production/asset-discovery.mjs";
+import {withPexelsAssetImportJob} from "./video-production/asset-import-jobs.mjs";
+import {createHash} from "node:crypto";
 import {handleSfxDiscoveryRequest} from "./sfx-discovery-vite.mjs";
 
 const PREFIX="/api/contentgen-assets";
@@ -38,6 +40,13 @@ export async function handleAssetDiscoveryRequest(req,res,deps={}){
   const url=new URL(req.url??"/","http://localhost");
   try{
     const opts={...(deps.options??{})};
+    const disconnect=new AbortController();
+    res.once?.("close",()=>{
+      if(!res.writableEnded)disconnect.abort(Error("The media import was cancelled by its client."));
+    });
+    const runAssetJob=async(input,importer)=>(deps.importJob??withPexelsAssetImportJob)(input,{
+      importer,lookup:async metadata=>(deps.list??listApprovedAssets)({projectId:metadata.projectId},opts),
+      ...(deps.jobsOptions??{}),signal:disconnect.signal});
     if(req.method==="POST"&&url.pathname==="/suggest"){
       const data=await body(req);
       if(data?.allowExternalSearch!==true)throw Error("Explicit external search permission required.");
@@ -54,11 +63,15 @@ export async function handleAssetDiscoveryRequest(req,res,deps={}){
       const input={projectId:url.searchParams.get("projectId"),shotId:url.searchParams.get("shotId"),
         sourceUrl:url.searchParams.get("sourceUrl"),assetType:url.searchParams.get("assetType"),
         creator:url.searchParams.get("creator"),confirmRights:url.searchParams.get("confirmRights")==="yes"};
-      send(res,200,await (deps.importDownloaded??importDownloadedPexelsAsset)(input,await fileBody(req),opts));
+      const bytes=await fileBody(req);
+      input.contentSha256=createHash("sha256").update(bytes).digest("hex");
+      send(res,200,await runAssetJob(input,(source,{signal})=>
+        (deps.importDownloaded??importDownloadedPexelsAsset)(source,bytes,{...opts,signal})));
     }else if(req.method==="POST"&&url.pathname==="/import-from-page"){
       const data=await body(req);
       if(data?.confirmRights!==true)throw Error("Review the original Pexels license before downloading.");
-      send(res,200,await (deps.importFromPage??importPexelsPhotoPage)(data,opts));
+      send(res,200,await runAssetJob(data,(source,{signal})=>
+        (deps.importFromPage??importPexelsPhotoPage)(source,{...opts,signal})));
     }else if(req.method==="POST"&&url.pathname==="/select"){
       send(res,200,await (deps.select??selectApprovedSceneAsset)(await body(req),opts));
     }else if(req.method==="POST"&&url.pathname==="/clear"){

@@ -55,7 +55,8 @@ test("local asset API binds and clears a verified scene asset only through same-
 
 test("Pexels API approval is disabled and website files require a same-origin binary upload",async()=>{
   const approvals=[];
-  const deps={approve:async()=>{throw Error("retired Pexels API must not be called");},
+  const deps={importJob:async(input,{importer})=>importer(input,{}),
+    approve:async()=>{throw Error("retired Pexels API must not be called");},
     importDownloaded:async(input,bytes)=>{approvals.push({input,bytes});return {provider:"pexels",sha256:"a".repeat(64)};}};
   assert.equal((await invoke("POST","/approve",{provider:"pexels",confirmRights:true,confirmDownload:true},deps)).status,422);
   const page="https://www.pexels.com/photo/forest-12345/";
@@ -80,7 +81,8 @@ test("Pexels API approval is disabled and website files require a same-origin bi
 
 test("single-photo Pexels page import requires an explicit same-origin action",async()=>{
   const inputs=[];
-  const deps={importFromPage:async input=>{inputs.push(input);return {assetId:"123",provider:"pexels"};}};
+  const deps={importJob:async(input,{importer})=>importer(input,{}),
+    importFromPage:async input=>{inputs.push(input);return {assetId:"123",provider:"pexels"};}};
   const data={projectId:"project-1",shotId:"scene-1",assetType:"photo",confirmRights:true,
     sourceUrl:"https://www.pexels.com/photo/forest-123/"};
   assert.equal((await invoke("POST","/import-from-page",data,deps,

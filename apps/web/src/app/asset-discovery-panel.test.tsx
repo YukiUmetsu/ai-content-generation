@@ -71,13 +71,14 @@ it("imports a website-downloaded Pexels file with explicit source and rights wit
 
 it("downloads a single chosen Pexels photo page without submitting any API credential",async()=>{
   const calls:Array<{path:string;body?:string}>=[];
+  const openJobs=vi.fn();
   vi.stubGlobal("fetch",vi.fn(async(url:string,init?:RequestInit)=>{
     const path=String(url);calls.push({path,body:typeof init?.body==="string"?init.body:undefined});
     return {ok:true,json:async()=>path.includes("/approved?")?{assets:[]}:
-      path.endsWith("/import-from-page")?{assetId:"42",provider:"pexels"}:{selections:[],invalidShots:[]}};
+      path.endsWith("/import-from-page")?{assetId:"42",provider:"pexels",jobId:"job-photo"}:{selections:[],invalidShots:[]}};
   }));
   const user=userEvent.setup();
-  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1"/>);
+  render(<AssetDiscoveryPanel bundle={bundle} projectId="director-demo" selectedShotId="scene-1" onOpenJobs={openJobs}/>);
   await user.type(screen.getByLabelText("Pexels source page URL"),"https://www.pexels.com/photo/porch-42/");
   await user.click(screen.getByRole("checkbox",{name:/I reviewed this Pexels page/}));
   await user.click(screen.getByRole("button",{name:"Download photo from Pexels page"}));
@@ -85,6 +86,8 @@ it("downloads a single chosen Pexels photo page without submitting any API crede
   const sent=calls.find(item=>item.path.endsWith("/import-from-page"))!;
   expect(sent.body).toContain("https://www.pexels.com/photo/porch-42/");
   expect(sent.body).not.toContain("apiKey");
+  await user.click(await screen.findByRole("button",{name:"View media preparation in Jobs"}));
+  expect(openJobs).toHaveBeenCalledTimes(1);
 });
 
 it("shows Openverse CC0 search leads as references without offering an unsupported importer",async()=>{

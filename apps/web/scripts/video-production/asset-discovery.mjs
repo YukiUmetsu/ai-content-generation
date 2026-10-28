@@ -2,7 +2,7 @@
  * ContentGen owns provider provenance. These files are optional visual inputs;
  * none is automatically evidence for a claim or an approved Kumiki composition.
  */
-import {createHash} from "node:crypto";
+import {createHash,randomUUID} from "node:crypto";
 import {execFile} from "node:child_process";
 import {mkdir, mkdtemp, lstat, readFile, readdir, rename, rm, writeFile} from "node:fs/promises";
 import {basename, dirname, join, resolve} from "node:path";
@@ -520,10 +520,28 @@ export async function importDownloadedPexelsAsset(input,bytes,opts={}){
       const existing=JSON.parse(await readFile(manifestFile,"utf8"));
       if(existing.sha256!==manifest.sha256||existing.sourceUrl!==manifest.sourceUrl)
         throw Error("Existing asset conflicts with the uploaded file.");
-      const existingMedia=join(finalDir,filename),mediaInfo=await lstat(existingMedia);
-      if(!mediaInfo.isFile()||mediaInfo.isSymbolicLink()||mediaInfo.size!==bytes.length||
-        sha(await readFile(existingMedia))!==manifest.sha256)
-        throw Error("An existing imported asset was changed or damaged. Replace it through scene asset review.");
+      const existingMedia=join(finalDir,filename);
+      let healthy=false;
+      try{
+        const mediaInfo=await lstat(existingMedia);
+        healthy=mediaInfo.isFile()&&!mediaInfo.isSymbolicLink()&&
+          mediaInfo.size===bytes.length&&sha(await readFile(existingMedia))===manifest.sha256;
+      }catch(error){if(error.code!=="ENOENT")throw error;}
+      if(!healthy){
+        // The new bytes have already passed FFprobe and digest verification.
+        // Preserve modified/missing originals in quarantine instead of
+        // replacing user data in place or silently accepting a bad cache.
+        const quarantine=join(sceneDir,".damaged-"+randomUUID());
+        await rename(finalDir,quarantine);
+        try{await rename(temp,finalDir);}
+        catch(error){
+          // A failed replacement must not strand the original directory when
+          // it can still be restored. Never delete the quarantined bytes.
+          try{await rename(quarantine,finalDir);}
+          catch{throw Error("The replacement failed; the original asset is preserved in a damaged-media quarantine.",{cause:error});}
+          throw error;
+        }
+      }
     }
     return {...manifest,localPath:join(finalDir,filename),manifestPath:join(finalDir,"manifest.json")};
   }finally{await rm(temp,{recursive:true,force:true});}

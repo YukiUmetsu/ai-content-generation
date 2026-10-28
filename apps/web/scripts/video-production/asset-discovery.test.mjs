@@ -30,8 +30,15 @@ test("site-downloaded Pexels JPEG is checked, hashed, reusable, and explicitly p
   const again=await importDownloadedPexelsAsset(input,image,opts);
   assert.equal(again.localPath,saved.localPath);
   await writeFile(saved.localPath,Buffer.alloc(512,1));
-  await assert.rejects(importDownloadedPexelsAsset(input,image,opts),/changed or damaged/);
   assert.equal((await listApprovedAssets({projectId:input.projectId},{root})).length,0);
+  const repaired=await importDownloadedPexelsAsset(input,image,opts);
+  assert.equal(repaired.localPath,saved.localPath);
+  assert.equal((await listApprovedAssets({projectId:input.projectId},{root})).length,1);
+  const names=await readdir(join(root,input.projectId,input.shotId));
+  const quarantine=names.find(name=>name.startsWith(".damaged-"));
+  assert.ok(quarantine,"damaged bytes are retained as a recoverable quarantine, never deleted");
+  assert.deepEqual(await readFile(join(root,input.projectId,input.shotId,quarantine,"photo.jpg")),
+    Buffer.alloc(512,1));
   await assert.rejects(importDownloadedPexelsAsset({...input,sourceUrl:"https://evil.example/photo/a-123456/"},image,opts),/Pexels source page/);
   await assert.rejects(importDownloadedPexelsAsset({...input,sourceUrl:"https://www.pexels.com/video/a-123456/"},image,opts),/must match/);
   await assert.rejects(importDownloadedPexelsAsset({...input,confirmRights:false},image,opts),/Review/);
