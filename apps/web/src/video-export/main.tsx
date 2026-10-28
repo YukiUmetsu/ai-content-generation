@@ -20,7 +20,7 @@ async function waitForRigImages(stage: HTMLElement) {
   const images = stage.querySelectorAll<SVGImageElement>('[data-rig-source="character-studio"] svg image');
   for (const layer of images) {
     const url = layer.getAttribute("href");
-    if (!url || !/^\\/__character_assets\\/[a-f0-9]{64}\\.(?:png|webp)$/.test(url))
+    if (!url || !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(url))
       throw new Error("Saved character layer has an invalid capture URL.");
     if (!decodedRigImages.has(url)) {
       const loading = (async () => {
@@ -193,7 +193,7 @@ async function boot() {
         validateCharacterDefinition(rig.definition).some(item => item.severity === "error"))
         throw new Error(`Saved character ${id} has an invalid Kumiki animation definition.`);
       for (const asset of Object.values(rig.definition.assets)) {
-        if (asset.kind !== "image" || !/^\\/__character_assets\\/[a-f0-9]{64}\\.(?:png|webp)$/.test(rig.assetUrls[asset.uri] ?? ""))
+        if (asset.kind !== "image" || !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(rig.assetUrls[asset.uri] ?? ""))
           throw new Error(`Saved character ${id} is missing a verified raster layer.`);
       }
       if (!plan.chapters.some(chapter => chapter.dialogue?.turns.some(turn =>
