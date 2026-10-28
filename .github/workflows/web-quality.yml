@@ -54,6 +54,22 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Production build
+        run: pnpm build
+
+      # This uses local, original character ZIPs and synthetic narration timing.
+      # No Fish Audio key, paid TTS or external asset retrieval is involved.
+      - name: Install Chromium and FFmpeg for visual animation QA
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          sudo apt-get install -y ffmpeg
+
+      - name: Verify saved Pip and Quill animation in real Chromium
+        run: |
+          CHROME="$(node --input-type=module -e "import { chromium } from 'playwright-core'; process.stdout.write(chromium.executablePath())")"
+          test -x "$CHROME"
+          CONTENTGEN_CHROMIUM_EXECUTABLE="$CHROME" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 pnpm test:video:browser
+
       # These use synthetic providers/browser drivers, not FFmpeg or Chromium.
       # Real media encoding, muxing and audio probes are local release gates.
       - name: Test video planning and mock production without media tools
@@ -82,19 +98,3 @@ jobs:
             scripts/video-production/research-model-settings.test.mjs \
             scripts/video-production/model-profiles.test.mjs \
             scripts/director-studio-vite.test.mjs
-
-      - name: Production build
-        run: pnpm build
-
-      # This uses local, original character ZIPs and synthetic narration timing.
-      # No Fish Audio key, paid TTS or external asset retrieval is involved.
-      - name: Install Chromium and FFmpeg for visual animation QA
-        run: |
-          pnpm exec playwright install --with-deps chromium
-          sudo apt-get install -y ffmpeg
-
-      - name: Verify saved Pip and Quill animation in real Chromium
-        run: |
-          CHROME="$(node --input-type=module -e "import { chromium } from 'playwright-core'; process.stdout.write(chromium.executablePath())")"
-          test -x "$CHROME"
-          CONTENTGEN_CHROMIUM_EXECUTABLE="$CHROME" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 pnpm test:video:browser
