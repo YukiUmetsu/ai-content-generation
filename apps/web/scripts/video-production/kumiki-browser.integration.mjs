@@ -15,6 +15,7 @@ import {chromium} from "playwright-core";
 import {buildSampleTimeline} from "./timeline.mjs";
 import {compileGeneralVisuals} from "./general-visual-plan.mjs";
 import {startLocalStageServer} from "./stage-server.mjs";
+import {loadProjectCharacterRigs,readCharacterZip} from "./character-rig-render.mjs";
 import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
 import {renderSelectedSceneClip} from "./scene-clip.mjs";
 import {renderVideoSegments} from "./render.mjs";
@@ -107,6 +108,51 @@ try{
       assert.notEqual(sha(seen),screenshots[0],"verified Commons photo must visibly change the scene");
     }finally{await mediaPage.close();}
   }finally{await mediaStage.close();}
+  // Saved Character Studio ZIP sprites must animate in real Chromium, not only SSR.
+  const rigArchives=new Map();
+  const rigDrafts=[];
+  for(const id of ["pip","quill"]){
+    const bytes=await readFile(new URL("../../public/starter-characters/"+id+".zip",import.meta.url));
+    const draftId=("character-draft-"+(id==="pip"?"a":"b")).padEnd(48,"0");
+    rigArchives.set(draftId,bytes);
+    rigDrafts.push({id:draftId,projectId:"rig-browser-smoke",characterId:id,
+      revision:readCharacterZip(bytes).definition.revision,archiveSha256:sha(bytes),sizeBytes:bytes.length});
+  }
+  const rigPacks=await loadProjectCharacterRigs({projectId:"rig-browser-smoke",speakers:["pip","quill"],
+    fetchImpl:async url=>{
+      const parsed=new URL(url),match=/\/api\/character-drafts\/(character-draft-[a-f0-9]{32})\/archive/.exec(parsed.pathname);
+      return match?new Response(rigArchives.get(match[1])??"",{status:rigArchives.has(match[1])?200:404}):
+        new Response(JSON.stringify({drafts:rigDrafts}),{headers:{"content-type":"application/json"}});
+    }});
+  const rigPlan=structuredClone(plan);
+  rigPlan.characterRigs=rigPacks.rigs;
+  rigPlan.chapters[0].dialogue={turns:[
+    {id:"pip-asks",speakerId:"pip",role:"character",startFrame:0,endFrame:9},
+    {id:"quill-replies",speakerId:"quill",role:"character",startFrame:9,endFrame:20}
+  ]};
+  const rigStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
+    validatedPlan:rigPlan,characterAssets:rigPacks.assets});
+  try{
+    const rigPage=await browser.newPage({viewport:{width:manifest.width,height:manifest.height},deviceScaleFactor:1});
+    try{
+      await rigPage.goto(rigStage.url,{waitUntil:"networkidle",timeout:30000});
+      await rigPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      const frames=[];
+      for(const frame of [2,6,12]){
+        await rigPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
+        const actor=rigPage.locator('[data-conversation-performer="pip"]');
+        assert.equal(await actor.getAttribute("data-rig-source"),"character-studio");
+        assert.equal(await actor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
+        assert.ok(await actor.locator("svg image").count()>=4);
+        frames.push(sha(await actor.screenshot({animations:"disabled"})));
+      }
+      assert.notEqual(frames[0],frames[1],"saved Pip mouth/arm layers must visibly animate during measured speech");
+      assert.notEqual(frames[1],frames[2],"Pip must return to listening when Quill speaks");
+      assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-rig-source"),"character-studio");
+      assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-speaking"),"true");
+      assert.equal(await rigPage.locator('[data-conversation-performer="quill"] [data-km-character-presenter]').getAttribute("data-diagnostics"),"0");
+    }finally{await rigPage.close();}
+  }finally{await rigStage.close();}
   // Exercise the actual selected-scene API's file publication via the same
   // Chromium page, H.264 encoder and FFprobe. Only three preview frames are
   // requested, keeping the provider-free smoke run bounded.
