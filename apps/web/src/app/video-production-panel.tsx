@@ -146,6 +146,17 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   const [ready,setReady]=useState(false);
   const [working,setWorking]=useState(initialStage!=="preview"||autoOpenVisuals?"opening":"");
   const [notice,setNotice]=useState("");
+  const [rigNote,setRigNote]=useState("");
+  const updateRigNote=(value:unknown)=>{
+    if(!Array.isArray(value)){setRigNote("");return;}
+    const names=value.filter(item=>item&&typeof item==="object"&&
+      ["pip","quill"].includes((item as {speakerId?:string}).speakerId??"")&&
+      typeof (item as {revision?:unknown}).revision==="string").map(item=>{
+      const rig=item as {speakerId:string;revision:string};
+      return `${rig.speakerId==="pip"?"Pip":"Quill"} (${rig.revision.slice(0,64)})`;
+    });
+    setRigNote(names.length?`Using saved Character Studio artwork: ${names.join(", ")}.`:"");
+  };
   const autoBusy=useRef(false);
   const inputRevision=useRef(0);
   const initialEntry=useRef(false);
@@ -346,12 +357,13 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   },[sampleStatus.state]);
   async function check(){
     const revision=inputRevision.current;
-    setWorking("check");setNotice("");setReady(false);
+    setWorking("check");setNotice("");setReady(false);setRigNote("");
     try{
       const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,...(voiceProjectId?{characterProjectId:voiceProjectId}:{}),...(productionId?{productionId,sourceRevision}:{})});
       if(revision!==inputRevision.current){setNotice("Scene, voice or consent changed during readiness. Check again for the new version.");return;}
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
+      updateRigNote(response.characterRigs);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
         message:report.ready?"Ready to produce your test draft.":"Fix the listed requirements.",report});
       setReady(report.ready);
@@ -363,7 +375,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     if(autoBusy.current||state.state==="rendering")return;
     autoBusy.current=true;
     const revision=inputRevision.current;
-    setStage("narration");setWorking("auto");setNotice("");
+    setStage("narration");setWorking("auto");setNotice("");setRigNote("");
     setReady(false);
     setState({state:"checking",phase:"preflight",message:"Preparing scenes and checking your narrator, FFmpeg and Chromium…"});
     try{
@@ -392,6 +404,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
       if(!report||typeof report.ready!=="boolean"||!Array.isArray(report.findings))
         throw Error("The renderer returned an invalid readiness report.");
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
+      updateRigNote(response.characterRigs);
       setReady(report.ready);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
         message:report.ready?"Starting your video…":"Resolve these requirements and retry.",report});
@@ -477,6 +490,8 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
         <p className="text-sm font-medium">Your saved draft video is available.</p>
         <Button variant="outline" size="sm" onClick={()=>setStage("export")}>Review saved video</Button>
       </div>}
+      {rigNote&&["ready","rendering","done"].includes(state.state)&&
+        <p role="status" className="text-xs text-muted-foreground">{rigNote}</p>}
       {state.state==="checking"&&<div role="status" className="flex items-start gap-3 rounded-control border border-primary/30 bg-primary/5 p-4">
         <RefreshCw aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin"/>
         <div><p className="font-semibold">Preparing your draft video</p><p className="mt-1 text-xs text-muted-foreground">{state.message} This can take a few minutes on the first run.</p></div>
