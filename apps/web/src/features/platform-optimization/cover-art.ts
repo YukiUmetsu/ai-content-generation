@@ -40,6 +40,22 @@ function clipText(text:string,max=62){
   return (short||normalized.slice(0,max-1))+"…";
 }
 
+/** Fixed-width bento tiles need deliberate line breaks. SVG viewers and
+ * FFmpeg's font renderer measure text differently, so a browser-only
+ * `fit: shrink` promise is not sufficient to prevent neighboring bleed. */
+function tileCaption(value:string){
+  const tokens=clipText(value,48).split(/\s+/u);
+  const lines:string[]=[];
+  for(const original of tokens){
+    const word=clipText(original,18);
+    const last=lines.length-1;
+    if(last>=0&&lines[last].length+1+word.length<=14)lines[last]+=" "+word;
+    else if(lines.length<3)lines.push(word);
+    else lines[2]=clipText(lines[2]+" "+word,18);
+  }
+  return lines.join("\n");
+}
+
 type Palette={dark:string;cream:string;accent:string;secondary:string;ink:string};
 function palette(colors:PlatformBrandColors|undefined):Palette{
   return {dark:colors?.primary??"#152D36",cream:colors?.background??"#F8F4EC",
@@ -73,8 +89,9 @@ function landscape(variant:number,w:number,h:number,title:string,heads:string[],
     for(let i=0;i<3;i++){
       const x=m+i*(cell+gap);
       add(rect(`tile-${i}`,x,h*.55,cell,h*.32,i===1?p.accent:i===2?p.secondary:p.cream,1,18),
-        words(`tile-title-${i}`,heads[i]??`Part ${i+1}`,x+cell*.065,h*.615,cell*.87,h*.20,h*.053,
-          i===2?p.cream:p.ink,2,{font:"body",maxLines:3,minSize:h*.034}));
+        words(`tile-title-${i}`,tileCaption(heads[i]??`Part ${i+1}`),x+cell*.065,h*.605,
+          cell*.87,h*.23,h*.043,i===2?p.cream:p.ink,2,
+          {font:"body",maxLines:3,minSize:h*.029}));
     }
   }else{
     // Editorial: high-impact typography balanced by a giant question mark.

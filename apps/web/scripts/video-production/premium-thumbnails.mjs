@@ -42,8 +42,12 @@ export function thumbnailCopy(job) {
 
 async function loadKumikiComposer() {
   const { createServer } = await import("vite");
-  const vite = await createServer({ root: webRoot, appType: "custom",
-    server: { middlewareMode: true, hmr: false }, logLevel: "error" });
+  // This is a one-shot, server-side TS module loader. Do not load Studio's
+  // Vite config: that initializes app plugins, proxies and an HMR listener
+  // unrelated to thumbnail export (and can bind an unwanted network port).
+  const vite = await createServer({configFile:false,root:webRoot,appType:"custom",
+    resolve:{alias:{"@":join(webRoot,"src")}},
+    server:{middlewareMode:true,hmr:false,host:"127.0.0.1"},logLevel:"silent"});
   try {
     const module = await vite.ssrLoadModule("/src/features/platform-optimization/cover-art.ts");
     return module.createCoverArtwork;

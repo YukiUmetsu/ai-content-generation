@@ -1,0 +1,100 @@
+/** Optional actual Chromium -> Kumiki -> PNG -> FFmpeg -> FFprobe integration.
+ * Run after `pnpm build` with CONTENTGEN_CHROMIUM_EXECUTABLE set. No voice
+ * provider, credentials, external requests or published media are involved.
+ */
+import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
+import {execFile} from "node:child_process";
+import {readFileSync} from "node:fs";
+import {mkdtemp,readFile,rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {fileURLToPath} from "node:url";
+import {promisify} from "node:util";
+import {chromium} from "playwright-core";
+import {buildSampleTimeline} from "./timeline.mjs";
+import {compileGeneralVisuals} from "./general-visual-plan.mjs";
+import {startLocalStageServer} from "./stage-server.mjs";
+import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
+
+const run=promisify(execFile);
+const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
+const browserPath=process.env.CONTENTGEN_CHROMIUM_EXECUTABLE;
+if(!browserPath)throw Error("Set CONTENTGEN_CHROMIUM_EXECUTABLE to an installed Chromium browser.");
+const input=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url)));
+const timeline=buildSampleTimeline(input.beats.map(beat=>({id:beat.id,samples:48000,
+  pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds})),
+{fps:input.destination.fps,events:input.events});
+const plan=compileGeneralVisuals(input,timeline);
+const manifest=plan.manifest;
+const root=await mkdtemp(join(tmpdir(),"contentgen-real-kumiki-"));
+let stage,browser;
+try{
+  stage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
+    validatedPlan:plan});
+  // Chromium refuses to start as root inside some CI containers. This flag is
+  // intentionally opt-in for this standalone test, never for production.
+  const unsafeTestSandbox=process.env.CONTENTGEN_BROWSER_TEST_NO_SANDBOX==="1";
+  browser=await chromium.launch({executablePath:browserPath,headless:true,
+    args:unsafeTestSandbox?["--no-sandbox"]:[]});
+  const page=await browser.newPage({viewport:{width:manifest.width,height:manifest.height},
+    deviceScaleFactor:1,reducedMotion:"reduce"});
+  const pageErrors=[];
+  page.on("pageerror",error=>pageErrors.push(error.message));
+  await page.goto(stage.url,{waitUntil:"networkidle",timeout:30000});
+  await page.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+  assert.deepEqual(await page.evaluate(()=>window.__kmVideoExport.manifest),manifest,
+    "the live Kumiki page must adopt the validated plan manifest");
+  assert.equal(await page.evaluate(()=>window.__contentgenBuildHash),stage.buildHash,
+    "a browser render must be bound to the exact built assets");
+  const viewport=page.locator("[data-km-video-capture]");
+  assert.equal(await viewport.count(),1,"Kumiki capture region must be present");
+  const screenshots=[];
+  for(let frame=0;frame<12;frame++){
+    await page.evaluate(index=>window.__kmVideoExport.seek(index),frame);
+    const bytes=await viewport.screenshot({path:join(root,`frame-${String(frame).padStart(5,"0")}.png`),
+      animations:"disabled",scale:"css"});
+    assert.equal(bytes.subarray(0,8).toString("hex"),"89504e470d0a1a0a");
+    assert.equal(bytes.readUInt32BE(16),manifest.width);
+    assert.equal(bytes.readUInt32BE(20),manifest.height);
+    screenshots.push(sha(bytes));
+  }
+  await page.evaluate(()=>window.__kmVideoExport.seek(0));
+  const repeated=await viewport.screenshot({animations:"disabled",scale:"css"});
+  assert.equal(sha(repeated),screenshots[0],"seeking to a frame must render deterministically");
+  assert.deepEqual(pageErrors,[],"the real built Kumiki page must not throw during capture");
+  const video=join(root,"kumiki-smoke.mp4");
+  await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+    "-framerate",`${manifest.fps.num}/${manifest.fps.den}`,
+    "-i",join(root,"frame-%05d.png"),"-frames:v","12","-c:v","libx264",
+    "-pix_fmt","yuv420p",video],{timeout:60000});
+  const {stdout}=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+    "-show_entries","stream=codec_name,width,height,nb_read_frames","-of","json",video],{timeout:30000});
+  const stream=JSON.parse(stdout).streams?.[0];
+  assert.equal(stream?.codec_name,"h264");
+  assert.equal(stream.width,manifest.width);
+  assert.equal(stream.height,manifest.height);
+  assert.equal(Number(stream.nb_read_frames),12);
+  const concepts=await generateProductionThumbnails(input,{outputDir:root});
+  assert.equal(concepts.length,3);
+  await page.setViewportSize({width:1920,height:1080});
+  await page.setContent(await readFile(join(root,"thumbnail-2.svg"),"utf8"));
+  const textFit=await page.evaluate(()=>{
+    const svg=document.querySelector("svg");
+    const boxes=[...svg.querySelectorAll("rect")].map(node=>node.getBoundingClientRect());
+    const panels=boxes.filter(box=>box.width>500&&box.width<600&&box.height>330&&box.height<370);
+    const labels=[...svg.querySelectorAll("text")].map(node=>node.getBoundingClientRect())
+      .filter(box=>panels.some(panel=>box.top>=panel.top&&box.top<panel.bottom));
+    return {panels:panels.length,labels:labels.length,outside:labels.filter(label=>
+      !panels.some(panel=>label.left>=panel.left+12&&label.right<=panel.right-12&&
+        label.top>=panel.top+12&&label.bottom<=panel.bottom-12)).length};
+  });
+  assert.equal(textFit.panels,3,"bento thumbnail needs three separate visual panels");
+  assert.ok(textFit.labels>=6,"bento thumbnail needs meaningful visible headings");
+  assert.equal(textFit.outside,0,"no tile heading may overlap adjacent thumbnails or escape its panel");
+  process.stdout.write(`PASS: real Kumiki Chromium export, deterministic ${manifest.width}x${manifest.height} PNG frames, FFmpeg H.264, FFprobe and three bounded thumbnail panels.\n`);
+}finally{
+  await browser?.close().catch(()=>{});
+  await stage?.close().catch(()=>{});
+  await rm(root,{recursive:true,force:true});
+}

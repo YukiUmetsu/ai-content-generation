@@ -20,6 +20,8 @@
     "video:topic": "node scripts/video-production/topic-cli.mjs",
     "video:studio": "node scripts/video-production/studio-server.mjs",
     "test:video:headless": "node --test scripts/video-production/*.test.mjs scripts/director-studio-vite.test.mjs scripts/director-production-vite.test.mjs scripts/research-readiness.test.mjs scripts/research-model-vite.test.mjs",
+    "test:video:browser": "node scripts/video-production/kumiki-browser.integration.mjs",
+    "test:video:thumbnails": "node scripts/video-production/premium-thumbnails.integration.mjs",
     "video:plan": "node scripts/video-production/preproduction-cli.mjs",
     "video:research": "node scripts/video-production/research-cli.mjs",
     "research:up": "node scripts/video-production/searxng-docker.mjs up",
