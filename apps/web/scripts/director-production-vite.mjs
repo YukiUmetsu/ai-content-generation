@@ -627,12 +627,22 @@ export function createDirectorProduction(deps={}){
                 reuseFrom:previousReleaseRoot??lastOutput,reuseFromOptional:!!input.productionId}:{}),onProgress:event=>{
                 progress(event);
                 if(tracker)journal=journal.then(()=>tracker.advance(event.phase,
-                  event.artifactLedger||event.phase==="narration"&&event.assetSearchSummary?
-                    {...(event.phase==="narration"&&event.assetSearchSummary?{assetSearch:event.assetSearchSummary}:{}),
+                  event.artifactLedger||event.phase==="asset-preparation"&&event.assetSearchSummary?
+                    {...(event.phase==="asset-preparation"&&event.assetSearchSummary?{assetSearch:event.assetSearchSummary}:{}),
                       ...(event.artifactLedger?{artifactLedger:event.artifactLedger}:{})}:undefined)).catch(error=>{
                   journalError=error;
                   abort.abort(error);
                 });
+                // A stage must be durably claimed before narration, downloads,
+                // browser capture, or FFmpeg performs the corresponding work.
+                // Frame-level progress may remain fire-and-forget; each stage
+                // boundary is awaited by the producer.
+                const checkpoint=journal.then(()=>{if(journalError)throw journalError;});
+                // Older renderer adapters and per-frame progress do not await
+                // diagnostic callbacks. Do not leak an unhandled rejection in
+                // that case; the stage-boundary producer still observes it.
+                void checkpoint.catch(()=>{});
+                return checkpoint;
               }
             });
             await journal;

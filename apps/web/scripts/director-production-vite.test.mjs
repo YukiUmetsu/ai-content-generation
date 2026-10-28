@@ -407,8 +407,9 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
       options.onProgress({phase:"browser-preflight"});
       options.onProgress({phase:"asset-search"});
       const summary=await options.prepareAssetSuggestions({signal:options.signal});
-      options.onProgress({phase:"narration",assetSearchSummary:summary,
-        artifactLedger:{kind:"asset-search",fingerprint:"a".repeat(64),selected:[
+      options.onProgress({phase:"asset-preparation",assetSearchSummary:summary});
+      options.onProgress({phase:"narration",
+        artifactLedger:{kind:"asset-preparation",fingerprint:"a".repeat(64),selected:[
           {beatId:"beat-01",assetType:"photo",sha256:"b".repeat(64)}]}});
       const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
       await writeFile(join(releaseDir,"video.mp4"),"mock video");
@@ -422,10 +423,10 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal(searchCalls.length,1);
   assert.equal(searchCalls[0].input.allowExternalSearch,true);
   assert.equal(searchCalls[0].options.pexelsKey,undefined);
-  assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","narration","complete"]);
+  assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","asset-preparation","narration","complete"]);
   assert.equal(events[2][1].assetSearch.status,"partial");
   assert.equal(events[2][1].assetSearch.candidates,1);
-  assert.equal(events[2][1].artifactLedger.selected[0].sha256,"b".repeat(64));
+  assert.equal(events[3][1].artifactLedger.selected[0].sha256,"b".repeat(64));
   const restarted=createDirectorProduction({outputRoot:dir});
   const saved=await invoke(restarted,"GET","/suggestions/"+productionId);
   assert.equal(saved.status,200);assert.equal(saved.data.found,true);

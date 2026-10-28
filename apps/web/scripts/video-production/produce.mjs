@@ -139,7 +139,7 @@ export async function produceVideo(candidate, options, deps = {}) {
   if (await exists(releaseDir)) fail("release already exists; choose a new output directory instead of overwriting published files");
   const distRoot = options.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
   // This potentially costly browser/build check MUST finish before provider transmission.
-  options.onProgress?.({ phase: "browser-preflight", message: "Opening Chromium to verify the render environment…" });
+  await options.onProgress?.({ phase: "browser-preflight", message: "Opening Chromium to verify the render environment…" });
   const preflight = await (deps.preflightExport ?? (async () => {
     const buildHash = await fingerprintBuiltStage(distRoot);
     await probeBrowserExecutable(options.browserExecutable);
@@ -200,12 +200,12 @@ export async function produceVideo(candidate, options, deps = {}) {
     // Metadata search is optional, never a stock-media substitution or a
     // publication license decision. This step executes after browser preflight
     // and before external voice transmission, inside the tracked render job.
-    options.onProgress?.({phase:"asset-search",message:options.prepareAssetSuggestions?
+    await options.onProgress?.({phase:"asset-search",message:options.prepareAssetSuggestions?
       "Finding optional scene media suggestions…":"Using Kumiki-generated scenes…"});
     const assetSearch=options.prepareAssetSuggestions?
       await options.prepareAssetSuggestions({signal:options.signal}):{status:"skipped"};
     if(options.signal?.aborted)fail("cancelled during scene media discovery");
-    options.onProgress?.({phase:"asset-preparation",assetSearchSummary:assetSearch,
+    await options.onProgress?.({phase:"asset-preparation",assetSearchSummary:assetSearch,
       message:"Validating approved imagery and preparing scene assets…"});
     if (Boolean(options.sceneAssetProjectId) !== Boolean(options.sceneShotMap))
       fail("both the scene asset project and shot mapping are required");
@@ -220,7 +220,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       fail("reviewed scene media requires the general Kumiki explainer; change the selected visual recipe");
     const selectedSceneMedia=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({
       beatId,assetType:media.assetType,sha256:media.sha256}));
-    options.onProgress?.({ phase: "narration",
+    await options.onProgress?.({ phase: "narration",
       ...(selectedSceneMedia.length?{artifactLedger:{kind:"asset-preparation",
         fingerprint:sceneMedia.fingerprint,selected:selectedSceneMedia}}:{}),
       message: `Generating ${job.beats.length} authorized narration beats…` });
@@ -238,7 +238,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
       onDiagnostic: options.onProgress,
     });
-    options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…",
+    await options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…",
       artifactLedger:{kind:"narration",beats:speech.map(({id,sha256,samples})=>({id,sha256,samples}))} });
     let timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const captionReadability = analyzeCaptionReadability(
@@ -279,13 +279,13 @@ export async function produceVideo(candidate, options, deps = {}) {
     const sfx = job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
     }));
-    options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…" });
+    await options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…" });
     const audio = await (deps.renderMasterAudio ?? renderMasterAudio)({ beats: speech, timeline, sfx }, {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
     });
     const masterHash=await sha256File(audio.wavPath);
-    options.onProgress?.({phase:"captions",message:"Checking generated scene captions…",
+    await options.onProgress?.({phase:"captions",message:"Checking generated scene captions…",
       artifactLedger:{kind:"sound-mix",masterSha256:masterHash,samples:timeline.totalSamples}});
     const captionBytes=await readFile(audio.srtPath);
     if(!captionBytes.length)fail("caption generation produced an empty subtitle file");
@@ -295,7 +295,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     let render;
     try {
       if(options.signal?.aborted)fail("cancelled before scene capture");
-      options.onProgress?.({ phase: "rendering", completedFrames: 0, totalFrames: frames,
+      await options.onProgress?.({ phase: "rendering", completedFrames: 0, totalFrames: frames,
         artifactLedger:{kind:"captions",sha256:sha256(captionBytes),bytes:captionBytes.length} });
       render = await (deps.renderVideoSegments ?? renderVideoSegments)({
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
@@ -325,7 +325,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     if(!firstStill||firstStill.frame!==0)fail("draft cover requires a verified first-frame still");
     await copyFile(join(working,firstStill.file),join(working,"cover-still.png"));
 
-    options.onProgress?.({phase:"thumbnails",message:"Composing three script-grounded Kumiki thumbnails…",
+    await options.onProgress?.({phase:"thumbnails",message:"Composing three script-grounded Kumiki thumbnails…",
       artifactLedger:{kind:"scene-render",planHash,buildHash:preflight.buildHash,
         segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))}});
     const thumbnails=await (deps.generateThumbnails??generateProductionThumbnails)(job,{
@@ -341,7 +341,7 @@ export async function produceVideo(candidate, options, deps = {}) {
         fail("thumbnail output changed after export");
     }
 
-    options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…",
+    await options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…",
       artifactLedger:{kind:"thumbnails",concepts:thumbnails.map(({id,sha256,sourceSha256})=>({id,sha256,sourceSha256}))} });
     const video = join(working, "video.mp4");
     await (deps.mux ?? muxVideo)(render.videoOnlyPath, audio.wavPath, video, options);
@@ -361,7 +361,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     };
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
     for(const item of thumbnails)artifactHashes[item.id]=item.sha256;
-    options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…",
+    await options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…",
       artifactLedger:{kind:"final-mux",artifacts:{video:artifactHashes.video,captions:artifactHashes.captions,
         master:artifactHashes.master,coverStill:artifactHashes.coverStill}} });
     const versions = deps.toolVersions ?? await toolVersions();
@@ -395,7 +395,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     // Multi-artifact commit: until this rename, there is no top-level successful release.
     if (await exists(releaseDir)) fail("release appeared concurrently; refusing to overwrite");
     await rename(working, releaseDir);
-    options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening.",
+    await options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening.",
       artifactLedger:{kind:"technical-qa",technicalPass:qa.technicalPass===true,manifestHash} });
     return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration,
       artifactHashes,manifestHash,thumbnails };

@@ -256,6 +256,30 @@ test("production emits real stage transitions and forwards verified capture fram
   assert.ok(!JSON.stringify(events).includes(ctx.opts.out),"durable job data must never disclose local paths");
 });
 
+test("the renderer waits for a durable narration claim before calling the voice provider",async t=>{
+  const ctx=await context(t);
+  let openGate,arrived;
+  const gate=new Promise(resolve=>{openGate=resolve;});
+  const claimed=new Promise(resolve=>{arrived=resolve;});
+  const work=produceVideo(ctx.job,{...ctx.opts,onProgress:event=>{
+    if(event.phase==="narration"){arrived();return gate;}
+  }},ctx.injected);
+  await claimed;
+  assert.equal(ctx.status().providerCalls,0,"no voice request may run ahead of the claimed Jobs stage");
+  openGate();
+  await work;
+  assert.ok(ctx.status().providerCalls>0);
+});
+
+test("a rejected Jobs claim prevents any paid or external production work",async t=>{
+  const ctx=await context(t);
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,
+    onProgress:event=>event.phase==="browser-preflight"?Promise.reject(Error("Jobs claim unavailable")):undefined},
+    ctx.injected),/Jobs claim unavailable/);
+  assert.equal(ctx.status().providerCalls,0);
+  assert.equal(ctx.status().browserCalls,0);
+});
+
 test("media suggestions are prepared before narration and expose a bounded Jobs summary",async t=>{
   const ctx=await context(t),events=[];
   const originalNarration=ctx.injected.synthesizeNarration;
