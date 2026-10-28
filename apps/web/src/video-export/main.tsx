@@ -10,8 +10,31 @@ import { HouseMathExportScene } from "./house-math-scene";
 import { GeneralExportScene } from "./general-scene";
 import { PortraitGeneralExportScene } from "./portrait-general-scene";
 import { waitForChartStoryReadiness } from "./chart-story-preflight";
+import { validateCharacterDefinition } from "@/components/character/validate";
+import type { ExportRigMap } from "./conversation-characters";
 import { prepareStockMediaFrame } from "./stock-media-readiness";
 declare global { interface Window { __contentgenBuildHash?: string } }
+
+const decodedRigImages = new Map<string, Promise<void>>();
+async function waitForRigImages(stage: HTMLElement) {
+  const images = stage.querySelectorAll<SVGImageElement>('[data-rig-source="character-studio"] svg image');
+  for (const layer of images) {
+    const url = layer.getAttribute("href");
+    if (!url || !/^\\/__character_assets\\/[a-f0-9]{64}\\.(?:png|webp)$/.test(url))
+      throw new Error("Saved character layer has an invalid capture URL.");
+    if (!decodedRigImages.has(url)) {
+      const loading = (async () => {
+        const picture = new Image();
+        picture.src = url;
+        await picture.decode();
+        if (picture.naturalWidth < 1 || picture.naturalHeight < 1)
+          throw new Error("Saved character image decoded without visible dimensions.");
+      })();
+      decodedRigImages.set(url, loading);
+    }
+    await decodedRigImages.get(url);
+  }
+}
 
 /** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
 async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" | "general-explainer-visual-plan", payoffFrame: number, portrait: boolean) {
@@ -26,6 +49,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   await document.fonts.ready;
   await waitForChartStoryReadiness(stage);
   await prepareStockMediaFrame(stage);
+  await waitForRigImages(stage);
   for (const conversation of stage.querySelectorAll<HTMLElement>("[data-conversation-characters]")) {
     const bounds = conversation.getBoundingClientRect();
     const performers = conversation.querySelectorAll<HTMLElement>("[data-conversation-performer]");
@@ -38,7 +62,9 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
       if (!rig || rig.dataset.diagnostics !== "0" || !rect || rect.width < 100 || rect.height < 100 ||
         rect.left < bounds.left - 2 || rect.right > bounds.right + 2 ||
         rect.top < bounds.top - 2 || rect.bottom > bounds.bottom + 2 ||
-        !rig.querySelector("svg [data-asset]")) {
+        !rig.querySelector("svg [data-asset]") ||
+        (performer.dataset.rigSource === "character-studio" &&
+          !rig.querySelector('svg image[href^="/__character_assets/"]'))) {
         throw new Error(`Character rig ${performer.dataset.conversationPerformer ?? "unknown"} failed render validation at frame ${target}`);
       }
     }
@@ -155,6 +181,25 @@ async function boot() {
     !Array.isArray(plan.chapters) || plan.chapters.length === 0 ||
     typeof plan.events?.[plan.payoffEventId] !== "number") {
     throw new Error("Video plan has an unsupported or incomplete scene contract");
+  }
+  const rigs = (plan as ExportPlan & { characterRigs?: ExportRigMap }).characterRigs;
+  if (rigs !== undefined) {
+    if (plan.kind !== "general-explainer-visual-plan" || !rigs || typeof rigs !== "object" || Array.isArray(rigs))
+      throw new Error("Custom character rigs require a general explainer video.");
+    for (const [id, rig] of Object.entries(rigs)) {
+      if (!["pip", "quill"].includes(id) || !rig || !/^character-draft-[a-f0-9]{32}$/.test(rig.draftId) ||
+        !/^[a-f0-9]{64}$/.test(rig.archiveSha256) || rig.definition?.characterId !== id ||
+        !rig.definition.revision || !rig.assetUrls || typeof rig.assetUrls !== "object" ||
+        validateCharacterDefinition(rig.definition).some(item => item.severity === "error"))
+        throw new Error(`Saved character ${id} has an invalid Kumiki animation definition.`);
+      for (const asset of Object.values(rig.definition.assets)) {
+        if (asset.kind !== "image" || !/^\\/__character_assets\\/[a-f0-9]{64}\\.(?:png|webp)$/.test(rig.assetUrls[asset.uri] ?? ""))
+          throw new Error(`Saved character ${id} is missing a verified raster layer.`);
+      }
+      if (!plan.chapters.some(chapter => chapter.dialogue?.turns.some(turn =>
+        turn.role === "character" && turn.speakerId === id)))
+        throw new Error(`Saved character ${id} has no matching spoken scene.`);
+    }
   }
   createRoot(root).render(<ExportApp plan={plan} />);
 }
