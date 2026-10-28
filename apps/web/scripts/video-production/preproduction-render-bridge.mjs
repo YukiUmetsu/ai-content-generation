@@ -94,6 +94,8 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
   for(let i=0;i<job.beats.length;i++){
     const shot=plan.shots[i];
     const phase=phases.get(shot.id);
+    const assigned=sound.get(shot.id)?.speaker;
+    if(assigned)job.beats[i].speaker={id:assigned.id,role:assigned.role,voiceId:assigned.voiceId};
     if(shot.motion)job.beats[i].visual.motion=structuredClone(shot.motion);
     // Respect the scene editor's pacing; the generic manual-draft defaults
     // must not silently replace the saved per-scene pause.

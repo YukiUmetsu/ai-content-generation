@@ -8,7 +8,8 @@ import { projectNarratorSettingsKey, readProjectVoices, type VoiceFavorite } fro
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
-type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>}};
+type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>;
+  sound?:Array<{shotId:string;speaker?:{id:string;role:"narrator"|"character";provider:"local"|"fish";voiceId:string}}>}};
 type Preview = {schemaVersion:number;kind:string;job:{beats:Array<{id:string;narration:string;visual:{headline:string;subhead:string;items:string[]}}>};
   shotMap:Array<{shotId:string;beatId:string;visualAction:string}>;
   warnings:string[];editorialStatus:string};
@@ -105,6 +106,13 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs,onFindVisuals}:{dossier:Dossier;bundle:Bundle;productionId?:string;voiceProjectId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void;onFindVisuals?:(shotId:string)=>void}){
   const [stage,setStage]=useState<Stage>(initialStage);
   const [settings,setSettings]=useState<Settings>(()=>savedVoiceSettings(voiceProjectId));
+  // Cast authorization is deliberately ephemeral: a saved voice ID is not permission
+  // to synthesize it. A new session, scene edit or narrator change needs consent.
+  const [castVoiceConsent,setCastVoiceConsent]=useState(false);
+  const sceneCast=(bundle.plan.sound??[]).filter((sound):sound is typeof sound & {speaker:NonNullable<typeof sound.speaker>}=>Boolean(sound.speaker));
+  const extraCast=sceneCast.filter(item=>item.speaker.voiceId!==settings.voiceId);
+  const extraVoices=[...new Set(extraCast.map(item=>`${item.speaker.provider}:${item.speaker.voiceId}`))];
+  const mismatchedCast=sceneCast.filter(item=>item.speaker.provider!==settings.provider);
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
   useEffect(()=>{
     try{localStorage.setItem(voiceProjectId?projectNarratorSettingsKey(voiceProjectId):voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
@@ -180,6 +188,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
       state:"generating",message:"An older sample is finishing. Cancel it or wait before auditioning the new voice."
     }:{state:"idle",message:"Voice changed. Generate a fresh sample to hear it."});
     setSettings(x=>({...x,...patch}));setReady(false);
+    if(patch.provider!==undefined||patch.voiceId!==undefined)setCastVoiceConsent(false);
     setSfxSummary(null);
     setState(current=>["rendering","done"].includes(current.state)?current:
       {state:"idle",phase:"idle",message:"",report:null});
@@ -222,6 +231,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   useEffect(()=>{
     if(lastBundle.current===bundle)return;
     lastBundle.current=bundle;
+    setCastVoiceConsent(false);
     inputRevision.current++;
     sampleRevision.current++;
     setSampleStatus(current=>current.state==="generating"?{
@@ -298,7 +308,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     activeSampleRevision.current=sampleRevision.current;
     try{
       const sceneShotId=selectedShotId&&bundle.plan.shots.some(shot=>shot.id===selectedShotId)?selectedShotId:undefined;
-      const result=await request("narration-sample",{...payload,settings,...(sceneShotId?{sceneShotId}:{})});
+      const result=await request("narration-sample",{...payload,settings,castVoiceConsent,...(sceneShotId?{sceneShotId}:{})});
       if(result.started!==true)throw Error("The local narration service did not start.");
       setSampleStatus({state:"generating",message:sceneShotId?
         "Synthesizing the selected scene's voice sample…":
@@ -330,9 +340,11 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     return ()=>{mounted=false;window.clearInterval(timer);};
   },[sampleStatus.state]);
   async function check(){
+    const revision=inputRevision.current;
     setWorking("check");setNotice("");setReady(false);
     try{
-      const response=await request("check",{...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})});
+      if(revision!==inputRevision.current){setNotice("Scene, voice or consent changed during readiness. Check again for the new version.");return;}
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
@@ -368,7 +380,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
         setPreview(result);
       }
       setState({state:"checking",phase:"preflight",message:"Checking voice permissions, installed tools and scene assets…"});
-      const requestInput={...payload,settings,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
+      const requestInput={...payload,settings,castVoiceConsent,searchFreeMedia,...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
@@ -560,6 +572,23 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
             <p className="text-muted-foreground">A free-model ID does not by itself establish commercial publishing rights. Check the provider's current terms.</p>
           </div>}
         </div>
+        {sceneCast.length>0&&<div className="space-y-3 rounded-control border border-border p-4" aria-label="Scene cast voices">
+          <div><p className="font-semibold">Scene cast <span className="font-normal text-muted-foreground">· {sceneCast.length} assigned {sceneCast.length===1?"scene":"scenes"}</span></p>
+            <p className="mt-1 text-xs text-muted-foreground">Your saved scene speaker choices will travel with the production job. Change them in the Scene editor above; other scenes still use your main narrator.</p></div>
+          <ul className="grid gap-2 sm:grid-cols-2">{sceneCast.map(({shotId,speaker})=><li key={shotId} className="min-w-0 rounded-control bg-surface-subtle px-3 py-2 text-xs">
+            <span className="block font-semibold text-foreground">{speaker.id==="pip"?"Pip":speaker.id==="quill"?"Quill":speaker.id} <span className="font-normal text-muted-foreground">· {shotId}</span></span>
+            <span className="mt-1 block break-all text-muted-foreground">{speaker.provider} · {speaker.voiceId}</span>
+          </li>)}</ul>
+          {mismatchedCast.length>0&&<p role="alert" className="flex items-start gap-2 text-xs text-danger"><AlertCircle className="size-4 shrink-0"/>
+            {mismatchedCast.length} scene {mismatchedCast.length===1?"voice uses":"voices use"} a different provider. Choose {settings.provider} voices for those scenes in the Scene editor before generating.</p>}
+          {extraVoices.length>0&&<label className="flex items-start gap-3 rounded-control border border-primary/30 bg-primary/5 p-3 text-xs">
+            <input type="checkbox" className="mt-0.5" aria-label="Authorize additional cast voices"
+              checked={castVoiceConsent} disabled={!!working||state.state==="rendering"}
+              onChange={event=>{inputRevision.current++;setCastVoiceConsent(event.target.checked);setReady(false);}}/>
+            <span><strong className="block text-foreground">I have permission to synthesize these {extraVoices.length} additional {extraVoices.length===1?"voice":"voices"}.</strong>
+              <span className="mt-1 block text-muted-foreground">{extraVoices.join(" · ")}. For Fish Audio, script excerpts for these characters will also be transmitted when you generate. Voice IDs alone do not establish rights.</span></span>
+          </label>}
+        </div>}
         <div className="rounded-control border border-border p-4 space-y-3">
           <p className="font-semibold">Listen before you render</p>
           <p className="text-xs text-muted-foreground">Generates up to 180 characters from {selectedShotId?"the selected scene":"the opening scene"}. This is an explicit TTS request and may take time on a local model.</p>
@@ -568,7 +597,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
               onClick={()=>void audition()}><Play className="mr-2 size-4"/>{selectedShotId?"Preview selected scene voice":"Generate voice sample"}</Button>
             {sampleStatus.state==="generating"&&<Button variant="outline" onClick={()=>void cancelSample()}><Square className="mr-2 size-4"/>Cancel sample</Button>}
           </div>
-          {sampleStatus.message&&<p role="status" className="text-xs text-muted-foreground">{sampleStatus.message}</p>}
+          {sampleStatus.message&&<p role={sampleStatus.state==="failed"?"alert":"status"} className="text-xs text-muted-foreground">{sampleStatus.message}</p>}
           {sampleStatus.state==="done"&&sampleStatus.audioUrl&&<audio key={sampleStatus.audioUrl} aria-label="Voice sample" controls preload="none" src={sampleStatus.audioUrl} className="w-full"/>}
         </div>
         <div className="rounded-control border border-primary/30 bg-primary/5 p-4 space-y-3">
@@ -595,6 +624,9 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
           <div className="rounded-control border border-border p-3"><p className="text-xs text-muted-foreground">Narrator</p><p className="mt-1 font-medium">{settings.voiceId||"Not chosen"}</p><p className="text-xs text-muted-foreground">{settings.provider==="local"?"Local TTS":"Fish Audio"}</p></div>
           <div className="rounded-control border border-border p-3"><p className="text-xs text-muted-foreground">Voice audition</p><p className="mt-1 font-medium">{sampleStatus.state==="done"?"Sample available":"Optional · not generated"}</p></div>
         </div>
+        {sceneCast.length>0&&<p className="rounded-control border border-border bg-surface-subtle p-3 text-xs text-muted-foreground" role="status">
+          {sceneCast.length} scenes have explicit speaker voices; {extraVoices.length} additional voices require permission. {extraVoices.length>0?(castVoiceConsent?"Cast voice permission is checked for this session.":"Return to Narration to authorize these voices."):"All assigned voices use the selected narrator voice."}
+        </p>}
         {preview&&<details className="rounded-control border border-border p-3">
           <summary className="cursor-pointer font-medium">Review all scene narration ({preview.job.beats.length})</summary>
           <ol className="mt-3 space-y-2">{preview.job.beats.map((beat,i)=><li key={beat.id} className="rounded-control bg-surface-subtle p-3">

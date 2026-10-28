@@ -3,12 +3,12 @@
  * implicitly reuses old approval, deletes media or silently regenerates.
  */
 import { createHash } from "node:crypto";
-import { compilePreproductionBundle } from "./preproduction.mjs";
+import { compilePreproductionBundle, isProductionSpeaker } from "./preproduction.mjs";
 import { isSceneMotion } from "./scene-motion.mjs";
 import { isVisualElements } from "./visual-elements.mjs";
 const sha=v=>createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const text=(v,max=2000)=>typeof v==="string"&&v.trim()&&v.length<=max&&!/[\u0000-\u0008\u000e-\u001f]/u.test(v);
-const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements","family","pauseAfterMs"];
+const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements","family","pauseAfterMs","speaker"];
 const families=new Set(["question","process","comparison","cost-breakdown","mechanism","evidence","summary"]);
 export function editPreproductionShot(dossier,original,edit){
   if(!original || original.kind!=="preproduction-bundle" || original.researchId!==dossier?.id ||
@@ -23,8 +23,9 @@ export function editPreproductionShot(dossier,original,edit){
       changes.some(([k,v])=>!allowed.includes(k)||(k==="pauseAfterMs"?
         !Number.isSafeInteger(v)||v<0||v>3000 : k==="family"? !families.has(v) :
         k==="visualElements"? !isVisualElements(v) : k==="motion"? !isSceneMotion(v) :
+        k==="speaker"? v!==null&&!isProductionSpeaker(v) :
         k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
-    throw Error("Editable fields include narration, scene timing, visible text, layout, motion, visual elements and sound effects.");
+    throw Error("Editable fields include narration, speaker voice, scene timing, visible text, layout, motion, visual elements and sound effects.");
   const plan=structuredClone(original.plan);
   const shot=plan.shots.find(x=>x.id===edit.shotId);
   const voice=plan.sound.find(x=>x.shotId===edit.shotId);
@@ -34,12 +35,13 @@ export function editPreproductionShot(dossier,original,edit){
     throw Error("The opening, closing and bespoke recipe scenes have dedicated layouts; choose a middle general scene to change its family.");
   const revised=new Set(),audio=new Set(),visual=new Set(),sfx=new Set();
   for(const [key,value] of changes){
-    const target=key==="narration"||key==="sfxIntent"||key==="pauseAfterMs"?voice:key==="visualAction"?phase:shot;
+    const target=key==="narration"||key==="sfxIntent"||key==="pauseAfterMs"||key==="speaker"?voice:key==="visualAction"?phase:shot;
     if(key==="visualAction"&&!phase)throw Error("Selected shot has no editable teaching phase.");
-    if(target[key]===value)continue;
-    target[key]=typeof value==="string"?value.trim():structuredClone(value);
+    if(JSON.stringify(target[key]??null)===JSON.stringify(value))continue;
+    if(key==="speaker"&&value===null)delete target.speaker;
+    else target[key]=typeof value==="string"?value.trim():structuredClone(value);
     revised.add(key);
-    if(key==="narration")audio.add(shot.id);
+    if(key==="narration"||key==="speaker")audio.add(shot.id);
     else if(key==="sfxIntent")sfx.add(shot.id);
     else if(key==="pauseAfterMs")visual.add(shot.id);
     else visual.add(shot.id);

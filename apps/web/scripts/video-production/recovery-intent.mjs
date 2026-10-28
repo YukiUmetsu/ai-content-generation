@@ -29,6 +29,9 @@ function validateIntent(runId,intent){
     .filter(key=>Object.hasOwn(raw,key)).map(key=>[key,raw[key]]));
   const request={productionId:intent.productionId,sourceRevision:intent.sourceRevision,
     dossier:intent.request.dossier,bundle:intent.request.bundle,settings,
+    // Preserve the exact consent that was included in the checked render identity;
+    // dropping it would make an authorized multi-voice draft unrecoverable.
+    castVoiceConsent:intent.request.castVoiceConsent===true,
     searchFreeMedia:intent.request.searchFreeMedia===true,
     autoPrepareFreeMedia:intent.request.autoPrepareFreeMedia!==false,
     confirmUpdatedVersion:intent.request.confirmUpdatedVersion===true};

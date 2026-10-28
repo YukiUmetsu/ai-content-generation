@@ -192,6 +192,53 @@ test("editor can audition the narration of one selected storyboard scene without
   assert.ok(jobs[0][0].narration.length<=180);
 });
 
+test("saved scene character voice reaches Check, Jobs render snapshot and selected-scene audition only after cast consent",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-cast-check-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const p=inputs(),shotId=p.bundle.plan.shots[1].id;
+  const revised=structuredClone(p.bundle.plan);
+  revised.sound[1].speaker={id:"pip",role:"character",provider:"local",voiceId:"pip-local-voice"};
+  p.bundle=compilePreproductionBundle(p.dossier,revised);
+  const rendered=[],auditioned=[];
+  const server=createDirectorProduction({outputRoot:dir,build:async()=>{},findBrowser:async()=>"/mock/chromium",
+    inspect:async()=>({ready:true,findings:[]}),
+    synthesizeNarration:async(job,options)=>{
+      auditioned.push({voiceId:job.beats[0].speaker?.voiceId,authorized:options.authorizedVoiceIds});
+      const wavPath=join(options.cacheRoot,"voice.wav");
+      await writeFile(wavPath,Buffer.from("RIFFcast-sampleWAVE"));return[{wavPath}];},
+    produce:async(job,options)=>{
+      rendered.push({voiceId:job.beats[1].speaker?.voiceId,authorized:options.authorizedVoiceIds});
+      const releaseDir=join(options.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"mock video");return{releaseDir};}
+  });
+  const input={...p,settings:config};
+  const blocked=await invoke(server,"POST","/check",input);
+  assert.equal(blocked.status,422);
+  assert.match(blocked.data.error,/Authorize.*additional cast voice/u);
+  assert.equal(rendered.length,0);
+  const wrongProvider=structuredClone(revised);
+  wrongProvider.sound[1].speaker.provider="fish";
+  wrongProvider.sound[1].speaker.voiceId="a".repeat(32);
+  const mismatch=await invoke(server,"POST","/check",{...input,bundle:compilePreproductionBundle(p.dossier,wrongProvider),castVoiceConsent:true});
+  assert.equal(mismatch.status,422);
+  assert.match(mismatch.data.error,/same provider/u);
+  const narratorSample=await invoke(server,"POST","/narration-sample",{...input,sceneShotId:p.bundle.plan.shots[0].id});
+  assert.equal(narratorSample.status,202,"auditioning the narrator needs no other character's consent");
+  assert.equal((await waitSample(server)).state,"done");
+  assert.deepEqual(auditioned[0],{voiceId:undefined,authorized:[]});
+  const deniedSample=await invoke(server,"POST","/narration-sample",{...input,sceneShotId:shotId});
+  assert.equal(deniedSample.status,422);
+  const startedSample=await invoke(server,"POST","/narration-sample",{...input,sceneShotId:shotId,castVoiceConsent:true});
+  assert.equal(startedSample.status,202);
+  assert.equal((await waitSample(server)).state,"done");
+  assert.deepEqual(auditioned[1],{voiceId:"pip-local-voice",authorized:["pip-local-voice"]});
+  const consented={...input,castVoiceConsent:true};
+  assert.equal((await invoke(server,"POST","/check",consented)).status,200);
+  assert.equal((await invoke(server,"POST","/start",{...consented,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.deepEqual(rendered,[{voiceId:"pip-local-voice",authorized:["pip-local-voice"]}]);
+});
+
 test("sample audition refuses unauthorized voices and concurrent render/check",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-audition-block-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   let resolveSample,synthesis=0;
@@ -863,8 +910,11 @@ test("restart shows the exact safe failed Jobs step rather than a generic interr
 
 test("a restarted coordinator claims and finishes one previously authorized full draft",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-auto-resurrect-"));t.after(()=>rm(dir,{recursive:true,force:true}));
-  const productionId="production-"+"a".repeat(24),payload={...inputs(),settings:config,
-    productionId,sourceRevision:"saved-script"};
+  const productionId="production-"+"a".repeat(24),p=inputs();
+  const withCast=structuredClone(p.bundle.plan);
+  withCast.sound[1].speaker={id:"pip",role:"character",provider:"local",voiceId:"resumed-pip"};
+  const payload={...p,bundle:compilePreproductionBundle(p.dossier,withCast),settings:config,
+    productionId,sourceRevision:"saved-script",castVoiceConsent:true};
   let failures=0;
   const initial=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
     build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
@@ -878,6 +928,8 @@ test("a restarted coordinator claims and finishes one previously authorized full
   const [saved]=await listRecoveryIntents(dir);
   assert.equal(saved?.request.settings.localVoiceAuthorized,true);
   assert.equal(saved?.request.settings.apiKey,undefined);
+  assert.equal(saved?.request.castVoiceConsent,true);
+  assert.equal(saved?.request.bundle.plan.sound[1].speaker.voiceId,"resumed-pip");
   const latestProductionJob=async()=>({job:{id:"job-interrupted",state:"RUNNING",jobKind:"video-production"},
     nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"saved-script",revision:saved.revision}},
       {id:"node-narration",nodeKey:"narration",state:"READY",errorCode:"worker_lease_expired"}],
@@ -887,8 +939,10 @@ test("a restarted coordinator claims and finishes one previously authorized full
     inspect:async()=>({ready:true,findings:[]}),latestProductionJob,
     jobTracker:()=>({priorRunId:saved.runId,start:async()=>"job-interrupted",advance:async()=>{},
       complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
-    produce:async(_job,request)=>{
+    produce:async(job,request)=>{
       resumed++;
+      assert.equal(job.beats[1].speaker.voiceId,"resumed-pip");
+      assert.deepEqual(request.authorizedVoiceIds,["resumed-pip"]);
       const releaseDir=join(request.out,"release");await mkdir(releaseDir,{recursive:true});
       await writeFile(join(releaseDir,"video.mp4"),"completed after restart");return{releaseDir};
     }};

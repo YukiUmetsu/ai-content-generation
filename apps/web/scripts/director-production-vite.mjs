@@ -130,6 +130,29 @@ export function configureRenderJob(job,settings){
   result.policy={commercialRightsVerified:false,reviewerApproved:false,maxCostUsd:0};
   return result;
 }
+/** Resolve only cast voices already present in the validated storyboard.
+ * User-supplied ID lists are never accepted as independent authorization.
+ */
+function resolveCastVoiceIds(compiled,bundle,settings,consent,selectedBeatIds=null){
+  if(consent!==undefined&&typeof consent!=="boolean")throw Error("Cast voice permission must be explicitly checked or unchecked.");
+  const byShot=new Map(bundle.plan.sound.map(sound=>[sound.shotId,sound.speaker]));
+  const additional=new Set();
+  for(const shot of compiled.shotMap){
+    if(selectedBeatIds&&!selectedBeatIds.has(shot.beatId))continue;
+    const speaker=byShot.get(shot.shotId);
+    if(!speaker)continue;
+    if(speaker.provider!==settings.provider)
+      throw Error(`Scene ${shot.shotId} uses ${speaker.provider} for ${speaker.id}. Choose the same provider as the main narrator, or change the scene voice.`);
+    const beat=compiled.job.beats.find(item=>item.id===shot.beatId);
+    if(!beat?.speaker||beat.speaker.voiceId!==speaker.voiceId)
+      throw Error("Scene cast changed during compilation. Reopen the storyboard before generating speech.");
+    if(speaker.voiceId!==settings.voiceId)additional.add(speaker.voiceId);
+  }
+  if(additional.size>16)throw Error("The video exceeds the 16-voice cast authorization limit.");
+  if(additional.size&&consent!==true)
+    throw Error(`Authorize the ${additional.size} additional cast voice(s) in Narration before generating speech. Your saved scene choices are intact.`);
+  return [...additional];
+}
 function authorize(req,res){
   const host=String(req.headers.host??""),origin=req.headers.origin;
   if(!/^(127\.0\.0\.1|localhost):\d+$/u.test(host)||
@@ -805,6 +828,7 @@ export function createDirectorProduction(deps={}){
           throw Error("The chosen scene is no longer part of this storyboard.");
         const selectedBeat=scene?job.beats.find(item=>item.id===scene.beatId):job.beats[0];
         if(!selectedBeat)throw Error("The chosen scene has no narration to preview.");
+        const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent,new Set([selectedBeat.id]));
         job.beats=[{...selectedBeat,narration:sampleExcerpt(selectedBeat.narration)}];
         const id=randomUUID(),abort=new AbortController();
         sampleController=abort;busy=true;
@@ -824,6 +848,7 @@ export function createDirectorProduction(deps={}){
               cacheRoot:ownedRoot,signal:abort.signal,localVoiceAuthorized:settings.localVoiceAuthorized===true,
               allowNetwork:settings.provider==="fish",voiceReferenceConsent:settings.voiceConsent===true,
               textTransmissionApproved:settings.transmitText===true,apiKey:settings.apiKey,
+              authorizedVoiceIds,
               budgetUsd:0,paidUsageApproved:false
             });
             if(abort.signal.aborted)throw Error("Cancelled by editor.");
@@ -918,8 +943,9 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=await resolvedVoiceSettings(input.settings,remember);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
+        const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
@@ -958,8 +984,9 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=await resolvedVoiceSettings(input.settings,remember);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
+        const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+        const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
@@ -1047,6 +1074,7 @@ export function createDirectorProduction(deps={}){
               localEndpoint:settings.endpoint,localVoiceAuthorized:settings.localVoiceAuthorized===true,
               allowNetwork:settings.provider==="fish",voiceReferenceConsent:settings.voiceConsent===true,
               textTransmissionApproved:settings.transmitText===true,
+              authorizedVoiceIds,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
               autoPrepareFreeMedia,

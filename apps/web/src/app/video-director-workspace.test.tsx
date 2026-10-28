@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PromptStudio } from "./prompt-studio";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import { addVoiceFavorite,defaultProjectVoices,saveProjectVoices } from "./project-voice-favorites";
 import * as projectStorage from "@/features/storyboard-planner/model/project-storage";
 
 vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
@@ -77,6 +78,45 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("assigns a saved character voice to a scene, persists the edit and restores it after switching scenes",async()=>{
+    const castId="director-cast-project";
+    const castVoice="b".repeat(32);
+    saveProjectVoices(addVoiceFavorite(defaultProjectVoices(castId),{
+      provider:"fish",voiceId:castVoice,name:"Conversational Pip",gender:"male",situation:"dialogue",language:"en"
+    }));
+    const edits:Array<{shotId:string;changes:Record<string,unknown>}> = [];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(String(url).endsWith("/edit")){
+        const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;shotId:string;changes:Record<string,unknown>};
+        edits.push({shotId:body.shotId,changes:body.changes});
+        const revised=structuredClone(body.bundle);
+        const sound=revised.plan.sound.find(entry=>entry.shotId===body.shotId)! as Record<string,unknown>;
+        if(body.changes.speaker)sound.speaker=body.changes.speaker;
+        else delete sound.speaker;
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:revised,
+          impacts:{changedFields:["speaker"],speechRegenerate:[body.shotId],visualRerender:[],sfxRemix:[],
+            downstreamRetiming:[body.shotId],timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+      }
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      throw Error("Unexpected call: "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en" projectId={castId}/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"cast.json",{type:"application/json"})]}});
+    await screen.findByText("Video project loaded");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene speaker"}),"pip");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Character voice for scene"}),`fish:${castVoice}`);
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toHaveLength(1));
+    expect(edits[0]).toEqual({shotId:"hook",changes:{speaker:{id:"pip",role:"character",provider:"fish",voiceId:castVoice}}});
+    await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("");
+    await user.click(screen.getByRole("button",{name:/Scene 1: Why\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("pip");
+    expect(screen.getByRole("combobox",{name:"Character voice for scene"})).toHaveValue(`fish:${castVoice}`);
+    localStorage.removeItem("contentgen:project-voice-favorites:v1:"+castId);
+  });
   it("uses an embedded region and notifies Production before a scene edit can be lost",async()=>{
     const productionId="production-"+"f".repeat(24);
     sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({

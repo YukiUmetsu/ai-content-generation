@@ -68,6 +68,29 @@ test("surgical narration change invalidates one speech beat, retimes downstream,
   assert.equal(result.impacts.externalActionsPerformed.length,0);
   assert.deepEqual(b.plan.sound[0].narration,fixture("preproduction-plan-smoke.json").sound[0].narration);
 });
+test("scene-cast edit is saved in the versioned preproduction bundle and rendered with the pinned voice",()=>{
+  const d=source(),before=bundle(),id=before.plan.shots[1].id;
+  const speaker={id:"pip",role:"character",provider:"fish",voiceId:"b".repeat(32)};
+  const changed=editPreproductionShot(d,before,{shotId:id,changes:{speaker}});
+  assert.deepEqual(changed.bundle.plan.sound[1].speaker,speaker);
+  assert.equal(changed.impacts.speechRegenerate.includes(id),true);
+  assert.deepEqual(changed.impacts.downstreamRetiming,before.plan.shots.slice(1).map(s=>s.id));
+  assert.deepEqual(compilePreproductionRenderJob(d,changed.bundle).job.beats[1].speaker,
+    {id:"pip",role:"character",voiceId:speaker.voiceId});
+  assert.equal(before.plan.sound[1].speaker,undefined,"original plan is immutable");
+  const restored=editPreproductionShot(d,changed.bundle,{shotId:id,changes:{speaker:null}});
+  assert.equal(restored.bundle.plan.sound[1].speaker,undefined);
+  assert.equal(compilePreproductionRenderJob(d,restored.bundle).job.beats[1].speaker,undefined);
+  for(const invalid of [
+    {id:"pip",role:"character",provider:"fish",voiceId:"unsafe"},
+    {id:"../quill",role:"character",provider:"local",voiceId:"voice"},
+    {id:"narrator",role:"character",provider:"local",voiceId:"voice"},
+    {id:"pip",role:"character",provider:"local",voiceId:"voice",apiKey:"untrusted"},
+  ])assert.throws(()=>editPreproductionShot(d,before,{shotId:id,changes:{speaker:invalid}}),/Editable fields/);
+  const mismatch=structuredClone(changed.bundle.plan);
+  mismatch.sound[2].speaker={...speaker,voiceId:"a".repeat(32)};
+  assert.throws(()=>compilePreproductionBundle(d,mismatch),/speaker-identity-changed/);
+});
 test("visual-only edits avoid TTS calls and keep other scenes byte-for-byte",()=>{
   const d=source(),b=bundle(),id=b.plan.shots[1].id;
   const edited=editPreproductionShot(d,b,{shotId:id,changes:{

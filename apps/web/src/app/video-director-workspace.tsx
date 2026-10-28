@@ -11,6 +11,8 @@ import { NewVideoSetup } from "./new-video-setup";
 import { isSceneMotion, normalizedSceneMotion, type SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
 import { transferableDirectorEdits } from "./director-edit-transfer";
+import { readProjectVoices, type VoiceFavorite } from "./project-voice-favorites";
+import { readCharacterVoiceBindings, type CharacterVoiceBinding } from "@/features/character-studio/character-voice-bindings";
 import { directorStages, nextDirectorStage, resolveDirectorNavigation,
   shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
 import type { LiveVisualPreviewData } from "./live-renderer-preview";
@@ -18,7 +20,8 @@ import type { LiveVisualPreviewData } from "./live-renderer-preview";
 const RendererScene=lazy(()=>import("./live-renderer-scene"));
 
 type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[];motion?:SceneMotion};
-type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number};
+type SpeakerAssignment={id:string;role:"character"|"narrator";provider:"local"|"fish";voiceId:string};
+type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number;speaker?:SpeakerAssignment};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
 type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string;researchSha256?:string};
@@ -138,6 +141,7 @@ function shotDraft(bundle:Bundle,id:string){
   return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",family:shot?.family??"process",
     visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
     sfxIntent:audio?.sfxIntent??"",pauseAfterMs:audio?.pauseAfterMs??160,
+    speaker:audio?.speaker??null,
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"",
     motion:safeSceneMotion(shot?.motion)};
 }
@@ -152,7 +156,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const [bundle,setBundle]=useState<Bundle|null>(null);
   const [sourceBundle,setSourceBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
-  const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,visualElementsText:"",motion:normalizedSceneMotion()});
+  const [draft,setDraft]=useState<ReturnType<typeof shotDraft>>({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,speaker:null,visualElementsText:"",motion:normalizedSceneMotion()});
+  const [castVoices,setCastVoices]=useState<{voices:VoiceFavorite[];characters:CharacterVoiceBinding[];error:string}>({voices:[],characters:[],error:""});
   const [variants,setVariants]=useState<Variant[]>([]);
   const [voiceVariant,setVoiceVariant]=useState("");
   const [visualVariant,setVisualVariant]=useState("");
@@ -199,6 +204,23 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
+  useEffect(()=>{
+    const id=voiceProjectId??projectId;
+    if(!id||!bundle)return;
+    try{setCastVoices({voices:readProjectVoices(id).voices,characters:readCharacterVoiceBindings(id).bindings,error:""});}
+    catch(error){setCastVoices({voices:[],characters:[],error:error instanceof Error?error.message:"Could not read saved cast voices."});}
+  },[voiceProjectId,projectId,bundle,stage]);
+  const characterOptions=[...new Set(["pip","quill",...castVoices.characters.map(item=>item.characterId),
+    ...(draft.speaker?.role==="character"?[draft.speaker.id]:[])])].filter(id=>/^[a-zA-Z0-9_-]{1,80}$/u.test(id));
+  function chooseSceneSpeaker(id:string){
+    if(!id){setDraft(current=>({...current,speaker:null}));return;}
+    const saved=castVoices.characters.find(item=>item.characterId===id)?.voice;
+    const suggestion=id==="pip"?castVoices.voices[1]??castVoices.voices[0]:
+      id==="quill"?castVoices.voices[2]??castVoices.voices[1]??castVoices.voices[0]:castVoices.voices[1]??castVoices.voices[0];
+    const voice=saved??suggestion;
+    if(!voice){setStatus("Save a project voice in Narration before assigning a character.");return;}
+    setDraft(current=>({...current,speaker:{id,role:"character",provider:voice.provider,voiceId:voice.voiceId}}));
+  }
   async function renderSceneClip(){
     if(!dossier||!bundle||!shotId||dirty)return;
     const sourceRevision=quickPreview?.sourcePlanSha256;
@@ -424,8 +446,9 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   }
   function changes(){
     if(!shot||!audio)return {};
-    const result:Record<string,string|null|VisualElement[]|number|SceneMotion>={};
+    const result:Record<string,string|null|VisualElement[]|number|SceneMotion|SpeakerAssignment>={};
     if(draft.narration!==audio.narration)result.narration=draft.narration;
+    if(JSON.stringify(draft.speaker)!==JSON.stringify(audio.speaker??null))result.speaker=draft.speaker;
     if(draft.family!==(shot.family??"process"))result.family=draft.family;
     if(draft.onScreenText!==shot.onScreenText)result.onScreenText=draft.onScreenText;
     if(draft.visualChange!==shot.visualChange)result.visualChange=draft.visualChange;
@@ -438,7 +461,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
       result.visualElements=parseElementsInput(draft.visualElementsText);
     return result;
   }
-  async function apply(changed:Record<string,string|null|VisualElement[]|number|SceneMotion>){
+  async function apply(changed:Record<string,string|null|VisualElement[]|number|SceneMotion|SpeakerAssignment>){
     if(!bundle||!dossier||!shot)return false;
     setBusy(true);setStatus("");
     try{
@@ -489,6 +512,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
   const visualTextSaved=shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
   const dirty=!!shot&&!!audio&&(
     draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
+    JSON.stringify(draft.speaker)!==JSON.stringify(audio.speaker??null)||
     draft.family!==(shot.family??"process")||
     draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
     draft.sfxIntent!==(audio.sfxIntent??"")||draft.pauseAfterMs!==(audio.pauseAfterMs??160)||
@@ -710,7 +734,42 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
               </select>
             </label>
             <div className="grid gap-3 lg:grid-cols-2">
-              <label className={header}>Narration script<textarea className={field+" mt-2"} rows={6} maxLength={2000} aria-label="Edit narration" value={draft.narration} onChange={e=>setDraft({...draft,narration:e.target.value})}/></label>
+              <div className="space-y-3">
+                <label className={header}>Narration or dialogue<textarea className={field+" mt-2"} rows={6} maxLength={2000} aria-label="Edit narration" value={draft.narration} onChange={e=>setDraft({...draft,narration:e.target.value})}/></label>
+                <div className="grid gap-3 rounded-control border border-border bg-surface-subtle p-3 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                  <label className={header}>Who speaks?
+                    <select aria-label="Scene speaker" className={field+" mt-2"}
+                      value={draft.speaker?.role==="character"?draft.speaker.id:""}
+                      onChange={event=>chooseSceneSpeaker(event.target.value)}>
+                      <option value="">Narrator · primary voice</option>
+                      {characterOptions.map(id=><option key={id} value={id}>{id==="pip"?"Pip":id==="quill"?"Quill":id}</option>)}
+                    </select>
+                  </label>
+                  {draft.speaker&&<label className={header}>Character voice
+                    <select aria-label="Character voice for scene" className={field+" mt-2"}
+                      value={`${draft.speaker.provider}:${draft.speaker.voiceId}`}
+                      onChange={event=>{
+                        const voice=[...castVoices.voices,...castVoices.characters.map(binding=>binding.voice)]
+                          .find(candidate=>`${candidate.provider}:${candidate.voiceId}`===event.target.value);
+                        if(voice)setDraft(current=>({...current,speaker:current.speaker?{...current.speaker,provider:voice.provider,voiceId:voice.voiceId}:null}));
+                      }}>
+                      {!([...castVoices.voices,...castVoices.characters.map(binding=>binding.voice)]
+                        .some(voice=>voice.provider===draft.speaker?.provider&&voice.voiceId===draft.speaker?.voiceId))&&
+                        <option value={`${draft.speaker.provider}:${draft.speaker.voiceId}`}>Saved selection · {draft.speaker.voiceId}</option>}
+                      {[...new Map([...castVoices.voices,...castVoices.characters.map(binding=>binding.voice)]
+                        .map(voice=>[`${voice.provider}:${voice.voiceId}`,voice] as const)).values()].map((voice,index)=><option
+                          key={`${voice.provider}:${voice.voiceId}`} value={`${voice.provider}:${voice.voiceId}`}>
+                          {voice.name} · {voice.provider}{index===0?" · primary":index===1?" · secondary":""}
+                        </option>)}
+                    </select>
+                  </label>}
+                  <p className="text-xs font-normal normal-case tracking-normal text-muted-foreground sm:col-span-2 lg:col-span-1 xl:col-span-2">
+                    {draft.speaker?"Voice changes regenerate only the affected speech. All scene voices must use the same provider when exporting.":
+                      "Narrator uses the voice selected in Production. Pip and Quill are voice roles until their character rigs are added."}
+                  </p>
+                  {castVoices.error&&<p role="alert" className="text-xs font-normal normal-case tracking-normal text-danger sm:col-span-2 lg:col-span-1 xl:col-span-2">{castVoices.error}</p>}
+                </div>
+              </div>
               <label className={header}>Visible explanation / motion intent<textarea className={field+" mt-2"} rows={6} maxLength={650} aria-label="Edit visual action" value={draft.visualAction} onChange={e=>setDraft({...draft,visualAction:e.target.value})}/></label>
               <label className={header}>What the viewer actually sees and learns
                 <textarea className={field+" mt-2 font-mono"} rows={5}

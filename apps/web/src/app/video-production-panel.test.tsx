@@ -317,6 +317,62 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
   expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
 });
 
+it("shows saved scene cast, requires explicit extra-voice permission and sends it through check and start",async()=>{
+  const castVoice="a".repeat(32);
+  const castBundle={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",speaker:{id:"pip",role:"character" as const,
+    provider:"fish" as const,voiceId:castVoice}}]}};
+  const requests:Array<{path:string;body:Record<string,unknown>}> = [];
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const path=String(input);
+    const body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
+    requests.push({path,body});
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:body.castVoiceConsent===true,findings:body.castVoiceConsent===true?[]:[{
+      severity:"error",code:"cast-consent",message:"Authorize additional cast voices"}]}});
+    if(path.endsWith("/start"))return reply({started:true,jobId:"job-cast-1"});
+    if(path.endsWith("/status"))return reply({state:"rendering",phase:"speech",message:"Speaking as Pip",jobId:"job-cast-1"});
+    throw Error("Unexpected call: "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={castBundle} initialStage="narration"/>);
+  expect(await screen.findByLabelText("Scene cast voices")).toHaveTextContent("Pip");
+  const consent=screen.getByRole("checkbox",{name:"Authorize additional cast voices"});
+  expect(consent).not.toBeChecked();
+  await user.click(screen.getByRole("button",{name:"Generate draft video"}));
+  await waitFor(()=>expect(requests.some(item=>item.path.endsWith("/check"))).toBe(true));
+  expect(requests.some(item=>item.path.endsWith("/start"))).toBe(false);
+  expect(requests.find(item=>item.path.endsWith("/check"))?.body.castVoiceConsent).toBe(false);
+  await user.click(consent);
+  await user.click(screen.getByRole("button",{name:"Generate draft video"}));
+  await waitFor(()=>expect(requests.some(item=>item.path.endsWith("/start"))).toBe(true));
+  expect(requests.filter(item=>item.path.endsWith("/check")).at(-1)?.body.castVoiceConsent).toBe(true);
+  expect(requests.find(item=>item.path.endsWith("/start"))?.body).toMatchObject({
+    castVoiceConsent:true,bundle:{plan:{sound:[{shotId:"shot1",speaker:{id:"pip",voiceId:castVoice}}]}}
+  });
+  expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
+});
+
+it("revokes cast permission whenever the narrator changes and flags mixed providers",async()=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    if(String(input).endsWith("/plan"))return reply(plan);
+    throw Error("Unexpected call: "+input);
+  });
+  const castBundle={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",speaker:{
+    id:"quill",role:"character" as const,provider:"fish" as const,voiceId:"b".repeat(32)}}]}};
+  const user=userEvent.setup();
+  const view=render(<ProductionPanel dossier={dossier} bundle={castBundle} initialStage="narration"/>);
+  const consent=screen.getByRole("checkbox",{name:"Authorize additional cast voices"});
+  await user.click(consent);
+  expect(consent).toBeChecked();
+  fireEvent.change(screen.getByRole("textbox",{name:"Production voice ID"}),{target:{value:"c".repeat(32)}});
+  expect(consent).not.toBeChecked();
+  await user.click(consent);
+  fireEvent.change(screen.getByRole("combobox",{name:"Production voice provider"}),{target:{value:"local"}});
+  expect(consent).not.toBeChecked();
+  expect(screen.getByRole("alert")).toHaveTextContent(/different provider/i);
+  view.unmount();
+});
+
 it("restores an active production and keeps its durable Jobs link visible",async()=>{
   const productionId="production-"+"a".repeat(24);
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{

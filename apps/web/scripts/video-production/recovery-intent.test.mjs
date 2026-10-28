@@ -11,7 +11,8 @@ const intent={productionId,sourceRevision:"script-rev-1",revision:"f".repeat(64)
   request:{productionId,sourceRevision:"script-rev-1",settings:{provider:"fish",voiceId:"approved-voice",
     providerRevision:"fish-v1",voiceConsent:true,transmitText:true,apiKey:"do-not-store-my-key",
     privateApiCredential:"unrecognized-secret-value"},
-    dossier:{id:"test-project"},bundle:{plan:{shots:[]}},searchFreeMedia:false,confirmUpdatedVersion:false}};
+    dossier:{id:"test-project"},bundle:{plan:{shots:[]}},castVoiceConsent:true,
+    searchFreeMedia:false,confirmUpdatedVersion:false}};
 
 test("recovery snapshots are private, version-bound and never contain a provider key",async t=>{
   const root=await mkdtemp(join(tmpdir(),"draft-intent-"));t.after(()=>rm(root,{recursive:true,force:true}));
@@ -24,6 +25,8 @@ test("recovery snapshots are private, version-bound and never contain a provider
   assert.equal(listed.length,1);
   assert.equal(listed[0].revision,intent.revision);
   assert.equal(listed[0].request.settings.voiceConsent,true);
+  assert.equal(listed[0].request.castVoiceConsent,true,
+    "an authorized multi-speaker draft must retain its exact approved render intent after restart");
   assert.equal(listed[0].request.settings.apiKey,undefined);
   assert.equal(listed[0].autoRecover,true);
   assert.equal(await reserveRecoveryAttempt(root,runId),true);
