@@ -10,6 +10,7 @@ import { loadProjectStoryboard } from "@/features/storyboard-planner/model/proje
 import { NewVideoSetup } from "./new-video-setup";
 import { isSceneMotion, normalizedSceneMotion, type SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
+import { transferableDirectorEdits } from "./director-edit-transfer";
 import { directorStages, nextDirectorStage, resolveDirectorNavigation,
   shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
 import type { LiveVisualPreviewData } from "./live-renderer-preview";
@@ -65,7 +66,7 @@ const directorSessionKey=(projectId:string,artifactId:string,storyboardSha256:st
 const safeSceneMotion=(value:unknown):SceneMotion=>normalizedSceneMotion(isSceneMotion(value)?value:undefined);
 function readDirectorSession(projectId:string|undefined,artifactId:string,source:Bundle,
   storyboardSha256:string|null=null):
-  {dossier:Dossier;bundle:Bundle}|null {
+  {dossier:Dossier;bundle:Bundle;sourceBundle:Bundle}|null {
   if(!projectId||typeof window==="undefined"||!source.researchSha256)return null;
   try{
     const key=directorSessionKey(projectId,artifactId,storyboardSha256);
@@ -75,15 +76,49 @@ function readDirectorSession(projectId:string|undefined,artifactId:string,source
     try{raw=sessionStorage.getItem(key);}catch{/* Try persistent storage. */}
     if(!raw)try{raw=localStorage.getItem(key);}catch{/* Storage can be disabled. */}
     if(!raw||raw.length>900000)return null;
-    const data=JSON.parse(raw) as {version?:number;artifactId?:string;dossier?:Dossier;bundle?:Bundle};
-    if(data.version!==1||data.artifactId!==artifactId||data.dossier?.kind!=="research-dossier"||
+    const data=JSON.parse(raw) as {version?:number;artifactId?:string;dossier?:Dossier;bundle?:Bundle;sourceBundle?:Bundle};
+    if(![1,2].includes(data.version??0)||data.artifactId!==artifactId||data.dossier?.kind!=="research-dossier"||
       data.dossier.id!==source.researchId||data.bundle?.kind!=="preproduction-bundle"||
       data.bundle.researchId!==source.researchId||data.bundle.researchSha256!==source.researchSha256||
       !Array.isArray(data.bundle.plan?.shots)||!data.bundle.plan.shots.length||
       !Array.isArray(data.bundle.plan?.sound)||!Array.isArray(data.bundle.plan?.teachingSequences)||
       !/^[a-f0-9]{64}$/u.test(data.bundle.planSha256??""))return null;
-    return {dossier:data.dossier,bundle:data.bundle};
+    if(data.version===2&&(data.sourceBundle?.kind!=="preproduction-bundle"||
+      data.sourceBundle.planSha256!==source.planSha256||
+      data.sourceBundle.researchSha256!==source.researchSha256))return null;
+    return {dossier:data.dossier,bundle:data.bundle,sourceBundle:data.sourceBundle??source};
   }catch{return null;}
+}
+/** Find only same-research, provenance-bearing edits from previous generated
+ * scripts. Older sessions lacked an original baseline, so cannot be safely
+ * applied to a different script without guessing which values were authored. */
+function findTransferableDirectorSession(projectId:string,sourceId:string,source:Bundle):
+  {sourceBundle:Bundle;bundle:Bundle}|null{
+  if(typeof window==="undefined"||!source.researchSha256)return null;
+  const prefix="contentgen:director-session:v1:"+projectId+":approved-script:";
+  let newest:{savedAt:number;sourceBundle:Bundle;bundle:Bundle}|null=null;
+  try{
+    const count=Math.min(localStorage.length,1000);
+    for(let i=0;i<count;i++){
+      const key=localStorage.key(i);
+      if(!key?.startsWith(prefix)||key===directorSessionKey(projectId,sourceId))continue;
+      const raw=localStorage.getItem(key);
+      if(!raw||raw.length>900000)continue;
+      let data:{version?:number;savedAt?:number;artifactId?:string;sourceBundle?:Bundle;bundle?:Bundle};
+      try{data=JSON.parse(raw);}catch{continue;}
+      if(data.version!==2||!data.artifactId||key!==directorSessionKey(projectId,data.artifactId)||
+        !data.artifactId.startsWith("approved-script:")||
+        !Number.isSafeInteger(data.savedAt)||typeof data.savedAt!=="number"||data.savedAt<0||
+        data.sourceBundle?.kind!=="preproduction-bundle"||data.bundle?.kind!=="preproduction-bundle"||
+        data.sourceBundle.researchId!==source.researchId||
+        data.sourceBundle.researchSha256!==source.researchSha256||
+        data.bundle.researchSha256!==source.researchSha256||
+        !/^[a-f0-9]{64}$/u.test(data.sourceBundle.planSha256??""))continue;
+      if(!newest||data.savedAt>newest.savedAt)newest={savedAt:data.savedAt,
+        sourceBundle:data.sourceBundle,bundle:data.bundle};
+    }
+  }catch{return null;}
+  return newest?{sourceBundle:newest.sourceBundle,bundle:newest.bundle}:null;
 }
 function shotDraft(bundle:Bundle,id:string){
   const shot=bundle.plan.shots.find(x=>x.id===id);
@@ -103,6 +138,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const ja=locale==="ja";
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
+  const [sourceBundle,setSourceBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
   const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,visualElementsText:"",motion:normalizedSceneMotion()});
   const [variants,setVariants]=useState<Variant[]>([]);
@@ -119,7 +155,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [sampleMode,setSampleMode]=useState(false);
   const [stage,setStage]=useState<DirectorStage>("storyboard");
   const [recheckToken,setRecheckToken]=useState(0);
-  const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId));
+  const [loadingSaved,setLoadingSaved]=useState(Boolean(researchArtifactId||projectId?.startsWith("production-")));
   const [loadError,setLoadError]=useState("");
   const [sourceArtifactId,setSourceArtifactId]=useState<string|null>(null);
   const [sourceStoryboardSha,setSourceStoryboardSha]=useState<string|null>(null);
@@ -127,8 +163,9 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const shot=bundle?.plan.shots.find(x=>x.id===shotId);
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
-  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null)=>{
+  const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null,originalBundle:Bundle=b)=>{
     setDossier(d);setBundle(b);setRevisions([]);setHistory({undo:[],redo:[]});setSampleMode(source==="sample");setSourceArtifactId(artifactId);
+    setSourceBundle(originalBundle);
     setSourceStoryboardSha(storyboardSha);setSyncReport(null);
     // "Edit video scenes" must open the editable shot controls. Voice and
     // export deep links open rendering controls; the preview stays one click
@@ -168,7 +205,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       const revision=sync?.storyboardSha256??null;
       const resumed=readDirectorSession(projectId,researchArtifactId,saved.bundle,revision);
       acceptProject(resumed?.dossier??saved.dossier,resumed?.bundle??saved.bundle,
-        "topic",researchArtifactId,revision);
+        "topic",researchArtifactId,revision,resumed?.sourceBundle??saved.bundle);
       setSyncReport(sync);
       setStatus((resumed?"Resumed applied edits from this storyboard version. ":
         sync?"Opened the saved storyboard with compatible changes applied. ":"Opened the original research plan. ")+
@@ -186,7 +223,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     // A browser-session handoff is external state. Load it after render and
     // cancel a pending handoff if the selected project changes.
     queueMicrotask(()=>{if(!active)return;
-    try{
+      void (async()=>{
       const raw=sessionStorage.getItem("contentgen:director-approved-script:v1:"+projectId);
       if(!raw)return;
       if(raw.length>900000)throw Error("Script handoff exceeds the Director browser-session limit.");
@@ -201,20 +238,55 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       // the exact compiled visual plan so old edits never mask new visuals.
       const sourceId=(handoff.sourcePrefix??"approved-script:"+handoff.scriptRevision+":")+handoff.bundle.planSha256;
       const resumed=readDirectorSession(projectId,sourceId,handoff.bundle);
-      acceptProject(resumed?.dossier??handoff.dossier,resumed?.bundle??handoff.bundle,"topic",sourceId);
-      setStatus(resumed?"Restored your saved scene edits. Review facts and rights before publication.":
+      if(resumed){
+        if(!active)return;
+        acceptProject(resumed.dossier,resumed.bundle,"topic",sourceId,null,resumed.sourceBundle);
+        setStatus("Restored your saved scene edits. Review facts and rights before publication.");
+        return;
+      }
+      const previous=findTransferableDirectorSession(projectId,sourceId,handoff.bundle);
+      const transfer=previous?transferableDirectorEdits(previous.sourceBundle,previous.bundle,handoff.bundle):
+        {patches:[],skipped:0};
+      let next=handoff.bundle;
+      const transferred:Array<{shotId:string;impacts:Impact}>=[];
+      try{
+        for(const patch of transfer.patches){
+          const result=await request("edit",{dossier:handoff.dossier,bundle:next,
+            shotId:patch.shotId,changes:patch.changes}) as unknown as Revision;
+          if(result.bundle?.researchId!==handoff.dossier.id||
+            !Array.isArray(result.bundle.plan?.shots)||
+            !result.bundle.plan.shots.some(shot=>shot.id===patch.shotId))
+            throw Error("The scene revision returned a different project.");
+          next=result.bundle;
+          transferred.push({shotId:patch.shotId,impacts:result.impacts});
+        }
+      }catch{
+        // No partial restoration. Keep the previous draft saved separately;
+        // never overwrite the newly generated script with an unverified edit.
+        next=handoff.bundle;
+        transferred.length=0;
+        transfer.skipped+=transfer.patches.length;
+      }
+      if(!active)return;
+      acceptProject(handoff.dossier,next,"topic",sourceId,null,handoff.bundle);
+      if(transferred.length)setRevisions(transferred);
+      setStatus(transferred.length?
+        `Carried ${transferred.length} compatible scene edit(s) into this script. ${transfer.skipped?`${transfer.skipped} changed field(s) were left in the older version. `:""}Review the scene changes before export.`:
+        transfer.skipped?"This script changed since the last edit. Previous edits remain saved in the earlier script, without overriding the new content.":
         "Video scenes are ready. Preview them or adjust individual shots while your draft is being made.");
-    }catch(reason){setLoadError(reason instanceof Error?reason.message:"Cannot open this script in Director.");}
+      })().catch(reason=>{if(active)setLoadError(reason instanceof Error?reason.message:"Cannot open this script in Director.");})
+        .finally(()=>{if(active)setLoadingSaved(false);});
     });
     return ()=>{active=false;};
   },[researchArtifactId,projectId,acceptProject]);
   useEffect(()=>{
-    if(!projectId||!sourceArtifactId||!dossier||!bundle||
+    if(!projectId||!sourceArtifactId||!sourceBundle||!dossier||!bundle||
       typeof window==="undefined")return;
     let warningTimer:ReturnType<typeof setTimeout>|undefined;
     try{
       // Only applied shot edits are saved here. Never store provider keys or voice permissions.
-      const data=JSON.stringify({version:1,artifactId:sourceArtifactId,dossier,bundle});
+      const data=JSON.stringify({version:2,savedAt:Date.now(),artifactId:sourceArtifactId,
+        dossier,sourceBundle,bundle});
       if(data.length>900000)throw Error("Saved director draft exceeds the browser session limit.");
       const key=directorSessionKey(projectId,sourceArtifactId,sourceStoryboardSha);
       let persistent=false;
@@ -226,7 +298,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       warningTimer=setTimeout(()=>setStatus("Scene edits could not be saved across browser restarts. Download Save project JSON before leaving Video Director."),0);
     }
     return ()=>{if(warningTimer!==undefined)clearTimeout(warningTimer);};
-  },[projectId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
+  },[projectId,sourceArtifactId,sourceStoryboardSha,dossier,sourceBundle,bundle]);
   useEffect(()=>{
     if(!bundle||!dossier||stage!=="storyboard")return;
     let active=true;
@@ -415,7 +487,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
         </div>
       </div>
       {loadError&&<p role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm">{loadError} Review the storyboard or open a saved project manually; no source was overwritten.</p>}
-      {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening saved research for Video Director…</p>}
+      {!usable&&loadingSaved&&<p role="status" className="rounded-control border border-border bg-surface p-4 text-sm">Opening your saved scenes and compatible edits…</p>}
       {!usable&&!loadingSaved&&<NewVideoSetup onGenerated={(d,b,source)=>acceptProject(d as Dossier,b as Bundle,source)}/>}
       {usable&&syncReport&&<div role="status" className="rounded-surface border border-primary/30 bg-surface-subtle p-4 text-sm">
         <p className="font-semibold">Saved storyboard → Director</p>

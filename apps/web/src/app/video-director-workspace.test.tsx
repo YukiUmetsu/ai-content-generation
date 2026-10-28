@@ -224,6 +224,49 @@ describe("Video Director selected-shot workbench",()=>{
     await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
     expect(screen.getByRole("combobox",{name:"Scene camera movement"})).toHaveValue("cinematic");
   });
+  it("carries a compatible scene edit into a regenerated script without reverting new narration",async()=>{
+    const productionId="production-"+"9".repeat(24);
+    const sessionKey="contentgen:director-approved-script:v1:"+productionId;
+    const source={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:"b".repeat(64)};
+    const handoff=(scriptRevision:string,plan:typeof source)=>JSON.stringify({
+      productionId,scriptRevision,sourcePrefix:"approved-script:"+scriptRevision+":",dossier,bundle:plan
+    });
+    sessionStorage.setItem(sessionKey,handoff("first",source));
+    const edits:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async (url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      if(!String(url).endsWith("/edit"))throw Error("Unexpected request: "+url);
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof source;shotId:string;changes:Record<string,unknown>};
+      edits.push(body.changes);
+      const revised=structuredClone(body.bundle);
+      Object.assign(revised.plan.shots.find(s=>s.id===body.shotId)!,body.changes);
+      revised.planSha256="e".repeat(64);
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:Object.keys(body.changes),
+        speechRegenerate:[],visualRerender:[body.shotId],sfxRemix:[],downstreamRetiming:[],
+        timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+    });
+    const first=render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
+    await userEvent.setup().click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    fireEvent.change(screen.getByRole("textbox",{name:"Edit on-screen text"}),{target:{value:"Edited cost graphic"}});
+    await userEvent.setup().click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Edited cost graphic"));
+    const savedKey="contentgen:director-session:v1:"+productionId+":approved-script:first:"+source.planSha256;
+    await waitFor(()=>expect((JSON.parse(localStorage.getItem(savedKey)??"null") as
+      {bundle?:{plan:{shots:Array<{onScreenText:string}>}}}|null)?.bundle?.plan.shots[1].onScreenText)
+      .toBe("Edited cost graphic"));
+    first.unmount();
+    const regenerated=structuredClone(source);
+    regenerated.planSha256="c".repeat(64);
+    regenerated.plan.sound[1].narration="New and more accurate voiceover";
+    sessionStorage.setItem(sessionKey,handoff("second",regenerated));
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
+    expect(await screen.findByText(/Carried 1 compatible scene edit/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button",{name:/Scene 2: Edited cost graphic/}));
+    expect(screen.getByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Edited cost graphic");
+    expect(screen.getByRole("textbox",{name:"Edit narration"})).toHaveValue("New and more accurate voiceover");
+    expect(edits).toEqual([{onScreenText:"Edited cost graphic"},{onScreenText:"Edited cost graphic"}]);
+    sessionStorage.removeItem(sessionKey);
+  });
 });
 
 describe("first-run complete Studio demo",()=>{
