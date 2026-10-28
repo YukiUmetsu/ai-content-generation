@@ -6,7 +6,7 @@
 import {createHash,randomUUID} from "node:crypto";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
-import {link,lstat,mkdir,readFile,rm,writeFile} from "node:fs/promises";
+import {link,lstat,mkdir,readFile,realpath,rm,writeFile} from "node:fs/promises";
 import {join,parse,resolve,sep} from "node:path";
 import {homedir} from "node:os";
 
@@ -33,6 +33,11 @@ async function ownedDirectory(path,{create=false}={}){
       catch(error){if(error.code!=="EEXIST")throw error;}
     }
     const info=await lstat(current);
+    // Apple's /var and /tmp are OS-owned aliases for /private counterparts.
+    // Local, user-controlled symlink parents remain forbidden.
+    if(info.isSymbolicLink()&&process.platform==="darwin"&&
+      ((current==="/var"&&await realpath(current)==="/private/var")||
+       (current==="/tmp"&&await realpath(current)==="/private/tmp")))continue;
     if(!info.isDirectory()||info.isSymbolicLink())throw Error("A scene media parent folder is not a real directory.");
   }
   return absolute;

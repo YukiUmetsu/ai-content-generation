@@ -59,6 +59,22 @@ flag for this standalone smoke script; production browser export never sets
 this flag automatically. A passing smoke test does not replace a complete
 voice/sound/scene/assembly production and human visual review.
 
+### Interrupted scene and final assembly recovery
+
+`pnpm test:video:headless` also exercises an interrupted H.264 segment commit,
+damaged segment/still verification, and a missing final assembly sidecar. In
+the dedicated render work folder, the renderer moves incomplete or corrupt
+files to uniquely named `.recovery-*` siblings and regenerates **only** the
+affected artifact. Intact segment and still hashes are reverified before reuse;
+files from a different plan/build are rejected rather than reused. A real
+FFmpeg test edits the middle of three scenes and confirms that the other two
+encoded segments are retained in a decodable six-frame MP4. Another real
+FFmpeg test resumes an interrupted final assembly with no frame recapture.
+
+These checks prove artifact-level recovery on a restarted invocation. They do
+**not** yet prove that an application restart automatically launches and
+finishes the complete production run without a user-initiated retry.
+
 ## Security and privacy baseline
 
 - Local API binds loopback; enforce origin checks, scoped file paths, size limits, request validation, CSP for rendered previews, safe Markdown/HTML sanitization and restricted embeds. Do not run content from scraped pages; they are untrusted and can contain prompt injection.

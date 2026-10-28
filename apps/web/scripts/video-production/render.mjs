@@ -1,20 +1,63 @@
 /** Bounded browser frame capture: verified H.264 segments, safe resume, no PNG hoarding. */
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
-import { access, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { listRenderChunks, reusableChapter } from "./media-reuse.mjs";
 import { constants } from "node:fs";
-import { join, parse, resolve } from "node:path";
+import { basename, join, parse, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import { homedir } from "node:os";
 import { isDeepStrictEqual } from "node:util";
 
 const exec = promisify(execFile);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+async function sha256File(path) {
+  const hash=createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  return hash.digest("hex");
+}
 const fail = (message) => { throw new Error(`Video export failed: ${message}`); };
 const integer = (value, min) => Number.isSafeInteger(value) && value >= min;
-const exists = async (path) => stat(path).then(() => true, (error) => error.code !== "ENOENT");
+
+/** Preserve incomplete worker artifacts for inspection without ever treating
+ * them as valid cache entries. Only narrow, known regular files in the owned
+ * render directory may be moved aside; links and directories are rejected. */
+async function quarantineInterruptedFile(path) {
+  let info;
+  try { info = await lstat(path); }
+  catch (error) { if (error.code === "ENOENT") return; throw error; }
+  if (!info.isFile() || info.isSymbolicLink()) fail("interrupted render artifact is not an owned regular file");
+  await rename(path, join(resolve(path, ".."), `.recovery-${randomUUID()}-${basename(path)}`));
+}
+
+async function regularArtifact(path, maxBytes) {
+  let info;
+  try { info = await lstat(path); }
+  catch (error) { if (error.code === "ENOENT") return false; throw error; }
+  if (!info.isFile() || info.isSymbolicLink() || info.size > maxBytes)
+    fail("interrupted render cache contains an unsafe file");
+  return true;
+}
+
+async function safeRenderDirectory(path) {
+  const absolute=resolve(path),root=parse(absolute).root;
+  let current=root;
+  for (const part of absolute.slice(root.length).split(sep).filter(Boolean)) {
+    current=join(current,part);
+    try { await mkdir(current,{mode:0o700}); }
+    catch (error) { if (error.code!=="EEXIST") throw error; }
+    const info=await lstat(current);
+    // macOS exposes /var and /tmp as fixed OS-managed links into /private.
+    // Accept only those exact canonical targets, never project-controlled links.
+    if (info.isSymbolicLink() && process.platform==="darwin" &&
+        ((current==="/var" && await realpath(current)==="/private/var") ||
+         (current==="/tmp" && await realpath(current)==="/private/tmp"))) continue;
+    if (!info.isDirectory() || info.isSymbolicLink())
+      fail("export output contains an unsafe linked or non-directory parent");
+  }
+}
 
 /** Launch and close the actual installed browser before any billable synthesis. */
 export async function probeBrowserExecutable(browserExecutable) {
@@ -172,7 +215,7 @@ export async function renderVideoSegments(options, dependencies = {}) {
   const reviewStills = [];
   let peakScratchBytes = 0;
   let reusedSegmentCount = 0, renderedSegmentCount = 0;
-  await mkdir(segmentsDir, { recursive: true });
+  await safeRenderDirectory(segmentsDir);
   let capture;
   try {
     // Even resume must establish the correct live visual page, not stale/bypassed output.
@@ -188,19 +231,38 @@ export async function renderVideoSegments(options, dependencies = {}) {
       const name = `segment-${String(index).padStart(5, "0")}.mp4`;
       const path = join(segmentsDir, name), metadataPath = join(segmentsDir, `${name}.json`);
       let completed = false, segmentHash;
-      const hasVideo = await exists(path), hasMeta = await exists(metadataPath);
+      const hasVideo = await regularArtifact(path,256*1024*1024);
+      const hasMeta = await regularArtifact(metadataPath,8192);
       if (hasVideo || hasMeta) {
-        if (!hasVideo || !hasMeta) fail(`incomplete resume record for ${name}; remove manually after inspection`);
-        let meta;
-        try { meta = JSON.parse(await readFile(metadataPath, "utf8")); }
-        catch { fail(`invalid resume metadata for ${name}`); }
-        if (meta.fingerprint !== fingerprint || meta.startFrame !== startFrame || meta.frameCount !== frameCount) fail(`stale resume manifest for ${name}`);
-        const bytes = await readFile(path);
-        if (sha256(bytes) !== meta.sha256) fail(`corrupt segment hash during resume: ${name}`);
-        const measured = await probe(path);
-        if (!matchProbe(measured, manifest, frameCount)) fail(`corrupt segment probe during resume: ${name}`);
-        completed = true;
-        segmentHash = meta.sha256;
+        let damaged = !hasVideo || !hasMeta;
+        if (!damaged) {
+          let meta;
+          try { meta = JSON.parse(await readFile(metadataPath, "utf8")); }
+          catch { damaged = true; }
+          if (!meta || typeof meta !== "object") damaged = true;
+          if (!damaged) {
+            // A different production identity is a caller error, never an
+            // interrupted artifact that may be silently replaced.
+            if (meta.fingerprint !== fingerprint || meta.startFrame !== startFrame ||
+                meta.frameCount !== frameCount) fail(`stale resume manifest for ${name}`);
+            const bytes = await readFile(path);
+            if (sha256(bytes) !== meta.sha256) damaged = true;
+            else {
+              try { completed = matchProbe(await probe(path), manifest, frameCount); }
+              catch (error) { if (options.signal?.aborted) throw error; completed = false; }
+              damaged = !completed;
+              if (completed) segmentHash = meta.sha256;
+            }
+          }
+        }
+        if (damaged) {
+          // A SIGKILL may land between publishing the H.264 file and its
+          // sidecar, or leave a damaged file. Move both aside, then render
+          // only this chunk; all verified siblings remain unchanged.
+          if (hasVideo) await quarantineInterruptedFile(path);
+          if (hasMeta) await quarantineInterruptedFile(metadataPath);
+          options.onProgress?.({phase:"segment-repair",startFrame,frameCount,chapterIndex});
+        }
       }
       // Reuse unchanged, identical-timeline chapters from the previous render
       // only after checking the old sidecar, H.264 SHA and measured frame count.
@@ -284,23 +346,39 @@ export async function renderVideoSegments(options, dependencies = {}) {
         throw error;
       }
     }
-    if (reviewFrames.length) await mkdir(join(dir, "stills"), { recursive: true });
+    if (reviewFrames.length) await safeRenderDirectory(join(dir, "stills"));
     for (const frame of reviewFrames) {
       if (options.signal?.aborted) fail("review still capture cancelled");
       const path = join(dir, "stills", `frame-${String(frame).padStart(6, "0")}.png`);
       const metadataPath = `${path}.json`;
-      const hasImage = await exists(path), hasMetadata = await exists(metadataPath);
+      const hasImage = await regularArtifact(path,20*1024*1024);
+      const hasMetadata = await regularArtifact(metadataPath,8192);
       let digest;
       if (hasImage || hasMetadata) {
-        if (!hasImage || !hasMetadata) fail(`incomplete review still: frame ${frame}`);
-        let metadata;
-        try { metadata = JSON.parse(await readFile(metadataPath, "utf8")); }
-        catch { fail(`invalid review still metadata: frame ${frame}`); }
-        const bytes = await readFile(path);
-        verifyScreenshot(bytes, manifest);
-        digest = sha256(bytes);
-        if (metadata.fingerprint !== fingerprint || metadata.frame !== frame || metadata.sha256 !== digest) fail(`corrupt review still hash: frame ${frame}`);
-      } else {
+        let damaged = !hasImage || !hasMetadata;
+        if (!damaged) {
+          let metadata;
+          try { metadata = JSON.parse(await readFile(metadataPath, "utf8")); }
+          catch { damaged = true; }
+          if (!metadata || typeof metadata !== "object") damaged = true;
+          if (!damaged) {
+            if (metadata.fingerprint !== fingerprint || metadata.frame !== frame)
+              fail(`stale review still provenance: frame ${frame}`);
+            const bytes = await readFile(path);
+            digest = sha256(bytes);
+            try { verifyScreenshot(bytes, manifest); }
+            catch { damaged = true; }
+            if (metadata.sha256 !== digest) damaged = true;
+          }
+        }
+        if (damaged) {
+          if (hasImage) await quarantineInterruptedFile(path);
+          if (hasMetadata) await quarantineInterruptedFile(metadataPath);
+          digest = undefined;
+          options.onProgress?.({phase:"still-repair",frame});
+        }
+      }
+      if (!digest) {
         const temporary = join(dir, "stills", `.frame-${randomUUID()}.png`);
         try {
           await capture.captureFrame(frame, temporary);
@@ -317,17 +395,41 @@ export async function renderVideoSegments(options, dependencies = {}) {
 
   const videoOnlyPath = join(dir, "video-only.mp4");
   const finalMetadataPath = join(dir, "video-only.mp4.json");
-  if (await exists(videoOnlyPath)) {
-    if (!await exists(finalMetadataPath)) fail("existing final video lacks a verified resume manifest");
-    const record = JSON.parse(await readFile(finalMetadataPath, "utf8"));
-    if (record.fingerprint !== fingerprint || record.sha256 !== sha256(await readFile(videoOnlyPath))) fail("existing final video has a mismatched hash or plan");
-  } else {
+  const hasFinal = await regularArtifact(videoOnlyPath,4*1024*1024*1024);
+  const hasFinalMeta = await regularArtifact(finalMetadataPath,8192);
+  let finalVerified = false;
+  if (hasFinal || hasFinalMeta) {
+    let damaged = !hasFinal || !hasFinalMeta;
+    if (!damaged) {
+      let record;
+      try { record = JSON.parse(await readFile(finalMetadataPath, "utf8")); }
+      catch { damaged = true; }
+      if (!record || typeof record !== "object") damaged = true;
+      if (!damaged) {
+        if (record.fingerprint !== fingerprint) fail("stale final video resume plan");
+        // The finished file is a local artifact, not a user release. A crash
+        // before the sidecar write leaves it intact for recovery and re-mux.
+        if (record.sha256 !== await sha256File(videoOnlyPath)) damaged = true;
+        else {
+          try { finalVerified = matchProbe(await probeFinal(videoOnlyPath),manifest,manifest.durationFrames); }
+          catch (error) { if (options.signal?.aborted) throw error; }
+          damaged = !finalVerified;
+        }
+      }
+    }
+    if (damaged) {
+      if (hasFinal) await quarantineInterruptedFile(videoOnlyPath);
+      if (hasFinalMeta) await quarantineInterruptedFile(finalMetadataPath);
+      options.onProgress?.({phase:"assembly-repair",message:"Resuming interrupted video assembly…"});
+    }
+  }
+  if (!finalVerified) {
     const stagedPath = join(dir, `.video-only-${randomUUID()}.mp4`);
     try {
       await concat(segments.map((item) => item.path), stagedPath);
       const check = await probeFinal(stagedPath);
       if (!matchProbe(check, manifest, manifest.durationFrames)) fail("concatenated video failed final frame/FPS/raster QA");
-      const digest = sha256(await readFile(stagedPath));
+      const digest = await sha256File(stagedPath);
       await rename(stagedPath, videoOnlyPath);
       await writeFile(finalMetadataPath, JSON.stringify({ fingerprint, sha256: digest, frameCount: manifest.durationFrames }, null, 2), { flag: "wx" });
     } finally { await rm(stagedPath, { force: true }); }
