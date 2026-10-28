@@ -54,6 +54,19 @@ export function compileGeneralVisuals(job, timeline, speech) {
         fail(`beat ${beat.id} measured turns do not fill the scene speech range`);
       dialogue = { turns };
     } else if (speech?.[index]?.turns) fail(`beat ${beat.id} gained unexpected measured dialogue`);
+    else if (beat.speaker?.role === "character") {
+      // Single-speaker character scenes must also draw the performer; otherwise
+      // saved Character Studio art would be pinned to a plan but never visible.
+      const actual = speech?.[index];
+      if (speech && (actual?.id !== beat.id || actual.text !== beat.narration ||
+        actual.speakerId !== beat.speaker.id || actual.speakerRole !== "character" ||
+        actual.voiceId !== beat.speaker.voiceId || !Number.isSafeInteger(actual.samples) ||
+        actual.samples < 1 || actual.samples > range.endSample - range.startSample))
+        fail(`beat ${beat.id} character speech differs from measured narration`);
+      dialogue = { turns: [{ id: beat.id, speakerId: beat.speaker.id, role: "character",
+        ...(actual ? { startFrame: toFrame(range.startSample, timeline.fps),
+          endFrame: toFrame(range.startSample + actual.samples, timeline.fps) } : {}) }] };
+    }
     return { id: beat.id, intent: beat.visualIntent, visual: structuredClone(beat.visual), startFrame, endFrame,
       ...(dialogue ? { dialogue } : {}),
       claimRefs: [...beat.claimRefs], evidenceRefs, eventIds: [...beat.eventIds] };
