@@ -1,8 +1,8 @@
 //! Local-only Axum server. The foundation slice exposes health plus three
 //! registered-but-not-implemented lane routers.
 
-pub mod creative;
 pub mod character_drafts;
+pub mod creative;
 pub mod credentials;
 pub mod db;
 pub mod error;

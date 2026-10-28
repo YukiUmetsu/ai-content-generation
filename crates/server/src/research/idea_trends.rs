@@ -145,9 +145,10 @@ fn has_contiguous_recent_weeks(points: &[TrendPoint]) -> bool {
     let Some(recent) = points.get(points.len().saturating_sub(26)..) else {
         return false;
     };
-    recent.len() == 26 && recent.windows(2).all(|pair| {
-        pair[1].timestamp.checked_sub(pair[0].timestamp) == Some(WEEK)
-    })
+    recent.len() == 26
+        && recent
+            .windows(2)
+            .all(|pair| pair[1].timestamp.checked_sub(pair[0].timestamp) == Some(WEEK))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -530,13 +531,18 @@ mod tests {
     #[test]
     fn missing_recent_week_cannot_masquerade_as_a_thirteen_week_change() {
         let timeline = (0..28)
-            .map(|index| serde_json::json!({
-                "time": (1_700_000_000_i64 + index * WEEK).to_string(),
-                "value": [30],
-                "hasData": [index != 18],
-                "isPartial": index == 27,
-            }))
+            .map(|index| {
+                serde_json::json!({
+                    "time": (1_700_000_000_i64 + index * WEEK).to_string(),
+                    "value": [30],
+                    "hasData": [index != 18],
+                    "isPartial": index == 27,
+                })
+            })
             .collect::<Vec<_>>();
-        assert!(parse_trends_timeseries(&serde_json::json!({"default":{"timelineData":timeline}})).is_err());
+        assert!(
+            parse_trends_timeseries(&serde_json::json!({"default":{"timelineData":timeline}}))
+                .is_err()
+        );
     }
 }

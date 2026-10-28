@@ -413,7 +413,10 @@ pub fn fail_attempt(
 /// Explicitly re-arm an interrupted video production. Unlike automatic
 /// attempts, this requires the local renderer to invoke it and immediately
 /// claim the one newly READY step. All successful outputs and attempts remain.
-pub fn retry_failed_video_job(conn: &mut Connection, job_id: &str) -> Result<JobSnapshot, JobsError> {
+pub fn retry_failed_video_job(
+    conn: &mut Connection,
+    job_id: &str,
+) -> Result<JobSnapshot, JobsError> {
     let transaction = conn.transaction()?;
     let dag = load_dag(&transaction, job_id)?;
     if dag.job.job_kind != "video-production" {
@@ -422,13 +425,22 @@ pub fn retry_failed_video_job(conn: &mut Connection, job_id: &str) -> Result<Job
     if !matches!(dag.job.state, JobState::Failed | JobState::Cancelled) {
         return Err(JobsError::NodeNotReady);
     }
-    let succeeded: HashSet<_> = dag.nodes.iter()
+    let succeeded: HashSet<_> = dag
+        .nodes
+        .iter()
         .filter(|node| node.state == JobState::Succeeded)
-        .map(|node| node.id.as_str()).collect();
+        .map(|node| node.id.as_str())
+        .collect();
     let now = now(&transaction)?;
     let mut ready = 0;
-    for node in dag.nodes.iter().filter(|node| node.state != JobState::Succeeded) {
-        let dependencies_met = dag.edges.iter()
+    for node in dag
+        .nodes
+        .iter()
+        .filter(|node| node.state != JobState::Succeeded)
+    {
+        let dependencies_met = dag
+            .edges
+            .iter()
             .filter(|edge| edge.to_node_id == node.id)
             .all(|edge| succeeded.contains(edge.from_node_id.as_str()));
         let max_attempts = if dependencies_met && node.attempt_count >= node.max_attempts {
@@ -436,19 +448,32 @@ pub fn retry_failed_video_job(conn: &mut Connection, job_id: &str) -> Result<Job
                 return Err(JobsError::RetryLimitExceeded);
             }
             node.max_attempts + 1
-        } else { node.max_attempts };
-        if dependencies_met { ready += 1; }
+        } else {
+            node.max_attempts
+        };
+        if dependencies_met {
+            ready += 1;
+        }
         transaction.execute(
             "UPDATE job_nodes SET state = ?1, max_attempts = ?2, error_code = NULL,
                     output_json = NULL, updated_at = ?3 WHERE id = ?4",
-            params![if dependencies_met {"READY"} else {"PENDING"},
-                i64::from(max_attempts), now, node.id],
+            params![
+                if dependencies_met { "READY" } else { "PENDING" },
+                i64::from(max_attempts),
+                now,
+                node.id
+            ],
         )?;
     }
     if ready != 1 {
-        return Err(JobsError::InvalidDocument("video production retry requires one ready step".to_owned()));
+        return Err(JobsError::InvalidDocument(
+            "video production retry requires one ready step".to_owned(),
+        ));
     }
-    transaction.execute("UPDATE jobs SET state = 'RUNNING', updated_at = ?1 WHERE id = ?2",params![now,job_id])?;
+    transaction.execute(
+        "UPDATE jobs SET state = 'RUNNING', updated_at = ?1 WHERE id = ?2",
+        params![now, job_id],
+    )?;
     transaction.commit()?;
     snapshot(conn, job_id)
 }

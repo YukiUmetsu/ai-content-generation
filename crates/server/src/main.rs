@@ -37,7 +37,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         db_path.display()
     );
     if !orphaned.is_empty() {
-        eprintln!("contentgen-server: reconciled {} interrupted job attempts", orphaned.len());
+        eprintln!(
+            "contentgen-server: reconciled {} interrupted job attempts",
+            orphaned.len()
+        );
     }
 
     let listener = tokio::net::TcpListener::bind(bind).await?;

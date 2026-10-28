@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use super::discovery_projects::{self, DiscoveryError, KeywordPatch, ProjectSnapshot};
 use super::discovery_store::{self, CandidateDraft};
-use super::sessions_api;
 use super::graph_store::{self, SourceDraft};
 use super::market_api::epoch_now;
+use super::sessions_api;
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -542,8 +542,12 @@ async fn finish(
         message: "Discovery database unavailable".into(),
     })?;
     let known = discovery_store::get_run(&db, &id, &run_id).map_err(map_error)?;
-    if known.status == "completed" || known.status == "insufficient_evidence"
-        || matches!(known.stage.as_str(), "measure_market" | "measure_market_collecting" | "measure_market_paused")
+    if known.status == "completed"
+        || known.status == "insufficient_evidence"
+        || matches!(
+            known.stage.as_str(),
+            "measure_market" | "measure_market_collecting" | "measure_market_paused"
+        )
     {
         return Ok(Json(known));
     }
