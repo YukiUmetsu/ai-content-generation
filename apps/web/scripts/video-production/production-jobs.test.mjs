@@ -244,3 +244,56 @@ test("individual scene Jobs reserve attempts, persist hashes, retry and cancel i
   await assert.rejects(tracker.completeScene(orphan,{sha256:"d".repeat(64)}),/active scene/i);
   assert.equal(base.calls.filter(item=>item.path==="/api/jobs/job-test/cancel").length,1);
 });
+
+test("cancelling during scene submission leaves no unclaimed child job running",async()=>{
+  const base=fakeScheduler(),events=[];
+  let releaseSubmission,submitted;
+  const waiting=new Promise(resolve=>submitted=resolve);
+  const fetcher=async(url,init)=>{
+    const path=new URL(url).pathname,body=init?.body?JSON.parse(init.body):null;
+    if(path==="/api/jobs"&&body?.jobKind==="video-narration-scene"){
+      submitted();
+      return new Promise(resolve=>{releaseSubmission=()=>resolve(Response.json({created:true,
+        job:{id:"late-child",state:"RUNNING"},nodes:[{id:"late-node",nodeKey:"narration-scene",state:"READY"}]}));});
+    }
+    if(path==="/api/jobs/late-child/cancel"){
+      events.push("child-cancelled");return Response.json({job:{state:"CANCELLED"}});
+    }
+    if(path.includes("late-child")&&path.endsWith("/start"))throw Error("cancelled scene must not claim a worker");
+    return base.fetcher(url,init);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"r1",runId:FIRST_RUN});
+  const pending=tracker.beginScene({kind:"narration-scene",sceneId:"opening",fingerprint:"c".repeat(64)});
+  await waiting;
+  await tracker.cancel();
+  releaseSubmission();
+  await assert.rejects(pending,/cancelled/u);
+  assert.deepEqual(events,["child-cancelled"]);
+});
+
+test("cancelling after the server reserved a scene aborts before media generation",async()=>{
+  const base=fakeScheduler(),events=[];
+  let releaseStart,startRequested;
+  const waiting=new Promise(resolve=>startRequested=resolve);
+  const fetcher=async(url,init)=>{
+    const path=new URL(url).pathname,body=init?.body?JSON.parse(init.body):null;
+    if(path==="/api/jobs"&&body?.jobKind==="video-render-segment")return Response.json({created:true,
+      job:{id:"late-child",state:"RUNNING"},nodes:[{id:"late-node",nodeKey:"render-segment",state:"READY"}]});
+    if(path.endsWith("late-node/start")){
+      startRequested();return new Promise(resolve=>{releaseStart=()=>resolve(Response.json({attempt:{id:"reserved"}}));});
+    }
+    if(path==="/api/jobs/late-child/cancel"){
+      events.push("child-cancelled");return Response.json({job:{state:"CANCELLED"}});
+    }
+    return base.fetcher(url,init);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"r2",runId:FIRST_RUN});
+  const pending=tracker.beginScene({kind:"render-segment",sceneId:"segment-00000",fingerprint:"d".repeat(64)});
+  await waiting;
+  await tracker.cancel();
+  releaseStart();
+  await assert.rejects(pending,/cancelled/u);
+  assert.deepEqual(events,["child-cancelled"]);
+});

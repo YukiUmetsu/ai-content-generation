@@ -243,6 +243,13 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       const jobKind=kind==="narration-scene"?"video-narration-scene":"video-render-segment";
       let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
         nodes:[{nodeKey:kind,nodeKind:`video.${kind}`,maxAttempts:3,input,dependsOn:[]}]});
+      // Cancellation may race the HTTP submission. Do not leave a newly
+      // created child job alive after its parent has already been cancelled.
+      if(terminal){
+        if(typeof data.job?.id==="string"&&data.job.state!=="SUCCEEDED")
+          await request(`/api/jobs/${data.job.id}/cancel`,{});
+        throw Error("Scene work was cancelled before it could be claimed.");
+      }
       if(data.created!==true&&["FAILED","CANCELLED"].includes(data.job?.state)){
         data=await request(`/api/jobs/${data.job.id}/retry`,{});
       }
@@ -255,6 +262,10 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       const node=data.nodes[0];
       const reservation=await request(`/api/jobs/${data.job.id}/nodes/${node.id}/start`,{});
       if(typeof reservation.attempt?.id!=="string")throw Error("Jobs did not reserve the scene attempt.");
+      if(terminal){
+        await request(`/api/jobs/${data.job.id}/cancel`,{});
+        throw Error("Scene work was cancelled before it could start.");
+      }
       sceneAttempts.set(key,{jobId:data.job.id,nodeId:node.id,attemptId:reservation.attempt.id});
       return key;
     },
