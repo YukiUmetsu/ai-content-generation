@@ -122,8 +122,8 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
     new Set(artworks.map(art => art.id)).size !== 3) {
     throw Error("Kumiki did not produce three distinct thumbnail compositions.");
   }
-  const outputs = [];
-  for (let index = 0; index < artworks.length; index++) {
+  const outputs = new Array(artworks.length);
+  async function generateConcept(index) {
     if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
     const art = artworks[index];
     if (!art?.media || typeof art.svg !== "string" || art.svg.length > 2_000_000 ||
@@ -163,13 +163,20 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
       const digest=hash(bytes);
       if(cacheDir&&!cached)await persistConcept(cacheDir,name,source,bytes,sourceSha256,digest);
       if(attempt)await sceneJobs.completeScene(attempt,{sha256:digest});
-      outputs.push({ id: name, label: art.label, headline: copy.headlines[index],
+      outputs[index] = { id: name, label: art.label, headline: copy.headlines[index],
         file: `${name}.png`, source: `${name}.svg`, sha256: digest,
-        sourceSha256, width: 1280, height: 720 });
+        sourceSha256, width: 1280, height: 720 };
     }catch(error){
       if(attempt)await sceneJobs.failScene(attempt,error);
       throw error;
     }
   }
+  // Each concept has an independent durable claim and distinct owned files.
+  // All three may execute together. Drain all in-flight work on failure before
+  // the caller cleans up or advances the parent Job; successful concepts stay
+  // hash-verified in the cache for a targeted retry.
+  const results=await Promise.allSettled(artworks.map((_,index)=>generateConcept(index)));
+  const failed=results.find(result=>result.status==="rejected");
+  if(failed)throw failed.reason;
   return outputs;
 }

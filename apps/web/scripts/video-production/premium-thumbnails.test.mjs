@@ -41,7 +41,7 @@ test("each concept has a durable Jobs attempt and survives restart without reren
     failScene:async(token)=>events.push(["fail",token]),
   };
   const first=await generateProductionThumbnails(fixture,{outputDir:firstDir,cacheDir:firstCache,sceneJobs});
-  assert.deepEqual(events.filter(item=>item[0]==="begin").map(item=>item.slice(1)),
+  assert.deepEqual(events.filter(item=>item[0]==="begin").map(item=>item.slice(1)).sort((a,b)=>a[1].localeCompare(b[1])),
     [["thumbnail-concept","thumbnail-1"],["thumbnail-concept","thumbnail-2"],["thumbnail-concept","thumbnail-3"]]);
   assert.equal(events.filter(item=>item[0]==="complete").length,3);
   const second=await generateProductionThumbnails(fixture,{outputDir:resumedDir,
@@ -76,16 +76,50 @@ test("interrupted thumbnail production retries only unfinished concepts",async t
         return sceneId;
       },completeScene:async()=>{},failScene:async()=>{},
     }}),/worker was interrupted/);
-  assert.equal(starts,2);
+  assert.equal(starts,3,"all independent concepts still claim work when one fails");
   const retried=[];
   const outputs=await generateProductionThumbnails(fixture,{outputDir:later,
     cacheDir:join(root,"later-cache"),reuseCacheDir:join(root,"prior-cache"),sceneJobs:{
       beginScene:async({sceneId})=>{retried.push(sceneId);return sceneId;},
       completeScene:async()=>{},failScene:async()=>{},
     }});
-  assert.deepEqual(retried,["thumbnail-2","thumbnail-3"]);
+  assert.deepEqual(retried,["thumbnail-2"],"completed third concept also survives the failure");
   assert.equal(outputs.length,3);
   assert.equal(outputs[0].sha256,sha(await readFile(join(prior,"thumbnail-1.png"))));
+  assert.equal(outputs[2].sha256,sha(await readFile(join(prior,"thumbnail-3.png"))));
+});
+
+test("independent thumbnail attempts run concurrently but settle before reporting failure",async t=>{
+  const outputDir=await mkdtemp(join(tmpdir(),"contentgen-thumbnails-parallel-"));
+  t.after(()=>rm(outputDir,{recursive:true,force:true}));
+  const builds=[1,2,3].map(n=>({id:String(n),label:`Concept ${n}`,
+    media:{},svg:`<svg xmlns="http://www.w3.org/2000/svg"><text>${n}</text></svg>`}));
+  const source=()=>builds;
+  const png=Buffer.alloc(160);
+  Buffer.from("89504e470d0a1a0a","hex").copy(png,0);
+  png.writeUInt32BE(1280,16);png.writeUInt32BE(720,20);
+  let unblock=()=>{};
+  const gate=new Promise(resolve=>{unblock=resolve;});
+  const started=[],finished=[];
+  const pending=generateProductionThumbnails(fixture,{outputDir,compose:async()=>source,
+    convert:async(_svg,path)=>{
+      const name=path.split("/").at(-1);
+      started.push(name);
+      if(name==="thumbnail-2.png")throw Error("isolated thumbnail conversion failed");
+      await gate;
+      await writeFile(path,png);
+      finished.push(name);
+    }});
+  // Give the independent conversions a chance to start without needing the
+  // first successful concept to complete. A serial loop cannot pass this.
+  await Promise.race([
+    (async()=>{while(started.length!==3)await new Promise(resolve=>setTimeout(resolve,5));})(),
+    new Promise((_,reject)=>setTimeout(()=>reject(Error("thumbnail workers did not start together")),2000))
+  ]).finally(unblock);
+  await assert.rejects(pending,/isolated thumbnail conversion failed/);
+  assert.deepEqual(started.sort(),["thumbnail-1.png","thumbnail-2.png","thumbnail-3.png"]);
+  assert.deepEqual(finished.sort(),["thumbnail-1.png","thumbnail-3.png"],
+    "remaining workers finish before parent observes failure");
 });
 
 test("unusable thumbnail export never reaches the release manifest",async t=>{
