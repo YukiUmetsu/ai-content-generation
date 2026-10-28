@@ -247,7 +247,7 @@ export function createDirectorProduction(deps={}){
   const resolveRigs=deps.loadCharacterRigs??loadProjectCharacterRigs;
   async function characterRigSelection(input,job){
     const speakers=[...new Set(job.beats.flatMap(beat=>
-      (beat.speechTurns??[beat]).map(turn=>turn.speaker?.id)).filter(id=>id==="pip"||id==="quill"))];
+      (beat.speechTurns??[beat]).map(turn=>turn.speaker?.role==="character"?turn.speaker.id:null)).filter(id=>id==="pip"||id==="quill"))];
     if(!speakers.length||input.characterProjectId===undefined)
       return {rigs:{},assets:[],identity:[]};
     if(typeof input.characterProjectId!=="string"||
