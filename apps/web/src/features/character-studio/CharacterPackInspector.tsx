@@ -15,6 +15,8 @@ import { readProjectVoices, type VoiceFavorite } from "@/app/project-voice-favor
 import { changeCharacterVoice, readCharacterVoiceBindings, saveCharacterVoiceBindings,
   characterVoicesKey,type CharacterVoiceBindings } from "./character-voice-bindings";
 import {loadSavedCharacterVoices,writeSavedCharacterVoices} from "./character-voice-bindings-api";
+import { STARTER_CHARACTERS, loadStarterArchive, type StarterCharacterId } from "./starter-characters";
+import { StarterCharacterPreview } from "./StarterCharacterPreview";
 
 const manifestFields = [
   { key: "schemaVersion / characterId / revision", en: "Required version 1, stable ID and editable revision string.", ja: "必須。バージョン 1、固定 ID、改訂番号。" },
@@ -56,6 +58,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
   const [voicePending,setVoicePending]=useState(false);
   const [voiceReload,setVoiceReload]=useState(0);
   const [exampleDownloadError, setExampleDownloadError] = useState("");
+  const [starterBusy,setStarterBusy]=useState<StarterCharacterId|null>(null);
   const [loadedProjectId, setLoadedProjectId] = useState("");
   const [lastSaved, setLastSaved] = useState("");
   const bytesRef = useRef<ArrayBuffer | null>(null);
@@ -187,12 +190,12 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
     return () => { active = false; };
   }, [projectId]);
 
-  async function presentBytes(bytes: ArrayBuffer, name: string, requestId: number, savedDraft?: CharacterDraft) {
+  async function presentBytes(bytes: ArrayBuffer, name: string, requestId: number, savedDraft?: CharacterDraft): Promise<InspectedCharacterPack|null> {
     const result = await inspectCharacterZip(bytes);
     if (savedDraft && (result.definition.characterId !== savedDraft.characterId || result.definition.revision !== savedDraft.revision)) {
       throw Error("The saved ZIP manifest does not match its recorded character ID or revision.");
     }
-    if (generation.current !== requestId) return;
+    if (generation.current !== requestId) return null;
     const nextUrls = new Map<string, string>();
     try {
       for (const [path, blob] of result.images) nextUrls.set(path, URL.createObjectURL(blob));
@@ -205,6 +208,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
     setFileName(name);
     setPreview({ pack: result, urls: nextUrls, inspectionId: requestId });
     setStatus("ready");
+    return result;
   }
 
   function startRead(name: string): number {
@@ -250,14 +254,13 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
     }
   };
 
-  const save = async () => {
-    if (savingRef.current || !pack || !bytesRef.current) return;
+  const persistDraft = async (selected:InspectedCharacterPack, bytes:ArrayBuffer, requestId:number) => {
+    if (savingRef.current || generation.current!==requestId) return;
     savingRef.current = true;
     setSaving(true);
     setSaveError("");
-    const requestId = generation.current;
     try {
-      const draft = await saveCharacterDraft(projectId, pack.definition.characterId, pack.definition.revision, bytesRef.current);
+      const draft = await saveCharacterDraft(projectId, selected.definition.characterId, selected.definition.revision, bytes);
       if (generation.current !== requestId) return;
       const run = ++draftsRun.current;
       setLoadedProjectId(projectId);
@@ -282,6 +285,32 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
     }
   };
 
+  const save = async () => {
+    if (pack && bytesRef.current) await persistDraft(pack,bytesRef.current,generation.current);
+  };
+
+  async function useStarter(id:StarterCharacterId){
+    if(starterBusy||savingRef.current||draftsLoading||draftsError)return;
+    const starter=STARTER_CHARACTERS.find(item=>item.id===id)!;
+    const existing=drafts.find(draft=>draft.characterId===id);
+    if(existing){await reopen(existing);return;}
+    const requestId=startRead(`${starter.name} · original starter rig`);
+    setStarterBusy(id);
+    try{
+      const bytes=await loadStarterArchive(id);
+      if(generation.current!==requestId)return;
+      const opened=await presentBytes(bytes,`${starter.name} · original starter rig`,requestId);
+      if(!opened||generation.current!==requestId)return;
+      if(opened.definition.characterId!==id||opened.definition.revision!==starter.definition.revision)
+        throw Error(`${starter.name}'s bundled ZIP has a different character identity or revision.`);
+      await persistDraft(opened,bytes,requestId);
+    }catch(caught){
+      if(generation.current!==requestId)return;
+      setError(caught instanceof Error?caught.message:`Could not add ${starter.name}.`);
+      setStatus("error");
+    }finally{setStarterBusy(current=>current===id?null:current);}
+  }
+
   return <section aria-label={ja ? "キャラクターパック検査" : "Character package inspector"} className="mt-7 space-y-4">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
@@ -293,6 +322,40 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
       </div>
       <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-subtle px-3 py-1.5 text-xs text-muted-foreground"><ShieldAlert aria-hidden className="size-4" />{ja ? "未承認の下書き" : "Unverified drafts"}</span>
     </div>
+    <Surface variant="outline" aria-label={ja?"最初から使えるキャラクター":"Included starter characters"}>
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <h3 className="font-serif text-lg font-semibold text-foreground">{ja?"Pip と Quill を使う":"Start with Pip & Quill"}</h3>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{ja
+            ?"オリジナルのリグをワンクリックでこのプロジェクトに保存。動きを確認してから調整できます。声の利用許可は別途必要です。"
+            :"Original, layered rigs are included. Add one to this project in a click, inspect its motion, and customize it. Voices require separate permission."}</p>
+        </div>
+        <span className="text-[11px] text-muted-foreground">{ja?"追加のダウンロード契約なし":"No external assets"}</span>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {STARTER_CHARACTERS.map(starter=>{
+          const existing=drafts.find(draft=>draft.characterId===starter.id);
+          return <div key={starter.id} className="flex min-w-0 flex-col items-center gap-3 rounded-xl border border-border bg-surface-subtle/60 p-3 sm:flex-row sm:gap-4">
+            <StarterCharacterPreview id={starter.id} locale={locale}/>
+            <div className="min-w-0 flex-1 space-y-2">
+              <div>
+                <p className="text-base font-semibold text-foreground">{starter.name}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{ja
+                  ?(starter.id==="pip"?"好奇心旺盛な案内役":"丁寧で落ち着いた解説役")
+                  :starter.description}</p>
+              </div>
+              <p className="text-[11px] text-muted-foreground">{ja?"頭・腕・目・口の独立パーツ":"Head · arms · eyes · mouth"} · rev {starter.definition.revision}</p>
+              <Button size="sm" className="w-full" isLoading={starterBusy===starter.id}
+                disabled={draftsLoading||!!draftsError||!!starterBusy||saving}
+                onClick={()=>void useStarter(starter.id)}>
+                {existing?(ja?"保存したリグを開く":"Open saved rig"):(ja?`${starter.name} を追加`:`Use ${starter.name}`)}
+              </Button>
+              {existing&&<p className="text-[11px] text-muted-foreground">{ja?"既存の修正を保持します":"Your saved revision is preserved"}</p>}
+            </div>
+          </div>;
+        })}
+      </div>
+    </Surface>
     <Surface variant="outline">
       <label className="group flex cursor-pointer flex-col flex-wrap items-center gap-3 rounded-xl border border-dashed border-primary/30 bg-surface-subtle/50 px-4 py-5 text-center transition-colors hover:border-primary/60 hover:bg-surface-subtle focus-within:ring-2 focus-within:ring-ring sm:flex-row sm:text-left">
         <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-surface text-primary shadow-sm"><UploadCloud aria-hidden className="size-5" /></span>
@@ -461,7 +524,7 @@ function ProjectCharacterPackInspector({ locale, projectId }: { locale: Locale; 
         <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-primary/25 bg-primary/5 p-4">
           <div className="max-w-xl">
             <h3 className="font-semibold">{ja ? "まずは実際に読み込めるサンプルから" : "Start with a package you can actually import"}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">{ja ? "同じJSONと透過PNG３枚を含み、上の ZIP インポーターで検査できる例です。Pip / Quill の完成リグではありません。" : "These downloads share one manifest. The ZIP includes three original transparent PNG layers and passes this inspector. It is a teaching sprite, not the promised Pip or Quill character rig."}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{ja ? "同じJSONと透過PNG３枚を含み、上の ZIP インポーターで検査できる学習用の例です。完成した Pip / Quill リグは上のカードから追加できます。" : "These downloads share one teaching manifest. The ZIP includes three transparent PNG layers and passes this inspector. For the complete Pip or Quill rig, use the starter cards above."}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" icon={<Download className="size-4"/>} onClick={() => downloadExample("json")}>{ja ? "JSONの例を保存" : "Download example character.json"}</Button>

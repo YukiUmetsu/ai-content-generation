@@ -6,6 +6,7 @@ import { listCharacterDrafts, loadCharacterDraft, saveCharacterDraft } from "./c
 import {loadSavedCharacterVoices,writeSavedCharacterVoices} from "./character-voice-bindings-api";
 import {readCharacterVoiceBindings,type CharacterVoiceBindings} from "./character-voice-bindings";
 import type { InspectedCharacterPack } from "./character-pack";
+import { loadStarterArchive, STARTER_CHARACTERS } from "./starter-characters";
 
 vi.mock("./character-pack", async importOriginal => {
   const module = await importOriginal<typeof import("./character-pack")>();
@@ -16,6 +17,9 @@ vi.mock("./character-drafts-api", async importOriginal => {
   return { ...module, listCharacterDrafts: vi.fn(), loadCharacterDraft: vi.fn(), saveCharacterDraft: vi.fn() };
 });
 vi.mock("./character-voice-bindings-api",()=>({loadSavedCharacterVoices:vi.fn(),writeSavedCharacterVoices:vi.fn()}));
+vi.mock("./starter-characters",async importOriginal=>({
+  ...(await importOriginal<typeof import("./starter-characters")>()),loadStarterArchive:vi.fn(),
+}));
 
 const sprite = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
 const fixture: InspectedCharacterPack = {
@@ -44,6 +48,7 @@ beforeEach(() => {
   vi.mocked(listCharacterDrafts).mockReset().mockResolvedValue([]);
   vi.mocked(loadCharacterDraft).mockReset();
   vi.mocked(saveCharacterDraft).mockReset();
+  vi.mocked(loadStarterArchive).mockReset();
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:local-character"), revokeObjectURL: vi.fn() });
   Object.defineProperty(File.prototype, "arrayBuffer", { configurable: true, value: vi.fn(async () => new ArrayBuffer(8)) });
 });
@@ -54,6 +59,50 @@ afterEach(() => {
 });
 
 describe("CharacterPackInspector", () => {
+  it("shows real Pip and Quill rigs by default and adds a tested starter to this project in one click",async()=>{
+    const pip=STARTER_CHARACTERS[0],bytes=new ArrayBuffer(64);
+    const saved={id:"character-draft-"+"7".repeat(32),projectId:"project-local",
+      characterId:"pip",revision:pip.definition.revision,archiveSha256:"a".repeat(64),
+      sizeBytes:bytes.byteLength,status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(loadStarterArchive).mockResolvedValue(bytes);
+    vi.mocked(inspectCharacterZip).mockResolvedValue({...fixture,definition:{...fixture.definition,
+      characterId:"pip",revision:pip.definition.revision}});
+    vi.mocked(saveCharacterDraft).mockResolvedValue(saved);
+    render(<CharacterPackInspector locale="en" projectId="project-local"/>);
+    expect(screen.getByLabelText("Included starter characters")).toBeInTheDocument();
+    expect(screen.getByLabelText("Pip original animated character")).toBeInTheDocument();
+    expect(screen.getByLabelText("Quill original animated character")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button",{name:"Use Pip"}));
+    await waitFor(()=>expect(saveCharacterDraft).toHaveBeenCalledWith("project-local","pip",pip.definition.revision,bytes));
+    expect(await screen.findByText("Draft saved")).toBeInTheDocument();
+    expect(loadStarterArchive).toHaveBeenCalledWith("pip");
+    expect(screen.getByRole("button",{name:"Open saved rig"})).toBeInTheDocument();
+    expect(vi.mocked(saveCharacterDraft)).toHaveBeenCalledTimes(1);
+  });
+
+  it("reopens an existing Pip without replacing its custom revision or calling the starter archive",async()=>{
+    const custom={id:"character-draft-"+"8".repeat(32),projectId:"project-local",characterId:"pip",
+      revision:"owner-v5",archiveSha256:"b".repeat(64),sizeBytes:64,status:"unverified" as const,
+      createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([custom]);
+    vi.mocked(loadCharacterDraft).mockResolvedValue(new ArrayBuffer(64));
+    vi.mocked(inspectCharacterZip).mockResolvedValue({...fixture,
+      definition:{...fixture.definition,characterId:"pip",revision:custom.revision}});
+    render(<CharacterPackInspector locale="en" projectId="project-local"/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Open saved rig"}));
+    await waitFor(()=>expect(loadCharacterDraft).toHaveBeenCalledWith("project-local",custom));
+    expect(loadStarterArchive).not.toHaveBeenCalled();
+    expect(saveCharacterDraft).not.toHaveBeenCalled();
+  });
+
+  it("shows a recoverable error when a local bundled ZIP is missing and never claims it saved",async()=>{
+    vi.mocked(loadStarterArchive).mockRejectedValue(Error("Pip's built-in ZIP is missing (HTTP 404)."));
+    render(<CharacterPackInspector locale="en" projectId="project-local"/>);
+    fireEvent.click(screen.getByRole("button",{name:"Use Pip"}));
+    expect(await screen.findByText(/built-in ZIP is missing.*404/u)).toBeInTheDocument();
+    expect(saveCharacterDraft).not.toHaveBeenCalled();
+  });
+
   it("binds a project favorite voice to a saved character revision without sending audio", async () => {
     const projectId="character-voice-test";
     const savedDraft={
