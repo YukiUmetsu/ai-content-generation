@@ -103,6 +103,33 @@ test("capture progress counts only batches that passed hashing and frame probes"
   ]);
 });
 
+test("verified frame chunks are independently claimed and committed, including cache reuse",async(t)=>{
+  const {dir,dependencies,stats}=await harness(t),events=[];
+  const sceneJobs={beginScene:async({sceneId,fingerprint})=>{
+    assert.match(fingerprint,/^[a-f0-9]{64}$/u);events.push("start:"+sceneId);return sceneId;},
+    completeScene:async(id,result)=>{assert.match(result.sha256,/^[a-f0-9]{64}$/u);
+      events.push(`done:${id}:${result.reused}`);},
+    failScene:async id=>events.push("failed:"+id)};
+  await renderVideoSegments({...config(dir,151),sceneJobs},dependencies);
+  assert.deepEqual(events,["start:segment-00000","done:segment-00000:false",
+    "start:segment-00001","done:segment-00001:false"]);
+  const encoded=stats().encoded;events.length=0;
+  await renderVideoSegments({...config(dir,151),sceneJobs},dependencies);
+  assert.equal(stats().encoded,encoded);
+  assert.deepEqual(events,["start:segment-00000","done:segment-00000:true",
+    "start:segment-00001","done:segment-00001:true"]);
+});
+
+test("a capture crash fails only its claimed segment and cannot commit unfinished output",async(t)=>{
+  const {dir,dependencies}=await harness(t),events=[];
+  const sceneJobs={beginScene:async({sceneId})=>{events.push("start:"+sceneId);return sceneId;},
+    completeScene:async id=>events.push("done:"+id),
+    failScene:async id=>events.push("failed:"+id)};
+  await assert.rejects(renderVideoSegments({...config(dir,151),sceneJobs},{...dependencies,
+    encodeBatch:async()=>{throw Error("FFmpeg worker killed");}}),/FFmpeg worker killed/u);
+  assert.deepEqual(events,["start:segment-00000","failed:segment-00000"]);
+});
+
 test("resume validates hash, manifest and probe before skipping completed segments", async (t) => {
   const { dir, dependencies, stats } = await harness(t);
   await renderVideoSegments(config(dir, 151), dependencies);

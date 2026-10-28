@@ -570,3 +570,110 @@ fn orphaned_running_attempt_is_reconciled_not_completed() {
     let second = reconcile_orphans(&mut connection, Some(&job_id)).expect("second reconcile");
     assert!(second.is_empty());
 }
+
+#[test]
+fn completed_scene_job_survives_worker_restart_while_interrupted_scene_retries() {
+    let dir = TestDir::new("contentgen-scene-worker-restart");
+    let mut connection = migrated_database(&dir);
+    let completed_spec = request(
+        "video-narration-scene",
+        "video-scene:narration:opening:content-sha",
+        vec![node("narration-scene", &[], 3)],
+    );
+    let interrupted_spec = request(
+        "video-render-segment",
+        "video-scene:render:middle:content-sha",
+        vec![node("render-segment", &[], 3)],
+    );
+    let complete = created(&mut connection, &completed_spec);
+    let interrupted = created(&mut connection, &interrupted_spec);
+    let complete_job = complete.dag.job.id.clone();
+    let interrupted_job = interrupted.dag.job.id.clone();
+    let complete_node = node_id(&complete.dag, "narration-scene");
+    let interrupted_node = node_id(&interrupted.dag, "render-segment");
+    let first = scheduler::begin_attempt(&mut connection, &complete_job, &complete_node).unwrap();
+    succeed_attempt(
+        &mut connection,
+        &complete_node,
+        &first.id,
+        json!({"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+    )
+    .unwrap();
+    let unfinished =
+        scheduler::begin_attempt(&mut connection, &interrupted_job, &interrupted_node).unwrap();
+    // The worker exits without sending succeed/fail. SQLite remains intact.
+    drop(connection);
+
+    let mut restarted = migrated_database(&dir);
+    let reconciled = reconcile_orphans(&mut restarted, None).unwrap();
+    assert_eq!(reconciled.len(), 1);
+    assert_eq!(reconciled[0].attempt_id, unfinished.id);
+    let previous = scheduler::snapshot(&restarted, &complete_job).unwrap();
+    assert_eq!(previous.dag.job.state, JobState::Succeeded);
+    assert_eq!(previous.dag.attempts.len(), 1);
+    assert_eq!(previous.dag.attempts[0].state, AttemptState::Succeeded);
+
+    let retryable = scheduler::snapshot(&restarted, &interrupted_job).unwrap();
+    assert_eq!(retryable.dag.job.state, JobState::Running);
+    assert_eq!(
+        node_state(&retryable.dag, "render-segment"),
+        JobState::Ready
+    );
+    let retry = scheduler::begin_attempt(&mut restarted, &interrupted_job, &interrupted_node)
+        .expect("new worker claims only the interrupted scene");
+    assert_ne!(retry.id, unfinished.id);
+    let final_state = succeed_attempt(
+        &mut restarted,
+        &interrupted_node,
+        &retry.id,
+        json!({"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}),
+    )
+    .unwrap();
+    assert_eq!(final_state.dag.job.state, JobState::Succeeded);
+    assert_eq!(final_state.dag.attempts.len(), 2);
+    assert_eq!(
+        final_state
+            .dag
+            .attempts
+            .iter()
+            .find(|a| a.id == unfinished.id)
+            .unwrap()
+            .state,
+        AttemptState::Failed
+    );
+    assert_eq!(
+        final_state
+            .dag
+            .attempts
+            .iter()
+            .find(|a| a.id == retry.id)
+            .unwrap()
+            .state,
+        AttemptState::Succeeded
+    );
+    assert_eq!(count(&restarted, "jobs"), 2);
+}
+
+#[test]
+fn exhausted_single_scene_job_can_be_retried_without_restarting_other_scenes() {
+    let dir = TestDir::new("contentgen-scene-retry");
+    let mut connection = migrated_database(&dir);
+    for kind in ["video-narration-scene", "video-render-segment"] {
+        let spec = request(kind, kind, vec![node("scene", &[], 1)]);
+        let dag = created(&mut connection, &spec).dag;
+        let id = node_id(&dag, "scene");
+        let first = scheduler::begin_attempt(&mut connection, &dag.job.id, &id).unwrap();
+        let failed = fail_attempt(&mut connection, &id, &first.id, "temporary_failure", None)
+            .expect("exhausted scene should fail");
+        assert_eq!(failed.dag.job.state, JobState::Failed);
+        let retried = scheduler::retry_failed_video_job(&mut connection, &dag.job.id)
+            .expect("the same scene is independently retryable");
+        assert_eq!(retried.dag.job.state, JobState::Running);
+        assert_eq!(retried.dag.nodes[0].max_attempts, 2);
+        let second = scheduler::begin_attempt(&mut connection, &dag.job.id, &id).unwrap();
+        let success =
+            succeed_attempt(&mut connection, &id, &second.id, json!({"ok":true})).unwrap();
+        assert_eq!(success.dag.job.state, JobState::Succeeded);
+        assert_eq!(success.dag.attempts.len(), 2);
+    }
+}

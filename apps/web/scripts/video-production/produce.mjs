@@ -236,6 +236,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
+      sceneJobs:options.sceneJobs,
       onDiagnostic: options.onProgress,
     });
     await options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…",
@@ -301,6 +302,7 @@ export async function produceVideo(candidate, options, deps = {}) {
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable, onProgress: options.onProgress,
         maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
+        sceneJobs:options.sceneJobs,
         visualPlan:plan,reuseFrom:previous??interruptedVisual??undefined,
       });
     } finally { await stage.close(); stage = null; }

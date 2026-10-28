@@ -181,3 +181,66 @@ test("cancelled Jobs cannot later claim a successful video export",async()=>{
   await assert.rejects(tracker.complete(),/cancelled/u);
   assert.equal(fake.calls.filter(call=>call.path.endsWith("/succeed")).length,0);
 });
+
+test("individual scene Jobs reserve attempts, persist hashes, retry and cancel independently",async()=>{
+  const base=fakeScheduler(),records=new Map(),calls=base.calls;
+  const fetcher=async(url,init)=>{
+    const path=new URL(url).pathname,body=init?.body?JSON.parse(init.body):null;
+    if(path==="/api/jobs"&&body?.idempotencyKey?.startsWith("video-scene:")){
+      calls.push({path,body});
+      let row=records.get(body.idempotencyKey);
+      if(!row){row={jobId:`scene-job-${records.size}`,nodeId:`scene-node-${records.size}`,
+        state:"READY",attempts:0,output:null,request:body};records.set(body.idempotencyKey,row);
+        return Response.json({created:true,job:{id:row.jobId,state:"RUNNING"},
+          nodes:[{id:row.nodeId,nodeKey:body.nodes[0].nodeKey,state:row.state}]});}
+      return Response.json({created:false,job:{id:row.jobId,state:row.state==="FAILED"?"FAILED":"RUNNING"},
+        nodes:[{id:row.nodeId,nodeKey:row.request.nodes[0].nodeKey,state:row.state}]});
+    }
+    const row=[...records.values()].find(r=>path.startsWith(`/api/jobs/${r.jobId}/`));
+    if(!row)return base.fetcher(url,init);
+    calls.push({path,body});
+    if(path.endsWith("/start")){
+      if(row.state!=="READY")return Response.json({error:"already claimed"},{status:409});
+      row.state="RUNNING";row.attempts++;
+      return Response.json({attempt:{id:`attempt-${row.jobId}-${row.attempts}`}});
+    }
+    if(path.endsWith("/succeed")){
+      assert.equal(body.attemptId,`attempt-${row.jobId}-${row.attempts}`);
+      row.state="SUCCEEDED";row.output=body.output;
+      return Response.json({job:{state:"SUCCEEDED"}});
+    }
+    if(path.endsWith("/fail")){
+      row.state="FAILED";return Response.json({job:{state:"FAILED"}});
+    }
+    if(path.endsWith("/retry")){
+      row.state="READY";return Response.json({job:{id:row.jobId,state:"RUNNING"},
+        nodes:[{id:row.nodeId,nodeKey:row.request.nodes[0].nodeKey,state:"READY"}]});
+    }
+    if(path.endsWith("/cancel")){
+      row.state="CANCELLED";return Response.json({job:{state:"CANCELLED"}});
+    }
+    throw Error(`unexpected ${path}`);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:FIRST_RUN});
+  const a={kind:"narration-scene",sceneId:"intro",fingerprint:"a".repeat(64)};
+  const b={kind:"render-segment",sceneId:"segment-00000",fingerprint:"b".repeat(64)};
+  const token=await tracker.beginScene(a);
+  await assert.rejects(tracker.beginScene(a),/already claimed/i);
+  await tracker.completeScene(token,{sha256:"c".repeat(64),samples:48000,reused:false});
+  const first=[...records.values()][0];
+  assert.deepEqual(first.output,{sha256:"c".repeat(64),samples:48000,reused:false});
+  assert.equal(first.request.nodes[0].input.runId,FIRST_RUN);
+  assert.ok(!JSON.stringify(first.request).includes("/tmp/"));
+  const failedToken=await tracker.beginScene(b);
+  await tracker.failScene(failedToken,new Error("worker exited"));
+  const retried=await tracker.beginScene(b);
+  assert.equal([...records.values()][1].attempts,2);
+  await tracker.completeScene(retried,{sha256:"d".repeat(64),frameCount:150});
+  const orphan=await tracker.beginScene({...b,sceneId:"segment-00001"});
+  await assert.rejects(tracker.complete(),/scene work is still claimed/i);
+  await tracker.cancel();
+  assert.ok(records.size===3&&[...records.values()][2].state==="CANCELLED");
+  await assert.rejects(tracker.completeScene(orphan,{sha256:"d".repeat(64)}),/active scene/i);
+  assert.equal(base.calls.filter(item=>item.path==="/api/jobs/job-test/cancel").length,1);
+});

@@ -419,7 +419,10 @@ pub fn retry_failed_video_job(
 ) -> Result<JobSnapshot, JobsError> {
     let transaction = conn.transaction()?;
     let dag = load_dag(&transaction, job_id)?;
-    if dag.job.job_kind != "video-production" {
+    if !matches!(
+        dag.job.job_kind.as_str(),
+        "video-production" | "video-narration-scene" | "video-render-segment"
+    ) {
         return Err(JobsError::Forbidden);
     }
     if !matches!(dag.job.state, JobState::Failed | JobState::Cancelled) {

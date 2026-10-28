@@ -234,6 +234,7 @@ const productionStageLabels:Record<string,string>={
   narration:"Generate narration",timeline:"Synchronize scene timing",
   "sound-mix":"Mix audio",captions:"Create captions",
   "scene-render":"Render video scenes",thumbnails:"Create three thumbnails",
+  "narration-scene":"Narrate one scene","render-segment":"Render one scene segment",
   "final-mux":"Assemble final video","technical-qa":"Check video quality",
   "export-package":"Save video and publishing files",
 };
@@ -1167,6 +1168,8 @@ function NodeCard({
   attempts: JobAttempt[];
 }) {
   const incoming = edges.filter((e) => e.toNodeId === node.id);
+  const sceneId=node.input&&typeof node.input==="object"&&"sceneId" in node.input&&
+    typeof node.input.sceneId==="string"&&/^[\w.-]{1,80}$/u.test(node.input.sceneId)?node.input.sceneId:null;
 
   return (
     <Surface variant="solid">
@@ -1180,6 +1183,7 @@ function NodeCard({
             {nodeStateLabel(node, locale)}
           </span>
         </div>
+        {sceneId&&<p className="break-words text-sm text-muted-foreground">Scene: {sceneId}</p>}
         <p className="break-words text-sm text-muted-foreground">
           {translate(locale, "jobsAttemptsUsed", {
             used: node.attemptCount,

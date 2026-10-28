@@ -103,6 +103,8 @@ export async function synthesizeNarration(job, options) {
       licenseStatus: voice.licenseStatus, commercialRightsVerified: job.policy?.commercialRightsVerified === true,
     };
     const key = sha256(JSON.stringify(signature));
+    const sceneAttempt=await options.sceneJobs?.beginScene({kind:"narration-scene",sceneId:beat.id,fingerprint:key});
+    try {
     const keyDir = join(root, "narration", key.slice(0, 2), key);
     const wavPath = join(keyDir, "speech.wav");
     const metaPath = join(keyDir, "metadata.json");
@@ -157,6 +159,7 @@ export async function synthesizeNarration(job, options) {
         options.onReuse?.({beatId:beat.id,source:"previous-verified-cache"});
       }
     }
+    const reused=Boolean(cached);
     if (!cached) {
       await mkdir(keyDir, { recursive: true });
       const staging = await mkdtemp(join(keyDir, ".staging-"));
@@ -197,6 +200,12 @@ export async function synthesizeNarration(job, options) {
       licenseStatus: cached.licenseStatus, commercialRightsVerified: cached.commercialRightsVerified,
       pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds ?? [],
     });
+    if(sceneAttempt)await options.sceneJobs.completeScene(sceneAttempt,{
+      sha256:cached.sha256,samples:cached.samples,reused});
+    } catch(error){
+      if(sceneAttempt)await options.sceneJobs.failScene(sceneAttempt,error);
+      throw error;
+    }
   }
   return outputs;
 }

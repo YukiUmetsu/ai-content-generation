@@ -115,6 +115,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
     server.username||server.password||server.pathname!=="/"||server.search||server.hash)
     throw Error("Production jobs require the local Rust server. Set CONTENTGEN_JOBS_ORIGIN to a loopback address.");
   let jobId=null,nodes=[],keys=PRODUCTION_NODES,active=-1,attemptId=null,terminal=null,priorRunId=null;
+  let sceneScope=null;
+  const sceneAttempts=new Map();
   const priorLedgers=new Map();
   async function request(path,body){
     let response;
@@ -151,7 +153,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!RUN_ID.test(runId))
         throw Error("Production job requires a saved production, revision and run identity.");
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
-      let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
+      const jobKind=kind==="narration-scene"?"video-narration-scene":"video-render-segment";
+      let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
         nodes:PRODUCTION_NODES.map((nodeKey,index)=>({nodeKey,nodeKind:`video.${nodeKey}`,
           // A restarted worker reclaims a READY attempt; committed work and
           // immutable content-addressed media can be reused after recovery.
@@ -183,6 +186,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
         typeof firstInput.runId==="string"&&RUN_ID.test(firstInput.runId)&&firstInput.runId!==runId)
         priorRunId=firstInput.runId;
       jobId=data.job.id;nodes=keys.map(key=>byKey.get(key));
+      sceneScope={productionId,revision,runId};
       const firstReady=nodes.findIndex(node=>node.state==="READY");
       if(firstReady<0||nodes.slice(0,firstReady).some(node=>node.state!=="SUCCEEDED"))
         throw Error("Jobs service did not return a resumable production step.");
@@ -214,6 +218,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
     async complete(finalStepOutput){
       if(terminal)throw Error(`Production job has ${terminal}.`);
       if(active<0)throw Error("Production job was not started.");
+      if(sceneAttempts.size)throw Error("Production cannot finish while scene work is still claimed.");
       const finalOutput=validatedOutput(keys.at(-1),finalStepOutput);
       while(active<keys.length-1){await succeed();await begin(active+1);}
       await succeed(finalOutput);terminal="completed";
@@ -224,10 +229,66 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       await request(`/api/jobs/${jobId}/nodes/${nodes[active].id}/fail`,{
         attemptId,errorCode:code.slice(0,80),errorDetail:detail.slice(0,240)});
     },
+    /** Each narration beat and encoded render chunk has a separately claimed,
+     * persisted attempt. An interrupted worker cannot complete another
+     * worker's attempt; Rust atomically verifies every transition. */
+    async beginScene({kind,sceneId,fingerprint}){
+      if(terminal||!sceneScope||!jobId)throw Error("A production must be running before scene work starts.");
+      if(!["narration-scene","render-segment"].includes(kind)||!BEAT_ID.test(sceneId))
+        throw Error("Scene Jobs require a valid scene and operation.");
+      hash(fingerprint);
+      const identity=JSON.stringify({...sceneScope,kind,sceneId,fingerprint});
+      const key="video-scene:"+createHash("sha256").update(identity).digest("hex");
+      if(sceneAttempts.has(key))throw Error("This scene is already claimed by this worker.");
+      const input={...sceneScope,kind,sceneId,fingerprint};
+      let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
+        nodes:[{nodeKey:kind,nodeKind:`video.${kind}`,maxAttempts:3,input,dependsOn:[]}]});
+      if(data.created!==true&&["FAILED","CANCELLED"].includes(data.job?.state)){
+        data=await request(`/api/jobs/${data.job.id}/retry`,{});
+      }
+      // SUCCEEDED work is only reused via separately SHA/probe-verified caches
+      // in speech.mjs/render.mjs, never by treating this Jobs row as media.
+      // A second worker cannot issue a fresh claim for a running node.
+      if(typeof data.job?.id!=="string"||data.nodes?.length!==1||
+        data.nodes[0]?.nodeKey!==kind||data.nodes[0]?.state!=="READY")
+        throw Error("This scene is already being produced or has completed in Jobs.");
+      const node=data.nodes[0];
+      const reservation=await request(`/api/jobs/${data.job.id}/nodes/${node.id}/start`,{});
+      if(typeof reservation.attempt?.id!=="string")throw Error("Jobs did not reserve the scene attempt.");
+      sceneAttempts.set(key,{jobId:data.job.id,nodeId:node.id,attemptId:reservation.attempt.id});
+      return key;
+    },
+    async completeScene(key,{sha256,samples,frameCount,reused=false}){
+      const attempt=sceneAttempts.get(key);
+      if(!attempt||terminal)throw Error("No active scene attempt can be completed.");
+      const output={sha256:hash(sha256),reused:reused===true};
+      if(samples!==undefined)output.samples=integer(samples,{positive:true});
+      if(frameCount!==undefined)output.frameCount=integer(frameCount,{positive:true});
+      await request(`/api/jobs/${attempt.jobId}/nodes/${attempt.nodeId}/succeed`,
+        {attemptId:attempt.attemptId,output});
+      sceneAttempts.delete(key);
+    },
+    async failScene(key,error){
+      const attempt=sceneAttempts.get(key);
+      if(!attempt)return;
+      // Provider failures may contain account tokens, voice text, or machine
+      // paths. Jobs stores the safe failure category, not raw vendor output.
+      const detail=error?.name==="AbortError"?
+        "Scene work was interrupted. Retry to reuse verified completed media.":
+        "Scene processing failed. Retry this draft to reuse completed scene media.";
+      await request(`/api/jobs/${attempt.jobId}/nodes/${attempt.nodeId}/fail`,{
+        attemptId:attempt.attemptId,errorCode:"scene_failed",errorDetail:detail});
+      sceneAttempts.delete(key);
+    },
     async cancel(){
       if(terminal||!jobId)return;
       terminal="cancelled";
+      const sceneResults=await Promise.allSettled([...sceneAttempts.values()].map(attempt=>
+        request(`/api/jobs/${attempt.jobId}/cancel`,{})));
+      sceneAttempts.clear();
       await request(`/api/jobs/${jobId}/cancel`,{});
+      if(sceneResults.some(result=>result.status==="rejected"))
+        throw Error("Cancellation was saved for the video, but an individual scene job could not be confirmed.");
     },
   };
 }

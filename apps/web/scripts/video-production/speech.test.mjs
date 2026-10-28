@@ -50,6 +50,42 @@ test("speech outputs measured 48 kHz samples and a SHA-backed reusable per-beat 
   assert.equal(calls, 2, "revoked authorization must not permit cached playback");
 });
 
+test("each narration beat is claimed and committed independently before the next provider call",async(t)=>{
+  const cacheRoot=await testContext(t),events=[];
+  let calls=0;
+  const sceneJobs={
+    beginScene:async ({kind,sceneId,fingerprint})=>{events.push(`start:${sceneId}`);
+      assert.equal(kind,"narration-scene");assert.match(fingerprint,/^[a-f0-9]{64}$/u);return sceneId;},
+    completeScene:async (id,output)=>{assert.match(output.sha256,/^[a-f0-9]{64}$/u);
+      assert.equal(output.samples,960);events.push(`done:${id}`);},
+    failScene:async (id)=>events.push(`failed:${id}`),
+  };
+  const options={provider:"local",providerRevision:"engine-0.1",cacheRoot,localVoiceAuthorized:true,
+    ...fakeMedia,sceneJobs,synthesize:async(request,beatId)=>{
+      calls++;events.push(`voice:${beatId}`);
+      return {audio:pcmWave(960),provider:"local",modelId:job.voice.modelId,
+        voiceId:job.voice.voiceId,engineVersion:"engine-0.1",encoding:"wav"};}};
+  await synthesizeNarration(job,options);
+  assert.deepEqual(events,["start:a","voice:a","done:a","start:b","voice:b","done:b"]);
+  events.length=0;
+  await synthesizeNarration(job,options);
+  assert.equal(calls,2,"verified cached voice is reused while each new attempt is recorded");
+  assert.deepEqual(events,["start:a","done:a","start:b","done:b"]);
+});
+
+test("failed narration marks only the affected scene attempt as failed",async(t)=>{
+  const cacheRoot=await testContext(t),events=[];
+  const sceneJobs={beginScene:async ({sceneId})=>{events.push("start:"+sceneId);return sceneId;},
+    completeScene:async id=>events.push("done:"+id),
+    failScene:async id=>events.push("failed:"+id)};
+  await assert.rejects(synthesizeNarration(job,{provider:"local",providerRevision:"engine-0.1",
+    cacheRoot,localVoiceAuthorized:true,...fakeMedia,sceneJobs,
+    synthesize:async(_req,id)=>{if(id==="b")throw Error("provider unavailable");
+      return {audio:pcmWave(960),provider:"local",modelId:job.voice.modelId,
+        voiceId:job.voice.voiceId,engineVersion:"engine-0.1",encoding:"wav"};}}),/provider unavailable/u);
+  assert.deepEqual(events,["start:a","done:a","start:b","failed:b"]);
+});
+
 test("editing one beat does not regenerate unrelated speech; engine/version/voice isolate keys", async (t) => {
   const cacheRoot = await testContext(t);
   let calls = 0;

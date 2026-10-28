@@ -181,6 +181,10 @@ export async function renderVideoSegments(options, dependencies = {}) {
     if (capture?.buildHash !== options.buildHash) fail("live browser export handshake has a mismatched built-scene fingerprint");
     for (const { index,startFrame,frameCount,chapterIndex } of chunks) {
       if (options.signal?.aborted) fail("video capture cancelled");
+      const sceneAttempt=await options.sceneJobs?.beginScene({kind:"render-segment",
+        sceneId:`segment-${String(index).padStart(5,"0")}`,
+        fingerprint:sha256(JSON.stringify({fingerprint,startFrame,frameCount,chapterIndex}))});
+      try {
       const name = `segment-${String(index).padStart(5, "0")}.mp4`;
       const path = join(segmentsDir, name), metadataPath = join(segmentsDir, `${name}.json`);
       let completed = false, segmentHash;
@@ -271,8 +275,14 @@ export async function renderVideoSegments(options, dependencies = {}) {
         }
       }
       segments.push({ path, sha256: segmentHash, startFrame, frameCount });
+      if(sceneAttempt)await options.sceneJobs.completeScene(sceneAttempt,{
+        sha256:segmentHash,frameCount,reused:completed});
       // Report verified progress only after segment metadata and probe succeed, including safe resume.
       options.onProgress?.({ phase: "rendering", completedFrames: startFrame + frameCount, totalFrames: manifest.durationFrames });
+      } catch(error){
+        if(sceneAttempt)await options.sceneJobs.failScene(sceneAttempt,error);
+        throw error;
+      }
     }
     if (reviewFrames.length) await mkdir(join(dir, "stills"), { recursive: true });
     for (const frame of reviewFrames) {

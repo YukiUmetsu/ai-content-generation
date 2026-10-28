@@ -567,6 +567,7 @@ export function createDirectorProduction(deps={}){
               textTransmissionApproved:settings.transmitText===true,
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
+              ...(tracker?{sceneJobs:tracker}:{}),
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
               sceneAssetBundle:input.bundle,
               expectedSceneMediaFingerprint:sceneMedia.fingerprint,
