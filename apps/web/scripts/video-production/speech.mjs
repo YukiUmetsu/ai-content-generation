@@ -99,6 +99,7 @@ export async function synthesizeNarration(job, options) {
     if(beat.speechTurns.map(turn=>turn.narration.trim()).join(" ")!==beat.narration?.trim())
       fail("scene narration differs from the approved dialogue turn transcript");
   }
+  if(units.length>160)fail("too many speech turns for one video (maximum 160); split the conversation before submitting a voice request");
 
   // Non-default cast voices require separate, explicit authorization. Validate
   // ALL beats before any TTS or cache reuse so a late unauthorized character

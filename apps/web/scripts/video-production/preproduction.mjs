@@ -254,6 +254,9 @@ export function parsePreproductionPlan(plan,dossier){
       }
     }
   });
+  if(Array.isArray(plan.sound)&&plan.sound.reduce((count,scene)=>count+
+    (Array.isArray(scene?.speechTurns)?scene.speechTurns.length:1),0)>160)
+    v.add("speech-turn-limit","sound","One storyboard supports at most 160 synthesized speech turns. Split longer conversations.");
   for(const shot of shots)if(!sounded.has(shot.id))v.add("silent-shot","sound","Missing narration for "+shot.id);
   const normalizedCopy=x=>typeof x==="string"?x.trim().toLowerCase():"";
   for(let i=2;i<shots.length;i++){

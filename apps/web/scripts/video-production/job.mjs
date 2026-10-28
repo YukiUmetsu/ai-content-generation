@@ -261,6 +261,8 @@ export function parseVideoProductionJob(input) {
   };
   const beats = objects(input.beats, "beats", ["id", "narration", "visualIntent", "claimRefs", "eventIds", "pauseAfterMs", "visual", "speaker", "speechTurns"]);
   if (beats.length === 0) add("empty-narration", "beats", "At least one narrated beat is required.");
+  if(beats.reduce((count,beat)=>count+(Array.isArray(beat.speechTurns)?beat.speechTurns.length:1),0)>160)
+    add("speech-turn-limit","beats","A video supports at most 160 synthesized speech turns. Split a longer conversation into separate videos.");
   const speakerVoices = new Map();
   for (const [index, beat] of beats.entries()) {
     text(beat.narration, `beats[${index}].narration`);

@@ -80,6 +80,23 @@ test("a late unauthorized voice within a scene fails before paid synthesis, incl
   assert.equal(calls,0);
 });
 
+test("oversized multi-scene conversations fail before any provider request",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"contentgen-dialogue-limit-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const job=jobWithTurns();
+  const turn={id:"pip-line",narration:"Let's inspect the same diagram again.",pauseAfterMs:0};
+  job.beats=Array.from({length:11},(_,index)=>({
+    ...structuredClone(job.beats[0]),id:`scene-${index}`,
+    speechTurns:Array.from({length:16},(_,line)=>({...turn,id:`line-${line}`})),
+    narration:Array(16).fill(turn.narration).join(" "),eventIds:[]
+  }));
+  assert.ok(parseVideoProductionJob(job).findings.some(finding=>finding.code==="speech-turn-limit"));
+  let called=0;
+  await assert.rejects(synthesizeNarration(job,{provider:"local",providerRevision:"1",cacheRoot:root,
+    localVoiceAuthorized:true,synthesize:async()=>{called++;throw Error("must not run");}}),/too many speech turns/u);
+  assert.equal(called,0);
+});
+
 test("one continuous scene's FFmpeg master sequences character and narrator turns with timed labeled captions",{skip:!enabled},async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-dialogue-scene-"));
   t.after(()=>rm(root,{recursive:true,force:true}));
