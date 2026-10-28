@@ -26,6 +26,23 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   await document.fonts.ready;
   await waitForChartStoryReadiness(stage);
   await prepareStockMediaFrame(stage);
+  for (const conversation of stage.querySelectorAll<HTMLElement>("[data-conversation-characters]")) {
+    const bounds = conversation.getBoundingClientRect();
+    const performers = conversation.querySelectorAll<HTMLElement>("[data-conversation-performer]");
+    if (!performers.length || performers.length > 2 || !bounds.width || !bounds.height) {
+      throw new Error(`Conversation characters are incomplete at frame ${target}`);
+    }
+    for (const performer of performers) {
+      const rig = performer.querySelector<HTMLElement>("[data-km-character-presenter]");
+      const rect = rig?.getBoundingClientRect();
+      if (!rig || rig.dataset.diagnostics !== "0" || !rect || rect.width < 100 || rect.height < 100 ||
+        rect.left < bounds.left - 2 || rect.right > bounds.right + 2 ||
+        rect.top < bounds.top - 2 || rect.bottom > bounds.bottom + 2 ||
+        !rig.querySelector("svg [data-asset]")) {
+        throw new Error(`Character rig ${performer.dataset.conversationPerformer ?? "unknown"} failed render validation at frame ${target}`);
+      }
+    }
+  }
   const isHouse = kind === "house-math-visual-plan";
   const copy = stage.querySelectorAll<SVGGraphicsElement>(isHouse ? "[data-house-copy]" : "[data-general-copy]");
   if (!portrait && !copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");

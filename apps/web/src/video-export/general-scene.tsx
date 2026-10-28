@@ -17,6 +17,7 @@ import { SemanticDiagram } from "./semantic-scene-diagrams";
 import { HomeCostStoryScene } from "./home-cost-story-scene";
 import { TeachingStateScene } from "./teaching-state-scene";
 import { SemanticMechanicScene } from "./semantic-mechanic-scene";
+import { ConversationCharacters } from "./conversation-characters";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -164,7 +165,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     throw new Error(`Chart ${chapter.id} provenance copy needs shortening to fit its visual source area without clipping`);
   }
   if(state.visual.sceneRecipe==="home-cost-story-v1"){
-    return <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>;
+    return <div style={{position:"relative",width:1920,height:1080}}>
+      <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>
+      {chapter.dialogue&&<ConversationCharacters chapter={chapter} frame={frame} compact/>}
+    </div>;
   }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
   <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
@@ -226,6 +230,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   {!stockMedia && chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />
   </div>}
+  {chapter.dialogue && <ConversationCharacters chapter={chapter} frame={frame} compact={Boolean(stockMedia || chartStory)} />}
   {stockMedia&&transitionOpacity>0&&<div data-scene-entry-fade="" aria-hidden="true"
     style={{position:"absolute",inset:0,background:"#101D2D",opacity:transitionOpacity,pointerEvents:"none"}}/>}
   </div>;

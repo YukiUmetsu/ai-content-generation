@@ -277,11 +277,11 @@ export async function produceVideo(candidate, options, deps = {}) {
     );
     if (!captionReadability.ok) fail("caption-readability preflight found missing or invalid beat captions");
     let plan = job.visualFamily === "general-explainer-v1"
-      ? compileGeneralVisuals(job, timeline) : compileHouseMathVisuals(job, timeline);
+      ? compileGeneralVisuals(job, timeline, speech) : compileHouseMathVisuals(job, timeline);
     const visualCueTimeline=resolveVisualSfxTimeline(job,timeline,plan);
     if(visualCueTimeline!==timeline){
       timeline=visualCueTimeline;
-      plan=compileGeneralVisuals(job,timeline);
+      plan=compileGeneralVisuals(job,timeline,speech);
     }
     if (Object.keys(sceneMedia.bindings).length) {
       const known = new Set(plan.chapters.map(chapter => chapter.id));

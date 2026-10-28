@@ -16,13 +16,22 @@ export type ReviewedStockMedia = {
   focalPoint?: {x:number;y:number};
 } & ({ assetType: "photo" } | { assetType: "video"; durationSeconds: number; width: number; height: number });
 
+export interface DialogueVisualTurn {
+  id: string;
+  speakerId: string;
+  role: "character" | "narrator";
+  /** Present only after a real measured 48 kHz speech sample is available. */
+  startFrame?: number;
+  endFrame?: number;
+}
+
 export interface GeneralVisualPlan {
   schemaVersion: 1;
   kind: "general-explainer-visual-plan";
   title: string;
   locale?: "en-US" | "ja-JP";
   manifest: { schemaVersion: 1; id: string; durationFrames: number; width: number; height: number; fps: { num: number; den: number }; preset: "youtube" | "youtube-shorts" | "instagram-reels" | "tiktok" };
-  chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; visual: { headline: string; subhead: string; emphasis: string; items: string[]; itemNotes?: string[]; chart?: QuantitativeChart; stockMedia?: ReviewedStockMedia; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe"; motion?: SceneMotion; sceneRecipe?: "home-cost-story-v1"; direction?: { phase: "problem" | "analogy" | "mechanism" | "payoff" | "none"; subjectIds: string[]; visualAction: string; learningChange: string; transformation?: {subjectId:string;before:string;action:string;after:string}; visualMechanic?:VisualMechanicV1 } }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
+  chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; visual: { headline: string; subhead: string; emphasis: string; items: string[]; itemNotes?: string[]; chart?: QuantitativeChart; stockMedia?: ReviewedStockMedia; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe"; motion?: SceneMotion; sceneRecipe?: "home-cost-story-v1"; direction?: { phase: "problem" | "analogy" | "mechanism" | "payoff" | "none"; subjectIds: string[]; visualAction: string; learningChange: string; transformation?: {subjectId:string;before:string;action:string;after:string}; visualMechanic?:VisualMechanicV1 } }; dialogue?: { turns: DialogueVisualTurn[] }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
   claims: Array<{ id: string; status: "verified" | "unverified" | "illustrative" | "disputed"; text: string; sourceRefs?: string[] }>;
   evidence: Array<{ id: string; title: string; sourceUri: string; retrievedAt: string; passageLocator: string; snapshotSha256: string }>;
   events: Record<string, number>;
@@ -36,5 +45,5 @@ export interface GeneralFrame {
   visual: GeneralVisualPlan["chapters"][number]["visual"];
   visibleItems: number; localFrame: number; enterProgress: number; progress: number; disclaimer: string;
 }
-export declare function compileGeneralVisuals(job: unknown, timeline: unknown): GeneralVisualPlan;
+export declare function compileGeneralVisuals(job: unknown, timeline: unknown, speech?: unknown): GeneralVisualPlan;
 export declare function getGeneralFrame(plan: GeneralVisualPlan, absoluteFrame: number): GeneralFrame;
