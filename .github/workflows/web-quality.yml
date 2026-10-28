@@ -66,6 +66,7 @@ jobs:
             scripts/video-production/job.test.mjs \
             scripts/video-production/topic-generator.test.mjs \
             scripts/video-production/general-visual-plan.test.mjs \
+            scripts/video-production/character-rig-render.test.mjs \
             scripts/video-production/visual-plan.test.mjs \
             scripts/video-production/timeline.test.mjs \
             scripts/video-production/produce.test.mjs \
