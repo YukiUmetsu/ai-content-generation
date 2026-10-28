@@ -4,7 +4,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { DEFAULT_ROOT, listSelectedSceneAssets } from "./asset-discovery.mjs";
+import { DEFAULT_ROOT, listApprovedAssets, listSelectedSceneAssets } from "./asset-discovery.mjs";
+import { withAutomaticApprovedMedia } from "./automatic-approved-assets.mjs";
 
 const exec = promisify(execFile);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -45,11 +46,15 @@ export async function probeApprovedFootage(path, { ffprobe = "ffprobe", signal }
 }
 
 /** Copies exact reviewed bytes into a job-owned, content-addressed directory. */
-export async function prepareApprovedSceneMedia({ projectId, shotMap, outputDir, expectedFingerprint, signal },
-  { root, listSelections = listSelectedSceneAssets, probeFootage = probeApprovedFootage, ffprobe } = {}) {
+export async function prepareApprovedSceneMedia({ projectId, shotMap, outputDir, expectedFingerprint, signal,
+  autoApprovedBundle },
+  { root, listSelections = listSelectedSceneAssets, listApproved = listApprovedAssets,
+    probeFootage = probeApprovedFootage, ffprobe } = {}) {
   if (!ID.test(projectId) || typeof outputDir !== "string" || !outputDir.trim()) fail("invalid production destination");
   if (signal?.aborted) throw signal.reason ?? Error("Media preparation cancelled");
-  const selected = await listSelections({ projectId }, root ? { root } : {});
+  const pinned = await listSelections({ projectId }, root ? { root } : {});
+  const selected = autoApprovedBundle ? withAutomaticApprovedMedia(pinned,
+    await listApproved({projectId},root?{root}:{}),shotMap,autoApprovedBundle) : pinned;
   const fingerprint = selectedMediaFingerprint(selected, shotMap);
   if (expectedFingerprint && expectedFingerprint !== fingerprint)
     fail("scene selection changed after readiness check; check the updated scenes and retry");

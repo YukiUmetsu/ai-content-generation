@@ -83,7 +83,9 @@ function landscape(variant:number,w:number,h:number,title:string,heads:string[],
       words("question","?",w*.77,h*.18,w*.22,h*.46,h*.39,p.cream,2,{maxLines:1,minSize:h*.25}));
     add(rect("top-rule",m,h*.12,w*.08,h*.012,p.accent,2,3),
       words("eyebrow","UNDER THE SURFACE",m,h*.055,w*.45,h*.07,h*.035,p.ink,3,{font:"body",maxLines:1}),
-      words("headline",title,m,h*.22,w*.61,h*.45,h*.135,p.ink,3,{maxLines:3,minSize:h*.066}),
+      // SVG export uses conservative font-width estimates; leave extra room
+      // so long words cannot run into the right-hand question illustration.
+      words("headline",title,m,h*.22,w*.56,h*.45,h*.106,p.ink,3,{maxLines:3,minSize:h*.056}),
       rect("footer-rule",m,h*.78,w*.54,h*.006,p.ink,2),
       words("first-idea",heads[0]??"",m,h*.82,w*.57,h*.10,h*.051,p.ink,3,{font:"body",maxLines:2}));
   }

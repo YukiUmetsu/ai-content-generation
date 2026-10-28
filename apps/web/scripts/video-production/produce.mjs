@@ -21,6 +21,7 @@ import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
 import { buildQaReport } from "./report.mjs";
 import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
+import { generateProductionThumbnails } from "./premium-thumbnails.mjs";
 
 const run = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -110,8 +111,8 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,expectedSceneMediaFingerprint?:string}} options
- * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
+ * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,generateThumbnails?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
   const parsed = parseVideoProductionJob(candidate);
@@ -154,14 +155,19 @@ export async function produceVideo(candidate, options, deps = {}) {
       fail("previous production must be a distinct, narrow job-owned directory");
     let priorManifest;
     try{priorManifest=JSON.parse(await readFile(join(priorDir,"release","render-manifest.json"),"utf8"));}
-    catch{fail("previous release lacks a readable render manifest");}
-    if(priorManifest.schemaVersion!==1 || !priorManifest.plan ||
+    catch{if(options.reuseFromOptional)priorManifest=null;
+      else fail("previous release lacks a readable render manifest");}
+    if(priorManifest && (priorManifest.schemaVersion!==1 || !priorManifest.plan ||
         priorManifest.planHash!==sha256(JSON.stringify(priorManifest.plan)) ||
-        !/^[a-f0-9]{64}$/i.test(priorManifest.buildHash??""))
-      fail("previous render manifest has invalid or tampered scene provenance");
-    if(priorManifest.buildHash!==preflight.buildHash)
-      fail("previous render uses a different Kumiki build; unsafe to reuse frames");
-    previous={
+        !/^[a-f0-9]{64}$/i.test(priorManifest.buildHash??""))) {
+      if(options.reuseFromOptional)priorManifest=null;
+      else fail("previous render manifest has invalid or tampered scene provenance");
+    }
+    if(priorManifest&&priorManifest.buildHash!==preflight.buildHash){
+      if(options.reuseFromOptional)priorManifest=null;
+      else fail("previous render uses a different Kumiki build; unsafe to reuse frames");
+    }
+    if(priorManifest)previous={
       sourcePlan:priorManifest.plan,
       buildHash:priorManifest.buildHash,
       segmentsDir:join(priorDir,".render","segments"),
@@ -199,6 +205,8 @@ export async function produceVideo(candidate, options, deps = {}) {
     const assetSearch=options.prepareAssetSuggestions?
       await options.prepareAssetSuggestions({signal:options.signal}):{status:"skipped"};
     if(options.signal?.aborted)fail("cancelled during scene media discovery");
+    options.onProgress?.({phase:"asset-preparation",assetSearchSummary:assetSearch,
+      message:"Validating approved imagery and preparing scene assets…"});
     if (Boolean(options.sceneAssetProjectId) !== Boolean(options.sceneShotMap))
       fail("both the scene asset project and shot mapping are required");
     const sceneMedia = options.sceneAssetProjectId ? await
@@ -206,13 +214,14 @@ export async function produceVideo(candidate, options, deps = {}) {
         projectId: options.sceneAssetProjectId, shotMap: options.sceneShotMap,
         outputDir: join(out, ".render", "scene-media"),
         expectedFingerprint: options.expectedSceneMediaFingerprint, signal: options.signal,
+        autoApprovedBundle:options.sceneAssetBundle,
       }, { ffprobe: options.ffprobe }) : { bindings: {}, assets: [] };
     if (Object.keys(sceneMedia.bindings).length && job.visualFamily !== "general-explainer-v1")
       fail("reviewed scene media requires the general Kumiki explainer; change the selected visual recipe");
     const selectedSceneMedia=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({
       beatId,assetType:media.assetType,sha256:media.sha256}));
-    options.onProgress?.({ phase: "narration", assetSearchSummary:assetSearch,
-      ...(selectedSceneMedia.length?{artifactLedger:{kind:"asset-search",
+    options.onProgress?.({ phase: "narration",
+      ...(selectedSceneMedia.length?{artifactLedger:{kind:"asset-preparation",
         fingerprint:sceneMedia.fingerprint,selected:selectedSceneMedia}}:{}),
       message: `Generating ${job.beats.length} authorized narration beats…` });
     const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
@@ -275,15 +284,19 @@ export async function produceVideo(candidate, options, deps = {}) {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
     });
+    const masterHash=await sha256File(audio.wavPath);
+    options.onProgress?.({phase:"captions",message:"Checking generated scene captions…",
+      artifactLedger:{kind:"sound-mix",masterSha256:masterHash,samples:timeline.totalSamples}});
+    const captionBytes=await readFile(audio.srtPath);
+    if(!captionBytes.length)fail("caption generation produced an empty subtitle file");
     stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan,
       approvedMedia: sceneMedia.assets });
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {
-      const masterHash=await sha256File(audio.wavPath);
       if(options.signal?.aborted)fail("cancelled before scene capture");
       options.onProgress?.({ phase: "rendering", completedFrames: 0, totalFrames: frames,
-        artifactLedger:{kind:"sound-mix",masterSha256:masterHash,samples:timeline.totalSamples} });
+        artifactLedger:{kind:"captions",sha256:sha256(captionBytes),bytes:captionBytes.length} });
       render = await (deps.renderVideoSegments ?? renderVideoSegments)({
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable, onProgress: options.onProgress,
@@ -312,9 +325,24 @@ export async function produceVideo(candidate, options, deps = {}) {
     if(!firstStill||firstStill.frame!==0)fail("draft cover requires a verified first-frame still");
     await copyFile(join(working,firstStill.file),join(working,"cover-still.png"));
 
-    options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…",
+    options.onProgress?.({phase:"thumbnails",message:"Composing three script-grounded Kumiki thumbnails…",
       artifactLedger:{kind:"scene-render",planHash,buildHash:preflight.buildHash,
-        segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))} });
+        segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))}});
+    const thumbnails=await (deps.generateThumbnails??generateProductionThumbnails)(job,{
+      outputDir:working,ffmpeg:options.ffmpeg,signal:options.signal});
+    if(!Array.isArray(thumbnails)||thumbnails.length!==3||new Set(thumbnails.map(x=>x.file)).size!==3||
+      thumbnails.some((item,i)=>item.file!==`thumbnail-${i+1}.png`||
+        !/^[a-f0-9]{64}$/u.test(item.sha256??"")||
+        !/^[a-f0-9]{64}$/u.test(item.sourceSha256??"")))
+      fail("Kumiki must export three distinct, hashed thumbnail compositions");
+    for(const item of thumbnails){
+      if(sha256(await readFile(join(working,item.file)))!==item.sha256||
+        sha256(await readFile(join(working,item.source)))!==item.sourceSha256)
+        fail("thumbnail output changed after export");
+    }
+
+    options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…",
+      artifactLedger:{kind:"thumbnails",concepts:thumbnails.map(({id,sha256,sourceSha256})=>({id,sha256,sourceSha256}))} });
     const video = join(working, "video.mp4");
     await (deps.mux ?? muxVideo)(render.videoOnlyPath, audio.wavPath, video, options);
     const mp4 = await (deps.probeMp4 ?? probeMuxedMp4)(video, {
@@ -332,6 +360,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       coverStill:sha256(await readFile(join(working,"cover-still.png"))),
     };
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
+    for(const item of thumbnails)artifactHashes[item.id]=item.sha256;
     options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…",
       artifactLedger:{kind:"final-mux",artifacts:{video:artifactHashes.video,captions:artifactHashes.captions,
         master:artifactHashes.master,coverStill:artifactHashes.coverStill}} });
@@ -357,7 +386,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     }));
     const mediaProvenance=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({beatId,...media}));
     const manifestBytes=JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects,
-      soundDucking:audio.ducking??null,sceneMedia:mediaProvenance, segmentHashes: render.segmentHashes,
+      soundDucking:audio.ducking??null,sceneMedia:mediaProvenance,thumbnails,segmentHashes: render.segmentHashes,
       reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2);
     await writeFile(manifestPath,manifestBytes,{flag:"wx"});
     const manifestHash=sha256(manifestBytes);
@@ -369,7 +398,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening.",
       artifactLedger:{kind:"technical-qa",technicalPass:qa.technicalPass===true,manifestHash} });
     return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration,
-      artifactHashes,manifestHash };
+      artifactHashes,manifestHash,thumbnails };
   } finally {
     if (stage) await stage.close();
     // Only the uniquely allocated staging directory is eligible for cleanup.

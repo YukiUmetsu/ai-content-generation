@@ -23,8 +23,9 @@ import { resolveModelForTask } from "./video-production/model-profiles.mjs";
 import { configuredSearchEndpoint } from "./video-production/local-search-config.mjs";
 import { synthesizeNarration } from "./video-production/speech.mjs";
 import { createProductionJobTracker } from "./video-production/production-jobs.mjs";
-import { discoverShotAssets, listSelectedSceneAssets } from "./video-production/asset-discovery.mjs";
+import { discoverShotAssets, listApprovedAssets, listSelectedSceneAssets } from "./video-production/asset-discovery.mjs";
 import { selectedMediaFingerprint } from "./video-production/render-scene-media.mjs";
+import { withAutomaticApprovedMedia } from "./video-production/automatic-approved-assets.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -139,8 +140,11 @@ export function createDirectorProduction(deps={}){
   const searchEndpoint=deps.searchEndpoint??configuredSearchEndpoint;
   const searchAssets=deps.searchAssets??discoverShotAssets;
   const listSelections=deps.listSelections??listSelectedSceneAssets;
-  async function sceneMediaIdentity(compiled,dossier){
-    const selected=await listSelections({projectId:dossier.id});
+  const listApproved=deps.listApproved??listApprovedAssets;
+  async function sceneMediaIdentity(compiled,dossier,bundle){
+    const pinned=await listSelections({projectId:dossier.id});
+    const selected=withAutomaticApprovedMedia(pinned,await listApproved({projectId:dossier.id}),
+      compiled.shotMap,bundle);
     const relevant=new Set(compiled.shotMap.map(shot=>shot.shotId));
     const fingerprint=selectedMediaFingerprint(selected,compiled.shotMap);
     return {fingerprint,identityFingerprint:selected.selections.some(asset=>relevant.has(asset.shotId))?
@@ -183,17 +187,34 @@ export function createDirectorProduction(deps={}){
     // validated UUID within the application's owned output directory.
     return join(outputRoot,"draft-"+runId,"release");
   }
+  async function previousProductionRoot(productionId){
+    if(!productionId)return null;
+    const records=(await readMediaIndex()).filter(item=>item.productionId===productionId);
+    for(const {runId} of records.reverse()){
+      const owned=join(outputRoot,"draft-"+runId);
+      try{
+        const [parent,release,manifest]=await Promise.all([
+          lstat(owned),lstat(join(owned,"release")),lstat(join(owned,"release","render-manifest.json"))]);
+        if(parent.isDirectory()&&!parent.isSymbolicLink()&&release.isDirectory()&&!release.isSymbolicLink()&&
+          manifest.isFile()&&!manifest.isSymbolicLink()&&manifest.size>80&&manifest.size<8*1024*1024)
+          return owned;
+      }catch(error){if(error?.code!=="ENOENT")throw error;}
+    }
+    return null;
+  }
   async function productionAssets(productionId){
     const records=(await readMediaIndex()).filter(item=>item.productionId===productionId);
     const assets=[];
     for(const {runId,sourceRevision} of records){
       const releaseDir=join(outputRoot,"draft-"+runId,"release");
-      for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"],["cover-still.png","thumbnail"]]){
+      for(const [file,kind] of [["video.mp4","video"],["captions.srt","captions"],
+        ["thumbnail-1.png","thumbnail"],["thumbnail-2.png","thumbnail"],
+        ["thumbnail-3.png","thumbnail"],["cover-still.png","thumbnail"]]){
         try{
           const info=await stat(join(releaseDir,file));
           if(!info.isFile()||info.size===0)continue;
         }catch(error){if(error?.code==="ENOENT")continue;throw error;}
-        assets.push({id:kind+"-"+runId,kind,platform:"youtube",filename:file,sourceRevision,
+        assets.push({id:kind+"-"+runId+(file==="cover-still.png"||kind!=="thumbnail"?"":"-"+file),kind,platform:"youtube",filename:file,sourceRevision,
           downloadUrl:"/api/contentgen-video/media/"+runId+"/"+file});
       }
     }
@@ -279,14 +300,16 @@ export function createDirectorProduction(deps={}){
         res.end(preview.html);return;
       }
       if(req.method==="GET"&&route.startsWith("/media/")){
-        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt|cover-still\.png)$/u.exec(route);
+        const match=/^\/media\/([a-f0-9-]+)\/(video\.mp4|captions\.srt|cover-still\.png|thumbnail-[123]\.png|thumbnail-[123]\.svg)$/u.exec(route);
         if(!match||!runIdPattern.test(match[1])){respond(res,404,{error:"Media is unavailable."});return;}
         const releaseDir=await releaseForRun(match[1]);
         if(!releaseDir){respond(res,404,{error:"Media is unavailable."});return;}
         if(match[2]==="video.mp4")await deliverVideo(req,res,releaseDir);
         else {
           const bytes=await readFile(join(releaseDir,match[2]));
-          res.writeHead(200,{...headers,"Content-Type":match[2]==="cover-still.png"?"image/png":"text/plain; charset=utf-8",
+          res.writeHead(200,{...headers,"Content-Type":match[2].endsWith(".png")?"image/png":
+            match[2].endsWith(".svg")?"image/svg+xml":"text/plain; charset=utf-8",
+            ...(match[2].endsWith(".svg")?{"Content-Security-Policy":"default-src 'none'; sandbox"}:{}),
             "Content-Length":bytes.length,"Content-Disposition":`attachment; filename="${match[2]}"`});
           res.end(bytes);
         }
@@ -437,7 +460,7 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const sceneMedia=await sceneMediaIdentity(compiled,input.dossier);
+        const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
         const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
@@ -473,7 +496,7 @@ export function createDirectorProduction(deps={}){
         const compiled=compile(input.dossier,input.bundle,{platform:"youtube"});
         const settings=validateSettings(input.settings);
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
-        const sceneMedia=await sceneMediaIdentity(compiled,input.dossier);
+        const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
         const identity=sha({source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
@@ -523,6 +546,8 @@ export function createDirectorProduction(deps={}){
         const interruptedRunId=tracker?.priorRunId;
         const reuseSpeechCacheFrom=interruptedRunId&&runIdPattern.test(interruptedRunId)?
           join(outputRoot,"draft-"+interruptedRunId):null;
+        // A broken optional cache index must never strand a claimed job.
+        const previousReleaseRoot=await previousProductionRoot(input.productionId).catch(()=>null);
         checked=null;
         status={state:"rendering",phase:"starting",message:"Producing the local draft…",
           progress:null,report:status.report,runId,jobId:trackedJobId,
@@ -543,6 +568,7 @@ export function createDirectorProduction(deps={}){
               apiKey:settings.apiKey||env.FISH_AUDIO_API_KEY,
               budgetUsd:0,allowTestAssets:true,browserExecutable:executable,signal:abort.signal,
               sceneAssetProjectId:input.dossier.id,sceneShotMap:compiled.shotMap,
+              sceneAssetBundle:input.bundle,
               expectedSceneMediaFingerprint:sceneMedia.fingerprint,
               ...(reuseSpeechCacheFrom?{reuseSpeechCacheFrom,
                 reuseRenderSegmentsFrom:reuseSpeechCacheFrom}:{}),
@@ -597,7 +623,8 @@ export function createDirectorProduction(deps={}){
                 }
                 return assetSearchSummary;
               }}:{}),
-              ...(lastOutput?{reuseFrom:lastOutput}:{}),onProgress:event=>{
+              ...(previousReleaseRoot||!input.productionId&&lastOutput?{
+                reuseFrom:previousReleaseRoot??lastOutput,reuseFromOptional:!!input.productionId}:{}),onProgress:event=>{
                 progress(event);
                 if(tracker)journal=journal.then(()=>tracker.advance(event.phase,
                   event.artifactLedger||event.phase==="narration"&&event.assetSearchSummary?

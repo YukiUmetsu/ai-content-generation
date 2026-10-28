@@ -95,6 +95,9 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     const shot=plan.shots[i];
     const phase=phases.get(shot.id);
     if(shot.motion)job.beats[i].visual.motion=structuredClone(shot.motion);
+    // Respect the scene editor's pacing; the generic manual-draft defaults
+    // must not silently replace the saved per-scene pause.
+    job.beats[i].pauseAfterMs=sound.get(shot.id).pauseAfterMs;
     if(shot.sceneRecipe)job.beats[i].visual.sceneRecipe=shot.sceneRecipe;
     if(shot.visualElements)job.beats[i].visual.itemNotes=normalizeVisualElements(shot.visualElements).map(x=>x.detail);
     job.beats[i].visual.direction={

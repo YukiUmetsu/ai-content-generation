@@ -52,8 +52,8 @@ describe("Video Director selected-shot workbench",()=>{
   const plan={story:{question:"Why?"},shots:[
     {id:"hook",purpose:"hook",visualChange:"Show a house.",onScreenText:"Why?"},
     {id:"middle",purpose:"explain",visualChange:"Show costs.",onScreenText:"What costs?"}],
-    sound:[{shotId:"hook",narration:"How much does this really cost?",sfxIntent:null},
-      {shotId:"middle",narration:"There are multiple costs.",sfxIntent:"soft click"}],
+    sound:[{shotId:"hook",narration:"How much does this really cost?",sfxIntent:null,pauseAfterMs:160},
+      {shotId:"middle",narration:"There are multiple costs.",sfxIntent:"soft click",pauseAfterMs:160}],
     teachingSequences:[{phases:[
       {kind:"problem",shotId:"hook",visualAction:"Reveal the house"},
       {kind:"mechanism",shotId:"middle",visualAction:"Reveal the costs"}]}]};
@@ -138,8 +138,53 @@ describe("Video Director selected-shot workbench",()=>{
     expect((edit?.changes as Record<string,string>)?.narration).toBe(variants[1].narration);
     expect((edit?.changes as Record<string,string>)?.visualAction).toBe(variants[2].firstVisual);
     expect(await screen.findByText(/New narration: hook/)).toBeInTheDocument();
-    expect(screen.getByText(/does not yet synthesize partial WAVs/)).toBeInTheDocument();
+    expect(screen.getByText(/Unchanged narration is kept/)).toBeInTheDocument();
     api.mockRestore();
+  });
+  it("offers a scene timeline and reversible saved edits without modifying untouched scenes",async()=>{
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;changes:{narration:string}};
+      const revised=structuredClone(body.bundle);
+      revised.plan.sound[0].narration=body.changes.narration;
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:["narration"],
+        speechRegenerate:["hook"],visualRerender:[],sfxRemix:[],downstreamRetiming:["hook","middle"],timelineRecalculate:true}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scenes.json",{type:"application/json"})]}});
+    expect(await screen.findByRole("group",{name:"Scene timeline"})).toBeInTheDocument();
+    const voice=screen.getByRole("textbox",{name:"Edit narration"});
+    fireEvent.change(voice,{target:{value:"What does this house really cost over time?"}});
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(voice).toHaveValue("What does this house really cost over time?"));
+    await user.click(screen.getByRole("button",{name:"Undo saved edit"}));
+    expect(voice).toHaveValue("How much does this really cost?");
+    await user.click(screen.getByRole("button",{name:"Redo"}));
+    expect(voice).toHaveValue("What does this house really cost over time?");
+    await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
+    expect(voice).toHaveValue("There are multiple costs.");
+  });
+  it("edits scene pacing without requesting voice regeneration",async()=>{
+    const edits:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;changes:Record<string,unknown>};
+      edits.push(body.changes);
+      const revised=structuredClone(body.bundle);
+      revised.plan.sound[1].pauseAfterMs=Number(body.changes.pauseAfterMs);
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:["pauseAfterMs"],
+        speechRegenerate:[],visualRerender:["middle"],sfxRemix:[],downstreamRetiming:["middle"],
+        timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scene-timing.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    fireEvent.change(screen.getByRole("spinbutton",{name:"Scene pause duration"}),{target:{value:"950"}});
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toEqual([{pauseAfterMs:950}]));
+    expect(screen.getByText(/New narration: none/)).toBeInTheDocument();
   });
 });
 
@@ -197,8 +242,9 @@ describe("first-run complete Studio demo",()=>{
     expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
     await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
     expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
-    // Navigating steps must not restart the visual preview.
-    expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
+    // The storyboard opens its own selected scene preview, without TTS or a render job.
+    await waitFor(()=>expect(calls).toEqual(["/api/contentgen-video/demo",
+      "/api/contentgen-video/live-preview","/api/contentgen-video/live-preview"]));
   });
 });
 
@@ -338,6 +384,7 @@ describe("saved research to Video Director handoff",()=>{
       const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
       calls.push(String(url));
       expect(init?.method).toBe("POST");
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"Preview unavailable in this fixture"}),{status:503});
       expect(JSON.parse(String(init?.body))).toEqual({artifactId});
       return new Response(JSON.stringify({artifactId,dossier,bundle}),{status:200});
     });
@@ -345,7 +392,8 @@ describe("saved research to Video Director handoff",()=>{
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
     expect(screen.getByText("Heat pump installation")).toBeInTheDocument();
     expect(screen.getByText(/1 scenes/)).toBeInTheDocument();
-    expect(calls).toEqual(["/api/contentgen-director/compile-saved-research"]);
+    await waitFor(()=>expect(calls).toEqual(["/api/contentgen-director/compile-saved-research",
+      "/api/contentgen-video/live-preview"]));
   });
   it("opens the requested guided production stage after loading saved research",async()=>{
     vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{

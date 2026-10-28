@@ -138,6 +138,27 @@ test("damaged segments in a failed previous attempt are redrawn, never reused or
   assert.equal(result.segmentHashes.length,2);
 });
 
+test("regenerating one edited scene reuses the other two verified scenes across exports",async t=>{
+  const {dir,dependencies,stats}=await harness(t);
+  const first=join(dir,"first"),second=join(dir,"second");
+  const manifest=config(first,180).manifest;
+  const chapters=["Start","Explanation","Outcome"].map((headline,index)=>({
+    id:`scene-${index+1}`,startFrame:index*60,endFrame:(index+1)*60,visual:{headline}}));
+  const base={kind:"test-explainer",manifest,chapters};
+  const digest=plan=>createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+  await renderVideoSegments({...config(first,180),planHash:digest(base),visualPlan:base},dependencies);
+  const oldCaptured=stats().captured.length,oldEncoded=stats().encoded;
+  const modified={...base,chapters:chapters.map((chapter,index)=>index===1?
+    {...chapter,visual:{headline:"An edited explanation"}}:chapter)};
+  const result=await renderVideoSegments({...config(second,180),planHash:digest(modified),visualPlan:modified,
+    reuseFrom:{sourcePlan:base,buildHash:"b".repeat(64),segmentsDir:join(first,"segments")}},dependencies);
+  assert.equal(result.reusedSegmentCount,2);
+  assert.equal(result.renderedSegmentCount,1);
+  assert.equal(stats().encoded-oldEncoded,1);
+  assert.deepEqual(stats().captured.slice(oldCaptured),Array.from({length:60},(_,index)=>index+60));
+  assert.equal(result.frameCount,180);
+});
+
 test("capture abort leaves verified segments but never publishes an incomplete MP4", async (t) => {
   const { dir, dependencies } = await harness(t);
   let closed = false;

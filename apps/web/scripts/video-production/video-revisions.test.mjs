@@ -86,6 +86,22 @@ test("visual-only edits avoid TTS calls and keep other scenes byte-for-byte",()=
   const mutated=structuredClone(b);mutated.plan.sound[0].narration="tampered";
   assert.throws(()=>editPreproductionShot(d,mutated,{shotId:id,changes:{onScreenText:"Approved"}}),/untampered/);
 });
+test("pacing edits change rendered beat duration and retime later scenes without TTS",()=>{
+  const dossier=source(),before=bundle(),id=before.plan.shots[1].id;
+  const oldPause=before.plan.sound[1].pauseAfterMs;
+  const changed=oldPause===900?800:900;
+  const revised=editPreproductionShot(dossier,before,{shotId:id,changes:{pauseAfterMs:changed}});
+  const beforeJob=compilePreproductionRenderJob(dossier,before).job;
+  const afterJob=compilePreproductionRenderJob(dossier,revised.bundle).job;
+  assert.equal(beforeJob.beats[1].pauseAfterMs,oldPause);
+  assert.equal(afterJob.beats[1].pauseAfterMs,changed);
+  assert.deepEqual(revised.impacts.speechRegenerate,[]);
+  assert.equal(revised.impacts.timelineRecalculate,true);
+  assert.deepEqual(revised.impacts.downstreamRetiming,before.plan.shots.slice(1).map(shot=>shot.id));
+  assert.deepEqual(afterJob.beats[0],beforeJob.beats[0]);
+  assert.throws(()=>editPreproductionShot(dossier,before,{shotId:id,changes:{pauseAfterMs:3001}}),/Editable/);
+  assert.throws(()=>editPreproductionShot(dossier,before,{shotId:id,changes:{pauseAfterMs:-1}}),/Editable/);
+});
 test("changing a middle-shot scene layout changes actual renderer structure without regenerating speech",()=>{
   const d=source(),plan=fixture("preproduction-plan-smoke.json");
   plan.shots.forEach(shot=>delete shot.sceneRecipe);

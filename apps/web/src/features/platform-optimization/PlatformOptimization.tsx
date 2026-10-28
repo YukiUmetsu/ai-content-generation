@@ -157,8 +157,13 @@ function AssetPicker({ label, kind, value, input, platform, onChange }: {
       </select>
     </label>
     {selected?.downloadUrl?.startsWith("/api/contentgen-video/media/")&&
-      <a className="mt-1 inline-block text-xs font-medium text-primary underline" href={selected.downloadUrl}
-        download={selected.filename}>Download selected local file</a>}
+      <div className="mt-2 space-y-2">
+        {kind==="thumbnail"&&selected.filename?.endsWith(".png")&&
+          <img src={selected.downloadUrl} alt={`${selected.filename} exported production thumbnail`}
+            className="aspect-video w-full max-w-sm rounded-xl border border-border bg-muted object-cover" />}
+        <a className="inline-block text-xs font-medium text-primary underline" href={selected.downloadUrl}
+          download={selected.filename}>Download selected local file</a>
+      </div>}
   </div>;
 }
 

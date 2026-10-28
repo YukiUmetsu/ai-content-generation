@@ -2,14 +2,20 @@
  * scheduler, queue, or database: SQLite remains the source of truth. */
 import {createHash} from "node:crypto";
 
-export const PRODUCTION_NODES=["scene-plan","visual-planning","asset-search","narration","timeline",
+const LEGACY_NODES=["scene-plan","visual-planning","asset-search","narration","timeline",
   "sound-mix","scene-render","final-mux","technical-qa","export-package"];
-const phases={"browser-preflight":"visual-planning","asset-search":"asset-search",narration:"narration",timeline:"timeline",
-  audio:"sound-mix",rendering:"scene-render",mux:"final-mux",qa:"technical-qa",review:"export-package"};
+export const PRODUCTION_NODES=["scene-plan","visual-planning","asset-search","asset-preparation",
+  "narration","timeline","sound-mix","captions","scene-render","thumbnails","final-mux",
+  "technical-qa","export-package"];
+const phases={"browser-preflight":"visual-planning","asset-search":"asset-search",
+  "asset-preparation":"asset-preparation",narration:"narration",timeline:"timeline",
+  audio:"sound-mix",captions:"captions",rendering:"scene-render",thumbnails:"thumbnails",
+  mux:"final-mux",qa:"technical-qa",review:"export-package"};
 const RUN_ID=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
 const SHA256=/^[a-f0-9]{64}$/u;
 const BEAT_ID=/^[a-z0-9][a-z0-9._:-]{0,127}$/iu;
-const LEDGER_KINDS={"asset-search":"asset-search",narration:"narration","sound-mix":"sound-mix","scene-render":"scene-render",
+const LEDGER_KINDS={"asset-search":"asset-search","asset-preparation":"asset-preparation",narration:"narration",
+  "sound-mix":"sound-mix",captions:"captions","scene-render":"scene-render",thumbnails:"thumbnails",
   "final-mux":"final-mux","technical-qa":"technical-qa","export-package":"export-package"};
 function hash(value){if(typeof value!=="string"||!SHA256.test(value))throw Error("Jobs artifact hash must be a SHA-256 digest.");return value;}
 function integer(value,{positive=false}={}){
@@ -28,7 +34,8 @@ function validatedLedger(ledger,nodeKey){
   if(!ledger||typeof ledger!=="object"||Array.isArray(ledger)||ledger.kind!==LEDGER_KINDS[nodeKey])
     throw Error(`Jobs artifact ledger does not match the completed ${nodeKey} step.`);
   switch(nodeKey){
-    case "asset-search":{
+    case "asset-search":
+    case "asset-preparation":{
       if(!Array.isArray(ledger.selected)||!ledger.selected.length||ledger.selected.length>60)
         throw Error("Jobs selected scene media must be a bounded nonempty list.");
       const selected=ledger.selected.map(asset=>{
@@ -51,6 +58,7 @@ function validatedLedger(ledger,nodeKey){
       return {kind:nodeKey,beats};
     }
     case "sound-mix":return {kind:nodeKey,masterSha256:hash(ledger.masterSha256),samples:integer(ledger.samples,{positive:true})};
+    case "captions":return {kind:nodeKey,sha256:hash(ledger.sha256),bytes:integer(ledger.bytes,{positive:true})};
     case "scene-render":{
       if(!Array.isArray(ledger.segments)||!ledger.segments.length||ledger.segments.length>4096)
         throw Error("Jobs video segment list must be bounded and nonempty.");
@@ -62,6 +70,14 @@ function validatedLedger(ledger,nodeKey){
         ...(ledger.buildHash===undefined?{}:{buildHash:hash(ledger.buildHash)}),segments};
     }
     case "final-mux":return {kind:nodeKey,artifacts:hashes(ledger.artifacts)};
+    case "thumbnails":{
+      if(!Array.isArray(ledger.concepts)||ledger.concepts.length!==3)
+        throw Error("Jobs thumbnails must contain exactly three concepts.");
+      return {kind:nodeKey,concepts:ledger.concepts.map((item,index)=>{
+        if(item?.id!==`thumbnail-${index+1}`)throw Error("Jobs thumbnails must use fixed concept identities.");
+        return {id:item.id,sha256:hash(item.sha256),sourceSha256:hash(item.sourceSha256)};
+      })};
+    }
     case "technical-qa":{
       if(typeof ledger.technicalPass!=="boolean")throw Error("Jobs technical QA status must be a boolean.");
       return {kind:nodeKey,technicalPass:ledger.technicalPass,manifestHash:hash(ledger.manifestHash)};
@@ -71,11 +87,11 @@ function validatedLedger(ledger,nodeKey){
     default:throw Error(`Jobs step ${nodeKey} does not produce an artifact ledger.`);
   }
 }
-function validatedOutput(index,payload){
+function validatedOutput(nodeKey,payload){
   if(!payload)return {completed:true};
   const output={completed:true};
   if(payload.assetSearch!==undefined){
-    if(PRODUCTION_NODES[index]!=="asset-search")throw Error("Jobs asset-search output belongs to the asset-search step.");
+    if(nodeKey!=="asset-search")throw Error("Jobs asset-search output belongs to the asset-search step.");
     const source=payload.assetSearch;
     if(!["skipped","completed","partial","fallback"].includes(source?.status))
       throw Error("Jobs asset-search status is invalid.");
@@ -88,7 +104,7 @@ function validatedOutput(index,payload){
     // detailed warnings in the private scene catalog, not the durable Jobs DB.
   }
   if(payload.artifactLedger!==undefined)
-    output.artifactLedger=validatedLedger(payload.artifactLedger,PRODUCTION_NODES[index]);
+    output.artifactLedger=validatedLedger(payload.artifactLedger,nodeKey);
   return output;
 }
 
@@ -98,7 +114,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
   if(!["localhost","127.0.0.1"].includes(server.hostname)||server.protocol!=="http:"||
     server.username||server.password||server.pathname!=="/"||server.search||server.hash)
     throw Error("Production jobs require the local Rust server. Set CONTENTGEN_JOBS_ORIGIN to a loopback address.");
-  let jobId=null,nodes=[],active=-1,attemptId=null,terminal=null,priorRunId=null;
+  let jobId=null,nodes=[],keys=PRODUCTION_NODES,active=-1,attemptId=null,terminal=null,priorRunId=null;
+  const priorLedgers=new Map();
   async function request(path,body){
     let response;
     try{
@@ -136,30 +153,36 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
       let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
         nodes:PRODUCTION_NODES.map((nodeKey,index)=>({nodeKey,nodeKind:`video.${nodeKey}`,
-          // The renderer is one synchronous execution. No worker exists to
-          // claim an auto-retried attempt after it exits; mark failure terminal
-          // instead of leaving a READY node and a permanently RUNNING job.
-          maxAttempts:1,input:{productionId,revision,runId},
+          // A restarted worker reclaims a READY attempt; committed work and
+          // immutable content-addressed media can be reused after recovery.
+          maxAttempts:3,input:{productionId,revision,runId},
           dependsOn:index?[PRODUCTION_NODES[index-1]]:[]}))});
       if(data.created!==true){
         if(["FAILED","CANCELLED"].includes(data.job?.state)&&typeof data.job.id==="string"){
           // Explicit retry is one SQLite transaction. Only one worker can
           // re-arm a terminal job; successful nodes remain intact.
           data=await request(`/api/jobs/${data.job.id}/retry`,{});
-        }else throw Error(data.job?.state==="SUCCEEDED"?
-          "A video for this revision already exists. Review its saved MP4 or edit the script to regenerate.":
-          "This video is already running or waiting in Jobs. Open Jobs to review or cancel it.");
+        }else if(data.job?.state!=="RUNNING"||
+          data.nodes?.some(node=>node.state==="RUNNING")||
+          data.nodes?.filter(node=>node.state==="READY").length!==1){
+          throw Error(data.job?.state==="SUCCEEDED"?
+            "A video for this revision already exists. Review its saved MP4 or edit the script to regenerate.":
+            "This video is already running or waiting in Jobs. Open Jobs to review or cancel it.");
+        }
       }
-      if(typeof data.job?.id!=="string"||!Array.isArray(data.nodes)||data.nodes.length!==PRODUCTION_NODES.length)
+      const returnedKeys=data.nodes?.map(node=>node.nodeKey);
+      keys=JSON.stringify(returnedKeys?.slice().sort())===JSON.stringify(PRODUCTION_NODES.slice().sort())?
+        PRODUCTION_NODES:LEGACY_NODES;
+      if(typeof data.job?.id!=="string"||!Array.isArray(data.nodes)||data.nodes.length!==keys.length)
         throw Error("Jobs service did not return the expected production steps.");
       const byKey=new Map(data.nodes.map(node=>[node.nodeKey,node]));
-      if(byKey.size!==PRODUCTION_NODES.length||PRODUCTION_NODES.some(key=>typeof byKey.get(key)?.id!=="string"))
+      if(byKey.size!==keys.length||keys.some(key=>typeof byKey.get(key)?.id!=="string"))
         throw Error("Jobs service returned incomplete or duplicate production steps.");
-      const firstInput=byKey.get(PRODUCTION_NODES[0])?.input;
+      const firstInput=byKey.get(keys[0])?.input;
       if(data.created!==true&&firstInput?.productionId===productionId&&firstInput.revision===revision&&
         typeof firstInput.runId==="string"&&RUN_ID.test(firstInput.runId)&&firstInput.runId!==runId)
         priorRunId=firstInput.runId;
-      jobId=data.job.id;nodes=PRODUCTION_NODES.map(key=>byKey.get(key));
+      jobId=data.job.id;nodes=keys.map(key=>byKey.get(key));
       const firstReady=nodes.findIndex(node=>node.state==="READY");
       if(firstReady<0||nodes.slice(0,firstReady).some(node=>node.state!=="SUCCEEDED"))
         throw Error("Jobs service did not return a resumable production step.");
@@ -168,19 +191,31 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
     },
     async advance(phase,completedStepOutput){
       if(terminal)throw Error(`Production job has ${terminal}.`);
-      const target=PRODUCTION_NODES.indexOf(phases[phase]);
+      // Older releases have a ten-step DAG. Keep that immutable history
+      // resumable even though the new runner splits out additional milestones.
+      if(keys===LEGACY_NODES&&completedStepOutput?.artifactLedger){
+        priorLedgers.set(completedStepOutput.artifactLedger.kind,completedStepOutput.artifactLedger);
+        if(phase==="narration"&&completedStepOutput.artifactLedger.kind==="asset-preparation")
+          completedStepOutput={...completedStepOutput,artifactLedger:{
+            ...completedStepOutput.artifactLedger,kind:"asset-search"}};
+        if(phase==="rendering"&&priorLedgers.has("sound-mix"))
+          completedStepOutput={...completedStepOutput,artifactLedger:priorLedgers.get("sound-mix")};
+        if(phase==="mux"&&priorLedgers.has("scene-render"))
+          completedStepOutput={...completedStepOutput,artifactLedger:priorLedgers.get("scene-render")};
+      }
+      const target=keys.indexOf(phases[phase]);
       if(target<0||target<=active)return;
       if(active<0)throw Error("Production job was not started.");
       // Validate before completing any earlier step, so a malformed last-stage
       // hash never leaves a partially advanced sequence marked successful.
-      const finalOutput=validatedOutput(target-1,completedStepOutput);
+      const finalOutput=validatedOutput(keys[target-1],completedStepOutput);
       while(active<target){await succeed(active===target-1?finalOutput:{completed:true});await begin(active+1);}
     },
     async complete(finalStepOutput){
       if(terminal)throw Error(`Production job has ${terminal}.`);
       if(active<0)throw Error("Production job was not started.");
-      const finalOutput=validatedOutput(PRODUCTION_NODES.length-1,finalStepOutput);
-      while(active<PRODUCTION_NODES.length-1){await succeed();await begin(active+1);}
+      const finalOutput=validatedOutput(keys.at(-1),finalStepOutput);
+      while(active<keys.length-1){await succeed();await begin(active+1);}
       await succeed(finalOutput);terminal="completed";
     },
     async fail(code="render_failed",detail="Video rendering failed"){

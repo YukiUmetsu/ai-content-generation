@@ -51,6 +51,13 @@ async function context(t) {
     },
     mux: async (_video, _audio, output) => { await writeFile(output, "muxed-film"); },
     probeMp4: async (_path, { fps, totalFrames, totalSamples }) => ({ width: 1920, height: 1080, fps, frameCount: totalFrames, audioSampleRate: 48000, audioDurationSeconds: totalSamples / 48000, videoDurationSeconds: totalFrames * fps.den / fps.num }),
+    generateThumbnails: async (_job, { outputDir }) => Promise.all([1,2,3].map(async n => {
+      const file=`thumbnail-${n}.png`,source=`thumbnail-${n}.svg`;
+      const bytes=Buffer.from(`kumiki-png-${n}`),svg=Buffer.from(`<svg>${n}</svg>`);
+      await writeFile(join(outputDir,file),bytes);
+      await writeFile(join(outputDir,source),svg);
+      return {id:`thumbnail-${n}`,file,source,sha256:hash(bytes),sourceSha256:hash(svg),width:1280,height:720};
+    })),
     toolVersions: { ffmpeg: "mock-ffmpeg", ffprobe: "mock-ffprobe" },
   };
   const opts = { out: join(root, "production"), provider: "local", providerRevision: "bridge-1", localVoiceAuthorized: true, allowTestAssets: true, distRoot: join(root, "dist") };
@@ -67,7 +74,7 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(result.qa.commercialReady, false);
   assert.ok(result.qa.findings.some(({ code, severity }) => code === "caption-reading-speed" && severity === "warning"));
   assert.match(await readFile(join(result.releaseDir, "video.mp4"), "utf8"), /muxed-film/);
-  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "cover-still.png", "master.wav", "qa-report.json", "render-manifest.json", "stills", "video.mp4", "voice.wav"]);
+  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "cover-still.png", "master.wav", "qa-report.json", "render-manifest.json", "stills", "thumbnail-1.png", "thumbnail-1.svg", "thumbnail-2.png", "thumbnail-2.svg", "thumbnail-3.png", "thumbnail-3.svg", "video.mp4", "voice.wav"]);
   assert.equal(result.qa.reviewStills.length >= 2, true);
   for (const still of result.qa.reviewStills) {
     const bytes = await readFile(join(result.releaseDir, still.file));
@@ -115,7 +122,7 @@ test("selected scene photo reaches the actual general Kumiki plan and stage befo
     onProgress:event=>progress.push(event) }, ctx.injected);
   assert.deepEqual(events, ["asset-preflight", "narration"]);
   assert.deepEqual(progress.find(event=>event.phase==="narration")?.artifactLedger,
-    {kind:"asset-search",fingerprint:"c".repeat(64),
+    {kind:"asset-preparation",fingerprint:"c".repeat(64),
       selected:[{beatId,assetType:"photo",sha256:photoHash}]});
   assert.ok(!JSON.stringify(progress).includes(asset.path));
   const released = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
@@ -219,18 +226,24 @@ test("production emits real stage transitions and forwards verified capture fram
   };
   const result=await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
   const phases = events.map((event) => event.phase);
-  assert.deepEqual(phases, ["browser-preflight", "asset-search", "narration", "timeline", "audio", "rendering", "rendering", "mux", "qa", "review"]);
+  assert.deepEqual(phases, ["browser-preflight", "asset-search", "asset-preparation", "narration", "timeline", "audio", "captions", "rendering", "rendering", "thumbnails", "mux", "qa", "review"]);
   assert.deepEqual(events.find((event) => event.completedFrames === 90),
     { phase: "rendering", completedFrames: 90, totalFrames: 90 });
   const narration=events.find(event=>event.phase==="timeline")?.artifactLedger;
   assert.equal(narration?.kind,"narration");
   assert.equal(narration?.beats.length,ctx.job.beats.length);
   assert.match(narration?.beats[0].sha256,/^[a-f0-9]{64}$/);
-  const visual=events.find(event=>event.phase==="mux")?.artifactLedger;
+  const visual=events.find(event=>event.phase==="thumbnails")?.artifactLedger;
   assert.equal(visual?.kind,"scene-render");
   assert.match(visual?.planHash,/^[a-f0-9]{64}$/);
   const release=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
   assert.deepEqual(visual?.segments,release.segmentHashes);
+  const captions=events.find(event=>event.phase==="rendering")?.artifactLedger;
+  assert.equal(captions?.kind,"captions");
+  assert.equal(captions?.sha256,hash("1\n00:00:00,000 --> 00:00:01,000\nSample"));
+  const thumbnails=events.find(event=>event.phase==="mux")?.artifactLedger;
+  assert.equal(thumbnails?.kind,"thumbnails");
+  assert.equal(thumbnails?.concepts.length,3);
   const mux=events.find(event=>event.phase==="qa")?.artifactLedger;
   assert.equal(mux?.kind,"final-mux");
   assert.equal(mux?.artifacts.video,hash("muxed-film"));
@@ -249,7 +262,7 @@ test("media suggestions are prepared before narration and expose a bounded Jobs 
   ctx.injected.synthesizeNarration=async(...args)=>{events.push("voice");return originalNarration(...args);};
   await produceVideo(ctx.job,{...ctx.opts,
     prepareAssetSuggestions:async()=>{events.push("search");return{status:"partial",candidates:3,warnings:["Pexels unavailable"]};},
-    onProgress:event=>{if(event.phase==="narration")events.push(event.assetSearchSummary);}},ctx.injected);
+    onProgress:event=>{if(event.phase==="asset-preparation")events.push(event.assetSearchSummary);}},ctx.injected);
   assert.equal(events[0],"search");
   assert.deepEqual(events[1],{status:"partial",candidates:3,warnings:["Pexels unavailable"]});
   assert.equal(events[2],"voice");

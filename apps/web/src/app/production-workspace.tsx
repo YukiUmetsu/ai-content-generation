@@ -906,12 +906,13 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 {renderAssets.length?renderAssets.map(asset=><a key={asset.id} href={asset.downloadUrl}
                   download={asset.filename} className={secondaryButton+" mr-2 inline-flex items-center gap-2"}>
                   {asset.kind==="video"?"Download MP4":asset.kind==="captions"?"Download captions":
-                    asset.kind==="thumbnail"?"Download cover frame":`Download ${asset.kind}`}
+                    asset.kind==="thumbnail"?(asset.filename?.startsWith("thumbnail-")?
+                      `Download ${asset.filename.replaceAll("-"," ")}`:"Download cover frame"):`Download ${asset.kind}`}
                   {!currentRenderAssets.includes(asset)&&" · previous / untracked revision"}
                   <ExternalLink className="size-3"/></a>):<p className="text-sm text-muted-foreground">
                   No completed renders are registered. Open Director to render an MP4 before preparing an upload.</p>}
-                {renderAssets.some(asset=>asset.kind==="thumbnail")&&<p className="text-xs text-muted-foreground">
-                  The cover frame is an actual Kumiki render still, ready to use as a starting image in the Thumbnail Composer. It is not a finished thumbnail design.
+                {renderAssets.some(asset=>asset.filename?.startsWith("thumbnail-"))&&<p className="text-xs text-muted-foreground">
+                  Three distinct 1280×720 thumbnail designs are exported automatically. Select one in Publish Kit to preview or download it, and edit the headline, composition and colors in the thumbnail designer.
                 </p>}
               </div>}
             {production&&mediaSnapshot?.status!=="ready"&&<p className="mt-4 text-sm text-muted-foreground">

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, Download, Film, Headphones, Images, Layers3, RefreshCw, WandSparkles, Save } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { ArrowRight, Download, Film, Headphones, Images, Layers3, RefreshCw, WandSparkles, Save, Undo2, Redo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
@@ -12,9 +12,12 @@ import type { SceneMotion } from "../../scripts/video-production/scene-motion.mj
 import { isVisualElements, type VisualElement } from "../../scripts/video-production/visual-elements.mjs";
 import { directorStages, nextDirectorStage, resolveDirectorNavigation,
   shouldInvalidateDirectorReadiness } from "../../scripts/video-production/director-workflow.mjs";
+import type { LiveVisualPreviewData } from "./live-renderer-preview";
+
+const RendererScene=lazy(()=>import("./live-renderer-scene"));
 
 type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[]};
-type Sound={shotId:string;narration:string;sfxIntent:string|null};
+type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
 type Bundle={kind:string;researchId:string;plan:Plan;planSha256?:string;researchSha256?:string};
@@ -24,6 +27,7 @@ type Variant={id:string;strategy:string;audienceSignal:string;curiosityQuestion:
 type Impact={changedFields:string[];speechRegenerate:string[];visualRerender:string[];
   sfxRemix:string[];downstreamRetiming:string[];timelineRecalculate:boolean;externalActionsPerformed:string[]};
 type Revision={kind:string;bundle:Bundle;impacts:Impact;reviewRequired:boolean};
+type DirectorSnapshot={bundle:Bundle;revisions:Array<{shotId:string;impacts:Impact}>};
 type DirectorStage="storyboard"|"assets"|"sound"|"preview";
 const stageIcons={storyboard:Layers3,assets:Images,sound:Headphones,preview:Film};
 type StoryboardSync={storyboardSha256:string;applied:string[];manualReview:string[]};
@@ -36,6 +40,14 @@ async function request(path:string,data:unknown){
   const json=await response.json() as Record<string,unknown>;
   if(!response.ok)throw Error(String(json.error??"Local director API unavailable."));
   return json;
+}
+async function previewScene(dossier:Dossier,bundle:Bundle):Promise<LiveVisualPreviewData>{
+  const response=await fetch("/api/contentgen-video/live-preview",{method:"POST",headers:{
+    "Content-Type":"application/json","X-Contentgen-Director":"local-only"},
+    body:JSON.stringify({dossier,bundle}),signal:AbortSignal.timeout(15000)});
+  const data=await response.json() as LiveVisualPreviewData & {error?:string};
+  if(!response.ok)throw Error(data.error??"Local scene renderer is unavailable.");
+  return data;
 }
 async function loadJson(file:File,maxBytes=900000){
   if(file.size>maxBytes)throw Error("File is too large for the editorial workspace (900 KB limit).");
@@ -73,7 +85,7 @@ function shotDraft(bundle:Bundle,id:string){
   const phase=bundle.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===id);
   return {narration:audio?.narration??"",onScreenText:shot?.onScreenText??"",family:shot?.family??"process",
     visualChange:shot?.visualChange??"",visualAction:phase?.visualAction??shot?.visualChange??"",
-    sfxIntent:audio?.sfxIntent??"",
+    sfxIntent:audio?.sfxIntent??"",pauseAfterMs:audio?.pauseAfterMs??160,
     visualElementsText:shot?.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??""};
 }
 type DirectorWorkspaceProps={locale:Locale;projectId?:string;researchArtifactId?:string|null;focusStage?:"visuals"|"audio"|"draft"|"export";onOpenJobs?:()=>void};
@@ -85,12 +97,16 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const [dossier,setDossier]=useState<Dossier|null>(null);
   const [bundle,setBundle]=useState<Bundle|null>(null);
   const [shotId,setShotId]=useState("");
-  const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",visualElementsText:""});
+  const [draft,setDraft]=useState({narration:"",onScreenText:"",family:"process",visualChange:"",visualAction:"",sfxIntent:"",pauseAfterMs:160,visualElementsText:""});
   const [variants,setVariants]=useState<Variant[]>([]);
   const [voiceVariant,setVoiceVariant]=useState("");
   const [visualVariant,setVisualVariant]=useState("");
   const [soundVariant,setSoundVariant]=useState("");
   const [revisions,setRevisions]=useState<Array<{shotId:string;impacts:Impact}>>([]);
+  const [history,setHistory]=useState<{undo:DirectorSnapshot[];redo:DirectorSnapshot[]}>({undo:[],redo:[]});
+  const [quickPreview,setQuickPreview]=useState<LiveVisualPreviewData|null>(null);
+  const [quickPreviewError,setQuickPreviewError]=useState("");
+  const [previewPercent,setPreviewPercent]=useState(35);
   const [busy,setBusy]=useState(false);
   const [status,setStatus]=useState("");
   const [sampleMode,setSampleMode]=useState(false);
@@ -105,7 +121,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   const audio=bundle?.plan.sound.find(x=>x.shotId===shotId);
   const phase=bundle?.plan.teachingSequences?.flatMap(x=>x.phases).find(x=>x.shotId===shotId);
   const acceptProject=useCallback((d:Dossier,b:Bundle,source:"sample"|"topic"="topic",artifactId:string|null=null,storyboardSha:string|null=null)=>{
-    setDossier(d);setBundle(b);setRevisions([]);setSampleMode(source==="sample");setSourceArtifactId(artifactId);
+    setDossier(d);setBundle(b);setRevisions([]);setHistory({undo:[],redo:[]});setSampleMode(source==="sample");setSourceArtifactId(artifactId);
     setSourceStoryboardSha(storyboardSha);setSyncReport(null);
     // "Edit video scenes" must open the editable shot controls. Voice and
     // export deep links open rendering controls; the preview stays one click
@@ -200,6 +216,19 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     }
     return ()=>{if(warningTimer!==undefined)clearTimeout(warningTimer);};
   },[projectId,sourceArtifactId,sourceStoryboardSha,dossier,bundle]);
+  useEffect(()=>{
+    if(!bundle||!dossier||stage!=="storyboard")return;
+    let active=true;
+    void previewScene(dossier,bundle).then(value=>{
+      if(!active)return;
+      const preview=value as unknown as LiveVisualPreviewData;
+      if(preview.kind!=="live-renderer-preview/v1"||!Array.isArray(preview.shotMap))
+        throw Error("The saved scene cannot be previewed by Kumiki.");
+      setQuickPreview(preview);setQuickPreviewError("");
+    }).catch(error=>{if(active){setQuickPreview(null);
+      setQuickPreviewError(error instanceof Error?error.message:"Scene preview unavailable.");}});
+    return()=>{active=false;};
+  },[dossier,bundle,stage]);
   async function importProject(file:File|undefined){
     if(!file)return;
     try{
@@ -228,7 +257,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     try{const x=await loadJson(file) as unknown as Bundle;
       if(x.kind!=="preproduction-bundle"||!x.plan?.shots?.length)
         throw Error("Expected a preproduction-bundle/v1 JSON file.");
-      setBundle(x);setRevisions([]);setShotId(x.plan.shots[0].id);
+      setBundle(x);setRevisions([]);setHistory({undo:[],redo:[]});setShotId(x.plan.shots[0].id);
       setDraft(shotDraft(x,x.plan.shots[0].id));
       setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");
       setStatus("Preproduction bundle loaded. Select a shot to revise.");
@@ -241,7 +270,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
       setStatus("Save or discard your scene edits before choosing another scene. Your changes are still here.");
       return;
     }
-    setShotId(id);setDraft(shotDraft(bundle,id));
+    setShotId(id);setDraft(shotDraft(bundle,id));setPreviewPercent(35);
     setVariants([]);setVoiceVariant("");setVisualVariant("");setSoundVariant("");setStatus("");
     if(focusEditor){
       setStage("storyboard");
@@ -261,23 +290,25 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   }
   function changes(){
     if(!shot||!audio)return {};
-    const result:Record<string,string|null|VisualElement[]>={};
+    const result:Record<string,string|null|VisualElement[]|number>={};
     if(draft.narration!==audio.narration)result.narration=draft.narration;
     if(draft.family!==(shot.family??"process"))result.family=draft.family;
     if(draft.onScreenText!==shot.onScreenText)result.onScreenText=draft.onScreenText;
     if(draft.visualChange!==shot.visualChange)result.visualChange=draft.visualChange;
     if(draft.visualAction!==(phase?.visualAction??shot.visualChange))result.visualAction=draft.visualAction;
     if(draft.sfxIntent!==(audio.sfxIntent??""))result.sfxIntent=draft.sfxIntent||null;
+    if(draft.pauseAfterMs!==(audio.pauseAfterMs??160))result.pauseAfterMs=draft.pauseAfterMs;
     const savedText=shot.visualElements?.map(item=>item.label+" | "+item.detail).join("\n")??"";
     if(draft.visualElementsText.trim()!==savedText.trim())
       result.visualElements=parseElementsInput(draft.visualElementsText);
     return result;
   }
-  async function apply(changed:Record<string,string|null|VisualElement[]>){
+  async function apply(changed:Record<string,string|null|VisualElement[]|number>){
     if(!bundle||!dossier||!shot)return;
     setBusy(true);setStatus("");
     try{
       const result=await request("edit",{bundle,dossier,shotId:shot.id,changes:changed}) as unknown as Revision;
+      setHistory(prev=>({undo:[...prev.undo,{bundle,revisions}].slice(-20),redo:[]}));
       setBundle(result.bundle);
       setDraft(shotDraft(result.bundle,shot.id));
       setRevisions(prev=>[...prev,{shotId:shot.id,impacts:result.impacts}]);
@@ -290,6 +321,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     setBusy(true);setStatus("");
     try{
       const result=await request("edit",{bundle,dossier,shotId:id,changes:{motion}}) as unknown as Revision;
+      setHistory(prev=>({undo:[...prev.undo,{bundle,revisions}].slice(-20),redo:[]}));
       setBundle(result.bundle);
       setRevisions(prev=>[...prev,{shotId:id,impacts:result.impacts}]);
       setStatus("Scene motion saved. Only its visual segment needs rebuilding; narration remains reusable.");
@@ -320,7 +352,8 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
     draft.narration!==audio.narration||draft.onScreenText!==shot.onScreenText||
     draft.family!==(shot.family??"process")||
     draft.visualChange!==shot.visualChange||draft.visualAction!==(phase?.visualAction??shot.visualChange)||
-    draft.sfxIntent!==(audio.sfxIntent??"")||draft.visualElementsText.trim()!==visualTextSaved.trim());
+    draft.sfxIntent!==(audio.sfxIntent??"")||draft.pauseAfterMs!==(audio.pauseAfterMs??160)||
+    draft.visualElementsText.trim()!==visualTextSaved.trim());
   function navigate(target:DirectorStage){
     const result=resolveDirectorNavigation({current:stage,target,unsaved:dirty});
     if(result.blocked){setStatus(result.message);return;}
@@ -330,6 +363,18 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
   function discardEdits(){
     if(bundle)setDraft(shotDraft(bundle,shotId));
     setStatus("Unsaved scene edits discarded. The saved storyboard is unchanged.");
+  }
+  function travelHistory(direction:"undo"|"redo"){
+    if(!bundle||busy||dirty)return;
+    const stack=history[direction];
+    if(!stack.length)return;
+    const previous=stack.at(-1)!;
+    const opposite=direction==="undo"?"redo":"undo";
+    setHistory(current=>({...current,[direction]:current[direction].slice(0,-1),
+      [opposite]:[...current[opposite],{bundle,revisions}].slice(-20)}));
+    setBundle(previous.bundle);setRevisions(previous.revisions);
+    setDraft(shotDraft(previous.bundle,shotId));setRecheckToken(value=>value+1);
+    setStatus(direction==="undo"?"Last saved scene change undone.":"Saved scene change restored.");
   }
   const nextStage=nextDirectorStage(stage) as DirectorStage|null;
   const usable=!!dossier&&!!bundle&&dossier.id===bundle.researchId&&!!shot;
@@ -432,11 +477,52 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-lg font-semibold">Shape your story</h2>
               <p className="mt-1 text-sm text-muted-foreground">Work on one scene at a time. Save its edits before choosing another.</p></div>
-            {dirty&&<div className="flex flex-wrap items-center gap-2 rounded-control border border-amber-400/40 bg-amber-400/5 px-3 py-2">
-              <span className="text-xs font-semibold text-foreground">Unsaved scene edits</span>
-              <Button size="sm" variant="outline" disabled={busy} onClick={discardEdits}>Discard unsaved edits</Button>
-            </div>}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" icon={<Undo2 className="size-4"/>}
+                disabled={busy||dirty||history.undo.length===0} onClick={()=>travelHistory("undo")}>Undo saved edit</Button>
+              <Button size="sm" variant="outline" icon={<Redo2 className="size-4"/>}
+                disabled={busy||dirty||history.redo.length===0} onClick={()=>travelHistory("redo")}>Redo</Button>
+              {dirty&&<div className="flex flex-wrap items-center gap-2 rounded-control border border-amber-400/40 bg-amber-400/5 px-3 py-2">
+                <span className="text-xs font-semibold text-foreground">Unsaved scene edits</span>
+                <Button size="sm" variant="outline" disabled={busy} onClick={discardEdits}>Discard unsaved edits</Button>
+              </div>}
+            </div>
           </div>
+          <div className="flex gap-2 overflow-x-auto pb-2" role="group" aria-label="Scene timeline">
+            {bundle.plan.shots.map((scene,index)=>{
+              const selected=scene.id===shotId;
+              const affected=revisions.some(item=>item.shotId===scene.id);
+              return <button key={scene.id} type="button" onClick={()=>chooseShot(scene.id)}
+                aria-pressed={selected} aria-label={`Scene ${index+1}: ${scene.onScreenText}${affected?", edited":""}`}
+                className={`min-w-36 max-w-52 flex-1 rounded-control border px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected?
+                  "border-primary bg-primary/10 text-foreground":"border-border bg-surface hover:border-primary/40"}`}>
+                <span className="block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Scene {String(index+1).padStart(2,"0")}{affected?" · Edited":""}</span>
+                <span className="mt-1 block truncate text-sm font-medium">{scene.onScreenText}</span>
+              </button>;
+            })}
+          </div>
+          <Surface header={<h2 className="font-medium">Selected scene · live preview</h2>}>
+            {quickPreview?.shotMap.some(item=>item.shotId===shotId)?(()=>{
+              const chapter=quickPreview.shotMap.find(item=>item.shotId===shotId)!;
+              const frame=chapter.startFrame+Math.floor(Math.max(0,chapter.endFrame-chapter.startFrame-1)*previewPercent/100);
+              return <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(14rem,1fr)]">
+                <div className="min-w-0 overflow-hidden rounded-control border border-border bg-surface-subtle">
+                  <Suspense fallback={<p role="status" className="p-5 text-sm">Loading the scene renderer…</p>}>
+                    <RendererScene plan={quickPreview.plan} frame={frame}/>
+                  </Suspense>
+                </div>
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold">{shot?.onScreenText}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">Preview uses the same Kumiki scene as export. Timing is estimated until voice generation.</p>
+                  <label className="block text-xs font-medium text-muted-foreground">Scrub selected scene · {previewPercent}%
+                    <input className="mt-2 block w-full accent-primary" aria-label="Scrub selected scene" type="range" min="0" max="100" step="5"
+                      value={previewPercent} onChange={e=>setPreviewPercent(Number(e.target.value))}/>
+                  </label>
+                  <Button size="sm" variant="outline" onClick={()=>navigate("preview")}>Open full video preview</Button>
+                </div>
+              </div>;
+            })():<p role="status" className="text-sm text-muted-foreground">{quickPreviewError||"Preparing this scene’s visual preview…"}</p>}
+          </Surface>
         <Surface header={<h2 className="font-medium">Scene editor</h2>}>
           <div className="flex flex-col gap-3">
             <label className={header}>Selected shot
@@ -474,6 +560,12 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
                 </label>
                 <label className={header}>On-screen text<input className={field+" mt-2"} maxLength={240} aria-label="Edit on-screen text" value={draft.onScreenText} onChange={e=>setDraft({...draft,onScreenText:e.target.value})}/></label>
                 <label className={header}>Sound effect intent (optional)<input className={field+" mt-2"} maxLength={250} aria-label="Edit sound effect intent" value={draft.sfxIntent} onChange={e=>setDraft({...draft,sfxIntent:e.target.value})}/></label>
+                <label className={header}>Pause after this scene (milliseconds)
+                  <input className={field+" mt-2"} type="number" min={0} max={3000} step={50}
+                    aria-label="Scene pause duration" value={draft.pauseAfterMs}
+                    onChange={e=>setDraft({...draft,pauseAfterMs:Number(e.target.value)})}/>
+                  <span className="mt-1 block text-xs font-normal normal-case tracking-normal text-muted-foreground">0–3000 ms. Changes pacing and adjusts later scene timing without regenerating this scene’s voice.</span>
+                </label>
               </div>
             </div>
             <Button icon={<Save className="size-4"/>} disabled={busy||!dirty}
@@ -524,7 +616,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
               <p>Revised shots: {revisions.length} · New narration: {[...mergedImpact.speech].join(", ")||"none"}</p>
               <p>Rerender visuals: {[...mergedImpact.visuals].join(", ")||"none"} · Remix sound: {[...mergedImpact.sfx].join(", ")||"none"}</p>
               <p>Retiming required from: {[...mergedImpact.shifted].join(", ")||"none"}</p>
-              <p className="text-xs text-muted-foreground">Unchanged narration beats can reuse ContentGen's content-addressed TTS cache. This editor produces an invalidation manifest and revised preproduction bundle; it does not yet synthesize partial WAVs or export partial MP4 clips.</p>
+              <p className="text-xs text-muted-foreground">Unchanged narration is kept and valid video scenes can be reused during the next draft export. A timing change may also move later scenes.</p>
               <div className="flex flex-wrap gap-2">
                 <Button icon={<Download className="size-4"/>} onClick={()=>downloadJson("contentgen-revised-preproduction.json",bundle)}>
                   Export revised bundle

@@ -176,6 +176,17 @@ describe("PlatformOptimization", () => {
     expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toHaveValue("The hidden tax bill");
   });
 
+  it("shows a real generated PNG in the Publish Kit asset picker without overwriting the editable cover",()=>{
+    const thumbnail={id:"thumbnail-run-3",kind:"thumbnail" as const,platform:"youtube" as const,
+      filename:"thumbnail-3.png",downloadUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/thumbnail-3.png"};
+    render(<PlatformOptimization input={{...input,assets:[...(input.assets??[]),thumbnail]}}/>);
+    fireEvent.change(screen.getByRole("combobox",{name:"Thumbnail / cover"}),
+      {target:{value:thumbnail.id}});
+    expect(screen.getByRole("img",{name:"thumbnail-3.png exported production thumbnail"}))
+      .toHaveAttribute("src",thumbnail.downloadUrl);
+    expect(screen.getByRole("textbox",{name:"Thumbnail headline"})).toBeInTheDocument();
+  });
+
   it("keeps a pinned concept while refreshing untouched concepts from the rewritten script",()=>{
     const view=render(<PlatformOptimization input={{...input,scriptSections:[
       {id:"first",heading:"Roof maintenance",text:"First draft."},

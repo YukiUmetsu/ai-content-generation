@@ -228,9 +228,19 @@ function orderNodes(nodes: JobNode[], edges: JobEdge[]): JobNode[] {
   return [...ordered, ...remaining];
 }
 
-/** Map opaque node ids to their operator-facing keys, falling back to the id. */
+const productionStageLabels:Record<string,string>={
+  "scene-plan":"Prepare scene plan","visual-planning":"Prepare visual layouts",
+  "asset-search":"Find suitable imagery","asset-preparation":"Prepare scene assets",
+  narration:"Generate narration",timeline:"Synchronize scene timing",
+  "sound-mix":"Mix audio",captions:"Create captions",
+  "scene-render":"Render video scenes",thumbnails:"Create three thumbnails",
+  "final-mux":"Assemble final video","technical-qa":"Check video quality",
+  "export-package":"Save video and publishing files",
+};
+const friendlyStage=(key:string)=>productionStageLabels[key]??key;
+/** Map opaque node ids to operator-facing stage names, falling back to the id. */
 function nodeLabel(nodes: JobNode[], nodeId: string): string {
-  return nodes.find((node) => node.id === nodeId)?.nodeKey ?? nodeId;
+  return friendlyStage(nodes.find((node) => node.id === nodeId)?.nodeKey ?? nodeId);
 }
 
 /** Compact list identity: the last 12 characters, with the full id in `title`. */
@@ -833,8 +843,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                     <p className="font-medium text-foreground">{translate(locale, "jobsFailureSummary")}</p>
                     <p className="break-words text-sm text-foreground">
                       <span className="text-muted-foreground">{translate(locale, "jobsFailureNode")}: </span>
-                      <span className="font-mono">{failure.node.nodeKey}</span>{" "}
-                      <span className="text-muted-foreground">({failure.node.nodeKind})</span>
+                      <span>{friendlyStage(failure.node.nodeKey)}</span>
                     </p>
                     {failure.errorCode && (
                       <p className="break-all text-sm text-danger">
@@ -1163,7 +1172,7 @@ function NodeCard({
     <Surface variant="solid">
       <div className="grid min-w-0 gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="break-words font-medium text-foreground">{node.nodeKey}</span>
+          <span className="break-words font-medium text-foreground">{friendlyStage(node.nodeKey)}</span>
           <span
             className={`rounded-full border px-2 py-0.5 text-sm font-medium ${stateBadgeClasses(node.state)}`}
             title={node.state}
@@ -1172,7 +1181,6 @@ function NodeCard({
           </span>
         </div>
         <p className="break-words text-sm text-muted-foreground">
-          {node.nodeKind} ·{" "}
           {translate(locale, "jobsAttemptsUsed", {
             used: node.attemptCount,
             max: node.maxAttempts,
