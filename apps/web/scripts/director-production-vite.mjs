@@ -998,7 +998,7 @@ export function createDirectorProduction(deps={}){
           status={...status,state:report.ready?"ready":"blocked",phase:"preflight",
             message:report.ready?"Ready to render an unverified test draft.":"Resolve the readiness findings below.",report};
           respond(res,200,{ready:report.ready,report,warnings:compiled.warnings,
-            sfxSummary:approvedSfx.sfxSummary});
+            sfxSummary:approvedSfx.sfxSummary,characterRigs:characterRigPacks.identity});
         }finally{busy=false;}
         return;
       }
