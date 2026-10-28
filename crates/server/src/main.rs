@@ -47,7 +47,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("contentgen-server: listening on http://{bind}");
     let state = AppState::new(db_path);
     let collector = contentgen_server::research::market_worker::spawn(state.clone());
+    let recovery = contentgen_server::jobs::recovery_worker::spawn(state.clone());
     let result = axum::serve(listener, build_router(state)).await;
+    recovery.abort();
     collector.abort();
     result?;
     Ok(())

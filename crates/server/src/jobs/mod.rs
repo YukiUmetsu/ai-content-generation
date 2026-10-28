@@ -1,6 +1,7 @@
 //! Jobs/artifact lane: persistent DAG scheduler plus content-addressed store.
 
 pub mod error;
+pub mod recovery_worker;
 pub mod scheduler;
 pub mod store;
 

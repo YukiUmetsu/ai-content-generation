@@ -581,6 +581,15 @@ pub fn reconcile_stale_video_attempts(
     reconcile_attempts(conn, Some(job_id), true)
 }
 
+/// The background recovery sweep uses the same transactional eligibility
+/// checks as an explicit worker retry. It touches only expired video attempts;
+/// successful work and non-video Jobs are never rearmed by this sweep.
+pub fn reconcile_all_stale_video_attempts(
+    conn: &mut Connection,
+) -> Result<Vec<ReconciledAttempt>, JobsError> {
+    reconcile_attempts(conn, None, true)
+}
+
 fn reconcile_attempts(
     conn: &mut Connection,
     job_id: Option<&str>,
