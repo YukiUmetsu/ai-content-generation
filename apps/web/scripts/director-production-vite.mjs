@@ -6,6 +6,7 @@ import { constants, createReadStream, readFileSync } from "node:fs";
 import { link, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { compilePreproductionRenderJob } from "./video-production/preproduction-render-bridge.mjs";
 import { resolveAndBindApprovedSfx } from "./video-production/sfx-render-bindings.mjs";
@@ -29,6 +30,7 @@ import { withAutomaticApprovedMedia } from "./video-production/automatic-approve
 import { productionProviderKey } from "./video-production/provider-keychain.mjs";
 import { renderSelectedSceneClip } from "./video-production/scene-clip.mjs";
 import { withSceneClipJob } from "./video-production/scene-clip-jobs.mjs";
+import {listRecoveryIntents,reserveRecoveryAttempt,writeRecoveryIntent} from "./video-production/recovery-intent.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
@@ -57,7 +59,8 @@ function renderFailure(phase,error){
   return{code,message};
 }
 function persistedFailure(job){
-  const failing=job?.nodes?.find(node=>node.state==="FAILED"&&typeof node.errorCode==="string");
+  const failing=job?.nodes?.find(node=>["FAILED","READY"].includes(node.state)&&
+    typeof node.errorCode==="string");
   if(failing?.errorCode==="disk_full")return renderFailure("",Error("ENOSPC"));
   for(const [phase,[code,message]] of Object.entries(failureRecovery)){
     if(failing?.errorCode===code)return{code,message,phase};
@@ -335,7 +338,10 @@ export function createDirectorProduction(deps={}){
     }
     const byRun=new Map(previous.map(item=>[item.runId,item]));
     for(const item of records)byRun.set(item.runId,item);
-    return [...byRun.values()].sort((a,b)=>a.createdAt-b.createdAt||a.runId.localeCompare(b.runId)).slice(-100);
+    // The legacy monolithic index is capped at 100, but immutable per-release
+    // records must not disappear globally after 100 unrelated exports: they
+    // authorize second-version confirmation and make old media discoverable.
+    return [...byRun.values()].sort((a,b)=>a.createdAt-b.createdAt||a.runId.localeCompare(b.runId));
   }
   async function recordMedia(runId,productionId,sourceRevision,manifestHash){
     await readMediaIndex(); // Preserve invalid historical data; never overwrite it.
@@ -546,14 +552,20 @@ export function createDirectorProduction(deps={}){
           respond(res,200,{...status,state:"idle"});return;
         }
         const state=persisted.job.state;
+        const liveClaim=persisted.nodes?.some(node=>node.state==="RUNNING")===true;
+        const interrupted=persisted.nodes?.some(node=>node.state==="READY"&&
+          ["worker_lease_expired","orphaned_after_restart"].includes(node.errorCode))===true;
+        // A RUNNING *job* is not evidence of a RUNNING *worker*: ordinary
+        // failed attempts can leave their node READY for explicit retry.
+        const waitingForRecovery=state==="RUNNING"&&(liveClaim||interrupted);
         const recovery=state==="CANCELLED"?{
           state:"cancelled",message:"The previous draft was cancelled. Generate a new draft to continue."}:
           state==="SUCCEEDED"?{
             state:"failed",message:"The last draft finished, but its saved video could not be found. Check your local output folder in Jobs."}:
-          state==="RUNNING"?{
+          waitingForRecovery?{
             state:"rendering",message:"A previous draft is tracked in Jobs and recovering after interruption. Check Jobs for the current stage."}:
           {state:"failed",message:persistedFailure(persisted).message};
-        respond(res,200,{...recovery,phase:state==="RUNNING"?"recovering":"production",progress:null,report:null,
+        respond(res,200,{...recovery,phase:waitingForRecovery?"recovering":"production",progress:null,report:null,
           jobId:persisted.job.id,mediaUrl:null,regeneration:null});return;
       }
       if(req.method==="GET"&&route==="/narration-sample/status"){
@@ -917,6 +929,14 @@ export function createDirectorProduction(deps={}){
         controller=abort;
         activeJobTracker=tracker;
         try {
+          if(input.productionId){
+            // Persist the exact, nonsecret authorized intent before claiming
+            // Jobs or launching any provider/media work.
+            await writeRecoveryIntent(outputRoot,runId,{productionId:input.productionId,
+              sourceRevision:input.sourceRevision??null,revision:identity,
+              autoRecover:req.__contentgenRecovery!==true,
+              request:{...input,sourceRevision:input.sourceRevision??null}});
+          }
           if(tracker){
             trackedJobId=await tracker.start({productionId:input.productionId,
               revision:identity,runId,sourceRevision:input.sourceRevision??null,
@@ -1125,13 +1145,113 @@ export function createDirectorProduction(deps={}){
       respond(res,422,{error:redact(error?.message||"Production request failed").slice(0,280)});
     }
   }
-  return {handle,status:()=>status};
+  async function localAction(route,payload){
+    // Drive the same validated check/start paths as a browser click. This
+    // private request marker is never accepted from network-supplied headers.
+    const req=Readable.from([Buffer.from(JSON.stringify(payload))]);
+    Object.assign(req,{method:"POST",url:route,__contentgenRecovery:true,headers:{
+      host:"127.0.0.1:5173",origin:"http://127.0.0.1:5173",
+      "x-contentgen-director":"local-only"}});
+    let code=0,body="";
+    const res={writeHead(statusCode){code=statusCode;},end(data){body+=String(data??"");},destroy(){}};
+    await handle(req,res);
+    let data;
+    try{data=JSON.parse(body);}catch{data={error:"Recovery response was unreadable."};}
+    return{code,data};
+  }
+  async function recoverEligible(){
+    if(busy)return 0;
+    let intents;
+    try{intents=await listRecoveryIntents(outputRoot);}
+    catch{status={...status,state:"failed",phase:"recovery",
+      message:"Stored draft recovery information is unavailable. Inspect the output folder and Jobs."};return 0;}
+    const seen=new Set();
+    for(const intent of intents){
+      const key=intent.productionId+":"+intent.revision;
+      if(seen.has(key))continue;
+      seen.add(key); // Never restart an older attempt over its continuation.
+      if(!intent.autoRecover)continue;
+      let persisted;
+      try{persisted=await latestProductionJob(intent.productionId);}
+      catch{continue;} // Rust might still be starting; the startup loop retries.
+      const source=persisted?.nodes?.find(node=>node.nodeKey==="scene-plan")?.input;
+      // Historical attempts can include an earlier lease loss followed by a
+      // genuinely failed manual retry. Only the *current* recoverable node
+      // authorizes unattended replay; attempt history is not a replay token.
+      const interrupted=persisted?.nodes?.some(node=>
+        ["READY","FAILED"].includes(node.state)&&
+        ["worker_lease_expired","orphaned_after_restart"].includes(node.errorCode));
+      if(persisted?.job?.jobKind!=="video-production"||
+        source?.sourceRevision!==intent.sourceRevision||source?.revision!==intent.revision||
+        !interrupted||
+        ["SUCCEEDED","CANCELLED"].includes(persisted.job.state)||
+        persisted.job.state==="RUNNING"&&persisted.nodes?.some(node=>node.state==="RUNNING"))
+        continue;
+      const settings=intent.request.settings;
+      if(settings.provider==="fish"){
+        let key="";
+        try{key=await providerKey("fish",{env});}catch{/* Missing Keychain is actionable. */}
+        if(!key||settings.voiceConsent!==true||settings.transmitText!==true){
+          status={state:"failed",phase:"recovery",productionId:intent.productionId,
+            sourceRevision:intent.sourceRevision,jobId:persisted.job.id,progress:null,report:null,
+            message:"Fish Audio API key or script/voice authorization is missing. Save the key in Settings → Connections, then retry the draft."};
+          continue;
+        }
+      }else if(settings.localVoiceAuthorized!==true){
+        status={state:"failed",phase:"recovery",productionId:intent.productionId,
+          sourceRevision:intent.sourceRevision,jobId:persisted.job.id,progress:null,report:null,
+          message:"Local voice authorization is missing. Reauthorize the narrator and retry the draft."};
+        continue;
+      }
+      const payload={...intent.request};
+      if(payload.sourceRevision===null)delete payload.sourceRevision;
+      const preflight=await localAction("/check",payload);
+      if(preflight.code!==200||preflight.data?.report?.ready!==true||
+        checked?.identity!==intent.revision){
+        status={state:"failed",phase:"recovery",productionId:intent.productionId,
+          sourceRevision:intent.sourceRevision,jobId:persisted.job.id,progress:null,report:null,
+          message:preflight.code!==200?"Draft recovery preflight failed. Check voice setup, Chromium and FFmpeg, then retry in Jobs.":
+            "Draft recovery input changed or local tools are unavailable. Review the saved scene and retry."};
+        continue;
+      }
+      // A temporary browser/FFmpeg outage has performed no production work;
+      // do not spend the one automatic replay on a failed readiness check.
+      // Once ready, reserve atomically *before* the Jobs/producer claim.
+      if(!await reserveRecoveryAttempt(outputRoot,intent.runId))continue;
+      const started=await localAction("/start",{...payload,confirmRender:true,
+        confirmUpdatedVersion:intent.request.confirmUpdatedVersion===true});
+      if(started.code!==202){
+        status={state:"failed",phase:"recovery",productionId:intent.productionId,
+          sourceRevision:intent.sourceRevision,jobId:persisted.job.id,progress:null,report:null,
+          message:"The persisted draft could not reclaim its Jobs attempt. Inspect Jobs and retry safely."};
+        continue;
+      }
+      return 1;
+    }
+    return 0;
+  }
+  async function recover(){
+    try{return await recoverEligible();}
+    catch{
+      status={...status,state:"failed",phase:"recovery",
+        message:"Draft recovery could not read or reserve its saved attempt. Review Jobs and retry the draft."};
+      return 0;
+    }
+  }
+  return {handle,status:()=>status,recover};
 }
 export function directorProductionPlugin(){
   const worker=createDirectorProduction();
+  function mountRecovery(server){
+    void worker.recover();
+    const timer=setInterval(()=>void worker.recover(),30_000);timer.unref?.();
+    (server.httpServer??server.previewServer)?.once("close",()=>clearInterval(timer));
+  }
   return {name:"contentgen-director-video-production",
-    configureServer(server){server.middlewares.use("/api/contentgen-video",(req,res)=>{void worker.handle(req,res);});},
-    configurePreviewServer(server){server.middlewares.use("/api/contentgen-video",(req,res)=>{void worker.handle(req,res);});}
+    configureServer(server){server.middlewares.use("/api/contentgen-video",(req,res)=>{void worker.handle(req,res);});
+      mountRecovery(server);},
+    configurePreviewServer(server){server.middlewares.use("/api/contentgen-video",(req,res)=>{void worker.handle(req,res);});
+      mountRecovery(server);}
   };
 }
 

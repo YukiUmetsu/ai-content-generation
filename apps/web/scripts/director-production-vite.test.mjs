@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, readdir, readFile, writeFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import { Readable, Writable } from "node:stream";
 import { once } from "node:events";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
 import { createDirectorProduction, configureRenderJob } from "./director-production-vite.mjs";
+import {listRecoveryIntents} from "./video-production/recovery-intent.mjs";
 
 const fixture=name=>JSON.parse(readFileSync(new URL("../../../examples/"+name,import.meta.url),"utf8"));
 const inputs=()=>{
@@ -720,7 +721,8 @@ test("restart reports the matching durable video job without inventing completed
   t.after(()=>rm(dir,{recursive:true,force:true}));
   const productionId="production-"+"c".repeat(24);
   const latestProductionJob=async()=>({job:{id:"job-persisted",jobKind:"video-production",state:"RUNNING"},
-    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"revision-2"}}]});
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"revision-2"}},
+      {nodeKey:"scene-render",id:"node-running",state:"RUNNING"}]});
   const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob});
   const recovered=await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-2");
   assert.equal(recovered.status,200);assert.equal(recovered.data.state,"rendering");
@@ -730,6 +732,38 @@ test("restart reports the matching durable video job without inventing completed
   assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=revision-3")).data.state,"idle");
   assert.equal((await invoke(restarted,"GET","/status/../../invalid")).status,404);
   assert.equal((await invoke(restarted,"GET","/status/"+productionId+"?sourceRevision=bad%0Avalue")).status,422);
+});
+
+test("a rearmed ordinary failure is retryable rather than shown as a worker rendering forever",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-restart-ready-failure-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"c".repeat(24);
+  const worker=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>({
+    job:{id:"job-ready-failed",jobKind:"video-production",state:"RUNNING"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"script"}},
+      {nodeKey:"scene-render",id:"node-render",state:"READY",errorCode:"scene_render_failed"}],
+    attempts:[{nodeId:"node-render",state:"FAILED",errorCode:"scene_render_failed"}]
+  })});
+  const result=await invoke(worker,"GET",`/status/${productionId}?sourceRevision=script`);
+  assert.equal(result.data.state,"failed");
+  assert.equal(result.data.jobId,"job-ready-failed");
+  assert.match(result.data.message,/scene rendering failed.*retry/i);
+});
+
+test("older completed releases still require confirmation after 100 unrelated exports",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-older-version-policy-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const records=join(dir,"production-media-records-v1");await mkdir(records);
+  const oldId="production-"+"c".repeat(24),otherId="production-"+"d".repeat(24);
+  for(let index=0;index<102;index++){
+    const runId=randomUUID(),record={runId,productionId:index===0?oldId:otherId,
+      sourceRevision:null,createdAt:1_800_000_000_000+index,manifestHash:null};
+    await writeFile(join(records,runId+".json"),JSON.stringify({version:1,record}));
+  }
+  const worker=createDirectorProduction({outputRoot:dir});
+  const older=await invoke(worker,"GET","/version-policy/"+oldId);
+  assert.equal(older.status,200);
+  assert.deepEqual(older.data,{requiresConfirmation:true,completedVersions:1});
 });
 
 test("restart shows the exact safe failed Jobs step rather than a generic interruption",async t=>{
@@ -748,6 +782,165 @@ test("restart shows the exact safe failed Jobs step rather than a generic interr
   assert.equal(restored.data.jobId,"job-failed-disk");
   assert.match(restored.data.message,/disk space/i);
   assert.match(restored.data.message,/retry/i);
+});
+
+test("a restarted coordinator claims and finishes one previously authorized full draft",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-auto-resurrect-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"a".repeat(24),payload={...inputs(),settings:config,
+    productionId,sourceRevision:"saved-script"};
+  let failures=0;
+  const initial=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-interrupted",advance:async()=>{},complete:async()=>{},
+      fail:async()=>{failures++;},cancel:async()=>{}}),
+    produce:async()=>{throw Error("Simulated process termination");}});
+  await invoke(initial,"POST","/check",payload);
+  assert.equal((await invoke(initial,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&initial.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(failures,1);
+  const [saved]=await listRecoveryIntents(dir);
+  assert.equal(saved?.request.settings.localVoiceAuthorized,true);
+  assert.equal(saved?.request.settings.apiKey,undefined);
+  const latestProductionJob=async()=>({job:{id:"job-interrupted",state:"RUNNING",jobKind:"video-production"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"saved-script",revision:saved.revision}},
+      {id:"node-narration",nodeKey:"narration",state:"READY",errorCode:"worker_lease_expired"}],
+    attempts:[{nodeId:"node-narration",state:"FAILED",errorCode:"worker_lease_expired"}]});
+  let resumed=0;
+  const options={outputRoot:dir,findBrowser:async()=>"/mock/chromium",build:async()=>{},
+    inspect:async()=>({ready:true,findings:[]}),latestProductionJob,
+    jobTracker:()=>({priorRunId:saved.runId,start:async()=>"job-interrupted",advance:async()=>{},
+      complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,request)=>{
+      resumed++;
+      const releaseDir=join(request.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"completed after restart");return{releaseDir};
+    }};
+  const a=createDirectorProduction(options),b=createDirectorProduction(options);
+  const claimed=await Promise.all([a.recover(),b.recover()]);
+  assert.deepEqual(claimed.sort(),[0,1],"a durable reservation prevents duplicate automatic recovery");
+  for(let i=0;i<40&&!([a.status().state,b.status().state].includes("done"));i++)
+    await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(resumed,1);
+  const after=await listRecoveryIntents(dir);
+  assert.equal(after.filter(item=>item.autoRecover).length,0,"a second restart needs a deliberate retry");
+  const restored=await invoke(createDirectorProduction({outputRoot:dir,latestProductionJob}),"GET",
+    `/status/${productionId}?sourceRevision=saved-script`);
+  assert.equal(restored.data.state,"done");
+});
+
+test("a transient recovery readiness failure does not use up the one automatic restart",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-recovery-preflight-retry-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"b".repeat(24),payload={...inputs(),settings:config,
+    productionId,sourceRevision:"confirmed-script"};
+  const initial=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-preflight",advance:async()=>{},complete:async()=>{},
+      fail:async()=>{},cancel:async()=>{}}),produce:async()=>{throw Error("Simulated stop");}});
+  await invoke(initial,"POST","/check",payload);
+  await invoke(initial,"POST","/start",{...payload,confirmRender:true});
+  for(let i=0;i<40&&initial.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  const [saved]=await listRecoveryIntents(dir);
+  const latestProductionJob=async()=>({job:{id:"job-preflight",state:"RUNNING",jobKind:"video-production"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:payload.sourceRevision,revision:saved.revision}},
+      {nodeKey:"scene-render",id:"node-render",state:"READY",errorCode:"worker_lease_expired"}]});
+  let ready=false,starts=0;
+  const worker=createDirectorProduction({outputRoot:dir,latestProductionJob,
+    findBrowser:async()=>"/mock/chromium",build:async()=>{},
+    inspect:async()=>ready?{ready:true,findings:[]}:{ready:false,findings:[{message:"Chromium unavailable"}]},
+    jobTracker:()=>({start:async()=>{starts++;return "job-preflight";},advance:async()=>{},
+      complete:async()=>{},fail:async()=>{},cancel:async()=>{}}),
+    produce:async(_job,request)=>{
+      const releaseDir=join(request.out,"release");await mkdir(releaseDir,{recursive:true});
+      await writeFile(join(releaseDir,"video.mp4"),"resumed");return{releaseDir};
+    }});
+  assert.equal(await worker.recover(),0);
+  assert.equal(starts,0);
+  assert.equal((await listRecoveryIntents(dir))[0]?.autoRecover,true);
+  ready=true;
+  assert.equal(await worker.recover(),1);
+  assert.equal(starts,1);
+  for(let i=0;i<40&&worker.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(worker.status().state,"done");
+  assert.equal((await listRecoveryIntents(dir))[0]?.autoRecover,false);
+});
+
+test("restart never resurrects a cancelled production or uses missing Fish credentials",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-restart-refused-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"e".repeat(24),settings={...config,provider:"fish",
+    voiceConsent:true,transmitText:true,localVoiceAuthorized:false};
+  const payload={...inputs(),settings,productionId,sourceRevision:"fish-script"};
+  const initial=createDirectorProduction({outputRoot:dir,providerKey:async()=>"initial-test-key",
+    findBrowser:async()=>"/mock/chromium",build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-fish",advance:async()=>{},complete:async()=>{},
+      fail:async()=>{},cancel:async()=>{}}),produce:async()=>{throw Error("Stopped");}});
+  await invoke(initial,"POST","/check",payload);
+  assert.equal((await invoke(initial,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&initial.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  const [saved]=await listRecoveryIntents(dir);
+  const latest=state=>async()=>({job:{id:"job-fish",state,jobKind:"video-production"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"fish-script",revision:saved.revision}},
+      {id:"node-narration",nodeKey:"narration",state:"READY",errorCode:"worker_lease_expired"}],
+    attempts:[{nodeId:"node-narration",errorCode:"worker_lease_expired",state:"FAILED"}]});
+  let voices=0;
+  const cancelled=createDirectorProduction({outputRoot:dir,latestProductionJob:latest("CANCELLED"),
+    providerKey:async()=>{voices++;return "";}});
+  assert.equal(await cancelled.recover(),0);
+  assert.equal(voices,0);
+  const missing=createDirectorProduction({outputRoot:dir,latestProductionJob:latest("FAILED"),
+    providerKey:async()=>{voices++;return "";}});
+  assert.equal(await missing.recover(),0);
+  assert.equal(voices,1);
+  assert.equal(missing.status().state,"failed");
+  assert.match(missing.status().message,/Fish Audio API key.*Settings/i);
+});
+
+test("restart never replays an ordinary failed narration or render attempt automatically",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-no-auto-error-retry-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"f".repeat(24),payload={...inputs(),settings:config,
+    productionId,sourceRevision:"draft-v1"};
+  const initial=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-error",advance:async()=>{},complete:async()=>{},
+      fail:async()=>{},cancel:async()=>{}}),produce:async()=>{throw Error("Scene failed");}});
+  await invoke(initial,"POST","/check",payload);
+  await invoke(initial,"POST","/start",{...payload,confirmRender:true});
+  for(let i=0;i<40&&initial.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  const [saved]=await listRecoveryIntents(dir);
+  let renders=0;
+  const restarted=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>({
+    job:{id:"job-error",state:"FAILED",jobKind:"video-production"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:"draft-v1",revision:saved.revision}},
+      {id:"node-scene",nodeKey:"scene-render",state:"FAILED",errorCode:"scene_render_failed"}],
+    attempts:[{nodeId:"node-scene",state:"FAILED",errorCode:"scene_render_failed"}]}),
+    findBrowser:async()=>"/mock/chromium",build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>{renders++;return "job-error";}})});
+  assert.equal(await restarted.recover(),0);
+  assert.equal(renders,0,"only worker-crash recovery is automatic; scene failures need an explicit retry");
+});
+
+test("an older lease-loss attempt never overrides the latest ordinary render failure",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-history-not-replay-"));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const productionId="production-"+"a".repeat(24),payload={...inputs(),settings:config,
+    productionId,sourceRevision:"draft-after-manual-retry"};
+  const initial=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-history",advance:async()=>{},complete:async()=>{},
+      fail:async()=>{},cancel:async()=>{}}),produce:async()=>{throw Error("Stopped");}});
+  await invoke(initial,"POST","/check",payload);
+  await invoke(initial,"POST","/start",{...payload,confirmRender:true});
+  for(let i=0;i<40&&initial.status().state==="rendering";i++)await new Promise(resolve=>setTimeout(resolve,5));
+  const [saved]=await listRecoveryIntents(dir);
+  let restarted=0;
+  const worker=createDirectorProduction({outputRoot:dir,latestProductionJob:async()=>({
+    job:{id:"job-history",state:"FAILED",jobKind:"video-production"},
+    nodes:[{nodeKey:"scene-plan",input:{sourceRevision:payload.sourceRevision,revision:saved.revision}},
+      {id:"node-render",nodeKey:"scene-render",state:"FAILED",errorCode:"scene_render_failed"}],
+    attempts:[{nodeId:"node-render",attemptNumber:1,state:"FAILED",errorCode:"worker_lease_expired"},
+      {nodeId:"node-render",attemptNumber:2,state:"FAILED",errorCode:"scene_render_failed"}]}),
+    jobTracker:()=>({start:async()=>{restarted++;return "job-history";}})});
+  assert.equal(await worker.recover(),0);
+  assert.equal(restarted,0,"old crash history is not permission to repeat an ordinary failed render");
 });
 
 test("a damaged media index blocks another version before Jobs can start",async t=>{
