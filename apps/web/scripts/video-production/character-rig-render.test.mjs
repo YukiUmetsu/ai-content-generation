@@ -32,8 +32,8 @@ test("real starter ZIPs load as articulated raster definitions with exact image 
     assert.ok(Object.keys(parsed.definition.assets).length>=7);
     assert.ok(parsed.definition.speech.approximateCycle.length>=2);
     for(const asset of Object.values(parsed.definition.assets)){
-      assert.ok(parsed.entries.has(asset.uri));
-      assert.equal(sha(parsed.entries.get(asset.uri).data),asset.sha256);
+      assert.ok(parsed.entries.has(asset.uri.toLowerCase()));
+      assert.equal(sha(parsed.entries.get(asset.uri.toLowerCase()).data),asset.sha256);
     }
   }
 });
@@ -74,7 +74,7 @@ test("rejects wrong project, tampered archive, forged revision and unsafe backen
   }
   await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],origin:"https://evil.example"}),/loopback/);
   const modified=Buffer.from(pip),parsed=readCharacterZip(modified);
-  parsed.entries.get(Object.values(parsed.definition.assets)[0].uri).data[0]^=1;
+  parsed.entries.get(Object.values(parsed.definition.assets)[0].uri.toLowerCase()).data[0]^=1;
   assert.throws(()=>readCharacterZip(modified),/checksum/);
 });
 test("no corrupt or missing saved rig silently falls back to bundled art",async()=>{
