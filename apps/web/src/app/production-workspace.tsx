@@ -52,6 +52,7 @@ interface MediaSnapshot {
   error?:string;
 }
 interface Props {
+  workspaceId?:string|null;
   locale: Locale;
   catalog: StudioCatalog;
   onSelectProject: (projectId:string)=>void;
@@ -143,7 +144,7 @@ export function ProductionWorkspace(props:Props){
   return <ProductionWorkspaceProject key={props.catalog.activeProjectId} {...props}/>;
 }
 function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenJobs,onOpenStoryboard,
-  onOpenVisuals,onOpenAudio,onOpenDraft,onOpenExport,onOpenNav,directorEntry,directorDirty=false,onDirectorDirtyChange}:Props){
+  onOpenVisuals,onOpenAudio,onOpenDraft,onOpenExport,onOpenNav,directorEntry,directorDirty=false,onDirectorDirtyChange,workspaceId="workspace"}:Props){
   const ja=locale==="ja";
   const tr=(en:string,jp:string)=>ja?jp:en;
   const projectId=catalog.activeProjectId;
@@ -631,7 +632,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const contentCard="rounded-surface border border-border bg-surface p-5 sm:p-6";
   const primaryButton="rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
   const secondaryButton="rounded-control border border-border px-4 py-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
-  return <section id="workspace" aria-label={tr("Guided production","制作ガイド")}
+  return <section id={workspaceId??undefined} aria-label={tr("Guided production","制作ガイド")}
     className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="z-10 flex shrink-0 items-center border-b border-border bg-surface-subtle px-3 py-1 lg:px-5">
       <button type="button" onClick={onOpenNav} aria-label={tr("Open navigation","メニューを開く")}

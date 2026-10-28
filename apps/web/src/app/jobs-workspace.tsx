@@ -387,6 +387,8 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   const visitedMobileDetailRef = useRef(false);
   const workspaceRef = useRef<HTMLElement | null>(null);
 
+  useEffect(()=>{workspaceRef.current?.focus();},[]);
+
   useEffect(() => {
     const workspace = workspaceRef.current;
     if (!workspace) return;
@@ -633,8 +635,9 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
     <section
       ref={workspaceRef}
       id="workspace"
+      tabIndex={-1}
       aria-label={translate(locale, "navJobs")}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
       <SplitPane
         className={`min-h-0 flex-1 !flex flex-col lg:!grid lg:grid-rows-[minmax(0,1fr)]

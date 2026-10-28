@@ -53,6 +53,7 @@ describe("Jobs & QA discovery visibility", () => {
       throw Error(`Unexpected Jobs request: ${path}`);
     });
     const view=render(<JobsWorkspace locale="en"/>);
+    expect(screen.getByRole("region",{name:"Jobs"})).toHaveFocus();
     const list=await screen.findByRole("list",{name:"Jobs"});
     expect(await within(list).findByText("Create draft video")).toBeInTheDocument();
     expect(within(list).getByText("Prepare scene media")).toBeInTheDocument();

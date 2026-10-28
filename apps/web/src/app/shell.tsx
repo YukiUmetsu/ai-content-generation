@@ -35,7 +35,10 @@ export function Shell() {
   const [directorNavigationWarning,setDirectorNavigationWarning]=useState("");
   const [storyboardOwnerId,setStoryboardOwnerId] = useState<string|null>(null);
   const selectSection = (next:SectionId) => {
-    if(directorDirty&&next!==activeSection){
+    const retainedEditorRoute=directorEntry!==null&&
+      (activeSection==="production"||activeSection==="jobs-qa")&&
+      (next==="production"||next==="jobs-qa");
+    if(directorDirty&&next!==activeSection&&!retainedEditorRoute){
       setDirectorNavigationWarning("Save or discard the edited scene in Production before leaving. Your changes have not been lost.");
       return;
     }
@@ -167,6 +170,9 @@ export function Shell() {
   }, [activeSection]);
 
   const activeMeta = FEATURE_METADATA[activeFeatureId];
+  // Keep the in-progress Director alive while inspecting Jobs. The browser's
+  // editor state, selected shot, sound preview and render status stay intact.
+  const keepProductionMounted=activeSection==="production"||(activeSection==="jobs-qa"&&directorEntry!==null);
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-canvas text-foreground">
@@ -201,16 +207,19 @@ export function Shell() {
             Local catalog: {catalogError}. Existing data has not been overwritten.
           </div>
         )}
-        {directorDirty&&directorNavigationWarning&&activeSection==="production"&&<div role="alert" className="border-b border-status-warning/40 bg-surface-subtle px-4 py-2 text-sm text-status-warning">{directorNavigationWarning}</div>}
+        {directorDirty&&directorNavigationWarning&&(activeSection==="production"||activeSection==="jobs-qa")&&<div role="alert" className="border-b border-status-warning/40 bg-surface-subtle px-4 py-2 text-sm text-status-warning">{directorNavigationWarning}</div>}
         {activeSection !== "create" && activeSection !== "production" && (
           <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
         )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-          {activeSection === "production" ? (
+          {keepProductionMounted&&<div className={activeSection==="production"?
+            "flex min-h-0 min-w-0 flex-1 flex-col":"hidden"}
+            aria-hidden={activeSection!=="production"} inert={activeSection!=="production"}>
             <ProductionWorkspace
               key={catalog.activeProjectId}
               locale={locale}
+              workspaceId={activeSection==="production"?"workspace":null}
               catalog={catalog}
               onSelectProject={(projectId) => {
                 if(projectId!==catalog.activeProjectId&&catalog.projects.some(project=>project.id===projectId)){
@@ -238,7 +247,8 @@ export function Shell() {
               onCreateStoryboard={startEditorialStoryboard}
               onUseVideo={saveVideoIdea}
             />
-          ) : activeSection === "create" ? (
+          </div>}
+          {activeSection === "production" ? null : activeSection === "create" ? (
             <Workspace
               key={storyboardOwnerId??catalog.activeProjectId}
               locale={locale}
