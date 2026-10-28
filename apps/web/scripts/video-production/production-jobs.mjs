@@ -153,8 +153,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!RUN_ID.test(runId))
         throw Error("Production job requires a saved production, revision and run identity.");
       const key="video-production:"+createHash("sha256").update(JSON.stringify({productionId,revision})).digest("hex");
-      const jobKind=kind==="narration-scene"?"video-narration-scene":"video-render-segment";
-      let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
+      let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
         nodes:PRODUCTION_NODES.map((nodeKey,index)=>({nodeKey,nodeKind:`video.${nodeKey}`,
           // A restarted worker reclaims a READY attempt; committed work and
           // immutable content-addressed media can be reused after recovery.
@@ -241,7 +240,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       const key="video-scene:"+createHash("sha256").update(identity).digest("hex");
       if(sceneAttempts.has(key))throw Error("This scene is already claimed by this worker.");
       const input={...sceneScope,kind,sceneId,fingerprint};
-      let data=await request("/api/jobs",{jobKind:"video-production",idempotencyKey:key,
+      const jobKind=kind==="narration-scene"?"video-narration-scene":"video-render-segment";
+      let data=await request("/api/jobs",{jobKind,idempotencyKey:key,
         nodes:[{nodeKey:kind,nodeKind:`video.${kind}`,maxAttempts:3,input,dependsOn:[]}]});
       if(data.created!==true&&["FAILED","CANCELLED"].includes(data.job?.state)){
         data=await request(`/api/jobs/${data.job.id}/retry`,{});
