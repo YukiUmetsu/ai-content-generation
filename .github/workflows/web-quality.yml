@@ -61,7 +61,7 @@ jobs:
       # No Fish Audio key, paid TTS or external asset retrieval is involved.
       - name: Install Chromium and FFmpeg for visual animation QA
         run: |
-          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright-core install --with-deps chromium
           sudo apt-get install -y ffmpeg
 
       - name: Verify saved Pip and Quill animation in real Chromium
