@@ -27,7 +27,12 @@ function validateIntent(runId,intent){
   const settings=Object.fromEntries(["provider","voiceId","providerRevision","modelId",
     "endpoint","localVoiceAuthorized","voiceConsent","transmitText"]
     .filter(key=>Object.hasOwn(raw,key)).map(key=>[key,raw[key]]));
+  const characterProjectId=intent.request.characterProjectId;
+  if(characterProjectId!==undefined&&
+    (typeof characterProjectId!=="string"||!/^[A-Za-z0-9_-]{1,120}$/.test(characterProjectId)))
+    throw Error("Recovery Character Studio project identity is invalid.");
   const request={productionId:intent.productionId,sourceRevision:intent.sourceRevision,
+    ...(characterProjectId===undefined?{}:{characterProjectId}),
     dossier:intent.request.dossier,bundle:intent.request.bundle,settings,
     // Preserve the exact consent that was included in the checked render identity;
     // dropping it would make an authorized multi-voice draft unrecoverable.
