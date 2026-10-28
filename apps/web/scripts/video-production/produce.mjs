@@ -120,6 +120,13 @@ export async function produceVideo(candidate, options, deps = {}) {
   const parsed = parseVideoProductionJob(candidate);
   if (!parsed.ok) fail(`invalid job: ${parsed.findings.filter((f) => f.severity === "error").map((f) => f.code).join(", ")}`);
   assertSceneReviewCapacity(parsed.job.beats.length); // Fail before TTS/provider work, not after capturing a long film.
+  const characterPacks = options?.characterRigPacks ?? { rigs: {}, assets: [], identity: [] };
+  if (!characterPacks || !characterPacks.rigs || !Array.isArray(characterPacks.assets) ||
+    !Array.isArray(characterPacks.identity) ||
+    Object.keys(characterPacks.rigs).some(id => !["pip", "quill"].includes(id)) ||
+    Object.keys(characterPacks.rigs).some(id => !parsed.job.beats.some(beat =>
+      (beat.speechTurns ?? [beat]).some(turn => turn.speaker?.id === id))))
+    fail("custom Character Studio rig does not match a speaking character in this job");
   if (!options?.out || !options.providerRevision) fail("explicit output and provider/engine revision are required");
   if (options.provider !== parsed.job.voice.provider) fail("provider substitution is forbidden; change the job voice configuration first");
   if (!Number.isFinite(options.budgetUsd ?? 0) || (options.budgetUsd ?? 0) < 0 ||
@@ -283,6 +290,11 @@ export async function produceVideo(candidate, options, deps = {}) {
       timeline=visualCueTimeline;
       plan=compileGeneralVisuals(job,timeline,speech);
     }
+    if (Object.keys(characterPacks.rigs).length) {
+      if (plan.kind !== "general-explainer-visual-plan")
+        fail("custom character rigs require the general-scene Kumiki renderer");
+      plan = { ...plan, characterRigs: characterPacks.rigs };
+    }
     if (Object.keys(sceneMedia.bindings).length) {
       const known = new Set(plan.chapters.map(chapter => chapter.id));
       if (Object.keys(sceneMedia.bindings).some(beatId => !known.has(beatId)))
@@ -318,7 +330,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     const captionBytes=await readFile(audio.srtPath);
     if(!captionBytes.length)fail("caption generation produced an empty subtitle file");
     stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan,
-      approvedMedia: sceneMedia.assets });
+      approvedMedia: sceneMedia.assets, characterAssets: characterPacks.assets });
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {
