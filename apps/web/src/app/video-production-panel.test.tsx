@@ -323,6 +323,26 @@ it("shows scene-by-scene visual proof and outstanding footage coverage next to t
     url.replace("/video.mp4","/qa-report.json"));
 });
 
+it("only offers a direct missing-footage action when scene order matches the current storyboard",async()=>{
+  const goto=vi.fn();
+  const url="/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4";
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    const path=String(input);
+    if(path.endsWith("/plan"))return reply(plan);
+    if(path.endsWith("/check"))return reply({report:{ready:true,findings:[]}});
+    if(path.endsWith("/start"))return reply({started:true});
+    if(path.endsWith("/status"))return reply({state:"done",phase:"review",message:"Draft ready",mediaUrl:url,
+      visualCoverage:{sceneCount:1,reviewStillCount:2,mediaDeclarationCounts:{stockVideo:0,stockPhoto:0,kumikiOnly:1},
+        scenesWithoutStockVideo:["beat1"],missingStockVideoShotIds:["shot1"]}});
+    throw Error("Unexpected request "+path);
+  });
+  const user=userEvent.setup();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration" onFindVisuals={goto}/>);
+  await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
+  await user.click(await screen.findByRole("button",{name:"Find footage for scene 1"}));
+  expect(goto).toHaveBeenCalledExactlyOnceWith("shot1");
+});
+
 it("shows one recovery action that rechecks and retries a failed draft without losing narration setup",async()=>{
   let checks=0,starts=0;
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{

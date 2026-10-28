@@ -875,6 +875,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,researchArtifactId,focu
             <p className="mt-1 text-sm text-muted-foreground">Inspect the real scenes first. When ready, check voice permissions and media tools before starting a render.</p></div>}
           <ProductionPanel key={`${dossier.id}:${draftLaunchCount}`} dossier={dossier} bundle={bundle}
             onOpenJobs={onOpenJobs}
+            onFindVisuals={id=>{chooseShot(id);navigate("assets");}}
             // A saved script can have multiple applied scene edits. Keep the
             // original source ID for its unedited plan, and scope edited MP4
             // restoration to that exact plan rather than showing an old film.

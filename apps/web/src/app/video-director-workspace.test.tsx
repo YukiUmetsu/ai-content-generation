@@ -132,7 +132,9 @@ describe("Video Director selected-shot workbench",()=>{
       }
       if(path.endsWith("/status"))return new Response(JSON.stringify({state:"done",phase:"review",
         message:"Narrated draft finished",jobId:"job-edited-film",
-        mediaUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4"}),{status:200});
+        mediaUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4",
+        visualCoverage:{sceneCount:2,reviewStillCount:3,mediaDeclarationCounts:{stockVideo:1,stockPhoto:0,kumikiOnly:1},
+          scenesWithoutStockVideo:["beat-2"],missingStockVideoShotIds:["middle"]}}),{status:200});
       if(path.endsWith("/live-preview"))return new Response(JSON.stringify({kind:"live-renderer-preview/v1",
         sourcePlanSha256:"a".repeat(64),plan:{chapters:[]},shotMap:[]}),{status:200});
       throw Error("Unexpected request "+path+" "+String(opts?.method));
@@ -151,6 +153,10 @@ describe("Video Director selected-shot workbench",()=>{
     expect(starts).toHaveLength(1);
     expect((starts[0]?.bundle as typeof editedBundle).plan.shots[0].onScreenText).toBe("Why? today");
     expect(calls.findIndex(path=>path.endsWith("/edit"))).toBeLessThan(calls.findIndex(path=>path.endsWith("/start")));
+    await user.click(await screen.findByRole("button",{name:"Find footage for scene 2"}));
+    expect(screen.getByRole("heading",{name:"Find the right visuals"})).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:"Visual asset scene"})).toHaveValue("middle");
+    expect(calls.some(path=>path.endsWith("/suggest"))).toBe(false);
   });
   it("opens an approved script's visual shortcut at the rendered scene editor",async()=>{
     const productionId="production-"+"b".repeat(24);

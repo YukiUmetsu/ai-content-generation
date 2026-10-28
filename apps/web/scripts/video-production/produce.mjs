@@ -348,7 +348,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       await copyFile(source, join(working, "stills", filename));
       publishedStills.push({ frame, file: `stills/${filename}`, sha256: still.sha256 });
     }
-    const visualCoverage = summarizeSceneReviewCoverage(plan, publishedStills);
+    const visualCoverage = summarizeSceneReviewCoverage(plan, publishedStills, options.sceneShotMap);
     // Export a genuine, renderer-captured first-frame image as the draft cover.
     // This is an editable starting still, not a claim that a designed thumbnail
     // or platform artwork was generated. The existing Kumiki composer handles design.

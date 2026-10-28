@@ -42,6 +42,7 @@ const MAX_SUGGESTIONS_BYTES=900_000;
 const failureRecovery={
   "browser-preflight":["renderer_unavailable","Renderer setup failed. Check Chromium and the local build, then retry."],
   "asset-search":["asset_search_failed","Media discovery stopped unexpectedly. Disable online search or retry the draft."],
+  "asset-preparation":["asset_preparation_failed","Selected scene media could not be verified. Open Find the right visuals, replace or remove the affected asset, then retry."],
   narration:["narration_failed","Narration failed. Check the authorized voice provider and retry; verified completed speech can be reused."],
   timeline:["timeline_failed","Scene timing failed. Reopen the visual editor, check the affected scenes and retry."],
   audio:["audio_mix_failed","Audio mixing failed. Review selected sounds and FFmpeg, then retry."],
@@ -425,6 +426,12 @@ export function createDirectorProduction(deps={}){
       .filter(item=>item.productionId===productionId).length;
     return{requiresConfirmation:completedVersions>0,completedVersions};
   }
+  function missingFootageShotIds(coverage){
+    if(!Array.isArray(coverage?.scenes)||coverage.scenes.length!==coverage.sceneCount)return undefined;
+    const missing=coverage.scenes.filter(scene=>scene?.sourceType!=="stock-video");
+    return missing.every(scene=>typeof scene?.shotId==="string"&&scene.shotId.length>0)?
+      missing.map(scene=>scene.shotId):undefined;
+  }
   async function verifiedSavedSceneCoverage(record,releaseDir){
     const file=join(releaseDir,"qa-report.json");
     let qaExpected=false;
@@ -439,17 +446,29 @@ export function createDirectorProduction(deps={}){
       const coverage=JSON.parse(await readFile(file,"utf8"))?.visualCoverage;
       const counts=coverage?.mediaDeclarationCounts;
       const integer=value=>Number.isSafeInteger(value)&&value>=0&&value<=64;
+      const missingShotIds=missingFootageShotIds(coverage);
       if(!integer(coverage?.sceneCount)||coverage.sceneCount===0||
         !integer(coverage.reviewStillCount)||coverage.reviewStillCount<coverage.sceneCount||
         !integer(counts?.stockVideo)||!integer(counts?.stockPhoto)||!integer(counts?.kumikiOnly)||
         counts.stockVideo+counts.stockPhoto+counts.kumikiOnly!==coverage.sceneCount||
         !Array.isArray(coverage.scenesWithoutStockVideo)||
         coverage.scenesWithoutStockVideo.length!==counts.stockPhoto+counts.kumikiOnly||
-        coverage.scenesWithoutStockVideo.some(id=>typeof id!=="string"||id.length>160))
+        coverage.scenesWithoutStockVideo.some(id=>typeof id!=="string"||id.length>160)||
+        !Array.isArray(coverage.scenes)||coverage.scenes.length!==coverage.sceneCount||
+        coverage.scenes.some((scene,index)=>typeof scene?.id!=="string"||scene.id.length>160||
+          !["stock-video","stock-photo","kumiki"].includes(scene.sourceType)||
+          (scene.shotId!==undefined&&(typeof scene.shotId!=="string"||!scene.shotId||
+            scene.shotId.length>160||/[\u0000-\u001f]/u.test(scene.shotId)))||
+          (scene.sourceType!=="stock-video")!==coverage.scenesWithoutStockVideo.includes(scene.id)||
+          coverage.scenes.findIndex(other=>other.id===scene.id)!==index||
+          (scene.shotId!==undefined&&coverage.scenes.findIndex(other=>other.shotId===scene.shotId)!==index))||
+        counts.stockVideo!==coverage.scenes.filter(scene=>scene.sourceType==="stock-video").length||
+        counts.stockPhoto!==coverage.scenes.filter(scene=>scene.sourceType==="stock-photo").length)
         return{visualCoverage:null,qaIntegrityFailure:true};
       return{visualCoverage:{sceneCount:coverage.sceneCount,reviewStillCount:coverage.reviewStillCount,
         mediaDeclarationCounts:{stockVideo:counts.stockVideo,stockPhoto:counts.stockPhoto,kumikiOnly:counts.kumikiOnly},
-        scenesWithoutStockVideo:coverage.scenesWithoutStockVideo},qaIntegrityFailure:false};
+        scenesWithoutStockVideo:coverage.scenesWithoutStockVideo,
+        ...(missingShotIds?{missingStockVideoShotIds:missingShotIds}:{})},qaIntegrityFailure:false};
     }catch{return{visualCoverage:null,qaIntegrityFailure:qaExpected};}
   }
   async function savedReleaseForProduction(productionId,sourceRevision){
@@ -1155,7 +1174,8 @@ export function createDirectorProduction(deps={}){
                 sceneCount:result.qa.visualCoverage.sceneCount,
                 reviewStillCount:result.qa.visualCoverage.reviewStillCount,
                 mediaDeclarationCounts:result.qa.visualCoverage.mediaDeclarationCounts,
-                scenesWithoutStockVideo:result.qa.visualCoverage.scenesWithoutStockVideo}:null,
+                scenesWithoutStockVideo:result.qa.visualCoverage.scenesWithoutStockVideo,
+                missingStockVideoShotIds:missingFootageShotIds(result.qa.visualCoverage)}:null,
               regeneration:result.regeneration??null};
           }catch(error){
             await journal;

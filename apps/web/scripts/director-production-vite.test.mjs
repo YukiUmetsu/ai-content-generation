@@ -405,7 +405,9 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
       const digest=value=>createHash("sha256").update(value).digest("hex");
       const files={"video.mp4":"mock media","captions.srt":"mock captions",
         "qa-report.json":JSON.stringify({technicalPass:true,visualCoverage:{sceneCount:2,reviewStillCount:4,
-          mediaDeclarationCounts:{stockVideo:0,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"]}}),
+          mediaDeclarationCounts:{stockVideo:0,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"],
+          scenes:[{id:"intro",shotId:"shot-intro",sourceType:"stock-photo"},
+            {id:"payoff",shotId:"shot-payoff",sourceType:"kumiki"}]}}),
         "cover-still.png":"mock cover","thumbnail-1.png":"mock concept 1",
         "thumbnail-2.png":"mock concept 2","thumbnail-3.png":"mock concept 3"};
       const keys={"video.mp4":"video","captions.srt":"captions","qa-report.json":"qaReport","cover-still.png":"coverStill",
@@ -423,7 +425,9 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
         artifactLedger:{kind:"sound-mix",masterSha256:"a".repeat(64),samples:96000}});
       return {releaseDir,manifestHash:exportedManifestHash,
         qa:{visualCoverage:{sceneCount:2,reviewStillCount:4,
-          mediaDeclarationCounts:{stockVideo:0,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"]}},
+          mediaDeclarationCounts:{stockVideo:0,stockPhoto:1,kumikiOnly:1},scenesWithoutStockVideo:["intro","payoff"],
+          scenes:[{id:"intro",shotId:"shot-intro",sourceType:"stock-photo"},
+            {id:"payoff",shotId:"shot-payoff",sourceType:"kumiki"}]}},
         artifactHashes:{video:exportedVideoHash,captions:exportedCaptionsHash}};
     }});
   const payload={...inputs(),settings:config,productionId:"production-"+"a".repeat(24),sourceRevision:"r1"};
@@ -434,6 +438,7 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   assert.equal(server.status().state,"done");
   assert.equal(server.status().jobId,"job-persisted");
   assert.equal(server.status().visualCoverage?.mediaDeclarationCounts.stockPhoto,1);
+  assert.deepEqual(server.status().visualCoverage?.missingStockVideoShotIds,["shot-intro","shot-payoff"]);
   const runId=server.status().mediaUrl.split("/").at(-2);
   const reportUrl=`/media/${runId}/qa-report.json`;
   const qaDownload=await audioResponse(server,reportUrl);
@@ -447,6 +452,7 @@ test("saved production starts a durable Jobs DAG before rendering and reports it
   assert.equal(reopened.data.state,"done");
   assert.equal(reopened.data.visualCoverage?.mediaDeclarationCounts.stockPhoto,1,
     "scene coverage should survive restarting the Director process");
+  assert.deepEqual(reopened.data.visualCoverage.missingStockVideoShotIds,["shot-intro","shot-payoff"]);
   await writeFile(join(dir,"draft-"+runId,"release","qa-report.json"),"tampered QA");
   assert.equal((await audioResponse(server,reportUrl)).status,404,"tampered QA must never be served");
   const reopenedTampered=await invoke(resumed,"GET",`/status/${payload.productionId}?sourceRevision=r1`);
@@ -673,6 +679,30 @@ test("a full draft disk-space failure exposes the specific recoverable cause in 
   assert.match(server.status().message,/disk space/i);
   assert.equal(server.status().jobId,"job-disk-full");
   assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private-token-value/);
+});
+
+test("a missing selected scene asset is a visible, Jobs-tracked preparation error",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-asset-preflight-fail-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  let failed,completed=0;
+  const server=createDirectorProduction({outputRoot:dir,findBrowser:async()=>"/mock/chromium",
+    build:async()=>{},inspect:async()=>({ready:true,findings:[]}),
+    jobTracker:()=>({start:async()=>"job-selected-media",advance:async()=>{},
+      complete:async()=>{completed++;},fail:async(...args)=>{failed=args;},cancel:async()=>{}}),
+    produce:async(_job,options)=>{
+      await options.onProgress({phase:"asset-preparation",message:"Checking selected visual assets"});
+      throw Error("Selected asset changed; choose another image /private/unsafe-path");
+    }});
+  const payload={...inputs(),settings:config,productionId:"production-"+"c".repeat(24)};
+  await invoke(server,"POST","/check",payload);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<40&&server.status().state==="rendering";i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(server.status().state,"failed");
+  assert.equal(server.status().jobId,"job-selected-media");
+  assert.equal(failed?.[0],"asset_preparation_failed");
+  assert.match(server.status().message,/selected scene media.*Find the right visuals/i);
+  assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private\/unsafe-path/);
+  assert.equal(completed,0);
 });
 
 test("an excessive scene-review PNG budget reports an actionable Jobs step without publishing",async t=>{

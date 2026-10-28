@@ -63,8 +63,22 @@ export function selectSceneReviewFrames(plan) {
 }
 
 /** Summarize source *declarations* with independently published, SHA-verified scene still metadata. */
-export function summarizeSceneReviewCoverage(plan, reviewStills) {
+export function summarizeSceneReviewCoverage(plan, reviewStills, shotMap) {
   const { frames, chapters } = checkedChapters(plan);
+  const shotsByBeat = new Map();
+  const usedShotIds = new Set();
+  if (shotMap !== undefined) {
+    if (!Array.isArray(shotMap) || shotMap.length > chapters.length) fail("invalid storyboard shot mapping");
+    const known = new Set(chapters.map(chapter => chapter.id));
+    for (const entry of shotMap) {
+      if (typeof entry?.beatId !== "string" || !known.has(entry.beatId) ||
+        typeof entry.shotId !== "string" || !entry.shotId.trim() || entry.shotId.length > 160 ||
+        /[\u0000-\u001f]/u.test(entry.shotId) || shotsByBeat.has(entry.beatId) || usedShotIds.has(entry.shotId))
+        fail("invalid or duplicate storyboard shot mapping");
+      shotsByBeat.set(entry.beatId, entry.shotId);
+      usedShotIds.add(entry.shotId);
+    }
+  }
   if (!Array.isArray(reviewStills) || reviewStills.length < 2 || reviewStills.length > MAX_SCENE_REVIEW_STILLS)
     fail("review stills must be a bounded collection");
   for (const [index, still] of reviewStills.entries()) {
@@ -91,7 +105,8 @@ export function summarizeSceneReviewCoverage(plan, reviewStills) {
       if (sourceType === "stock-photo") counts.stockPhoto++;
       else counts.kumikiOnly++;
     }
-    return { id: chapter.id, sourceType, startFrame: chapter.startFrame, endFrame: chapter.endFrame,
+    return { id: chapter.id, ...(shotsByBeat.has(chapter.id) ? { shotId: shotsByBeat.get(chapter.id) } : {}),
+      sourceType, startFrame: chapter.startFrame, endFrame: chapter.endFrame,
       reviewStill: still,
       ...(media?.rightsStatus ? { rightsStatus: media.rightsStatus } : {}),
       ...(media?.license ? { declaredLicense: media.license } : {}),

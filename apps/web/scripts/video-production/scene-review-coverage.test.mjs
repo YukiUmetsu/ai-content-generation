@@ -28,6 +28,17 @@ test("captures the first and last frame, a representative still for every scene,
   assert.equal(coverage.humanVisualReviewRequired, true);
 });
 
+test("binds missing footage to the immutable storyboard shot ID, not the current scene position", () => {
+  const frames=selectSceneReviewFrames(plan);
+  const coverage=summarizeSceneReviewCoverage(plan,frames.map(makeStill),[
+    {shotId:"shot-payoff",beatId:"payoff"},{shotId:"shot-intro",beatId:"intro"}]);
+  assert.equal(coverage.scenes[0].shotId,"shot-intro");
+  assert.equal(coverage.scenes[1].shotId,undefined);
+  assert.equal(coverage.scenes[2].shotId,"shot-payoff");
+  assert.throws(()=>summarizeSceneReviewCoverage(plan,frames.map(makeStill),[
+    {shotId:"same-shot",beatId:"intro"},{shotId:"same-shot",beatId:"payoff"}]),/duplicate|shot/i);
+});
+
 test("short scenes still receive exactly one in-scene proof even when midpoints collide with boundaries", () => {
   const short = { manifest: { durationFrames: 3 }, chapters: [
     { id: "a", startFrame: 0, endFrame: 1, visual: {} },

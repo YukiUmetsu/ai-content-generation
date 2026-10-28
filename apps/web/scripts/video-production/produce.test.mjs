@@ -144,6 +144,7 @@ test("selected scene photo reaches the actual general Kumiki plan and stage befo
   assert.equal(released.sceneMedia[0].sha256, photoHash);
   assert.equal(released.visualCoverage.mediaDeclarationCounts.stockPhoto,1);
   assert.equal(released.visualCoverage.scenes.find(scene=>scene.id===beatId)?.sourceType,"stock-photo");
+  assert.equal(released.visualCoverage.scenes.find(scene=>scene.id===beatId)?.shotId,"scene-roof");
   assert.ok(released.visualCoverage.scenesWithoutStockVideo.includes(beatId));
 });
 

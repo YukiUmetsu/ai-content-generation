@@ -12,7 +12,8 @@ type Preview = {schemaVersion:number;kind:string;job:{beats:Array<{id:string;nar
   warnings:string[];editorialStatus:string};
 type Report = {ready:boolean;findings:Array<{severity:string;code:string;message:string}>};
 type VisualCoverage={sceneCount:number;reviewStillCount:number;
-  mediaDeclarationCounts:{stockVideo:number;stockPhoto:number;kumikiOnly:number};scenesWithoutStockVideo:string[]};
+  mediaDeclarationCounts:{stockVideo:number;stockPhoto:number;kumikiOnly:number};
+  scenesWithoutStockVideo:string[];missingStockVideoShotIds?:string[]};
 type Status = {state:string;phase:string;message:string;report?:Report|null;
   jobId?:string|null;
   progress?:{phase:string;completedFrames?:number;totalFrames?:number}|null;
@@ -76,7 +77,7 @@ async function request(path:string,payload?:unknown){
   return data;
 }
 export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
-  initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void}){
+  initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs,onFindVisuals}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void;onFindVisuals?:(shotId:string)=>void}){
   const [stage,setStage]=useState<Stage>(initialStage);
   const [settings,setSettings]=useState<Settings>(savedVoiceSettings);
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
@@ -419,6 +420,9 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const progress=state.progress;
   const pct=progress?.totalFrames&&progress?.completedFrames!==undefined
     ?Math.min(100,Math.round(100*progress.completedFrames/progress.totalFrames)):null;
+  const firstMissingShot=state.visualCoverage?.sceneCount===bundle.plan.shots.length?
+    bundle.plan.shots.find(shot=>state.visualCoverage?.missingStockVideoShotIds?.includes(shot.id)):undefined;
+  const firstMissingShotIndex=firstMissingShot?bundle.plan.shots.indexOf(firstMissingShot):-1;
   return <div ref={previewAnchor} id="contentgen-interactive-preview" className="scroll-mt-4">
     <Surface header={<div className="space-y-1"><h2 className="flex items-center gap-2 text-lg font-semibold"><Film className="size-5"/>Preview & Export</h2>
       <p className="text-xs font-normal text-muted-foreground">From working scenes to a playable test video, one step at a time.</p></div>}>
@@ -622,7 +626,12 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
           {state.visualCoverage&&<div className="space-y-1 rounded-control border border-border bg-surface-subtle p-3" role="status">
             <p className="text-sm font-semibold">{state.visualCoverage.sceneCount} of {state.visualCoverage.sceneCount} scenes have captured review stills</p>
             <p className="text-xs text-muted-foreground">{state.visualCoverage.mediaDeclarationCounts.stockVideo} stock video · {state.visualCoverage.mediaDeclarationCounts.stockPhoto} stock photo · {state.visualCoverage.mediaDeclarationCounts.kumikiOnly} Kumiki graphic</p>
-            <p className="text-xs text-muted-foreground">{state.visualCoverage.scenesWithoutStockVideo.length} scenes still lack stock footage. Inspect actual playback and media rights before publishing.</p>
+            <p className="text-xs text-muted-foreground">{state.visualCoverage.scenesWithoutStockVideo.length} scenes still lack stock footage in this export. Inspect actual playback and media rights before publishing.</p>
+            {firstMissingShot&&onFindVisuals&&<div className="pt-2">
+              <Button size="sm" variant="outline" onClick={()=>onFindVisuals(firstMissingShot.id)}>
+                Find footage for scene {firstMissingShotIndex+1}
+              </Button>
+            </div>}
           </div>}
           <div className="flex flex-wrap gap-2">
             <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline" href={state.mediaUrl} download="contentgen-draft.mp4">Download MP4</a>
