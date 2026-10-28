@@ -11,6 +11,7 @@ import {synthesizeNarration} from "./speech.mjs";
 import {buildSampleTimeline} from "./timeline.mjs";
 import {writeSceneSpeechSrt} from "./timeline.mjs";
 import {renderMasterAudio} from "./audio.mjs";
+import {compileGeneralVisuals} from "./general-visual-plan.mjs";
 
 const lines=[
   {id:"pip-first",narration:"Pip asks how the moving heat reaches the house.",
@@ -114,6 +115,11 @@ test("one continuous scene's FFmpeg master sequences character and narrator turn
   assert.equal(first[0].samples,3*48000+(120+150)*48);
   assert.deepEqual(called.slice(0,3).map(x=>x.voiceId),["pip-voice","quill-voice","narrator-voice"]);
   const timeline=buildSampleTimeline(first,{fps:{num:30,den:1},events:job.events});
+  const visual=compileGeneralVisuals(job,timeline,first);
+  assert.deepEqual(visual.chapters[0].dialogue.turns.map(turn=>turn.speakerId),["pip","quill","narrator"]);
+  assert.equal(visual.chapters[0].dialogue.turns[0].startFrame,0);
+  assert.equal(visual.chapters[0].dialogue.turns[1].startFrame,34);
+  assert.equal(visual.chapters[0].dialogue.turns[2].startFrame,68);
   const output=await renderMasterAudio({beats:first,timeline,sfx:[]},{outputDir:join(root,"master")});
   const stem=await readFile(output.voiceStemPath);
   const signalAt=(start,frequency)=>{
