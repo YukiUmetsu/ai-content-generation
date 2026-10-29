@@ -67,6 +67,22 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
           !rig.querySelector('svg image[href^="/__character_assets/"]'))) {
         throw new Error(`Character rig ${performer.dataset.conversationPerformer ?? "unknown"} failed render validation at frame ${target}`);
       }
+      // A saved rig must draw its own raster layers and return its own mouth to
+      // rest during another speaker's turn. Never accept a vector fallback or
+      // an accidentally animated, silent character in an exported frame.
+      if (performer.dataset.rigSource === "character-studio") {
+        const images = [...rig.querySelectorAll<SVGImageElement>("svg image")];
+        if (!images.length || images.some(image =>
+          !/^\\/__character_assets\\/[a-f0-9]{64}\\.(?:png|webp)$/.test(image.getAttribute("href") ?? "")))
+          throw new Error(`Saved character art was not used at frame ${target}`);
+        const mouth = [...rig.querySelectorAll<SVGGElement>("[data-part]")].find(part =>
+          part.dataset.part === performer.dataset.rigMouthPart);
+        if (!mouth || !performer.dataset.rigRestAsset)
+          throw new Error(`Saved character mouth is missing at frame ${target}`);
+        if (performer.dataset.speaking !== "true" &&
+          !mouth.querySelector(`[data-asset="${performer.dataset.rigRestAsset}"]`))
+          throw new Error(`Silent character mouth did not return to rest at frame ${target}`);
+      }
     }
   }
   const isHouse = kind === "house-math-visual-plan";
