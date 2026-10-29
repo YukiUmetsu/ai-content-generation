@@ -3,7 +3,9 @@ import { StrictMode } from "react";
 import {fireEvent,render,screen,waitFor} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {ProductionPanel} from "./video-production-panel";
-import {DEFAULT_FISH_VOICE_ID,readProjectVoices} from "./project-voice-favorites";
+import {AudioSettingsPanel} from "./audio-settings-panel";
+import {DEFAULT_FISH_VOICE_ID,readProjectVoices,projectNarratorSettingsKey} from "./project-voice-favorites";
+import {saveAudioSettings,DEFAULT_AUDIO_SETTINGS} from "./audio-settings";
 
 afterEach(()=>{localStorage.clear();vi.restoreAllMocks();});
 
@@ -91,7 +93,7 @@ it("can return from a pinned ZIP to automatic latest without sending an empty dr
   expect((checked as Record<string,unknown>|null)?.characterDraftIds).toEqual({});
 });
 
-it("starts a new project's narrator on the requested Fish primary without TTS or consent",async()=>{
+it("shows the project's saved Fish narrator without TTS or setup controls",async()=>{
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     if(String(input).endsWith("/plan"))return reply(plan);
     if(String(input).includes("/api/project-voices/")){
@@ -102,31 +104,60 @@ it("starts a new project's narrator on the requested Fish primary without TTS or
     throw Error("No provider or other request was authorized: "+input);
   });
   render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
-  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toHaveValue(DEFAULT_FISH_VOICE_ID);
-  expect(screen.getByRole("combobox",{name:"Production voice provider"})).toHaveValue("fish");
-  expect(screen.getByText(/language unverified/)).toBeInTheDocument();
-  expect(screen.getByText(/Fish Audio API key once/i)).toBeInTheDocument();
-  expect(screen.getByRole("checkbox",{name:/permission to use this Fish voice/i})).not.toBeChecked();
+  expect(await screen.findByLabelText("Selected narrator")).toHaveTextContent(DEFAULT_FISH_VOICE_ID);
+  expect(screen.getByLabelText("Selected narrator")).toHaveTextContent("Fish Audio");
+  expect(screen.getByText(/Settings → Audio/)).toBeInTheDocument();
+  expect(screen.queryByRole("textbox",{name:"Production voice ID"})).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox",{name:/permission to use this Fish voice/i})).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox",{name:/sending this script excerpt/i})).not.toBeInTheDocument();
   expect(readProjectVoices("project-one").voices[0].voiceId).toBe(DEFAULT_FISH_VOICE_ID);
 });
 
-it("sends the seeded primary to preflight only after the draft action, with no implicit Fish authorization",async()=>{
+it("sends the seeded primary and explicit render authorization only after the draft action",async()=>{
   let preflight:Record<string,unknown>|null=null;
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     const path=String(input);
     if(path.endsWith("/plan"))return reply(plan);
     if(path.endsWith("/check")){
       preflight=JSON.parse(String(init?.body)) as Record<string,unknown>;
-      return reply({report:{ready:false,findings:[{severity:"error",code:"voice-consent",message:"Approve Fish voice and script transmission."}]}});
+      return reply({report:{ready:false,findings:[{severity:"error",code:"offline",message:"Fish service is offline."}]}});
     }
     throw Error("No TTS or render call was authorized: "+path);
   });
   render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
-  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   await userEvent.setup().click(screen.getByRole("button",{name:"Generate draft video"}));
   await waitFor(()=>expect(preflight).not.toBeNull());
-  expect(preflight).toMatchObject({settings:{provider:"fish",voiceId:DEFAULT_FISH_VOICE_ID,voiceConsent:false,transmitText:false}});
-  expect(screen.getByText(/Approve Fish voice and script transmission/)).toBeInTheDocument();
+  expect(preflight).toMatchObject({settings:{provider:"fish",voiceId:DEFAULT_FISH_VOICE_ID,
+    providerRevision:"fish-api-v1",voiceConsent:true,transmitText:true},castVoiceConsent:true});
+  expect(screen.getByText(/Fish service is offline/)).toBeInTheDocument();
+});
+
+it("uses an edited engine revision from project Audio Settings for the actual render preflight",async()=>{
+  let preflight:Record<string,unknown>|null=null;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const url=String(input);
+    if(url.includes("/api/project-voices/"))return reply({revision:0,library:null});
+    if(url.endsWith("/plan"))return reply(plan);
+    if(url.endsWith("/check")){
+      preflight=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      return reply({report:{ready:false,findings:[]}});
+    }
+    throw Error("Unexpected request: "+url);
+  });
+  const user=userEvent.setup();
+  const panel=render(<AudioSettingsPanel projectId="project-one" projectName="First" locale="en"/>);
+  const revision=screen.getByRole("textbox",{name:"Audio engine revision"});
+  expect(revision).toHaveValue("fish-api-v1");
+  await user.clear(revision);
+  await user.type(revision,"fish-api-v2");
+  panel.unmount();
+  render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
+  expect(screen.queryByRole("textbox",{name:"Audio engine revision"})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"Generate draft video"}));
+  await waitFor(()=>expect(preflight).not.toBeNull());
+  expect(preflight).toMatchObject({settings:{provider:"fish",providerRevision:"fish-api-v2",
+    voiceConsent:true,transmitText:true}});
 });
 
 it("migrates an existing manually selected legacy voice to only the first opened project",async()=>{
@@ -136,10 +167,10 @@ it("migrates an existing manually selected legacy voice to only the first opened
     throw Error("Unexpected request: "+input);
   });
   const first=render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
-  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toHaveValue("saved-local-voice");
+  expect(await screen.findByLabelText("Selected narrator")).toHaveTextContent("saved-local-voice");
   first.unmount();
   render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-two" initialStage="narration"/>);
-  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toHaveValue(DEFAULT_FISH_VOICE_ID);
+  expect(await screen.findByLabelText("Selected narrator")).toHaveTextContent(DEFAULT_FISH_VOICE_ID);
   expect(localStorage.getItem("contentgen:production-voice-profile:legacy-owner:v1")).toBe("project-one");
 });
 
@@ -158,8 +189,8 @@ it("adds and ranks project voices, applies one narrator explicitly and isolates 
     throw Error("Unexpected request: "+input);
   });
   const user=userEvent.setup();
-  const first=render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
-  await screen.findByRole("textbox",{name:"Production voice ID"});
+  const first=render(<AudioSettingsPanel projectId="project-one" projectName="First" locale="en"/>);
+  await screen.findByRole("textbox",{name:"Audio voice ID"});
   await waitFor(()=>expect(screen.getByRole("button",{name:"Add voice"})).toBeEnabled());
   await user.click(screen.getByRole("button",{name:"Add voice"}));
   await user.type(screen.getByRole("textbox",{name:"Voice ID"}),"b".repeat(32));
@@ -174,10 +205,10 @@ it("adds and ranks project voices, applies one narrator explicitly and isolates 
   await user.click(screen.getByRole("button",{name:"Make primary"}));
   await waitFor(()=>expect(readProjectVoices("project-one").voices[0].name).toBe("Calm guide"));
   await user.click(screen.getByRole("button",{name:"Use"}));
-  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("b".repeat(32));
+  expect(screen.getByRole("textbox",{name:"Audio voice ID"})).toHaveValue("b".repeat(32));
   first.unmount();
-  render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-two" initialStage="narration"/>);
-  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toHaveValue(DEFAULT_FISH_VOICE_ID);
+  render(<AudioSettingsPanel projectId="project-two" projectName="Second" locale="en"/>);
+  expect(await screen.findByRole("textbox",{name:"Audio voice ID"})).toHaveValue(DEFAULT_FISH_VOICE_ID);
   await waitFor(()=>expect(screen.getByRole("button",{name:"Add voice"})).toBeEnabled());
   expect(screen.queryByText("Calm guide")).not.toBeInTheDocument();
   expect(readProjectVoices("project-two").voices).toHaveLength(1);
@@ -189,7 +220,7 @@ it("keeps corrupted project voice data intact and exposes an actionable alert",a
     if(String(input).endsWith("/plan"))return reply(plan);
     throw Error("Unexpected request: "+input);
   });
-  render(<ProductionPanel dossier={dossier} bundle={bundle} voiceProjectId="project-one" initialStage="narration"/>);
+  render(<AudioSettingsPanel projectId="project-one" projectName="First" locale="en"/>);
   expect(await screen.findByRole("alert")).toHaveTextContent(/saved data/i);
   expect(screen.getByRole("button",{name:"Add voice"})).toBeDisabled();
   expect(localStorage.getItem("contentgen:project-voice-favorites:v1:project-one")).toBe("{broken");
@@ -231,7 +262,7 @@ it("does not let delayed job recovery overwrite a newer readiness result",async(
   expect(screen.getByRole("button",{name:/Continue to export/i})).toBeEnabled();
 });
 
-it("guides the user from narration to final review and keeps voice settings when readiness resets",async()=>{
+it("guides the user from narration to final review and keeps the configured voice when readiness resets",async()=>{
   const calls:string[]=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
     const endpoint=String(input);calls.push(endpoint);
@@ -240,12 +271,12 @@ it("guides the user from narration to final review and keeps voice settings when
     throw Error("Unexpected production request: "+endpoint);
   });
   const user=userEvent.setup();
+  saveAudioSettings({...DEFAULT_AUDIO_SETTINGS,provider:"fish",voiceId:"licensed-voice",providerRevision:"fish-api-v1"});
   const view=render(<ProductionPanel dossier={dossier} bundle={bundle} recheckToken={0}/>);
   expect(screen.getByRole("tab",{name:/Preview/})).toHaveAttribute("aria-selected","true");
   await user.click(screen.getByRole("tab",{name:/Narration/}));
-  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   expect(screen.queryByRole("button",{name:/Render test MP4/i})).not.toBeInTheDocument();
-  await user.type(screen.getByRole("textbox",{name:"Production voice ID"}),"licensed-voice");
   await user.click(screen.getByRole("tab",{name:/Final review/}));
   expect(screen.getByText(/Review factual claims/)).toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:/Check readiness/i}));
@@ -256,31 +287,28 @@ it("guides the user from narration to final review and keeps voice settings when
   view.rerender(<ProductionPanel dossier={dossier} bundle={bundle} recheckToken={1}/>);
   await waitFor(()=>expect(screen.getByRole("button",{name:/Render test MP4/i})).toBeDisabled());
   await user.click(screen.getByRole("tab",{name:/Narration/}));
-  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("licensed-voice");
+  expect(screen.getByLabelText("Selected narrator")).toHaveTextContent("licensed-voice");
   expect(calls.filter(x=>x.endsWith("/check"))).toHaveLength(1);
 });
 
 it("remembers only nonsecret narrator preferences, never provider credentials or consent",async()=>{
-  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
-    if(String(input).endsWith("/plan"))return reply(plan);
-    throw Error("Unexpected request: "+input);
-  });
   const user=userEvent.setup();
-  const first=render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  await user.selectOptions(screen.getByRole("combobox",{name:"Production voice provider"}),"fish");
-  await user.type(screen.getByRole("textbox",{name:"Production voice ID"}),"authorized-voice");
-  expect(screen.getByText(/Save your Fish Audio API key once/i)).toBeInTheDocument();
-  const saved=localStorage.getItem("contentgen:production-voice-profile:v1")??"";
+  const first=render(<AudioSettingsPanel projectId="project-one" projectName="First" locale="en"/>);
+  await user.clear(screen.getByRole("textbox",{name:"Audio voice ID"}));
+  await user.type(screen.getByRole("textbox",{name:"Audio voice ID"}),"authorized-voice");
+  expect(screen.getByText(/API keys are managed in Settings/)).toBeInTheDocument();
+  const saved=localStorage.getItem(projectNarratorSettingsKey("project-one"))??"";
   expect(saved).toContain("authorized-voice");
   expect(saved).not.toContain("apiKey");
   expect(saved).not.toContain("voiceConsent");
+  expect(saved).not.toContain("transmitText");
   first.unmount();
-  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toHaveValue("authorized-voice");
+  render(<AudioSettingsPanel projectId="project-one" projectName="First" locale="en"/>);
+  expect(screen.getByRole("textbox",{name:"Audio voice ID"})).toHaveValue("authorized-voice");
   expect(screen.queryByLabelText("Fish Audio key")).not.toBeInTheDocument();
 });
 
-it("auditions a voice only on request and hides stale audio when provider settings change",async()=>{
+it("auditions a configured voice only on request and hides stale audio when project settings change",async()=>{
   const calls:string[]=[];
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
     const url=String(input);calls.push(url);
@@ -290,18 +318,17 @@ it("auditions a voice only on request and hides stale audio when provider settin
     throw Error("Unexpected production request: "+url);
   });
   const user=userEvent.setup();
+  saveAudioSettings({...DEFAULT_AUDIO_SETTINGS,provider:"local",voiceId:"my-voice",providerRevision:"v1",modelId:"test-model"});
   render(<ProductionPanel dossier={dossier} bundle={bundle}/>);
   await user.click(screen.getByRole("tab",{name:/Narration/}));
-  const voice=await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   expect(calls.every(x=>!x.endsWith("/narration-sample"))).toBe(true);
-  await user.type(voice,"my-voice");
-  await user.type(screen.getByRole("textbox",{name:"Production engine revision"}),"v1");
-  await user.type(screen.getByRole("textbox",{name:"Installed TTS model"}),"test-model");
-  await user.click(screen.getByRole("checkbox",{name:/I am authorized/}));
   await user.click(screen.getByRole("button",{name:/Generate voice sample/i}));
   expect(await screen.findByLabelText("Voice sample")).toHaveAttribute("src","/api/contentgen-video/narration-sample/one.wav");
-  await user.type(voice,"-new");
-  expect(screen.queryByLabelText("Voice sample")).not.toBeInTheDocument();
+  saveAudioSettings({...DEFAULT_AUDIO_SETTINGS,provider:"local",voiceId:"my-voice-new",providerRevision:"v1",modelId:"test-model"});
+  fireEvent(window,new StorageEvent("storage",{key:"contentgen:production-voice-profile:v1"}));
+  await waitFor(()=>expect(screen.queryByLabelText("Voice sample")).not.toBeInTheDocument());
+  expect(screen.getByLabelText("Selected narrator")).toHaveTextContent("my-voice-new");
 });
 
 it("auditions the selected scene instead of always using the opening narration",async()=>{
@@ -353,7 +380,7 @@ it("opens voice setup directly and prepares the approved scene plan automaticall
     throw Error("Unexpected request: "+input);
   });
   render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(await screen.findByLabelText("Selected narrator")).toBeInTheDocument();
   expect(screen.getByRole("tab",{name:/Narration/})).toHaveAttribute("aria-selected","true");
 });
 
@@ -363,13 +390,13 @@ it("opens voice setup when React remounts effects in Strict Mode",async()=>{
     throw Error("Unexpected request: "+input);
   });
   render(<StrictMode><ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/></StrictMode>);
-  expect(await screen.findByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(await screen.findByLabelText("Selected narrator")).toBeInTheDocument();
 });
 
-it("keeps voice controls usable when the local scene planner is unavailable",async()=>{
+it("keeps narrator preview actions available when the local scene planner is unavailable",async()=>{
   vi.spyOn(globalThis,"fetch").mockRejectedValue(Error("Local director is offline"));
   render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(screen.getByLabelText("Selected narrator")).toBeInTheDocument();
   expect(await screen.findByText(/Cannot reach local video production/)).toBeInTheDocument();
   expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
 });
@@ -385,7 +412,7 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
     throw Error("Unexpected request: "+path);
   });
   const user=userEvent.setup();render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
   expect(await screen.findByText(/Encoding|Producing a real draft MP4/)).toBeInTheDocument();
   expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
@@ -393,7 +420,7 @@ it("runs preflight and starts the MP4 on one Generate draft video click",async()
   expect(calls.filter(path=>path.endsWith("/start"))).toHaveLength(1);
 });
 
-it("shows saved scene cast, requires explicit extra-voice permission and sends it through check and start",async()=>{
+it("shows saved scene cast and sends it through check and start on one explicit render click",async()=>{
   const castVoice="a".repeat(32);
   const castBundle={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",speaker:{id:"pip",role:"character" as const,
     provider:"fish" as const,voiceId:castVoice}}]}};
@@ -403,8 +430,7 @@ it("shows saved scene cast, requires explicit extra-voice permission and sends i
     const body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
     requests.push({path,body});
     if(path.endsWith("/plan"))return reply(plan);
-    if(path.endsWith("/check"))return reply({report:{ready:body.castVoiceConsent===true,findings:body.castVoiceConsent===true?[]:[{
-      severity:"error",code:"cast-consent",message:"Authorize additional cast voices"}]}});
+    if(path.endsWith("/check"))return reply({report:{ready:body.castVoiceConsent===true,findings:[]}});
     if(path.endsWith("/start"))return reply({started:true,jobId:"job-cast-1"});
     if(path.endsWith("/status"))return reply({state:"rendering",phase:"speech",message:"Speaking as Pip",jobId:"job-cast-1"});
     throw Error("Unexpected call: "+path);
@@ -412,14 +438,9 @@ it("shows saved scene cast, requires explicit extra-voice permission and sends i
   const user=userEvent.setup();
   render(<ProductionPanel dossier={dossier} bundle={castBundle} initialStage="narration"/>);
   expect(await screen.findByLabelText("Scene cast voices")).toHaveTextContent("Pip");
-  const consent=screen.getByRole("checkbox",{name:"Authorize additional cast voices"});
-  expect(consent).not.toBeChecked();
+  expect(screen.queryByRole("checkbox",{name:"Authorize additional cast voices"})).not.toBeInTheDocument();
   await user.click(screen.getByRole("button",{name:"Generate draft video"}));
   await waitFor(()=>expect(requests.some(item=>item.path.endsWith("/check"))).toBe(true));
-  expect(requests.some(item=>item.path.endsWith("/start"))).toBe(false);
-  expect(requests.find(item=>item.path.endsWith("/check"))?.body.castVoiceConsent).toBe(false);
-  await user.click(consent);
-  await user.click(screen.getByRole("button",{name:"Generate draft video"}));
   await waitFor(()=>expect(requests.some(item=>item.path.endsWith("/start"))).toBe(true));
   expect(requests.filter(item=>item.path.endsWith("/check")).at(-1)?.body.castVoiceConsent).toBe(true);
   expect(requests.find(item=>item.path.endsWith("/start"))?.body).toMatchObject({
@@ -428,23 +449,15 @@ it("shows saved scene cast, requires explicit extra-voice permission and sends i
   expect(screen.getByRole("tab",{name:/Export/})).toHaveAttribute("aria-selected","true");
 });
 
-it("revokes cast permission whenever the narrator changes and flags mixed providers",async()=>{
+it("flags cast voices whose providers differ from the narrator configured in Settings",async()=>{
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
     if(String(input).endsWith("/plan"))return reply(plan);
     throw Error("Unexpected call: "+input);
   });
   const castBundle={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",speaker:{
     id:"quill",role:"character" as const,provider:"fish" as const,voiceId:"b".repeat(32)}}]}};
-  const user=userEvent.setup();
+  saveAudioSettings({...DEFAULT_AUDIO_SETTINGS,provider:"local",voiceId:"narrator-local"});
   const view=render(<ProductionPanel dossier={dossier} bundle={castBundle} initialStage="narration"/>);
-  const consent=screen.getByRole("checkbox",{name:"Authorize additional cast voices"});
-  await user.click(consent);
-  expect(consent).toBeChecked();
-  fireEvent.change(screen.getByRole("textbox",{name:"Production voice ID"}),{target:{value:"c".repeat(32)}});
-  expect(consent).not.toBeChecked();
-  await user.click(consent);
-  fireEvent.change(screen.getByRole("combobox",{name:"Production voice provider"}),{target:{value:"local"}});
-  expect(consent).not.toBeChecked();
   expect(screen.getByRole("alert")).toHaveTextContent(/different provider/i);
   view.unmount();
 });
@@ -654,7 +667,7 @@ it("shows a missing narrator as an actionable error when auto-started from the s
   render(<ProductionPanel dossier={dossier} bundle={bundle} autoStartDraft/>);
   expect(await screen.findByText(/Choose a voice provider, authorized voice ID/)).toBeInTheDocument();
   expect(screen.getByRole("tab",{name:/Narration/})).toHaveAttribute("aria-selected","true");
-  expect(screen.getByRole("textbox",{name:"Production voice ID"})).toBeInTheDocument();
+  expect(screen.getByLabelText("Selected narrator")).toBeInTheDocument();
   expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
 });
 
@@ -667,14 +680,14 @@ it("explains failed preflight without starting a render or disabling retry",asyn
     throw Error("Render should not start: "+path);
   });
   const user=userEvent.setup();render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
   expect(await screen.findByText(/Install a local TTS voice first/)).toBeInTheDocument();
   expect(screen.getByRole("button",{name:/Generate draft video/i})).toBeEnabled();
   expect(calls.some(path=>path.endsWith("/start"))).toBe(false);
 });
 
-it("never renders with an obsolete voice chosen while readiness is still running",async()=>{
+it("never renders with an obsolete Settings voice while readiness is still running",async()=>{
   let finishCheck:((response:Response)=>void)|undefined;
   const inFlight=new Promise<Response>(resolve=>{finishCheck=resolve;});
   const calls:string[]=[];
@@ -686,10 +699,12 @@ it("never renders with an obsolete voice chosen while readiness is still running
   });
   const user=userEvent.setup();
   render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  const voice=await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   await user.click(screen.getByRole("button",{name:/Generate draft video/i}));
   await waitFor(()=>expect(calls.some(path=>path.endsWith("/check"))).toBe(true));
-  await user.type(voice,"new-voice");
+  saveAudioSettings({...DEFAULT_AUDIO_SETTINGS,provider:"fish",voiceId:"new-voice",providerRevision:"fish-api-v1"});
+  fireEvent(window,new StorageEvent("storage",{key:"contentgen:production-voice-profile:v1"}));
+  await waitFor(()=>expect(screen.getByLabelText("Selected narrator")).toHaveTextContent("new-voice"));
   finishCheck?.(reply({report:{ready:true,findings:[]}}));
   expect(await screen.findByText(/Voice or scene settings changed/)).toBeInTheDocument();
   expect(calls.some(path=>path.endsWith("/start"))).toBe(false);
@@ -706,7 +721,7 @@ it("starts at most one preflight for repeated draft clicks",async()=>{
     throw Error("Unexpected render request: "+path);
   });
   render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
-  await screen.findByRole("textbox",{name:"Production voice ID"});
+  await screen.findByLabelText("Selected narrator");
   const button=screen.getByRole("button",{name:/Generate draft video/i});
   fireEvent.click(button);fireEvent.click(button);
   await waitFor(()=>expect(calls.filter(path=>path.endsWith("/check"))).toHaveLength(1));
