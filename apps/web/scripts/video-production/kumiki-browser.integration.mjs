@@ -19,20 +19,26 @@ import {loadProjectCharacterRigs,readCharacterZip} from "./character-rig-render.
 import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
 import {renderSelectedSceneClip} from "./scene-clip.mjs";
 import {renderVideoSegments} from "./render.mjs";
+import {makeOfflineRigDialogue} from "./offline-rig-dialogue.mjs";
 
 const run=promisify(execFile);
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
 const browserPath=process.env.CONTENTGEN_CHROMIUM_EXECUTABLE;
 if(!browserPath)throw Error("Set CONTENTGEN_CHROMIUM_EXECUTABLE to an installed Chromium browser.");
 const input=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url)));
-const timeline=buildSampleTimeline(input.beats.map(beat=>({id:beat.id,samples:48000,
+const root=await mkdtemp(join(tmpdir(),"contentgen-real-kumiki-"));
+let stage,browser;
+try{
+const spoken=await makeOfflineRigDialogue({outDir:root,turns:[
+  {id:"pip-asks",speakerId:"pip",voice:"kal",text:"Send"},
+  {id:"quill-replies",speakerId:"quill",voice:"slt",text:"Route"}
+],fps:input.destination.fps});
+const timeline=buildSampleTimeline(input.beats.map((beat,index)=>({id:beat.id,
+  samples:index===0?spoken.samples:48000,
   pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds})),
 {fps:input.destination.fps,events:input.events});
 const plan=compileGeneralVisuals(input,timeline);
 const manifest=plan.manifest;
-const root=await mkdtemp(join(tmpdir(),"contentgen-real-kumiki-"));
-let stage,browser;
-try{
   stage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
     validatedPlan:plan});
   // Chromium refuses to start as root inside some CI containers. This flag is
@@ -112,7 +118,9 @@ try{
   const rigArchives=new Map();
   const rigDrafts=[];
   for(const id of ["pip","quill"]){
-    const bytes=await readFile(new URL("../../public/starter-characters/"+id+".zip",import.meta.url));
+    const bytes=id==="pip"&&process.env.CONTENTGEN_QA_PIP_ARCHIVE?
+      await readFile(process.env.CONTENTGEN_QA_PIP_ARCHIVE):
+      await readFile(new URL("../../public/starter-characters/"+id+".zip",import.meta.url));
     const draftId=("character-draft-"+(id==="pip"?"a":"b")).padEnd(48,"0");
     rigArchives.set(draftId,bytes);
     rigDrafts.push({id:draftId,projectId:"rig-browser-smoke",characterId:id,
@@ -126,10 +134,10 @@ try{
     }});
   const rigPlan=structuredClone(plan);
   rigPlan.characterRigs=rigPacks.rigs;
-  rigPlan.chapters[0].dialogue={turns:[
-    {id:"pip-asks",speakerId:"pip",role:"character",animationAction:"pip-explain",startFrame:0,endFrame:24},
-    {id:"quill-replies",speakerId:"quill",role:"character",startFrame:24,endFrame:30}
-  ]};
+  rigPlan.chapters[0].dialogue={turns:spoken.turns.map(turn=>({id:turn.id,
+    speakerId:turn.speakerId,role:"character",
+    ...(turn.speakerId==="pip"?{animationAction:"pip-explain"}:{}),
+    startFrame:turn.startFrame,endFrame:turn.endFrame}))};
   // A second authored scene may select a different immutable Pip revision.
   // Catalog/hash checks happen in the server tests; this checks Chromium's
   // per-chapter renderer selection without introducing another animation path.
@@ -146,19 +154,26 @@ try{
     try{
       await rigPage.goto(rigStage.url,{waitUntil:"networkidle",timeout:30000});
       await rigPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      const pipRig=rigPacks.rigs.pip;
+      const mouth=pipRig.definition.parts.find(part=>part.id===pipRig.definition.speech.mouthPart);
+      const restAsset=mouth.variants?.[pipRig.definition.speech.rest]??mouth.asset;
+      const rightArm=pipRig.definition.parts.find(part=>["right-arm","arm_right"].includes(part.id))?.id;
+      assert.ok(rightArm,"a supplied Pip rig must expose an articulated right forepaw");
+      const quillStart=spoken.turns[1].startFrame,quillEnd=spoken.turns[1].endFrame;
+      const sampleFrames=[2,10,quillStart+3,quillEnd+2];
       const frames=[];
       const armTransforms=[];
-      for(const [index,frame] of [2,10,28].entries()){
+      for(const [index,frame] of sampleFrames.entries()){
         await rigPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
         const actor=rigPage.locator('[data-conversation-performer="pip"]');
         assert.equal(await actor.getAttribute("data-rig-source"),"character-studio");
         assert.equal(await actor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
         assert.ok(await actor.locator("svg image").count()>=4);
-        armTransforms.push(await actor.locator('[data-part="right-arm"]').getAttribute("transform"));
-        if(frame===28){
+        armTransforms.push(await actor.locator(`[data-part="${rightArm}"]`).getAttribute("transform"));
+        if(frame>=quillStart){
           assert.equal(await actor.getAttribute("data-speaking"),"false");
-          assert.ok(await actor.locator('[data-part="mouth"] [data-asset="mouthRest"]').count()>0,
-            "the saved raster mouth must close while Quill speaks");
+          assert.ok(await actor.locator(`[data-part="${pipRig.definition.speech.mouthPart}"] [data-asset="${restAsset}"]`).count()>0,
+            "the selected saved raster mouth must close when the recorded Pip speech ends");
         }
         frames.push(sha(await actor.screenshot({animations:"disabled"})));
         await rigPage.locator("[data-km-video-capture]").screenshot({path:join(root,`custom-rig-${String(index).padStart(2,"0")}.png`),animations:"disabled"});
@@ -167,6 +182,7 @@ try{
         "saved Pip arm must actually gesture during a long measured speech turn");
       assert.notEqual(frames[0],frames[1],"saved Pip mouth/arm layers must visibly animate during measured speech");
       assert.notEqual(frames[1],frames[2],"Pip must return to listening when Quill speaks");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),quillStart+3);
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-rig-source"),"character-studio");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-speaking"),"true");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"] [data-km-character-presenter]').getAttribute("data-diagnostics"),"0");
@@ -180,12 +196,12 @@ try{
     // Encode the *continuous* Kumiki scene at the real manifest FPS. Three
     // sampled PNGs at 3 fps prove artwork differences, but cannot prove that
     // speech closes at frame 24 or that exported timing survives FFmpeg.
-    assert.ok(rigPlan.chapters[0].endFrame>=30);
+    assert.ok(rigPlan.chapters[0].endFrame>=spoken.turns[1].endFrame+2);
     const realRigClip=await renderVideoSegments({stageUrl:rigStage.url,
       manifest:rigPlan.manifest,visualPlan:rigPlan,onlyChapterId:rigPlan.chapters[0].id,
       planHash:sha(JSON.stringify(rigPlan)),buildHash:rigStage.buildHash,
       outDir:join(root,"continuous-custom-rig"),browserExecutable:browserPath,
-      maxBatchFrames:30,reviewFrames:[2,10,28]});
+      maxBatchFrames:30,reviewFrames:[2,10,spoken.turns[1].startFrame+3]});
     assert.equal(realRigClip.frameCount,rigPlan.chapters[0].endFrame-rigPlan.chapters[0].startFrame);
     assert.equal(realRigClip.reviewStills.length,3);
     const customMp4=realRigClip.videoOnlyPath;
@@ -198,15 +214,15 @@ try{
     assert.equal(Number(customStream?.nb_read_frames),realRigClip.frameCount,
       "every measured dialogue frame must encode into a real H.264 video");
     assert.equal(customStream?.r_frame_rate,"30/1", "custom rigs cannot be exported at a sampled 3-fps animation rate");
-    // Also verify the real movie's audio/video container contract without a
-    // paid voice provider. The test tone stands in for an already-measured
-    // 48-kHz spoken track; the actual production mux consumes that WAV.
+    // Also verify the real movie's audio/video contract with a test-only,
+    // offline *spoken* 48-kHz track. Each character's mouth turns were bound
+    // to these actual measured WAV sample ranges, not a sine-wave surrogate.
     const clipSeconds=realRigClip.frameCount*rigPlan.manifest.fps.den/rigPlan.manifest.fps.num;
     const syncedMp4=join(root,"continuous-custom-rig-with-audio.mp4");
     await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
-      "-i",customMp4,"-f","lavfi","-i",`sine=frequency=440:sample_rate=48000:duration=${clipSeconds}`,
+      "-i",customMp4,"-i",spoken.wavPath,
       "-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","128k",
-      "-t",String(clipSeconds),"-movflags","+faststart",syncedMp4],{timeout:60000});
+      "-af","apad","-t",String(clipSeconds),"-movflags","+faststart",syncedMp4],{timeout:60000});
     const syncedProbe=await run("ffprobe",["-v","error","-show_entries",
       "stream=codec_type,codec_name,start_time,duration","-of","json",syncedMp4],{timeout:30000});
     const streams=JSON.parse(syncedProbe.stdout).streams??[];
