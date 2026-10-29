@@ -73,7 +73,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
       if (performer.dataset.rigSource === "character-studio") {
         const images = [...rig.querySelectorAll<SVGImageElement>("svg image")];
         if (!images.length || images.some(image =>
-          !/^\\/__character_assets\\/[a-f0-9]{64}\\.(?:png|webp)$/.test(image.getAttribute("href") ?? "")))
+          !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(image.getAttribute("href") ?? "")))
           throw new Error(`Saved character art was not used at frame ${target}`);
         const mouth = [...rig.querySelectorAll<SVGGElement>("[data-part]")].find(part =>
           part.dataset.part === performer.dataset.rigMouthPart);
