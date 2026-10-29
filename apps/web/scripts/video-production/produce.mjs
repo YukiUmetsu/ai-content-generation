@@ -127,7 +127,30 @@ export async function produceVideo(candidate, options, deps = {}) {
     Object.keys(characterPacks.rigs).some(id => !parsed.job.beats.some(beat =>
       (beat.speechTurns ?? [beat]).some(turn => turn.speaker?.role === "character" && turn.speaker.id === id))))
     fail("custom Character Studio rig does not match a speaking character in this job");
-  if (Object.keys(characterPacks.rigs).length && parsed.job.visualFamily !== "general-explainer-v1")
+  const sceneRigs=characterPacks.rigsByScene ?? {};
+  if (!sceneRigs || typeof sceneRigs !== "object" || Array.isArray(sceneRigs))
+    fail("selected Character Studio scene revisions are invalid");
+  const beatsById=new Map(parsed.job.beats.map(beat=>[beat.id,beat]));
+  const speaks=(beat,id)=>(beat.speechTurns ?? [beat]).some(turn=>
+    turn.speaker?.role==="character" && turn.speaker.id===id);
+  for(const [beatId,actors] of Object.entries(sceneRigs)) {
+    const beat=beatsById.get(beatId);
+    if (!beat || !actors || typeof actors!=="object" || Array.isArray(actors) || !Object.keys(actors).length)
+      fail("selected Character Studio scene revision no longer matches the storyboard");
+    for(const [id,rig] of Object.entries(actors))
+      if (!["pip","quill"].includes(id) || !speaks(beat,id) || !rig?.definition ||
+        rig.definition.characterId!==id)
+        fail(`selected Character Studio scene speaker ${id} does not match a speaking character`);
+  }
+  for(const beat of parsed.job.beats) for(const turn of beat.speechTurns ?? []) {
+    if (turn.speaker?.role!=="character" || !turn.animationAction) continue;
+    const id=turn.speaker.id;
+    const pinned=sceneRigs[beat.id]?.[id] ?? characterPacks.rigs[id];
+    if (pinned && !Object.hasOwn(pinned.definition?.actions ?? {},turn.animationAction))
+      fail(`action ${turn.animationAction} is not declared by the selected ${id} rig revision for scene ${beat.id}`);
+  }
+  if ((Object.keys(characterPacks.rigs).length || Object.keys(sceneRigs).length) &&
+    parsed.job.visualFamily !== "general-explainer-v1")
     fail("custom character rigs require the general-scene Kumiki renderer");
   if (!options?.out || !options.providerRevision) fail("explicit output and provider/engine revision are required");
   if (options.provider !== parsed.job.voice.provider) fail("provider substitution is forbidden; change the job voice configuration first");

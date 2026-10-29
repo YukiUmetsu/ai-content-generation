@@ -593,3 +593,45 @@ test("custom character rigs cannot silently enter an unrelated visual family or 
   await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/custom character rigs require the general-scene/);
   assert.equal(ctx.status().providerCalls,0);
 });
+
+test("scene-specific custom rig rejects an unavailable dialogue action before TTS or Chromium",async t=>{
+  const ctx=await context(t);
+  ctx.job=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job.voice={...ctx.job.voice,provider:"local",modelId:"installed-mock",voiceId:"licensed",
+    endpoint:"http://127.0.0.1:8765",licenseStatus:"test-only"};
+  const beat=ctx.job.beats[1];
+  beat.speechTurns=[
+    {id:"pip-line",narration:"Pip introduces the route.",pauseAfterMs:120,
+      speaker:{id:"pip",role:"character",voiceId:"pip-voice"},animationAction:"walk"},
+    {id:"narration",narration:"Then we follow its path.",pauseAfterMs:0}
+  ];
+  beat.narration=beat.speechTurns.map(turn=>turn.narration).join(" ");
+  const pip={definition:{characterId:"pip",actions:{"pip-explain":{}}}};
+  ctx.opts.characterRigPacks={rigs:{pip},rigsByScene:{steps:{pip:{definition:{characterId:"pip",actions:{ask_question:{}}}}}},
+    assets:[],identity:[]};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/walk.*selected.*rig|action.*walk.*revision/i);
+  assert.equal(ctx.status().providerCalls,0);
+  assert.equal(ctx.status().sceneCalls,0);
+  // A valid scoped action takes precedence over the global revision and
+  // reaches environment preflight without generating audio.
+  ctx.opts.characterRigPacks.rigsByScene.steps.pip.definition.actions.walk={};
+  ctx.injected.preflightExport=async()=>{throw Error("browser-preflight-reached");};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/browser-preflight-reached/);
+  assert.equal(ctx.status().providerCalls,0);
+});
+
+test("stale or unrelated scene rig overrides fail before any browser or speech work",async t=>{
+  const ctx=await context(t);
+  ctx.job=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job.voice={...ctx.job.voice,provider:"local",modelId:"installed-mock",voiceId:"licensed",
+    endpoint:"http://127.0.0.1:8765",licenseStatus:"test-only"};
+  ctx.job.beats[1].speaker={id:"pip",role:"character",voiceId:"pip-voice"};
+  ctx.opts.characterRigPacks={rigs:{},rigsByScene:{old_scene:{pip:{definition:{characterId:"pip",actions:{}}}}},
+    assets:[],identity:[]};
+  ctx.injected.preflightExport=async()=>{throw Error("browser-preflight-should-not-run");};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/scene.*revision|unknown.*scene|scene.*match/i);
+  assert.equal(ctx.status().providerCalls,0);
+  ctx.opts.characterRigPacks.rigsByScene={steps:{quill:{definition:{characterId:"quill",actions:{}}}}};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/scene.*speaker|scene.*character|speaking character/i);
+  assert.equal(ctx.status().providerCalls,0);
+});
