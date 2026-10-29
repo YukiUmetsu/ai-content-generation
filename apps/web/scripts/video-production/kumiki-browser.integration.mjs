@@ -275,7 +275,7 @@ const manifest=plan.manifest;
       const target=resolve(process.env.CONTENTGEN_QA_ARTIFACT_DIR);
       await mkdir(target,{recursive:true});
       await copyFile(syncedMp4,join(target,"kumiki-custom-rigs-voiced.mp4"));
-      if(pipRig.definition.blink){
+      if(rigPacks.rigs.pip.definition.blink){
         await copyFile(join(root,"pip-open.png"),join(target,"pip-open.png"));
         await copyFile(join(root,"pip-closed.png"),join(target,"pip-closed.png"));
       }
