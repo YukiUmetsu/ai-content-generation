@@ -121,20 +121,21 @@ async fn list(
     Query(query): Query<DraftQuery>,
 ) -> Result<Json<DraftList>, ApiError> {
     validate_query(&query, false)?;
-    let drafts =
-        tokio::task::spawn_blocking(move || {
-            let db = state.connect().map_err(|_| unavailable())?;
-            let mut statement = db.prepare(&format!(
-            "{SELECT_DRAFT} WHERE project_id = ?1 ORDER BY rowid DESC LIMIT 250"
-        )).map_err(|_| unavailable())?;
-            statement
-                .query_map([query.project_id], row_draft)
-                .map_err(|_| unavailable())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| unavailable())
-        })
-        .await
-        .map_err(|_| unavailable())??;
+    let drafts = tokio::task::spawn_blocking(move || {
+        let db = state.connect().map_err(|_| unavailable())?;
+        let mut statement = db
+            .prepare(&format!(
+                "{SELECT_DRAFT} WHERE project_id = ?1 ORDER BY rowid DESC LIMIT 250"
+            ))
+            .map_err(|_| unavailable())?;
+        statement
+            .query_map([query.project_id], row_draft)
+            .map_err(|_| unavailable())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| unavailable())
+    })
+    .await
+    .map_err(|_| unavailable())??;
     Ok(Json(DraftList { drafts }))
 }
 
