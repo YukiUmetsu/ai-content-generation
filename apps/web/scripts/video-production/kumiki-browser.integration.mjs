@@ -162,18 +162,27 @@ try{
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-speaking"),"true");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"] [data-km-character-presenter]').getAttribute("data-diagnostics"),"0");
     }finally{await rigPage.close();}
-    const customMp4=join(root,"custom-pip-quill.mp4");
-    await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
-      "-framerate","3","-i",join(root,"custom-rig-%02d.png"),
-      "-frames:v","3","-c:v","libx264","-pix_fmt","yuv420p",customMp4],{timeout:60000});
+    // Encode the *continuous* Kumiki scene at the real manifest FPS. Three
+    // sampled PNGs at 3 fps prove artwork differences, but cannot prove that
+    // speech closes at frame 24 or that exported timing survives FFmpeg.
+    assert.ok(rigPlan.chapters[0].endFrame>=30);
+    const realRigClip=await renderVideoSegments({stageUrl:rigStage.url,
+      manifest:rigPlan.manifest,visualPlan:rigPlan,onlyChapterId:rigPlan.chapters[0].id,
+      planHash:sha(JSON.stringify(rigPlan)),buildHash:rigStage.buildHash,
+      outDir:join(root,"continuous-custom-rig"),browserExecutable:browserPath,
+      maxBatchFrames:30,reviewFrames:[2,10,28]});
+    assert.equal(realRigClip.frameCount,rigPlan.chapters[0].endFrame-rigPlan.chapters[0].startFrame);
+    assert.equal(realRigClip.reviewStills.length,3);
+    const customMp4=realRigClip.videoOnlyPath;
     const customProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
-      "-show_entries","stream=codec_name,width,height,nb_read_frames","-of","json",customMp4],{timeout:30000});
+      "-show_entries","stream=codec_name,width,height,nb_read_frames,r_frame_rate","-of","json",customMp4],{timeout:30000});
     const customStream=JSON.parse(customProbe.stdout).streams?.[0];
     assert.equal(customStream?.codec_name,"h264");
     assert.equal(customStream?.width,1920);
     assert.equal(customStream?.height,1080);
-    assert.equal(Number(customStream?.nb_read_frames),3,
-      "custom Character Studio sprite frames must encode into a real H.264 video");
+    assert.equal(Number(customStream?.nb_read_frames),realRigClip.frameCount,
+      "every measured dialogue frame must encode into a real H.264 video");
+    assert.equal(customStream?.r_frame_rate,"30/1", "custom rigs cannot be exported at a sampled 3-fps animation rate");
   }finally{await rigStage.close();}
   // Exercise the actual selected-scene API's file publication via the same
   // Chromium page, H.264 encoder and FFprobe. Only three preview frames are

@@ -2,7 +2,7 @@
  * Archives are inert: never extracted to disk, executed, or trusted as voice permissions.
  */
 import { createHash } from "node:crypto";
-import { inflateRawSync } from "node:zlib";
+import { inflateRawSync, inflateSync } from "node:zlib";
 
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const MAX_ZIP = 16 * 1024 * 1024;
@@ -23,6 +23,88 @@ function crc32(bytes) {
     for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
   }
   return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** Fail before speech synthesis if a verified ZIP contains a structurally broken
+ * raster. A URL and a ZIP checksum alone do not prove that Chromium can draw it.
+ * PNG scanlines are inflated and checked; WebP's RIFF/VP8 dimensions and bounds
+ * are checked here, with full browser decode checked by the export capture gate.
+ */
+export function assertCharacterRasterIntegrity(bytes, asset) {
+  const invalid = reason => fail(`Character ${asset?.mediaType === "image/webp" ? "WebP" : "PNG"} image ${reason}.`);
+  if (!Buffer.isBuffer(bytes) || !Number.isSafeInteger(asset?.width) || !Number.isSafeInteger(asset?.height) ||
+    asset.width < 1 || asset.height < 1 || asset.width > 8192 || asset.height > 8192) invalid("dimensions are invalid");
+  if (asset.mediaType === "image/png") {
+    if (bytes.length < 57 || !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) invalid("signature is missing");
+    let offset = 8, header = false, end = false, idatStarted = false;
+    const chunks = [];
+    let bits = 0, channels = 0, rows = 0;
+    while (offset + 12 <= bytes.length && !end) {
+      const length = bytes.readUInt32BE(offset);
+      if (length > 16 * 1024 * 1024 || offset + 12 + length > bytes.length) invalid("chunk bounds are broken");
+      const name = bytes.toString("ascii", offset + 4, offset + 8);
+      if (!/^[A-Za-z]{4}$/.test(name)) invalid("chunk name is invalid");
+      const data = bytes.subarray(offset + 8, offset + 8 + length);
+      if (crc32(bytes.subarray(offset + 4, offset + 8 + length)) !== bytes.readUInt32BE(offset + 8 + length))
+        invalid("chunk checksum differs");
+      if (!header && (name !== "IHDR" || length !== 13)) invalid("has no leading IHDR");
+      if (name === "IHDR") {
+        if (header || length !== 13 || bytes.readUInt32BE(offset + 8) !== asset.width ||
+          bytes.readUInt32BE(offset + 12) !== asset.height) invalid("dimensions differ from the manifest");
+        const bitDepth = data[8], color = data[9];
+        const configurations = new Map([[0,[1,2,4,8,16]],[2,[8,16]],[3,[1,2,4,8]],[4,[8,16]],[6,[8,16]]]);
+        if (!configurations.get(color)?.includes(bitDepth) || data[10] !== 0 || data[11] !== 0 || data[12] !== 0)
+          invalid("uses an unsupported pixel format or interlacing");
+        bits = bitDepth; channels = ({0:1,2:3,3:1,4:2,6:4})[color]; rows = asset.height;
+        header = true;
+      } else if (name === "IDAT") {
+        idatStarted = true;
+        chunks.push(data);
+      } else if (name === "IEND") {
+        if (length !== 0 || !idatStarted) invalid("is missing image pixels");
+        end = true;
+      } else if (name[0] === name[0].toUpperCase() && !["PLTE"].includes(name)) {
+        invalid(`contains unsupported critical chunk ${name}`);
+      }
+      offset += 12 + length;
+    }
+    if (!header || !end || offset !== bytes.length) invalid("is truncated or has trailing data");
+    const stride = Math.ceil(asset.width * channels * bits / 8);
+    const expected = (stride + 1) * rows;
+    if (expected > 64 * 1024 * 1024) invalid("decoded pixels exceed the 64 MiB limit");
+    let pixels;
+    try { pixels = inflateSync(Buffer.concat(chunks), { maxOutputLength: expected + 1 }); }
+    catch { invalid("compressed pixel stream is unreadable"); }
+    if (pixels.length !== expected) invalid("decoded scanline dimensions differ");
+    for (let y = 0; y < rows; y++) if (pixels[y * (stride + 1)] > 4) invalid("has an invalid row filter");
+    return;
+  }
+  if (asset.mediaType !== "image/webp" || bytes.length < 20 || bytes.toString("ascii",0,4) !== "RIFF" ||
+    bytes.toString("ascii",8,12) !== "WEBP" || bytes.readUInt32LE(4) + 8 !== bytes.length) invalid("RIFF container is invalid");
+  let offset = 12, dimensions, hasPixels = false;
+  while (offset + 8 <= bytes.length) {
+    const type = bytes.toString("ascii", offset, offset + 4);
+    const size = bytes.readUInt32LE(offset + 4), start = offset + 8;
+    if (!/^[A-Za-z0-9 ]{4}$/.test(type) || size > bytes.length - start || start + size + (size & 1) > bytes.length)
+      invalid("WebP chunk bounds are broken");
+    if (type === "VP8X") {
+      if (size !== 10 || dimensions) invalid("WebP extended header is invalid");
+      dimensions = [1 + bytes.readUIntLE(start + 4,3), 1 + bytes.readUIntLE(start + 7,3)];
+    } else if (type === "VP8L") {
+      if (size < 5 || bytes[start] !== 0x2f) invalid("WebP lossless header is invalid");
+      const packed = bytes.readUInt32LE(start + 1);
+      dimensions ??= [1 + (packed & 0x3fff), 1 + ((packed >>> 14) & 0x3fff)];
+      hasPixels = true;
+    } else if (type === "VP8 ") {
+      if (size < 10 || bytes[start + 3] !== 0x9d || bytes[start + 4] !== 0x01 || bytes[start + 5] !== 0x2a)
+        invalid("WebP lossy header is invalid");
+      dimensions ??= [bytes.readUInt16LE(start + 6) & 0x3fff, bytes.readUInt16LE(start + 8) & 0x3fff];
+      hasPixels = true;
+    }
+    offset = start + size + (size & 1);
+  }
+  if (offset !== bytes.length || !hasPixels || dimensions?.[0] !== asset.width || dimensions?.[1] !== asset.height)
+    invalid("dimensions or pixel chunks differ from the manifest");
 }
 
 /** Validate local/central ZIP metadata before inflating a bounded entry. No ZIP64 or links. */
@@ -110,12 +192,7 @@ function verifyPack(archive, draft, id) {
     const file = entries.get(asset.uri.toLowerCase());
     if (!file || file.name !== asset.uri) fail("Character ZIP is missing an exact referenced layer.");
     const bytes = file.data;
-    if (extension === ".png" && (bytes.length < 24 ||
-      !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ||
-      bytes.readUInt32BE(16) !== asset.width || bytes.readUInt32BE(20) !== asset.height))
-      fail("Character PNG signature or dimensions differ from its manifest.");
-    if (extension === ".webp" && (bytes.length < 12 || bytes.toString("ascii",0,4) !== "RIFF" ||
-      bytes.toString("ascii",8,12) !== "WEBP")) fail("Character WebP signature is invalid.");
+    assertCharacterRasterIntegrity(bytes, asset);
     const digest = sha256(bytes);
     if (asset.sha256 && asset.sha256.toLowerCase() !== digest) fail("Character image checksum differs from its manifest.");
     const url = `/__character_assets/${digest}${extension}`;
@@ -165,6 +242,35 @@ function verifyPack(archive, draft, id) {
   return { draftId: draft.id, archiveSha256: draft.archiveSha256, definition, assetUrls, assets };
 }
 
+/** List every referenced layer, including offscreen expressions/visemes. This
+ * drives the real Chromium decode check before FFmpeg captures any frames. */
+export function characterRasterPreflightList(rigs = {}) {
+  if (!rigs || typeof rigs !== "object" || Array.isArray(rigs)) fail("Invalid saved-rig raster manifest.");
+  const layers = new Map();
+  for (const [id, rig] of Object.entries(rigs)) {
+    if (!["pip", "quill"].includes(id) || !object(rig?.definition?.assets) || !object(rig.assetUrls))
+      fail("Invalid saved-rig raster manifest.");
+    for (const asset of Object.values(rig.definition.assets)) {
+      const ext = asset?.mediaType === "image/png" ? "png" : asset?.mediaType === "image/webp" ? "webp" : null;
+      const url = rig.assetUrls[asset?.uri];
+      if (!ext || asset.kind !== "image" || !safePath(asset.uri) ||
+        !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(url ?? "") ||
+        !url.endsWith(`.${ext}`) || !Number.isSafeInteger(asset.width) ||
+        !Number.isSafeInteger(asset.height) || asset.width < 1 || asset.height < 1 ||
+        asset.width > 8192 || asset.height > 8192)
+        fail(`Saved ${id} raster URL or image dimensions are missing or invalid.`);
+      const former = layers.get(url);
+      if (former && (former.width !== asset.width || former.height !== asset.height))
+        fail("A saved raster URL has conflicting image dimensions.");
+      layers.set(url, { url, width: asset.width, height: asset.height });
+    }
+  }
+  if (layers.size > 256) fail("Saved cast exceeds the bounded raster decode budget.");
+  if ([...layers.values()].reduce((total,layer)=>total+layer.width*layer.height*4,0) > 384*1024*1024)
+    fail("Saved cast decoded image pixels exceed the 384 MiB browser budget.");
+  return [...layers.values()];
+}
+
 async function boundedResponse(response, max) {
   if (!response.ok) fail(`Character Studio backend returned HTTP ${response.status}.`);
   if (Number(response.headers.get("content-length") ?? 0) > max) fail("Character Studio response exceeds its size limit.");
@@ -181,8 +287,11 @@ async function boundedResponse(response, max) {
 /** Resolve only the two currently staged characters. Newest saved revision wins;
  * an absent character uses original bundled art, never an unrelated project's rig.
  */
-export async function loadProjectCharacterRigs({ projectId, speakers, origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetchImpl = fetch }) {
+export async function loadProjectCharacterRigs({ projectId, speakers, selectedDraftIds = {}, origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetchImpl = fetch }) {
   const ids = [...new Set(speakers ?? [])].filter(id => id === "pip" || id === "quill");
+  if (!object(selectedDraftIds) || Object.entries(selectedDraftIds).some(([id, draftId]) =>
+    !ids.includes(id) || !/^character-draft-[a-f0-9]{32}$/.test(draftId)))
+    fail("Selected character revision must name an active cast speaker and a saved draft ID.");
   if (!ids.length) return { rigs: {}, assets: [], identity: [] };
   if (!safeId(projectId) || projectId.length > 120) fail("Select a valid Character Studio project before rendering its custom cast.");
   let base;
@@ -203,7 +312,11 @@ export async function loadProjectCharacterRigs({ projectId, speakers, origin = p
   if (!Array.isArray(catalog?.drafts) || catalog.drafts.length > 250) fail("Character Studio returned an invalid revision catalog.");
   const rigs = {}, assets = [], identity = [];
   for (const id of ids) {
-    const draft = catalog.drafts.find(item => item?.characterId === id);
+    const selectedId = selectedDraftIds[id];
+    const draft = catalog.drafts.find(item => item?.characterId === id &&
+      (selectedId === undefined || item?.id === selectedId));
+    if (selectedId !== undefined && !draft)
+      fail(`Selected ${id} Character Studio revision is missing from this project; refusing a built-in or newer-art fallback.`);
     if (!draft) continue;
     if (!/^character-draft-[a-f0-9]{32}$/.test(draft.id) || draft.projectId !== projectId ||
       typeof draft.revision !== "string" || !draft.revision || draft.revision.length > 64 ||

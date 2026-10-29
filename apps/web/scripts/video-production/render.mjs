@@ -5,6 +5,7 @@ import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
 import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { listRenderChunks, reusableChapter } from "./media-reuse.mjs";
+import { characterRasterPreflightList } from "./character-rig-render.mjs";
 import { assertReviewStillBudget, MAX_SCENE_REVIEW_STILLS } from "./scene-review-coverage.mjs";
 import { constants } from "node:fs";
 import { basename, join, parse, resolve, sep } from "node:path";
@@ -139,18 +140,53 @@ function matchProbe(actual, expected, count) {
     actual.fps?.num * expected.fps.den === expected.fps.num * actual.fps.den;
 }
 
+/** Only the existing explicit visual-test override may disable Chromium's
+ * process sandbox; normal production capture retains browser isolation. */
+export function chromiumExportLaunchArgs(env = process.env) {
+  return env.CONTENTGEN_BROWSER_TEST_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
+}
+
 async function defaultOpenCapture(stageUrl, manifest, options) {
   if (!options.browserExecutable) fail("configure an already-installed Chromium executable for browser export");
   let chromium;
   try { ({ chromium } = await import("playwright-core")); }
   catch { fail("playwright-core is unavailable; install the pinned driver without downloading a browser"); }
-  const browser = await chromium.launch({ executablePath: options.browserExecutable, headless: true });
+  const browser = await chromium.launch({ executablePath: options.browserExecutable,
+    headless: true, args: chromiumExportLaunchArgs() });
   try {
     const page = await browser.newPage({ viewport: { width: manifest.width, height: manifest.height }, deviceScaleFactor: 1, reducedMotion: "reduce" });
     await page.goto(stageUrl, { waitUntil: "networkidle", timeout: 30000 });
     await page.waitForFunction(() => Boolean(window.__kmVideoExport?.manifest), undefined, { timeout: 20000 });
     const live = await page.evaluate(() => window.__kmVideoExport?.manifest);
     const buildHash = await page.evaluate(() => window.__contentgenBuildHash);
+    // SVG <image> URLs can be present while the artwork is undecodable, which
+    // otherwise produces a black/empty actor without any React diagnostic.
+    // Decode *all* pinned layers, including expressions not visible in frame 0.
+    const characterLayers = characterRasterPreflightList(options.visualPlan?.characterRigs);
+    if (characterLayers.length) {
+      try {
+        await page.evaluate(async layers => {
+          let cursor = 0;
+          await Promise.all(Array.from({length:Math.min(4,layers.length)},async()=>{
+            while (cursor < layers.length) {
+              const layer = layers[cursor++], image = new Image();
+              image.src = layer.url;
+              let timer;
+              try {
+                await Promise.race([
+                  image.decode(),
+                  new Promise((_, reject) => { timer = setTimeout(() => reject(Error("decode timed out")), 15000); }),
+                ]);
+              } finally { clearTimeout(timer); }
+              if (image.naturalWidth !== layer.width || image.naturalHeight !== layer.height)
+                throw Error("decoded dimensions changed");
+            }
+          }));
+        }, characterLayers);
+      } catch (error) {
+        fail(`saved Character Studio raster failed Chromium image decoding: ${error.message}`);
+      }
+    }
     return {
       manifest: live,
       buildHash,

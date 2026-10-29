@@ -248,12 +248,20 @@ export function createDirectorProduction(deps={}){
   async function characterRigSelection(input,job){
     const speakers=[...new Set(job.beats.flatMap(beat=>
       (beat.speechTurns??[beat]).map(turn=>turn.speaker?.role==="character"?turn.speaker.id:null)).filter(id=>id==="pip"||id==="quill"))];
+    const selectedDraftIds=input.characterDraftIds??{};
+    if(!selectedDraftIds||typeof selectedDraftIds!=="object"||Array.isArray(selectedDraftIds)||
+      Object.entries(selectedDraftIds).some(([speaker,id])=>
+        !speakers.includes(speaker)||typeof id!=="string"||
+        !/^character-draft-[a-f0-9]{32}$/.test(id)))
+      throw Error("Select valid saved Character Studio revisions for characters speaking in this video.");
+    if(Object.keys(selectedDraftIds).length&&!input.characterProjectId)
+      throw Error("Select the Character Studio project before pinning a saved rig revision.");
     if(!speakers.length||input.characterProjectId===undefined)
       return {rigs:{},assets:[],identity:[]};
     if(typeof input.characterProjectId!=="string"||
       !/^[A-Za-z0-9_-]{1,120}$/.test(input.characterProjectId))
       throw Error("Invalid Character Studio project identity.");
-    return resolveRigs({projectId:input.characterProjectId,speakers});
+    return resolveRigs({projectId:input.characterProjectId,speakers,selectedDraftIds});
   }
   const synthesizeSample=deps.synthesizeNarration??synthesizeNarration;
   const compile=deps.compile??compilePreproductionRenderJob;

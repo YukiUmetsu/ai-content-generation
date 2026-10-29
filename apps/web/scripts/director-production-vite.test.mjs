@@ -1619,17 +1619,19 @@ test("custom rig revisions are checked twice and frozen into the actual render r
   let archiveSha="a".repeat(64),renders=0,used=null,lookups=0;
   const server=createDirectorProduction({outputRoot:dir,build:async()=>{},findBrowser:async()=>"/mock/chromium",
     inspect:async()=>({ready:true,findings:[],tools:{}}),
-    loadCharacterRigs:async ({projectId,speakers})=>{
+    loadCharacterRigs:async ({projectId,speakers,selectedDraftIds})=>{
       lookups++;
       assert.equal(projectId,"project-custom-rigs");
       assert.deepEqual(speakers,["pip"]);
+      assert.deepEqual(selectedDraftIds,{pip:"character-draft-"+"b".repeat(32)});
       const identity=[{speakerId:"pip",draftId:"character-draft-"+"b".repeat(32),
         archiveSha256:archiveSha,revision:"custom-v2"}];
       return {identity,rigs:{pip:{draftId:identity[0].draftId,
         archiveSha256:archiveSha,definition:{characterId:"pip",revision:"custom-v2"},assetUrls:{}}},assets:[]};
     },
     produce:async(_job,options)=>{renders++;used=options.characterRigPacks;throw Error("intentional fixture stop");}});
-  const payload={...project,settings:config,characterProjectId:"project-custom-rigs"};
+  const payload={...project,settings:config,characterProjectId:"project-custom-rigs",
+    characterDraftIds:{pip:"character-draft-"+"b".repeat(32)}};
   const checked=await invoke(server,"POST","/check",payload);
   assert.equal(checked.status,200);
   assert.equal(checked.data.characterRigs[0].revision,"custom-v2");

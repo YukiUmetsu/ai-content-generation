@@ -15,6 +15,82 @@ const plan={schemaVersion:1,kind:"preview",job:{beats:[{id:"beat1",narration:"Ex
   shotMap:[{shotId:"shot1",beatId:"beat1",visualAction:"Reveal costs"}],warnings:["Review factual claims."],editorialStatus:"draft"};
 const reply=(payload:unknown)=>new Response(JSON.stringify(payload),{status:200});
 
+it("lets the user pin a saved Pip ZIP revision and sends the same selection to render preflight",async()=>{
+  const pinnedId=`character-draft-${"b".repeat(32)}`;
+  const speaking={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",
+    speaker:{id:"pip",role:"character" as const,provider:"fish" as const,voiceId:DEFAULT_FISH_VOICE_ID}}]}};
+  let preflight:Record<string,unknown>|null=null;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const url=String(input);
+    if(url.includes("/api/character-drafts?"))return reply({drafts:[{
+      id:pinnedId,projectId:"project-one",characterId:"pip",revision:"custom-pip-v1.6",
+      archiveSha256:"a".repeat(64),sizeBytes:1234,status:"unverified",createdAt:"2026-10-28T00:00:00Z"}]});
+    if(url.endsWith("/plan"))return reply(plan);
+    if(url.endsWith("/check")){
+      preflight=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      return reply({report:{ready:false,findings:[]}});
+    }
+    throw Error("Unexpected request: "+url);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={speaking} voiceProjectId="project-one" initialStage="narration"/>);
+  const selection=await screen.findByRole("combobox",{name:"Pip rig revision"});
+  fireEvent.change(selection,{target:{value:pinnedId}});
+  await userEvent.setup().click(screen.getByRole("button",{name:"Generate draft video"}));
+  await waitFor(()=>expect(preflight).not.toBeNull());
+  expect(preflight).toMatchObject({characterDraftIds:{pip:pinnedId},characterProjectId:"project-one"});
+});
+it("does not reuse a selected character revision when the project changes",async()=>{
+  const pinnedId=`character-draft-${"b".repeat(32)}`;
+  const speaking={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",
+    speaker:{id:"pip",role:"character" as const,provider:"fish" as const,voiceId:DEFAULT_FISH_VOICE_ID}}]}};
+  let checked:Record<string,unknown>|null=null;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const url=String(input);
+    if(url.includes("/api/character-drafts?"))return reply({drafts:url.includes("project-one")?[{
+      id:pinnedId,projectId:"project-one",characterId:"pip",revision:"custom",
+      archiveSha256:"a".repeat(64),sizeBytes:1234,status:"unverified",createdAt:"2026-10-28T00:00:00Z"}]:[]});
+    if(url.endsWith("/plan"))return reply(plan);
+    if(url.endsWith("/check")){
+      checked=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      return reply({report:{ready:false,findings:[]}});
+    }
+    throw Error("Unexpected request: "+url);
+  });
+  const view=render(<ProductionPanel dossier={dossier} bundle={speaking} voiceProjectId="project-one" initialStage="narration"/>);
+  fireEvent.change(await screen.findByRole("combobox",{name:"Pip rig revision"}),{target:{value:pinnedId}});
+  expect(screen.getByRole("combobox",{name:"Pip rig revision"})).toHaveValue(pinnedId);
+  view.rerender(<ProductionPanel dossier={dossier} bundle={speaking} voiceProjectId="project-two" initialStage="narration"/>);
+  await userEvent.setup().click(screen.getByRole("button",{name:"Generate draft video"}));
+  await waitFor(()=>expect(checked).not.toBeNull());
+  expect(checked).toMatchObject({characterProjectId:"project-two"});
+  expect((checked as Record<string,unknown>|null)?.characterDraftIds).toEqual({});
+});
+it("can return from a pinned ZIP to automatic latest without sending an empty draft ID",async()=>{
+  const pinnedId=`character-draft-${"b".repeat(32)}`;
+  const speaking={...bundle,plan:{...bundle.plan,sound:[{shotId:"shot1",
+    speaker:{id:"pip",role:"character" as const,provider:"fish" as const,voiceId:DEFAULT_FISH_VOICE_ID}}]}};
+  let checked:Record<string,unknown>|null=null;
+  vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+    const url=String(input);
+    if(url.includes("/api/character-drafts?"))return reply({drafts:[{
+      id:pinnedId,projectId:"project-one",characterId:"pip",revision:"custom",
+      archiveSha256:"a".repeat(64),sizeBytes:1234,status:"unverified",createdAt:"2026-10-28T00:00:00Z"}]});
+    if(url.endsWith("/plan"))return reply(plan);
+    if(url.endsWith("/check")){
+      checked=JSON.parse(String(init?.body)) as Record<string,unknown>;
+      return reply({report:{ready:false,findings:[]}});
+    }
+    throw Error("Unexpected request: "+url);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={speaking} voiceProjectId="project-one" initialStage="narration"/>);
+  const select=await screen.findByRole("combobox",{name:"Pip rig revision"});
+  fireEvent.change(select,{target:{value:pinnedId}});
+  fireEvent.change(select,{target:{value:""}});
+  await userEvent.setup().click(screen.getByRole("button",{name:"Generate draft video"}));
+  await waitFor(()=>expect(checked).not.toBeNull());
+  expect((checked as Record<string,unknown>|null)?.characterDraftIds).toEqual({});
+});
+
 it("starts a new project's narrator on the requested Fish primary without TTS or consent",async()=>{
   vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
     if(String(input).endsWith("/plan"))return reply(plan);

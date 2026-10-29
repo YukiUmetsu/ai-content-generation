@@ -5,6 +5,7 @@ import { Surface } from "@/components/ui/surface-card";
 import { LiveRendererPreview, type LiveVisualPreviewData } from "./live-renderer-preview";
 import { ProjectVoiceFavoritesPanel } from "./project-voice-favorites-panel";
 import { projectNarratorSettingsKey, readProjectVoices, type VoiceFavorite } from "./project-voice-favorites";
+import { listCharacterDrafts, type CharacterDraft } from "@/features/character-studio/character-drafts-api";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
@@ -118,6 +119,23 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   const extraCast=sceneCast.filter(item=>item.speaker.voiceId!==settings.voiceId);
   const extraVoices=[...new Set(extraCast.map(item=>`${item.speaker.provider}:${item.speaker.voiceId}`))];
   const mismatchedCast=sceneCast.filter(item=>item.speaker.provider!==settings.provider);
+  const rigSpeakers=[...new Set(sceneCast.map(item=>item.speaker.id))].filter(id=>id==="pip"||id==="quill");
+  const rigSpeakerKey=rigSpeakers.join(":");
+  const [savedRigs,setSavedRigs]=useState<CharacterDraft[]>([]);
+  const [rigListError,setRigListError]=useState("");
+  const [rigSelection,setRigSelection]=useState<{owner?:string;ids:Record<string,string>}>(
+    {owner:voiceProjectId,ids:{}});
+  const characterDraftIds=rigSelection.owner===voiceProjectId?rigSelection.ids:{};
+  useEffect(()=>{
+    if(!voiceProjectId||!rigSpeakerKey){return;}
+    let active=true;
+    void listCharacterDrafts(voiceProjectId).then(drafts=>{
+      if(active){setSavedRigs(drafts);setRigListError("");}
+    }).catch(error=>{if(active)setRigListError(error instanceof Error?error.message:"Could not read saved character revisions.");});
+    return ()=>{active=false;};
+  },[voiceProjectId,rigSpeakerKey,stage,recheckToken]);
+  const selectedCharacterDraftIds=Object.fromEntries(Object.entries(characterDraftIds)
+    .filter(([id,draftId])=>Boolean(draftId)&&rigSpeakers.some(speaker=>speaker===id)));
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
   useEffect(()=>{
     try{localStorage.setItem(voiceProjectId?projectNarratorSettingsKey(voiceProjectId):voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
@@ -359,7 +377,9 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     const revision=inputRevision.current;
     setWorking("check");setNotice("");setReady(false);setRigNote("");
     try{
-      const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,...(voiceProjectId?{characterProjectId:voiceProjectId}:{}),...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,
+        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds}:{}),
+        ...(productionId?{productionId,sourceRevision}:{})});
       if(revision!==inputRevision.current){setNotice("Scene, voice or consent changed during readiness. Check again for the new version.");return;}
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
@@ -397,7 +417,9 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
         setPreview(result);
       }
       setState({state:"checking",phase:"preflight",message:"Checking voice permissions, installed tools and scene assets…"});
-      const requestInput={...payload,settings,castVoiceConsent,searchFreeMedia,...(voiceProjectId?{characterProjectId:voiceProjectId}:{}),...(productionId?{productionId,sourceRevision}:{})};
+      const requestInput={...payload,settings,castVoiceConsent,searchFreeMedia,
+        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds}:{}),
+        ...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
@@ -599,6 +621,24 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
             <span className="block font-semibold text-foreground">{speaker.id==="pip"?"Pip":speaker.id==="quill"?"Quill":speaker.id} <span className="font-normal text-muted-foreground">· {label}</span></span>
             <span className="mt-1 block break-all text-muted-foreground">{speaker.provider} · {speaker.voiceId}</span>
           </li>)}</ul>
+          {voiceProjectId&&rigSpeakers.length>0&&<div className="grid gap-2 sm:grid-cols-2" aria-label="Saved character rig revisions">
+            {rigSpeakers.map(id=><label key={id} className={inputLabel}>
+              {id==="pip"?"Pip":"Quill"} rig revision
+              <select className={field} aria-label={`${id==="pip"?"Pip":"Quill"} rig revision`}
+                value={characterDraftIds[id]??""} disabled={!!working||state.state==="rendering"}
+                onChange={event=>{
+                  inputRevision.current++;
+                  setRigSelection({owner:voiceProjectId,ids:{...characterDraftIds,[id]:event.target.value}});
+                  setReady(false);setRigNote("");
+                }}>
+                <option value="">Latest saved revision (automatic)</option>
+                {savedRigs.filter(draft=>draft.characterId===id).map(draft=><option key={draft.id} value={draft.id}>
+                  {draft.revision}
+                </option>)}
+              </select>
+            </label>)}
+            {rigListError&&<p role="alert" className="text-xs text-danger sm:col-span-2">{rigListError}</p>}
+          </div>}
           {mismatchedCast.length>0&&<p role="alert" className="flex items-start gap-2 text-xs text-danger"><AlertCircle className="size-4 shrink-0"/>
             {mismatchedCast.length} scene {mismatchedCast.length===1?"voice uses":"voices use"} a different provider. Choose {settings.provider} voices for those scenes in the Scene editor before generating.</p>}
           {extraVoices.length>0&&<label className="flex items-start gap-3 rounded-control border border-primary/30 bg-primary/5 p-3 text-xs">

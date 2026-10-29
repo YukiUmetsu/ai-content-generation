@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { loadProjectCharacterRigs, readCharacterZip } from "./character-rig-render.mjs";
+import { assertCharacterRasterIntegrity, characterRasterPreflightList, loadProjectCharacterRigs, readCharacterZip } from "./character-rig-render.mjs";
 
 const sha = bytes => createHash("sha256").update(bytes).digest("hex");
 const archive = id => readFile(new URL(`../../public/starter-characters/${id}.zip`, import.meta.url));
@@ -37,6 +37,32 @@ test("real starter ZIPs load as articulated raster definitions with exact image 
     }
   }
 });
+test("raster preflight decodes checked PNG rows, rejecting damaged image data even if ZIP metadata is valid",async()=>{
+  const bytes=await archive("pip"),parsed=readCharacterZip(bytes);
+  const image=Object.values(parsed.definition.assets).find(item=>item.mediaType==="image/png");
+  const valid=parsed.entries.get(image.uri.toLowerCase()).data;
+  assert.doesNotThrow(()=>assertCharacterRasterIntegrity(valid,image));
+  const truncated=valid.subarray(0,valid.length-12);
+  assert.throws(()=>assertCharacterRasterIntegrity(truncated,image),/PNG|image/i);
+  const damaged=Buffer.from(valid);
+  const idat=damaged.indexOf(Buffer.from("IDAT"));
+  assert.ok(idat>0,"starter image contains IDAT data");
+  damaged[idat+6]^=1;
+  assert.throws(()=>assertCharacterRasterIntegrity(damaged,image),/PNG|checksum|image/i);
+  assert.throws(()=>assertCharacterRasterIntegrity(valid,{...image,width:image.width+1}),/dimensions/i);
+});
+test("WebP preflight refuses invalid RIFF lengths and mismatched dimensions",()=>{
+  // A minimal lossless WebP header; the browser still performs final decoding.
+  const webp=Buffer.alloc(26);
+  webp.write("RIFF",0);webp.writeUInt32LE(18,4);webp.write("WEBP",8);
+  webp.write("VP8L",12);webp.writeUInt32LE(5,16);
+  webp[20]=0x2f;webp.writeUInt32LE(3|(4<<14),21);
+  const asset={mediaType:"image/webp",width:4,height:5};
+  assert.doesNotThrow(()=>assertCharacterRasterIntegrity(webp,asset));
+  assert.throws(()=>assertCharacterRasterIntegrity(webp,{...asset,width:8}),/dimensions/i);
+  const broken=Buffer.from(webp);broken.writeUInt32LE(999,4);
+  assert.throws(()=>assertCharacterRasterIntegrity(broken,asset),/WebP|RIFF/i);
+});
 test("saved immutable Pip and Quill revisions become a project-owned render cast",async()=>{
   const pip=await archive("pip"),quill=await archive("quill");
   const first=record("pip",pip,readCharacterZip(pip).definition.revision);
@@ -56,6 +82,30 @@ test("saved immutable Pip and Quill revisions become a project-owned render cast
   assert.equal(mocks.calls.length,3);
   assert.ok(mocks.calls.every(call=>new URL(call.url).hostname==="127.0.0.1"));
   assert.ok(mocks.calls.every(call=>call.options.cache==="no-store"));
+  const check=characterRasterPreflightList(selected.rigs);
+  assert.equal(check.length,selected.assets.length);
+  assert.ok(check.every(layer=>layer.url.startsWith("/__character_assets/")&&layer.width>0&&layer.height>0));
+});
+test("browser preflight refuses an omitted or disguised saved raster URL instead of silently drawing bundled art",async()=>{
+  const bytes=await archive("pip"),draft=record("pip",bytes,readCharacterZip(bytes).definition.revision);
+  const mock=mockCatalog([draft],new Map([[draft.id,bytes]]));
+  const selected=await loadProjectCharacterRigs({projectId,speakers:["pip"],fetchImpl:mock.fetchImpl});
+  const valid=characterRasterPreflightList(selected.rigs);
+  assert.ok(valid.length>0);
+  const uri=Object.values(selected.rigs.pip.definition.assets)[0].uri;
+  const altered=structuredClone(selected.rigs);
+  delete altered.pip.assetUrls[uri];
+  assert.throws(()=>characterRasterPreflightList(altered),/missing|raster/i);
+  altered.pip.assetUrls[uri]="https://example.org/stolen.png";
+  assert.throws(()=>characterRasterPreflightList(altered),/raster|URL/i);
+});
+test("raster preflight bounds the total Chromium-decoded pixel budget",()=>{
+  const assets=Object.fromEntries(Array.from({length:3},(_,index)=>[
+    `layer${index}`,{kind:"image",uri:`layers/${index}.png`,mediaType:"image/png",
+      width:8192,height:8192}  ]));
+  const urls=Object.fromEntries(Array.from({length:3},(_,index)=>[
+    `layers/${index}.png`,`/__character_assets/${String(index).repeat(64)}.png`]));
+  assert.throws(()=>characterRasterPreflightList({pip:{definition:{assets},assetUrls:urls}}),/budget|pixels|raster/i);
 });
 test("missing custom rigs retain bundled fallback without fetching arbitrary character names",async()=>{
   const mock=mockCatalog([],new Map());
@@ -64,6 +114,19 @@ test("missing custom rigs retain bundled fallback without fetching arbitrary cha
   assert.equal(mock.calls.length,1);
   const none=await loadProjectCharacterRigs({projectId,speakers:["unknown","narrator"],fetchImpl:()=>{throw Error("unexpected network");}});
   assert.deepEqual(none,{rigs:{},assets:[],identity:[]});
+});
+test("an explicitly selected revision stays pinned and never downgrades to the newest saved ZIP",async()=>{
+  const pip=await archive("pip"),rev=readCharacterZip(pip).definition.revision;
+  const older=record("pip",pip,rev),latest={...older,id:`character-draft-${"e".repeat(32)}`};
+  const mocks=mockCatalog([latest,older],new Map([[older.id,pip],[latest.id,pip]]));
+  const pinned=await loadProjectCharacterRigs({projectId,speakers:["pip"],selectedDraftIds:{pip:older.id},fetchImpl:mocks.fetchImpl});
+  assert.equal(pinned.rigs.pip.draftId,older.id);
+  assert.equal(pinned.identity[0].draftId,older.id);
+  assert.ok(mocks.calls.at(-1).url.includes(older.id));
+  await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],
+    selectedDraftIds:{pip:`character-draft-${"f".repeat(32)}`},fetchImpl:mocks.fetchImpl}),/selected|missing|revision/i);
+  await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],
+    selectedDraftIds:{quill:older.id},fetchImpl:mocks.fetchImpl}),/selection|speaker/i);
 });
 test("rejects wrong project, tampered archive, forged revision and unsafe backend",async()=>{
   const pip=await archive("pip"),rev=readCharacterZip(pip).definition.revision;

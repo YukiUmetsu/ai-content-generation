@@ -53,11 +53,28 @@ downloads if you need the work later; a future project animation API can adopt
 the tracks without changing the original character pack. Natural-speed visual
 review and exported video parity are not yet certified.
 
-Drafts are **unverified and immutable**. They are not publishing approvals,
-character registrations for rendering, lip-sync previews, voice grants or
-evidence of artwork rights. Changing art or metadata requires a different
+Drafts are **unverified and immutable**. In a test-only general explainer,
+Production can now use the latest saved Pip or Quill revision, or the exact
+revision explicitly chosen under **Narration → Scene cast → Rig revision**.
+That test export uses Kumiki's pinned character presenter, verified local
+image assets and the measured dialogue/speech frame windows. A saved revision
+never grants publishing approval, verified lip-sync phonemes, voice consent or
+artwork rights. Changing art or metadata requires a different
 `revision` in `character.json`. Saving the same bytes with the same project,
 character ID and revision is idempotent; conflicting bytes are rejected.
+
+The video exporter verifies ZIP entry CRCs and archive SHA-256, PNG pixel
+streams and checksums (or bounded WebP container metadata), manifest dimensions
+and referenced image URLs. Chromium must decode **every** pinned image layer,
+including currently hidden expressions, before frame capture. A selected
+revision that is missing, corrupt or from another project blocks the render;
+it never silently substitutes built-in art. The render identity includes the
+exact saved draft ID, revision and archive hash, so checking one version and
+rendering another requires a new preflight. Mouth shapes use approximate
+cycles across measured voice timing, not true phoneme alignment. Blink, idle
+and declared explain actions come from Kumiki; walking and other gestures
+require suitable authored rig actions and scene controls, which are not yet
+exposed throughout the production workflow.
 
 Start the ContentGen Rust server (`cargo run -p contentgen-server`) before
 saving. With the Vite dev server on 127.0.0.1:5173, requests are proxied to the

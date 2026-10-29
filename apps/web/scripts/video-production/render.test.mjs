@@ -6,7 +6,13 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
-import { probeVideo, renderVideoSegments } from "./render.mjs";
+import { chromiumExportLaunchArgs, probeVideo, renderVideoSegments } from "./render.mjs";
+
+test("Chromium export keeps its sandbox unless an explicit CI-only test override is set",()=>{
+  assert.deepEqual(chromiumExportLaunchArgs({}),[]);
+  assert.deepEqual(chromiumExportLaunchArgs({CONTENTGEN_BROWSER_TEST_NO_SANDBOX:"0"}),[]);
+  assert.deepEqual(chromiumExportLaunchArgs({CONTENTGEN_BROWSER_TEST_NO_SANDBOX:"1"}),["--no-sandbox"]);
+});
 
 function crc32(bytes) {
   let crc = 0xffffffff;
