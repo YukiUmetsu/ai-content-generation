@@ -127,8 +127,8 @@ try{
   const rigPlan=structuredClone(plan);
   rigPlan.characterRigs=rigPacks.rigs;
   rigPlan.chapters[0].dialogue={turns:[
-    {id:"pip-asks",speakerId:"pip",role:"character",startFrame:0,endFrame:9},
-    {id:"quill-replies",speakerId:"quill",role:"character",startFrame:9,endFrame:20}
+    {id:"pip-asks",speakerId:"pip",role:"character",startFrame:0,endFrame:24},
+    {id:"quill-replies",speakerId:"quill",role:"character",startFrame:24,endFrame:30}
   ]};
   const rigStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
     validatedPlan:rigPlan,characterAssets:rigPacks.assets});
@@ -138,15 +138,24 @@ try{
       await rigPage.goto(rigStage.url,{waitUntil:"networkidle",timeout:30000});
       await rigPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
       const frames=[];
-      for(const [index,frame] of [2,6,12].entries()){
+      const armTransforms=[];
+      for(const [index,frame] of [2,10,28].entries()){
         await rigPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
         const actor=rigPage.locator('[data-conversation-performer="pip"]');
         assert.equal(await actor.getAttribute("data-rig-source"),"character-studio");
         assert.equal(await actor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
         assert.ok(await actor.locator("svg image").count()>=4);
+        armTransforms.push(await actor.locator('[data-part="right-arm"]').getAttribute("transform"));
+        if(frame===28){
+          assert.equal(await actor.getAttribute("data-speaking"),"false");
+          assert.ok(await actor.locator('[data-part="mouth"] [data-asset="mouthRest"]').count()>0,
+            "the saved raster mouth must close while Quill speaks");
+        }
         frames.push(sha(await actor.screenshot({animations:"disabled"})));
         await rigPage.locator("[data-km-video-capture]").screenshot({path:join(root,`custom-rig-${String(index).padStart(2,"0")}.png`),animations:"disabled"});
       }
+      assert.notEqual(armTransforms[0],armTransforms[1],
+        "saved Pip arm must actually gesture during a long measured speech turn");
       assert.notEqual(frames[0],frames[1],"saved Pip mouth/arm layers must visibly animate during measured speech");
       assert.notEqual(frames[1],frames[2],"Pip must return to listening when Quill speaks");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-rig-source"),"character-studio");
