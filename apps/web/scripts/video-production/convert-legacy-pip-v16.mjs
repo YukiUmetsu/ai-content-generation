@@ -1,7 +1,7 @@
 /** Convert the user's registered-sprite Pip v1.6 ZIP to an inert Character Studio
  * ZIP that the existing Kumiki character presenter and raster preflight accept.
  *
- * Usage: node scripts/video-production/convert-legacy-pip-v16.mjs SOURCE.zip DEST.zip
+ * Usage: node scripts/video-production/convert-legacy-pip-v16.mjs SOURCE.zip DEST.zip [CLOSED_EYE_HEAD.png]
  * The source artwork stays local. No JavaScript inside SOURCE.zip is executed.
  */
 import { createHash } from "node:crypto";
@@ -10,7 +10,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { readCharacterZip } from "./character-rig-render.mjs";
+import { assertCharacterRasterIntegrity, readCharacterZip } from "./character-rig-render.mjs";
 
 const exec = promisify(execFile);
 const sourceRoot = "Pip_Animated_Rig/";
@@ -44,6 +44,11 @@ export function convertPipMetadata(rig, arms, assetMetadata) {
     `invalid ${name} arm registration`);
   for (const name of ["relaxed_left","relaxed_right","ask_right","point_left","point_right","wave_right"])
     expect(arms[name],`missing ${name} pose-specific forepaw artwork`);
+  const hasBlink=Object.hasOwn(assetMetadata,"headClosed");
+  if(hasBlink)expect(assetMetadata.headClosed?.width===assetMetadata.head?.width &&
+    assetMetadata.headClosed?.height===assetMetadata.head?.height &&
+    /^[a-f0-9]{64}$/.test(assetMetadata.headClosed.sha256),
+  "closed-eye head dimensions or checksum differ from the original head");
   const regions=rig.regions, lm=rig.landmarks, shift={x:340,y:180};
   const part=(id,asset,pivot,rest,z,parent="root",channel="body",variants)=>({
     id,channel,asset,pivot:{x:pivot[0],y:pivot[1]},rest,z,parent,
@@ -62,7 +67,8 @@ export function convertPipMetadata(rig, arms, assetMetadata) {
     part("arm_right","arm_relaxed_right",[310,310],location("shoulder_right",[310,310]),-4,"root","body",armVariants("right")),
     part("torso","torso",regions.torso.origin,location("torso_center",regions.torso.origin),-3),
     part("satchel","satchel",regions.satchel.origin,location("satchel_mount",regions.satchel.origin),-2),
-    part("head","head",regions.head.origin,location("neck",regions.head.origin),2),
+    part("head","head",regions.head.origin,location("neck",regions.head.origin),2,
+      "root","body",hasBlink?{closed:"headClosed"}:undefined),
     part("mouth","mouth0",regions.head.origin,{x:0,y:0},3,"head","mouth",
       Object.fromEntries([...Array.from({length:7},(_,i)=>[`stage${i}`,`mouth${i}`]),
         ...Array.from({length:6},(_,i)=>Array.from({length:3},(_,j)=>[
@@ -88,12 +94,15 @@ export function convertPipMetadata(rig, arms, assetMetadata) {
   const assets={};
   for(const [name,item] of Object.entries(assetMetadata))assets[name]={kind:"image",
     uri:`layers/${name}.png`,mediaType:"image/png",width:item.width,height:item.height,
-    sha256:item.sha256,provenance};
+    sha256:item.sha256,provenance:name==="headClosed"?
+      {source:"Optional closed-eye head edit based on the user's Pip v1.6 artwork",
+        license:"User-supplied derivative artwork; confirm publication rights before release"}:provenance};
   for(const part of parts) {
     expect(assets[part.asset],`missing ${part.asset} artwork`);
     for(const key of Object.values(part.variants??{}))expect(assets[key],`missing ${key} variant`);
   }
-  return {schemaVersion:1,characterId:"pip",revision:"pip-animated-rig-v1.6-imported",
+  return {schemaVersion:1,characterId:"pip",
+    revision:hasBlink?"pip-animated-rig-v1.6-blinking":"pip-animated-rig-v1.6-imported",
     mode:"puppet-2.5d",design:{width:1020,height:750},channels:["body","mouth"],
     palette:{},assets,parts,poses:{neutral:{tail:{rotation:-7}}},basePose:"neutral",
     actions:{
@@ -114,17 +123,23 @@ export function convertPipMetadata(rig, arms, assetMetadata) {
         "stage4","between_4_5_2","stage6","between_5_6_2","stage4",
         "between_2_3_3","stage2","between_0_1_3","stage0"],
       approximateStepFrames:2,transitionFrames:1},
+    ...(hasBlink?{blink:{parts:["head"],variant:"closed",
+      intervalFrames:{min:64,max:113},durationFrames:4}}:{}),
     idle:{parts:{head:{property:"rotation",amplitude:1.3,periodFrames:93},
       tail:{property:"rotation",amplitude:3.2,periodFrames:139},
       torso:{property:"scaleY",amplitude:.004,periodFrames:86}}},
-    capabilities:["approximate-speech","arm-gesture","idle","expression","walking"]};
+    capabilities:["approximate-speech","arm-gesture","idle","expression","walking",
+      ...(hasBlink?["blink"]:[])]};
 }
 
-export async function convertLegacyPipZip(input,output){
+export async function convertLegacyPipZip(input,output,{closedEyeHead}={}){
   const source=resolve(input),destination=resolve(output);
   const size=(await stat(source)).size;
   expect(size>200&&size<=64*1024*1024,"the source archive is empty or exceeds 64 MiB");
   expect(source!==destination,"output must differ from the original archive");
+  const closedEyeSource=closedEyeHead?resolve(closedEyeHead):undefined;
+  if(closedEyeSource)expect(closedEyeSource!==source&&closedEyeSource!==destination,
+    "closed-eye source must differ from the input and destination archives");
   const root=await mkdtemp(join(tmpdir(),"contentgen-pip-convert-"));
   try{
     const extract=async file=>{
@@ -150,13 +165,22 @@ export async function convertLegacyPipZip(input,output){
       ...Object.entries(arms).map(([name,data])=>({name:`arm_${name}`,source:`assets/pip/${data.file}`,
         width:620,height:620,registration:data}))
     ];
+    if(closedEyeSource){
+      const bytes=await readFile(closedEyeSource);
+      expect(bytes.length>100&&bytes.length<4*1024*1024,"closed-eye image size is invalid");
+      assertCharacterRasterIntegrity(bytes,{mediaType:"image/png",width:rig.regions.head?.width,
+        height:rig.regions.head?.height});
+      imageSpecs.push({name:"headClosed",externalBytes:bytes,width:rig.regions.head.width,
+        height:rig.regions.head.height});
+    }
     // Catch malformed landmarks and registrations before inflating image contents.
     convertPipMetadata(rig,arms,Object.fromEntries(imageSpecs.map(spec=>[spec.name,{width:spec.width,height:spec.height,sha256:"0".repeat(64)}])));
     await mkdir(join(root,"layers"));
     const metadata={},paths=[];
     for(const spec of imageSpecs){
-      expect(/^assets\/pip\/[a-z0-9_]+\.png$/.test(spec.source),"unsupported source art path");
-      const raw=await extract(spec.source),original=join(root,`${spec.name}-original.png`);
+      if(!spec.externalBytes)expect(/^assets\/pip\/[a-z0-9_]+\.png$/.test(spec.source),
+        "unsupported source art path");
+      const raw=spec.externalBytes??await extract(spec.source),original=join(root,`${spec.name}-original.png`);
       expect(raw.length<4*1024*1024 && raw.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])),
         `invalid ${spec.name} image signature`);
       await writeFile(original,raw,{flag:"wx"});
@@ -188,7 +212,9 @@ export async function convertLegacyPipZip(input,output){
 }
 
 if(process.argv[1]&&resolve(process.argv[1])===resolve(new URL(import.meta.url).pathname)){
-  if(process.argv.length!==4)throw Error("Usage: node convert-legacy-pip-v16.mjs SOURCE.zip DEST.zip");
-  const result=await convertLegacyPipZip(process.argv[2],process.argv[3]);
+  if(process.argv.length<4||process.argv.length>5)
+    throw Error("Usage: node convert-legacy-pip-v16.mjs SOURCE.zip DEST.zip [CLOSED_EYE_HEAD.png]");
+  const result=await convertLegacyPipZip(process.argv[2],process.argv[3],
+    {closedEyeHead:process.argv[4]});
   process.stdout.write(JSON.stringify({path:result.path,bytes:result.bytes,sha256:result.sha256})+"\n");
 }

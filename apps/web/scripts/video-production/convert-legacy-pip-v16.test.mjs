@@ -51,3 +51,28 @@ test("legacy converter rejects other rig generations and missing registered spri
   const missing={...assets};delete missing.mouth6;
   assert.throws(()=>convertPipMetadata(rig,arms,missing),/mouth6/);
 });
+
+test("optional user-supplied closed-eye head keeps the same rig and enables deterministic Kumiki blinking",()=>{
+  const {rig,arms,assets}=fixture();
+  assets.headClosed={...assets.head,sha256:"b".repeat(64)};
+  const definition=convertPipMetadata(rig,arms,assets);
+  const head=definition.parts.find(part=>part.id==="head");
+  assert.equal(definition.revision,"pip-animated-rig-v1.6-blinking",
+    "revised art must be a separately selectable immutable revision");
+  assert.equal(head.asset,"head");
+  assert.deepEqual(head.variants,{closed:"headClosed"});
+  assert.deepEqual(definition.blink,{parts:["head"],variant:"closed",
+    intervalFrames:{min:64,max:113},durationFrames:4});
+  assert.ok(definition.capabilities.includes("blink"));
+  assert.equal(definition.assets.headClosed.sha256,"b".repeat(64));
+  assert.match(definition.assets.headClosed.provenance.source,/closed-eye head/);
+  assert.equal(definition.parts.find(part=>part.id==="mouth").parent,"head",
+    "mouth stage artwork continues following the head while blinking");
+  assert.equal(definition.actions.walk.phases.length,10,"existing walking rig is unchanged");
+});
+
+test("closed-eye replacement must have the same raster dimensions as the original head",()=>{
+  const {rig,arms,assets}=fixture();
+  assets.headClosed={width:500,height:300,sha256:"b".repeat(64)};
+  assert.throws(()=>convertPipMetadata(rig,arms,assets),/closed-eye head dimensions/);
+});
