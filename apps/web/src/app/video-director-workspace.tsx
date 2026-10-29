@@ -1026,7 +1026,7 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
                   </label>}
                   <p className="text-xs font-normal normal-case tracking-normal text-muted-foreground sm:col-span-2 lg:col-span-1 xl:col-span-2">
                     {draft.speaker?"Voice changes regenerate only the affected speech. All scene voices must use the same provider when exporting.":
-                      "Narrator uses the Production voice. The Pip and Quill conversation template animates bundled vector rigs in preview/export; custom characters still need rig import and binding."}
+                      "Narrator uses the Production voice. Pip and Quill use your latest saved Character Studio rigs in video exports, or the built-in artwork when no custom rig is saved."}
                   </p>
                   {castVoices.error&&<p role="alert" className="text-xs font-normal normal-case tracking-normal text-danger sm:col-span-2 lg:col-span-1 xl:col-span-2">{castVoices.error}</p>}
                 </div>
