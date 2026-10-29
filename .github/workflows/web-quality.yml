@@ -57,7 +57,8 @@ jobs:
       - name: Production build
         run: pnpm build
 
-      # This uses local, original character ZIPs and synthetic narration timing.
+      # This uses repo-owned starter Character Studio ZIPs and offline spoken
+      # dialogue with measured narration samples, not a synthetic timing tone.
       # No Fish Audio key, paid TTS or external asset retrieval is involved.
       - name: Install Chromium and FFmpeg for visual animation QA
         run: |
@@ -68,7 +69,15 @@ jobs:
         run: |
           CHROME="$(node --input-type=module -e "import { chromium } from 'playwright-core'; process.stdout.write(chromium.executablePath())")"
           test -x "$CHROME"
-          CONTENTGEN_CHROMIUM_EXECUTABLE="$CHROME" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 pnpm test:video:browser
+          CONTENTGEN_CHROMIUM_EXECUTABLE="$CHROME" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 CONTENTGEN_QA_ARTIFACT_DIR=qa-artifacts pnpm test:video:browser
+
+      - name: Keep voiced rig MP4 and blink stills for visual review
+        uses: actions/upload-artifact@v4
+        with:
+          name: kumiki-rig-voiced-qa
+          path: apps/web/qa-artifacts/
+          if-no-files-found: error
+          retention-days: 7
 
       # These use synthetic providers/browser drivers, not FFmpeg or Chromium.
       # Real media encoding, muxing and audio probes are local release gates.

@@ -6,9 +6,9 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {execFile} from "node:child_process";
 import {readFileSync} from "node:fs";
-import {mkdir,mkdtemp,readFile,rm} from "node:fs/promises";
+import {copyFile,mkdir,mkdtemp,readFile,rm,writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
-import {join} from "node:path";
+import {join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import {chromium} from "playwright-core";
@@ -23,6 +23,17 @@ import {makeOfflineRigDialogue} from "./offline-rig-dialogue.mjs";
 
 const run=promisify(execFile);
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
+// The app's fixed Pip seed (117) makes the first blink reproducible across
+// interactive playback, seek and exported frames. This test intentionally
+// checks the *actual* variant selected by Chromium, not a synthetic eye swap.
+function firstBlinkFrame(spec,seed){
+  let state=(seed+0x6d2b79f5)>>>0;
+  let t=state;
+  t=Math.imul(t^(t>>>15),t|1);
+  t^=t+Math.imul(t^(t>>>7),t|61);
+  const first=((t^(t>>>14))>>>0)/4294967296;
+  return spec.intervalFrames.min+Math.floor(first*(spec.intervalFrames.max-spec.intervalFrames.min+1));
+}
 const browserPath=process.env.CONTENTGEN_CHROMIUM_EXECUTABLE;
 if(!browserPath)throw Error("Set CONTENTGEN_CHROMIUM_EXECUTABLE to an installed Chromium browser.");
 const input=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url)));
@@ -192,6 +203,30 @@ const manifest=plan.manifest;
       assert.equal(await secondActor.getAttribute("data-rig-draft-id"),sceneDraftId);
       assert.equal(await secondActor.getAttribute("data-rig-revision"),"pinned-second-scene");
       assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
+      const blink=pipRig.definition.blink;
+      if(blink){
+        const start=firstBlinkFrame(blink,117);
+        assert.ok(start-1>=secondChapter.startFrame&&start+blink.durationFrames<secondChapter.endFrame,
+          "the two-scene browser fixture must include a complete custom Pip blink");
+        const blinkPart=blink.parts[0];
+        const part=pipRig.definition.parts.find(candidate=>candidate.id===blinkPart);
+        const closedAsset=part?.variants?.[blink.variant];
+        assert.ok(closedAsset,"saved ZIP must include the actual closed-eye art");
+        await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),start-1);
+        const open=await secondActor.locator(`[data-part="${blinkPart}"]`).screenshot({animations:"disabled"});
+        await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),start);
+        assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-blinking"),"",
+          "saved Character Studio rig must blink at its deterministic seeded frame");
+        assert.equal(await secondActor.locator(`[data-part="${blinkPart}"] [data-asset="${closedAsset}"]`).count(),1,
+          "Kumiki must draw the selected saved closed-eye raster, never a bundled Pip substitute");
+        const closed=await secondActor.locator(`[data-part="${blinkPart}"]`).screenshot({animations:"disabled"});
+        assert.notEqual(sha(closed),sha(open),"the verified closed-eye sprite must change actual pixels");
+        await writeFile(join(root,"pip-open.png"),open);
+        await writeFile(join(root,"pip-closed.png"),closed);
+        await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),start+blink.durationFrames);
+        assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-blinking"),null,
+          "blinking must return to the saved open-eye art after its declared duration");
+      }
     }finally{await rigPage.close();}
     // Encode the *continuous* Kumiki scene at the real manifest FPS. Three
     // sampled PNGs at 3 fps prove artwork differences, but cannot prove that
@@ -235,6 +270,15 @@ const manifest=plan.manifest;
         "audio/video starts cannot differ from the authored scene by more than a frame");
       assert.ok(Math.abs(Number(stream.duration)-clipSeconds)<=1/rigPlan.manifest.fps.num,
         "audio/video durations must stay within a frame of measured dialogue");
+    }
+    if(process.env.CONTENTGEN_QA_ARTIFACT_DIR){
+      const target=resolve(process.env.CONTENTGEN_QA_ARTIFACT_DIR);
+      await mkdir(target,{recursive:true});
+      await copyFile(syncedMp4,join(target,"kumiki-custom-rigs-voiced.mp4"));
+      if(pipRig.definition.blink){
+        await copyFile(join(root,"pip-open.png"),join(target,"pip-open.png"));
+        await copyFile(join(root,"pip-closed.png"),join(target,"pip-closed.png"));
+      }
     }
   }finally{await rigStage.close();}
   // Exercise the actual selected-scene API's file publication via the same
