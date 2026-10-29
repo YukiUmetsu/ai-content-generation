@@ -107,7 +107,7 @@ describe("custom Character Studio rigs in exported conversation frames", () => {
     // A changed mouth sprite alone is not animation verification: the
     // customized articulated arm must move during the measured speech turn.
     const customArm = (html: string) => {
-      const pip = html.match(/<div[^>]*data-conversation-performer="pip"[\\s\\S]*?(?=<div[^>]*data-conversation-performer="quill")/)?.[0];
+      const pip = html.match(/<div[^>]*data-conversation-performer="pip"[\s\S]*?(?=<div[^>]*data-conversation-performer="quill")/)?.[0];
       return pip?.match(/data-part="right-arm" transform="([^"]+)"/)?.[1];
     };
     expect(customArm(silent)).toBeTruthy();
