@@ -102,6 +102,18 @@ describe("custom Character Studio rigs in exported conversation frames", () => {
     expect(speaking).toContain('data-rig-draft-id="character-draft-');
     expect(silent).toContain('data-asset="mouthRest"');
     expect(silent).not.toContain('data-asset="mouthOpen"');
+    expect(silent).toContain('data-rig-mouth-part="mouth"');
+    expect(silent).toContain('data-rig-rest-asset="mouthRest"');
+    // A changed mouth sprite alone is not animation verification: the
+    // customized articulated arm must move during the measured speech turn.
+    const customArm = (html: string) => {
+      const pip = html.match(/<div[^>]*data-conversation-performer="pip"[\\s\\S]*?(?=<div[^>]*data-conversation-performer="quill")/)?.[0];
+      return pip?.match(/data-part="right-arm" transform="([^"]+)"/)?.[1];
+    };
+    expect(customArm(silent)).toBeTruthy();
+    expect(customArm(speaking)).toBeTruthy();
+    expect(customArm(silent)).not.toBe(customArm(speaking));
+    expect(custom(75)).toContain('data-rig-rest-asset="mouthRest"');
     expect(gesture).not.toEqual(speaking);
     expect(speaking).toContain('data-rig-source="bundled"');
     const portrait = {...customPlan,manifest:{...customPlan.manifest,width:1080,height:1920,preset:"youtube-shorts" as const}};
