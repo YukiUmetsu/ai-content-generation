@@ -20,6 +20,7 @@ import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
 import {renderSelectedSceneClip} from "./scene-clip.mjs";
 import {renderVideoSegments} from "./render.mjs";
 import {makeOfflineRigDialogue} from "./offline-rig-dialogue.mjs";
+import {planRigQaCoverage} from "./rig-qa-coverage.mjs";
 
 const run=promisify(execFile);
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
@@ -158,6 +159,10 @@ const manifest=plan.manifest;
     startFrame:secondChapter.startFrame+1,endFrame:secondChapter.startFrame+15}]};
   rigPlan.characterRigsByScene={[secondChapter.id]:{pip:{...rigPacks.rigs.pip,
     draftId:sceneDraftId,definition:{...rigPacks.rigs.pip.definition,revision:"pinned-second-scene"}}}};
+  const blinkSpec=rigPacks.rigs.pip.definition.blink;
+  const qaCoverage=blinkSpec?planRigQaCoverage({chapters:rigPlan.chapters,
+    spokenChapterId:rigPlan.chapters[0].id,
+    blinkStartFrame:firstBlinkFrame(blinkSpec,117),blinkDurationFrames:blinkSpec.durationFrames}):null;
   const rigStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
     validatedPlan:rigPlan,characterAssets:rigPacks.assets});
   try{
@@ -205,9 +210,9 @@ const manifest=plan.manifest;
       assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
       const blink=pipRig.definition.blink;
       if(blink){
-        const start=firstBlinkFrame(blink,117);
-        assert.ok(start-1>=secondChapter.startFrame&&start+blink.durationFrames<secondChapter.endFrame,
-          "the two-scene browser fixture must include a complete custom Pip blink");
+        const start=qaCoverage.blinkReviewFrames[1];
+        assert.equal(qaCoverage.blinkChapterId,secondChapter.id,
+          "the second authored rig scene must contain the complete blink transition");
         const blinkPart=blink.parts[0];
         const part=pipRig.definition.parts.find(candidate=>candidate.id===blinkPart);
         const closedAsset=part?.variants?.[blink.variant];
@@ -271,10 +276,35 @@ const manifest=plan.manifest;
       assert.ok(Math.abs(Number(stream.duration)-clipSeconds)<=1/rigPlan.manifest.fps.num,
         "audio/video durations must stay within a frame of measured dialogue");
     }
+    // The voiced scene ends before Pip's first blink. Export the separate
+    // chapter at native FPS so the QA MP4 evidence includes the actual blink,
+    // not only two browser still images of closed and open eyelids.
+    let blinkMp4;
+    if(qaCoverage?.blinkChapterId){
+      const blinkChapter=rigPlan.chapters.find(chapter=>chapter.id===qaCoverage.blinkChapterId);
+      const blinkClip=await renderVideoSegments({stageUrl:rigStage.url,
+        manifest:rigPlan.manifest,visualPlan:rigPlan,onlyChapterId:blinkChapter.id,
+        planHash:sha(JSON.stringify(rigPlan)),buildHash:rigStage.buildHash,
+        outDir:join(root,"continuous-pip-blink"),browserExecutable:browserPath,
+        maxBatchFrames:30,reviewFrames:qaCoverage.blinkReviewFrames});
+      assert.equal(blinkClip.frameCount,blinkChapter.endFrame-blinkChapter.startFrame);
+      assert.equal(blinkClip.reviewStills.length,3,
+        "the encoded blink chapter must include open, closed and reopened review frames");
+      const blinkProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+        "-show_entries","stream=codec_name,nb_read_frames,r_frame_rate","-of","json",
+        blinkClip.videoOnlyPath],{timeout:30000});
+      const blinkStream=JSON.parse(blinkProbe.stdout).streams?.[0];
+      assert.equal(blinkStream?.codec_name,"h264");
+      assert.equal(Number(blinkStream?.nb_read_frames),blinkClip.frameCount,
+        "all open, closed and reopened Pip frames must survive MP4 encoding");
+      assert.equal(blinkStream?.r_frame_rate,"30/1");
+      blinkMp4=blinkClip.videoOnlyPath;
+    }
     if(process.env.CONTENTGEN_QA_ARTIFACT_DIR){
       const target=resolve(process.env.CONTENTGEN_QA_ARTIFACT_DIR);
       await mkdir(target,{recursive:true});
       await copyFile(syncedMp4,join(target,"kumiki-custom-rigs-voiced.mp4"));
+      if(blinkMp4)await copyFile(blinkMp4,join(target,"kumiki-pip-blink.mp4"));
       if(rigPacks.rigs.pip.definition.blink){
         await copyFile(join(root,"pip-open.png"),join(target,"pip-open.png"));
         await copyFile(join(root,"pip-closed.png"),join(target,"pip-closed.png"));
