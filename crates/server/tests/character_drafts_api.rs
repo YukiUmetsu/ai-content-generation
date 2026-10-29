@@ -274,3 +274,46 @@ async fn imports_enforce_loopback_origin_mime_body_limit_and_safe_metadata() {
         StatusCode::CREATED
     );
 }
+
+#[tokio::test]
+async fn newest_character_revision_is_first_even_when_saved_in_the_same_second() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("contentgen.sqlite");
+    let mut db = db::open(&path).unwrap();
+    db::migrate(&mut db).unwrap();
+    let app = build_router(AppState::new(path));
+    let mut ids = Vec::new();
+    for revision in ["v1", "v2", "v3"] {
+        let url = format!(
+            "/api/character-drafts?projectId=project-local&characterId=pip&revision={revision}"
+        );
+        let (status, draft, _) = call(
+            &app,
+            Method::POST,
+            &url,
+            zip_fixture(revision.as_bytes()[1]),
+            true,
+            None,
+            "127.0.0.1:8787",
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        ids.push(draft["id"].as_str().unwrap().to_string());
+    }
+    let (status, rows, _) = call(
+        &app,
+        Method::GET,
+        "/api/character-drafts?projectId=project-local",
+        vec![],
+        false,
+        None,
+        "127.0.0.1:8787",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let drafts = rows["drafts"].as_array().unwrap();
+    assert_eq!(drafts.len(), 3);
+    assert_eq!(drafts[0]["id"], ids[2]);
+    assert_eq!(drafts[1]["id"], ids[1]);
+    assert_eq!(drafts[2]["id"], ids[0]);
+}
