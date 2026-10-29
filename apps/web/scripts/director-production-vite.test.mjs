@@ -1658,6 +1658,43 @@ test("custom rig revisions are checked twice and frozen into the actual render r
   assert.equal(used.identity[0].archiveSha256,"a".repeat(64));
   assert.ok(lookups>=3);
 });
+test("per-scene saved rig selection binds a specific compiled beat and invalidates a checked render",async t=>{
+  const dir=await mkdtemp(join(tmpdir(),"director-scene-rig-test-"));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const project=inputs(),speaker={id:"pip",role:"character",provider:"local",voiceId:config.voiceId};
+  const source=structuredClone(project.bundle.plan);
+  source.sound[0].speaker=speaker;
+  project.bundle=compilePreproductionBundle(project.dossier,source);
+  const shotId=source.sound[0].shotId,chosen=`character-draft-${"b".repeat(32)}`;
+  let seen=null,renders=0;
+  const server=createDirectorProduction({outputRoot:dir,build:async()=>{},findBrowser:async()=>"/mock/chromium",
+    inspect:async()=>({ready:true,findings:[],tools:{}}),
+    loadCharacterRigs:async params=>{
+      seen=params;
+      const identity=Object.entries(params.selectedDraftIdsByScene).map(([beatId,picks])=>({
+        beatId,speakerId:"pip",draftId:picks.pip,revision:"scene-art",archiveSha256:"d".repeat(64)}));
+      return {rigs:{},rigsByScene:Object.fromEntries(identity.map(({beatId,draftId})=>[beatId,{pip:{
+        draftId,archiveSha256:"d".repeat(64),definition:{characterId:"pip",revision:"scene-art",actions:{}},assetUrls:{}}}])),
+        assets:[],identity};
+    },produce:async()=>{renders++;throw Error("expected fixture stop");}});
+  const payload={...project,settings:config,characterProjectId:"project-custom-rigs",
+    characterDraftIdsByScene:{[shotId]:{pip:chosen}}};
+  assert.equal((await invoke(server,"POST","/check",{...payload,characterDraftIdsByScene:{unknown:{pip:chosen}}})).status,422);
+  assert.equal((await invoke(server,"POST","/check",{...payload,characterDraftIdsByScene:{[shotId]:{quill:chosen}}})).status,422);
+  assert.equal((await invoke(server,"POST","/check",{...payload,characterProjectId:undefined})).status,422);
+  const checked=await invoke(server,"POST","/check",payload);
+  assert.equal(checked.status,200);
+  const beatId=seen&&Object.keys(seen.selectedDraftIdsByScene)[0];
+  assert.ok(beatId&&beatId!==shotId);
+  assert.deepEqual(seen.selectedDraftIdsByScene[beatId],{pip:chosen});
+  assert.equal(checked.data.characterRigs[0].beatId,beatId);
+  assert.equal((await invoke(server,"POST","/start",{...payload,
+    characterDraftIdsByScene:{[shotId]:{pip:`character-draft-${"a".repeat(32)}`}},confirmRender:true})).status,409);
+  assert.equal(renders,0);
+  assert.equal((await invoke(server,"POST","/start",{...payload,confirmRender:true})).status,202);
+  for(let i=0;i<20&&!renders;i++)await new Promise(resolve=>setTimeout(resolve,5));
+  assert.equal(renders,1);
+});
 test("readiness and export bind reviewed SFX to the same measured beat events, and recheck after changes",async t=>{
   const dir=await mkdtemp(join(tmpdir(),"director-reviewed-sfx-test-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const project=inputs();

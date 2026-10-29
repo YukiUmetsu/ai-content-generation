@@ -128,6 +128,26 @@ test("an explicitly selected revision stays pinned and never downgrades to the n
   await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],
     selectedDraftIds:{quill:older.id},fetchImpl:mocks.fetchImpl}),/selection|speaker/i);
 });
+test("scene revisions remain independently pinned, share immutable archives, and reject missing scene art",async()=>{
+  const pip=await archive("pip"),rev=readCharacterZip(pip).definition.revision;
+  const old=record("pip",pip,rev),newer={...old,id:`character-draft-${"e".repeat(32)}`};
+  const mock=mockCatalog([newer,old],new Map([[old.id,pip],[newer.id,pip]]));
+  const selected=await loadProjectCharacterRigs({projectId,speakers:["pip"],
+    selectedDraftIds:{pip:newer.id},
+    selectedDraftIdsByScene:{"first-beat":{pip:old.id},"second-beat":{pip:newer.id}},
+    fetchImpl:mock.fetchImpl});
+  assert.equal(selected.rigs.pip.draftId,newer.id);
+  assert.equal(selected.rigsByScene["first-beat"].pip.draftId,old.id);
+  assert.equal(selected.rigsByScene["second-beat"].pip.draftId,newer.id);
+  assert.equal(selected.identity.length,3);
+  assert.equal(selected.identity[1].beatId,"first-beat");
+  assert.equal(mock.calls.length,3,"a selected archive should only be fetched once per render");
+  assert.equal(characterRasterPreflightList(selected.rigs,selected.rigsByScene).length,
+    Object.keys(selected.rigs.pip.assetUrls).length);
+  await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],
+    selectedDraftIdsByScene:{first:{pip:`character-draft-${"f".repeat(32)}`}},
+    fetchImpl:mock.fetchImpl}),/missing|revision|selected/i);
+});
 test("rejects wrong project, tampered archive, forged revision and unsafe backend",async()=>{
   const pip=await archive("pip"),rev=readCharacterZip(pip).definition.revision;
   const draft=record("pip",pip,rev);
@@ -144,4 +164,11 @@ test("no corrupt or missing saved rig silently falls back to bundled art",async(
   const pip=await archive("pip"),draft=record("pip",pip,readCharacterZip(pip).definition.revision);
   const mock=mockCatalog([draft],new Map());
   await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],fetchImpl:mock.fetchImpl}),/HTTP 404/);
+});
+test("duplicate catalog IDs cannot reuse a cached Pip archive as Quill artwork",async()=>{
+  const pip=await archive("pip"),rev=readCharacterZip(pip).definition.revision;
+  const p=record("pip",pip,rev),q={...p,characterId:"quill"};
+  const mock=mockCatalog([p,q],new Map([[p.id,pip]]));
+  await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip","quill"],fetchImpl:mock.fetchImpl}),
+    /duplicate.*revision/i);
 });

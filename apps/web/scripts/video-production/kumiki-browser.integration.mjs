@@ -130,6 +130,15 @@ try{
     {id:"pip-asks",speakerId:"pip",role:"character",animationAction:"pip-explain",startFrame:0,endFrame:24},
     {id:"quill-replies",speakerId:"quill",role:"character",startFrame:24,endFrame:30}
   ]};
+  // A second authored scene may select a different immutable Pip revision.
+  // Catalog/hash checks happen in the server tests; this checks Chromium's
+  // per-chapter renderer selection without introducing another animation path.
+  const secondChapter=rigPlan.chapters[1];
+  const sceneDraftId=`character-draft-${"e".repeat(32)}`;
+  secondChapter.dialogue={turns:[{id:"pip-scene-two",speakerId:"pip",role:"character",
+    startFrame:secondChapter.startFrame+1,endFrame:secondChapter.startFrame+15}]};
+  rigPlan.characterRigsByScene={[secondChapter.id]:{pip:{...rigPacks.rigs.pip,
+    draftId:sceneDraftId,definition:{...rigPacks.rigs.pip.definition,revision:"pinned-second-scene"}}}};
   const rigStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
     validatedPlan:rigPlan,characterAssets:rigPacks.assets});
   try{
@@ -161,6 +170,12 @@ try{
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-rig-source"),"character-studio");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-speaking"),"true");
       assert.equal(await rigPage.locator('[data-conversation-performer="quill"] [data-km-character-presenter]').getAttribute("data-diagnostics"),"0");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),secondChapter.startFrame+4);
+      const secondActor=rigPage.locator('[data-conversation-performer="pip"]');
+      assert.equal(await secondActor.getAttribute("data-rig-source"),"character-studio");
+      assert.equal(await secondActor.getAttribute("data-rig-draft-id"),sceneDraftId);
+      assert.equal(await secondActor.getAttribute("data-rig-revision"),"pinned-second-scene");
+      assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
     }finally{await rigPage.close();}
     // Encode the *continuous* Kumiki scene at the real manifest FPS. Three
     // sampled PNGs at 3 fps prove artwork differences, but cannot prove that

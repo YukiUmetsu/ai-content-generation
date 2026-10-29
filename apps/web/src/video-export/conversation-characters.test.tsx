@@ -81,6 +81,28 @@ describe("original Pip and Quill rig integration in exported scenes", () => {
 });
 
 describe("custom Character Studio rigs in exported conversation frames", () => {
+  it("pins different saved revisions of Pip to separate chapters without changing Quill",()=>{
+    const base={definition:{...PIP_RIG,revision:"saved-pip-global"},assetUrls:{},
+      draftId:`character-draft-${"a".repeat(32)}`,archiveSha256:"b".repeat(64)};
+    const override={...base,definition:{...base.definition,revision:"saved-pip-scene-two"},
+      draftId:`character-draft-${"c".repeat(32)}`};
+    const other={...plan.chapters[0],id:"scene-two",startFrame:100,endFrame:150,
+      dialogue:{turns:[{id:"second-line",role:"character" as const,speakerId:"pip",
+        startFrame:108,endFrame:132}]},eventIds:["answer"]};
+    const selected={...plan,chapters:[plan.chapters[0],other],
+      characterRigs:{pip:base},characterRigsByScene:{"scene-two":{pip:override}}} as GeneralVisualPlan;
+    const first=renderToStaticMarkup(<GeneralExportScene plan={selected} frame={19}/>);
+    const second=renderToStaticMarkup(<GeneralExportScene plan={selected} frame={115}/>);
+    expect(first).toContain('data-rig-revision="saved-pip-global"');
+    expect(first).not.toContain('saved-pip-scene-two');
+    expect(second).toContain('data-rig-revision="saved-pip-scene-two"');
+    expect(second).toContain(`data-rig-draft-id="${override.draftId}"`);
+    expect(first).toContain('data-conversation-performer="quill"');
+    const portrait={...selected,manifest:{...selected.manifest,width:1080,height:1920,
+      preset:"youtube-shorts" as const}};
+    expect(renderToStaticMarkup(<PortraitGeneralExportScene plan={portrait} frame={115}/>))
+      .toContain('data-rig-revision="saved-pip-scene-two"');
+  });
   it("schedules an explicitly authored rig action, and fails if that revision lacks it", () => {
     const walk:CharacterDefinition["actions"][string] = {...PIP_RIG.actions["pip-explain"],phases:[
       {name:"prepare" as const,frames:4,pose:{"right-arm":{rotation:42}}},

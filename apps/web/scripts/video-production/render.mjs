@@ -162,7 +162,8 @@ async function defaultOpenCapture(stageUrl, manifest, options) {
     // SVG <image> URLs can be present while the artwork is undecodable, which
     // otherwise produces a black/empty actor without any React diagnostic.
     // Decode *all* pinned layers, including expressions not visible in frame 0.
-    const characterLayers = characterRasterPreflightList(options.visualPlan?.characterRigs);
+    const characterLayers = characterRasterPreflightList(options.visualPlan?.characterRigs,
+      options.visualPlan?.characterRigsByScene);
     if (characterLayers.length) {
       try {
         await page.evaluate(async layers => {

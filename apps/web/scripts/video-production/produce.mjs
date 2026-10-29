@@ -292,10 +292,14 @@ export async function produceVideo(candidate, options, deps = {}) {
       timeline=visualCueTimeline;
       plan=compileGeneralVisuals(job,timeline,speech);
     }
-    if (Object.keys(characterPacks.rigs).length) {
+    if (Object.keys(characterPacks.rigs).length || Object.keys(characterPacks.rigsByScene ?? {}).length) {
       if (plan.kind !== "general-explainer-visual-plan")
         fail("custom character rigs require the general-scene Kumiki renderer");
-      plan = { ...plan, characterRigs: characterPacks.rigs };
+      const chapters=new Set(plan.chapters.map(chapter=>chapter.id));
+      if (Object.keys(characterPacks.rigsByScene ?? {}).some(beatId=>!chapters.has(beatId)))
+        fail("selected Character Studio scene revision no longer matches the rendered storyboard");
+      plan = { ...plan, characterRigs: characterPacks.rigs,
+        ...(characterPacks.rigsByScene?{characterRigsByScene:characterPacks.rigsByScene}:{}) };
     }
     if (Object.keys(sceneMedia.bindings).length) {
       const known = new Set(plan.chapters.map(chapter => chapter.id));

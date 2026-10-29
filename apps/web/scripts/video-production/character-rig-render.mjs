@@ -244,10 +244,14 @@ function verifyPack(archive, draft, id) {
 
 /** List every referenced layer, including offscreen expressions/visemes. This
  * drives the real Chromium decode check before FFmpeg captures any frames. */
-export function characterRasterPreflightList(rigs = {}) {
+export function characterRasterPreflightList(rigs = {}, rigsByScene = {}) {
   if (!rigs || typeof rigs !== "object" || Array.isArray(rigs)) fail("Invalid saved-rig raster manifest.");
   const layers = new Map();
-  for (const [id, rig] of Object.entries(rigs)) {
+  if (!object(rigsByScene)) fail("Invalid saved-rig scene manifest.");
+  for (const [beatId, scene] of Object.entries(rigsByScene))
+    if (!safeId(beatId) || !object(scene)) fail("Invalid saved-rig scene identity.");
+  for (const [id, rig] of [...Object.entries(rigs),
+    ...Object.values(rigsByScene).flatMap(scene => Object.entries(scene))]) {
     if (!["pip", "quill"].includes(id) || !object(rig?.definition?.assets) || !object(rig.assetUrls))
       fail("Invalid saved-rig raster manifest.");
     for (const asset of Object.values(rig.definition.assets)) {
@@ -287,11 +291,16 @@ async function boundedResponse(response, max) {
 /** Resolve only the two currently staged characters. Newest saved revision wins;
  * an absent character uses original bundled art, never an unrelated project's rig.
  */
-export async function loadProjectCharacterRigs({ projectId, speakers, selectedDraftIds = {}, origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetchImpl = fetch }) {
+export async function loadProjectCharacterRigs({ projectId, speakers, selectedDraftIds = {}, selectedDraftIdsByScene = {}, origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetchImpl = fetch }) {
   const ids = [...new Set(speakers ?? [])].filter(id => id === "pip" || id === "quill");
   if (!object(selectedDraftIds) || Object.entries(selectedDraftIds).some(([id, draftId]) =>
     !ids.includes(id) || !/^character-draft-[a-f0-9]{32}$/.test(draftId)))
     fail("Selected character revision must name an active cast speaker and a saved draft ID.");
+  if (!object(selectedDraftIdsByScene) || Object.entries(selectedDraftIdsByScene).some(([beatId, picks]) =>
+    !safeId(beatId) || !object(picks) || !Object.keys(picks).length ||
+    Object.entries(picks).some(([id, draftId]) => !ids.includes(id) ||
+      typeof draftId !== "string" || !/^character-draft-[a-f0-9]{32}$/.test(draftId))))
+    fail("Selected scene character revision must name a valid beat, active speaker and saved draft ID.");
   if (!ids.length) return { rigs: {}, assets: [], identity: [] };
   if (!safeId(projectId) || projectId.length > 120) fail("Select a valid Character Studio project before rendering its custom cast.");
   let base;
@@ -310,27 +319,48 @@ export async function loadProjectCharacterRigs({ projectId, speakers, selectedDr
   try { catalog = JSON.parse((await request(`/api/character-drafts?projectId=${encodeURIComponent(projectId)}`, 180000)).toString("utf8")); }
   catch (error) { fail(`Cannot load saved character revisions: ${error.message}`); }
   if (!Array.isArray(catalog?.drafts) || catalog.drafts.length > 250) fail("Character Studio returned an invalid revision catalog.");
-  const rigs = {}, assets = [], identity = [];
-  for (const id of ids) {
-    const selectedId = selectedDraftIds[id];
+  if (new Set(catalog.drafts.map(draft=>draft?.id)).size !== catalog.drafts.length)
+    fail("Character Studio returned duplicate immutable revision identities.");
+  const rigs = {}, rigsByScene = {}, assets = [], identity = [], archiveCache = new Map(), assetCache = new Map();
+  async function resolveOne(id, selectedId) {
     const draft = catalog.drafts.find(item => item?.characterId === id &&
       (selectedId === undefined || item?.id === selectedId));
     if (selectedId !== undefined && !draft)
       fail(`Selected ${id} Character Studio revision is missing from this project; refusing a built-in or newer-art fallback.`);
-    if (!draft) continue;
+    if (!draft) return null;
     if (!/^character-draft-[a-f0-9]{32}$/.test(draft.id) || draft.projectId !== projectId ||
       typeof draft.revision !== "string" || !draft.revision || draft.revision.length > 64 ||
       !/^[a-f0-9]{64}$/.test(draft.archiveSha256) || !Number.isSafeInteger(draft.sizeBytes) ||
       draft.sizeBytes < 22 || draft.sizeBytes > MAX_ZIP)
       fail(`Character Studio returned an invalid ${id} revision.`);
-    const archive = await request(`/api/character-drafts/${draft.id}/archive?projectId=${encodeURIComponent(projectId)}`, MAX_ZIP);
-    if (archive.length !== draft.sizeBytes || sha256(archive) !== draft.archiveSha256)
-      fail(`Saved ${id} ZIP differs from its immutable Character Studio revision.`);
-    const verified = verifyPack(archive, draft, id);
-    rigs[id] = { draftId: verified.draftId, archiveSha256: verified.archiveSha256,
+    if (!archiveCache.has(draft.id)) {
+      const archive = await request(`/api/character-drafts/${draft.id}/archive?projectId=${encodeURIComponent(projectId)}`, MAX_ZIP);
+      if (archive.length !== draft.sizeBytes || sha256(archive) !== draft.archiveSha256)
+        fail(`Saved ${id} ZIP differs from its immutable Character Studio revision.`);
+      archiveCache.set(draft.id, verifyPack(archive, draft, id));
+    }
+    const verified = archiveCache.get(draft.id);
+    for (const asset of verified.assets) assetCache.set(asset.url, asset);
+    return { draftId: verified.draftId, archiveSha256: verified.archiveSha256,
       definition: verified.definition, assetUrls: verified.assetUrls };
-    assets.push(...verified.assets);
-    identity.push({ speakerId: id, draftId: draft.id, revision: draft.revision, archiveSha256: draft.archiveSha256 });
   }
-  return { rigs, assets, identity };
+  for (const id of ids) {
+    const rig = await resolveOne(id, selectedDraftIds[id]);
+    if (rig) {
+      rigs[id] = rig;
+      identity.push({ speakerId: id, draftId: rig.draftId, revision: rig.definition.revision, archiveSha256: rig.archiveSha256 });
+    }
+  }
+  for (const [beatId, picks] of Object.entries(selectedDraftIdsByScene)) {
+    rigsByScene[beatId] = {};
+    for (const [id, selectedId] of Object.entries(picks)) {
+      const rig = await resolveOne(id, selectedId);
+      rigsByScene[beatId][id] = rig;
+      identity.push({ beatId, speakerId:id, draftId:rig.draftId,
+        revision:rig.definition.revision, archiveSha256:rig.archiveSha256 });
+    }
+  }
+  assets.push(...assetCache.values());
+  characterRasterPreflightList(rigs, rigsByScene);
+  return Object.keys(rigsByScene).length ? { rigs, rigsByScene, assets, identity } : { rigs, assets, identity };
 }

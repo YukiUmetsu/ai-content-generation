@@ -245,9 +245,9 @@ async function deliverSceneVideo(req,res,file,expectedHash,expectedSize,digestCa
 export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
   const resolveRigs=deps.loadCharacterRigs??loadProjectCharacterRigs;
-  async function characterRigSelection(input,job){
+  async function characterRigSelection(input,job,shotMap){
     const actionRequests=job.beats.flatMap(beat=>(beat.speechTurns??[])
-      .filter(turn=>turn.animationAction).map(turn=>({speakerId:turn.speaker?.id,action:turn.animationAction})));
+      .filter(turn=>turn.animationAction).map(turn=>({beatId:beat.id,speakerId:turn.speaker?.id,action:turn.animationAction})));
     const speakers=[...new Set(job.beats.flatMap(beat=>
       (beat.speechTurns??[beat]).map(turn=>turn.speaker?.role==="character"?turn.speaker.id:null)).filter(id=>id==="pip"||id==="quill"))];
     const selectedDraftIds=input.characterDraftIds??{};
@@ -256,8 +256,25 @@ export function createDirectorProduction(deps={}){
         !speakers.includes(speaker)||typeof id!=="string"||
         !/^character-draft-[a-f0-9]{32}$/.test(id)))
       throw Error("Select valid saved Character Studio revisions for characters speaking in this video.");
-    if(Object.keys(selectedDraftIds).length&&!input.characterProjectId)
+    const requestedScenes=input.characterDraftIdsByScene??{};
+    const sceneSpeakers=new Map(shotMap.map(shot=>{
+      const beat=job.beats.find(item=>item.id===shot.beatId);
+      return [shot.shotId,new Set((beat?.speechTurns??[beat])
+        .filter(turn=>turn?.speaker?.role==="character")
+        .map(turn=>turn.speaker.id))];
+    }));
+    if(!requestedScenes||typeof requestedScenes!=="object"||Array.isArray(requestedScenes)||
+      Object.entries(requestedScenes).some(([shotId,picks])=>
+        !sceneSpeakers.has(shotId)||!picks||typeof picks!=="object"||Array.isArray(picks)||
+        !Object.keys(picks).length||Object.entries(picks).some(([speaker,id])=>
+          !sceneSpeakers.get(shotId).has(speaker)||!["pip","quill"].includes(speaker)||
+          typeof id!=="string"||!/^character-draft-[a-f0-9]{32}$/.test(id))))
+      throw Error("Scene rig revisions must identify a saved draft for a character speaking in that exact scene.");
+    if((Object.keys(selectedDraftIds).length||Object.keys(requestedScenes).length)&&!input.characterProjectId)
       throw Error("Select the Character Studio project before pinning a saved rig revision.");
+    const selectedDraftIdsByScene=Object.create(null);
+    for(const shot of shotMap)if(requestedScenes[shot.shotId])
+      selectedDraftIdsByScene[shot.beatId]={...selectedDraftIdsByScene[shot.beatId],...requestedScenes[shot.shotId]};
     if(!speakers.length||input.characterProjectId===undefined){
       if(actionRequests.some(({speakerId,action})=>!(["pip","quill"].includes(speakerId)&&action===`${speakerId}-explain`)))
         throw Error("A named walk or gesture requires a selected Character Studio rig containing that action.");
@@ -266,9 +283,9 @@ export function createDirectorProduction(deps={}){
     if(typeof input.characterProjectId!=="string"||
       !/^[A-Za-z0-9_-]{1,120}$/.test(input.characterProjectId))
       throw Error("Invalid Character Studio project identity.");
-    const resolved=await resolveRigs({projectId:input.characterProjectId,speakers,selectedDraftIds});
-    for(const {speakerId,action} of actionRequests){
-      const available=resolved.rigs?.[speakerId]?.definition?.actions;
+    const resolved=await resolveRigs({projectId:input.characterProjectId,speakers,selectedDraftIds,selectedDraftIdsByScene});
+    for(const {beatId,speakerId,action} of actionRequests){
+      const available=(resolved.rigsByScene?.[beatId]?.[speakerId]??resolved.rigs?.[speakerId])?.definition?.actions;
       if(available ? !Object.hasOwn(available,action) : action!==`${speakerId}-explain`)
         throw Error(`Character action "${action}" is not declared by the selected ${speakerId} Character Studio revision. Choose an action from that rig or clear it.`);
     }
@@ -992,7 +1009,7 @@ export function createDirectorProduction(deps={}){
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const characterRigPacks=await characterRigSelection(input,job);
+        const characterRigPacks=await characterRigSelection(input,job,compiled.shotMap);
         const identity=sha({characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
@@ -1034,7 +1051,7 @@ export function createDirectorProduction(deps={}){
         const approvedSfx=await bindSfx(compiled,input),job=configureRenderJob(approvedSfx.job,settings);
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
-        const characterRigPacks=await characterRigSelection(input,job);
+        const characterRigPacks=await characterRigSelection(input,job,compiled.shotMap);
         const identity=sha({characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
           ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
         if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}

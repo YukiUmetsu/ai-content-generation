@@ -119,13 +119,18 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   const extraCast=sceneCast.filter(item=>item.speaker.voiceId!==settings.voiceId);
   const extraVoices=[...new Set(extraCast.map(item=>`${item.speaker.provider}:${item.speaker.voiceId}`))];
   const mismatchedCast=sceneCast.filter(item=>item.speaker.provider!==settings.provider);
-  const rigSpeakers=[...new Set(sceneCast.map(item=>item.speaker.id))].filter(id=>id==="pip"||id==="quill");
+  const rigSpeakers=[...new Set(sceneCast.filter(item=>item.speaker.role==="character")
+    .map(item=>item.speaker.id))].filter(id=>id==="pip"||id==="quill");
+  const sceneRigSpeakers=[...new Map(sceneCast.filter(item=>item.speaker.role==="character"&&
+    (item.speaker.id==="pip"||item.speaker.id==="quill"))
+    .map(item=>[`${item.shotId}:${item.speaker.id}`,{shotId:item.shotId,id:item.speaker.id}])).values()];
   const rigSpeakerKey=rigSpeakers.join(":");
   const [savedRigs,setSavedRigs]=useState<CharacterDraft[]>([]);
   const [rigListError,setRigListError]=useState("");
-  const [rigSelection,setRigSelection]=useState<{owner?:string;ids:Record<string,string>}>(
-    {owner:voiceProjectId,ids:{}});
+  const [rigSelection,setRigSelection]=useState<{owner?:string;ids:Record<string,string>;sceneIds:Record<string,string>}>(
+    {owner:voiceProjectId,ids:{},sceneIds:{}});
   const characterDraftIds=rigSelection.owner===voiceProjectId?rigSelection.ids:{};
+  const characterSceneDraftIds=rigSelection.owner===voiceProjectId?rigSelection.sceneIds:{};
   useEffect(()=>{
     if(!voiceProjectId||!rigSpeakerKey){return;}
     let active=true;
@@ -136,6 +141,11 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   },[voiceProjectId,rigSpeakerKey,stage,recheckToken]);
   const selectedCharacterDraftIds=Object.fromEntries(Object.entries(characterDraftIds)
     .filter(([id,draftId])=>Boolean(draftId)&&rigSpeakers.some(speaker=>speaker===id)));
+  const selectedCharacterDraftIdsByScene:Record<string,Record<string,string>>={};
+  for(const {shotId,id} of sceneRigSpeakers){
+    const selected=characterSceneDraftIds[`${shotId}:${id}`];
+    if(selected)(selectedCharacterDraftIdsByScene[shotId]??={})[id]=selected;
+  }
   const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
   useEffect(()=>{
     try{localStorage.setItem(voiceProjectId?projectNarratorSettingsKey(voiceProjectId):voiceProfileKey,JSON.stringify({provider:settings.provider,voiceId:settings.voiceId,
@@ -378,7 +388,8 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     setWorking("check");setNotice("");setReady(false);setRigNote("");
     try{
       const response=await request("check",{...payload,settings,castVoiceConsent,searchFreeMedia,
-        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds}:{}),
+        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds,
+          characterDraftIdsByScene:selectedCharacterDraftIdsByScene}:{}),
         ...(productionId?{productionId,sourceRevision}:{})});
       if(revision!==inputRevision.current){setNotice("Scene, voice or consent changed during readiness. Check again for the new version.");return;}
       const report=response.report as Report;
@@ -418,7 +429,8 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
       }
       setState({state:"checking",phase:"preflight",message:"Checking voice permissions, installed tools and scene assets…"});
       const requestInput={...payload,settings,castVoiceConsent,searchFreeMedia,
-        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds}:{}),
+        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds,
+          characterDraftIdsByScene:selectedCharacterDraftIdsByScene}:{}),
         ...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
@@ -628,10 +640,27 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
                 value={characterDraftIds[id]??""} disabled={!!working||state.state==="rendering"}
                 onChange={event=>{
                   inputRevision.current++;
-                  setRigSelection({owner:voiceProjectId,ids:{...characterDraftIds,[id]:event.target.value}});
+                  setRigSelection({owner:voiceProjectId,ids:{...characterDraftIds,[id]:event.target.value},
+                    sceneIds:{...characterSceneDraftIds}});
                   setReady(false);setRigNote("");
                 }}>
                 <option value="">Latest saved revision (automatic)</option>
+                {savedRigs.filter(draft=>draft.characterId===id).map(draft=><option key={draft.id} value={draft.id}>
+                  {draft.revision}
+                </option>)}
+              </select>
+            </label>)}
+            {sceneRigSpeakers.map(({shotId,id})=><label key={`${shotId}:${id}`} className={inputLabel}>
+              {shotId} · {id==="pip"?"Pip":"Quill"} scene revision
+              <select className={field} aria-label={`${shotId} ${id} scene rig revision`}
+                value={characterSceneDraftIds[`${shotId}:${id}`]??""} disabled={!!working||state.state==="rendering"}
+                onChange={event=>{
+                  inputRevision.current++;
+                  setRigSelection({owner:voiceProjectId,ids:{...characterDraftIds},sceneIds:{
+                    ...characterSceneDraftIds,[`${shotId}:${id}`]:event.target.value}});
+                  setReady(false);setRigNote("");
+                }}>
+                <option value="">Use character default</option>
                 {savedRigs.filter(draft=>draft.characterId===id).map(draft=><option key={draft.id} value={draft.id}>
                   {draft.revision}
                 </option>)}

@@ -8,7 +8,8 @@ import type { SafeFrameItem } from "@/components/visual/safe-frame";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
 import { portraitProfile } from "./portrait-profile";
 import { ConversationCharacters } from "./conversation-characters";
-import type { ExportRigMap } from "./conversation-characters";
+import { characterRigsForChapter } from "./scene-character-rigs";
+import type { ExportRigPlan } from "./scene-character-rigs";
 
 const colors = ["#8CDAD2", "#EFC08B", "#BCAEF0", "#D6E9AC", "#F3ACC4"];
 const bg = "#101D2D", ink = "#F8F6F0", muted = "#C0CDD6", accent = "#EFC08B";
@@ -91,6 +92,6 @@ export function PortraitGeneralExportScene({ plan, frame }: { plan: GeneralVisua
       <path d="M116 1532 H893" stroke="#4F6C78" strokeWidth="2"/>
       <rect x="116" y="1532" width={777 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="4" fill={accent}/>
     </svg>
-    {chapter.dialogue && <ConversationCharacters chapter={chapter} frame={frame} rigs={(plan as GeneralVisualPlan & {characterRigs?: ExportRigMap}).characterRigs} portrait/>}
+    {chapter.dialogue && <ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} portrait/>}
   </ShortSafeFrame>;
 }

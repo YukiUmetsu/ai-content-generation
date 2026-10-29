@@ -198,11 +198,21 @@ async function boot() {
     typeof plan.events?.[plan.payoffEventId] !== "number") {
     throw new Error("Video plan has an unsupported or incomplete scene contract");
   }
-  const rigs = (plan as ExportPlan & { characterRigs?: ExportRigMap }).characterRigs;
-  if (rigs !== undefined) {
-    if (plan.kind !== "general-explainer-visual-plan" || !rigs || typeof rigs !== "object" || Array.isArray(rigs))
+  const rigPlan = plan as ExportPlan & { characterRigs?: ExportRigMap;
+    characterRigsByScene?: Record<string, ExportRigMap> };
+  const rigs = rigPlan.characterRigs;
+  const perScene = rigPlan.characterRigsByScene;
+  if (rigs !== undefined || perScene !== undefined) {
+    if (plan.kind !== "general-explainer-visual-plan" || (rigs !== undefined && (!rigs || typeof rigs !== "object" || Array.isArray(rigs))) ||
+      (perScene !== undefined && (!perScene || typeof perScene !== "object" || Array.isArray(perScene))))
       throw new Error("Custom character rigs require a general explainer video.");
-    for (const [id, rig] of Object.entries(rigs)) {
+    for (const [sceneId, sceneRigs] of Object.entries(perScene ?? {})) {
+      if (!plan.chapters.some(chapter=>chapter.id===sceneId) || !sceneRigs ||
+        typeof sceneRigs!=="object" || Array.isArray(sceneRigs) || !Object.keys(sceneRigs).length)
+        throw new Error("Saved character scene revision no longer matches the rendered scene.");
+    }
+    for (const [sceneId, group] of [[null,rigs??{}] as const,
+      ...Object.entries(perScene??{})] as [string|null,ExportRigMap][]) for (const [id, rig] of Object.entries(group)) {
       if (!["pip", "quill"].includes(id) || !rig || !/^character-draft-[a-f0-9]{32}$/.test(rig.draftId) ||
         !/^[a-f0-9]{64}$/.test(rig.archiveSha256) || rig.definition?.characterId !== id ||
         !rig.definition.revision || !rig.assetUrls || typeof rig.assetUrls !== "object" ||
@@ -212,7 +222,7 @@ async function boot() {
         if (asset.kind !== "image" || !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(rig.assetUrls[asset.uri] ?? ""))
           throw new Error(`Saved character ${id} is missing a verified raster layer.`);
       }
-      if (!plan.chapters.some(chapter => chapter.dialogue?.turns.some(turn =>
+      if (!plan.chapters.some(chapter => (sceneId===null||chapter.id===sceneId) && chapter.dialogue?.turns.some(turn =>
         turn.role === "character" && turn.speakerId === id)))
         throw new Error(`Saved character ${id} has no matching spoken scene.`);
     }
