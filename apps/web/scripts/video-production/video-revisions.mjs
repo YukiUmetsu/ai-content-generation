@@ -7,6 +7,10 @@ import { compilePreproductionBundle, isProductionSpeaker } from "./preproduction
 import { isSceneMotion } from "./scene-motion.mjs";
 import { isVisualElements } from "./visual-elements.mjs";
 const sha=v=>createHash("sha256").update(JSON.stringify(v)).digest("hex");
+// Animation names change only the Kumiki visual track, never voice text,
+// timing, provider identity or permissions. Preserve expensive TTS caches.
+const speechOnly=turns=>Array.isArray(turns)?turns.map(turn=>({id:turn.id,narration:turn.narration,
+  pauseAfterMs:turn.pauseAfterMs,speaker:turn.speaker})):null;
 const text=(v,max=2000)=>typeof v==="string"&&v.trim()&&v.length<=max&&!/[\u0000-\u0008\u000e-\u001f]/u.test(v);
 const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements","family","pauseAfterMs","speaker","speechTurns"];
 const families=new Set(["question","process","comparison","cost-breakdown","mechanism","evidence","summary"]);
@@ -45,6 +49,8 @@ export function editPreproductionShot(dossier,original,edit){
     const target=key==="narration"||key==="sfxIntent"||key==="pauseAfterMs"||key==="speaker"||key==="speechTurns"?voice:key==="visualAction"?phase:shot;
     if(key==="visualAction"&&!phase)throw Error("Selected shot has no editable teaching phase.");
     if(JSON.stringify(target[key]??null)===JSON.stringify(value))continue;
+    const visualActionOnly=key==="speechTurns"&&value!==null&&
+      JSON.stringify(speechOnly(target.speechTurns))===JSON.stringify(speechOnly(value));
     if(key==="speaker"&&value===null)delete target.speaker;
     else if(key==="speechTurns"){
       if(value===null)delete target.speechTurns;
@@ -52,12 +58,12 @@ export function editPreproductionShot(dossier,original,edit){
         target.speechTurns=structuredClone(value);
         target.narration=value.map(turn=>typeof turn?.narration==="string"?turn.narration.trim():"").join(" ");
         delete target.speaker;
-        revised.add("narration");
+        if(!visualActionOnly)revised.add("narration");
       }
     }
     else target[key]=typeof value==="string"?value.trim():structuredClone(value);
     revised.add(key);
-    if(key==="narration"||key==="speaker"||key==="speechTurns")audio.add(shot.id);
+    if(key==="narration"||key==="speaker"||key==="speechTurns"&&!visualActionOnly)audio.add(shot.id);
     else if(key==="sfxIntent")sfx.add(shot.id);
     else if(key==="pauseAfterMs")visual.add(shot.id);
     else visual.add(shot.id);

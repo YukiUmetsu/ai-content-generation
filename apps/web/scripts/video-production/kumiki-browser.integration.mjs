@@ -127,7 +127,7 @@ try{
   const rigPlan=structuredClone(plan);
   rigPlan.characterRigs=rigPacks.rigs;
   rigPlan.chapters[0].dialogue={turns:[
-    {id:"pip-asks",speakerId:"pip",role:"character",startFrame:0,endFrame:24},
+    {id:"pip-asks",speakerId:"pip",role:"character",animationAction:"pip-explain",startFrame:0,endFrame:24},
     {id:"quill-replies",speakerId:"quill",role:"character",startFrame:24,endFrame:30}
   ]};
   const rigStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),

@@ -48,7 +48,8 @@ export function compileGeneralVisuals(job, timeline, speech) {
         const timed = measured ? { startFrame: toFrame(cursor, timeline.fps),
           endFrame: toFrame(cursor + measured.samples, timeline.fps) } : {};
         if (measured) cursor += measured.samples + measured.pauseAfterMs * 48;
-        return { id: turn.id, speakerId: speaker.id, role: speaker.role, ...timed };
+        return { id: turn.id, speakerId: speaker.id, role: speaker.role,
+          ...(turn.animationAction?{animationAction:turn.animationAction}:{}),...timed };
       });
       if (actual && cursor !== range.endSample)
         fail(`beat ${beat.id} measured turns do not fill the scene speech range`);

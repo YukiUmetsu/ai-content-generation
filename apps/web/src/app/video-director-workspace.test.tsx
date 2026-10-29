@@ -111,6 +111,37 @@ describe("Video Director selected-shot workbench",()=>{
     expect((edits[0].changes.speechTurns as Array<{narration:string}>)[1].narration).toBe("Let me describe the second step.");
     expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
   });
+  it("persists a chosen walking action on one character dialogue beat",async()=>{
+    const edited=structuredClone(bundle);
+    const voice="a".repeat(32);
+    const turns=[
+      {id:"pip",narration:"Pip walks into the scene.",pauseAfterMs:80,
+        speaker:{id:"pip",role:"character",provider:"fish",voiceId:voice}},
+      {id:"narrate",narration:"The narrator describes the movement.",pauseAfterMs:0}
+    ];
+    Object.assign(edited.plan.sound[1],{speechTurns:turns,narration:turns.map(turn=>turn.narration).join(" ")});
+    const edits:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(String(url).endsWith("/edit")){
+        const body=JSON.parse(String(opts?.body)) as {changes:Record<string,unknown>};
+        edits.push(body.changes);
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:edited,
+          impacts:{changedFields:["speechTurns"],speechRegenerate:[],visualRerender:[],
+            sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}));
+      }
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"Fixture"}),{status:503});
+      throw Error("Unexpected request "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle:edited})],"actions.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    await user.type(screen.getByRole("textbox",{name:"Character action line 1"}),"walk");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toHaveLength(1));
+    expect((edits[0].speechTurns as Array<{animationAction?:string}>)[0].animationAction).toBe("walk");
+  });
   it("writes scene cast to SQLite-backed project storage and reloads the same speaker without a browser draft",async()=>{
     const productionId="production-"+"7".repeat(24),sourceHash="b".repeat(64);
     const original={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sourceHash};

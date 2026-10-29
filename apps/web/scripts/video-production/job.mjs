@@ -276,7 +276,7 @@ export function parseVideoProductionJob(input) {
         const seen=new Set();
         for (const [turnIndex,turn] of turns.entries()) {
           const at=`${path}[${turnIndex}]`;
-          if (!fields(turn,at,["id","narration","speaker","pauseAfterMs"]))continue;
+          if (!fields(turn,at,["id","narration","speaker","pauseAfterMs","animationAction"]))continue;
           if(typeof turn.id!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(turn.id)||
             (typeof beat.id==="string"&&beat.id.length+turn.id.length+1>127)||seen.has(turn.id))
             add("invalid-speech-turn-id",at+".id","Use unique bounded IDs for each scene speech turn.");
@@ -286,6 +286,10 @@ export function parseVideoProductionJob(input) {
             add("invalid-speech-turn-text",at+".narration","Each spoken line must be nonempty, bounded and one line.");
           if(!integer(turn.pauseAfterMs,0)||turn.pauseAfterMs>3000)
             add("invalid-speech-turn-pause",at+".pauseAfterMs","Use a 0–3,000 ms pause after this speaker.");
+          if(has(turn,"animationAction")&&(typeof turn.animationAction!=="string"||
+            !/^[a-zA-Z0-9_-]{1,80}$/u.test(turn.animationAction)||
+            turn.speaker?.role!=="character"))
+            add("invalid-character-action",at+".animationAction","Named rig actions require a character dialogue turn and a safe action ID.");
           if(has(turn,"speaker")&&fields(turn.speaker,at+".speaker",["id","role","voiceId"])){
             const speaker=turn.speaker;
             if(typeof speaker.id!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(speaker.id)||

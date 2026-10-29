@@ -81,6 +81,29 @@ describe("original Pip and Quill rig integration in exported scenes", () => {
 });
 
 describe("custom Character Studio rigs in exported conversation frames", () => {
+  it("schedules an explicitly authored rig action, and fails if that revision lacks it", () => {
+    const walk:CharacterDefinition["actions"][string] = {...PIP_RIG.actions["pip-explain"],phases:[
+      {name:"prepare" as const,frames:4,pose:{"right-arm":{rotation:42}}},
+      {name:"act" as const,frames:8,pose:{"right-arm":{rotation:38}}},
+      {name:"recover" as const,frames:4,pose:{}}
+    ]};
+    const definition: CharacterDefinition={...PIP_RIG,revision:"edited-walking-rig",actions:{...PIP_RIG.actions,walk}};
+    const custom=(action:string)=>({...plan,chapters:plan.chapters.map((chapter,index)=>index!==0?chapter:{...chapter,
+      dialogue:{turns:chapter.dialogue!.turns.map((turn,turnIndex)=>turnIndex===0?{
+        ...turn,animationAction:action}:turn)}})}) as GeneralVisualPlan;
+    const rigs:ExportRigMap={pip:{definition,assetUrls:{},draftId:`character-draft-${"a".repeat(32)}`,
+      archiveSha256:"b".repeat(64)}};
+    const asHtml=(action:string)=>{
+      const customPlan={...custom(action),characterRigs:rigs};
+      return renderToStaticMarkup(<GeneralExportScene plan={customPlan} frame={17}/>);
+    };
+    const walking=asHtml("walk");
+    expect(walking).toContain('data-rig-revision="edited-walking-rig"');
+    expect(walking).toContain('data-part="right-arm"');
+    expect(walking).not.toEqual(asHtml("pip-explain"));
+    expect(()=>asHtml("nonexistent-walk")).toThrow(/not declared.*rig|unknown.*action/i);
+  });
+
   it("uses the saved raster revision and its animated mouth/arm parts instead of the bundled vector puppet", () => {
     const assets = Object.fromEntries(Object.keys(PIP_RIG.assets).map(key => [key, {
       kind: "image", uri: `layers/${key}.png`, mediaType: "image/png", width: 360, height: 420,

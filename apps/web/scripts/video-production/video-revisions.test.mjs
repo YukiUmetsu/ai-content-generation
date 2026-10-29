@@ -89,6 +89,22 @@ test("a dialogue-turn edit regenerates one scene's speech, preserves unrelated v
   assert.deepEqual(reduced.impacts.speechRegenerate,[shot]);
   assert.deepEqual(reduced.impacts.visualRerender,[]);
 });
+test("editing only a named character action rerenders the scene without a new voice request",()=>{
+  const d=source(),base=bundle(),shot=base.plan.shots[1].id;
+  const turns=[
+    {id:"pip",narration:"Pip explains the home costs clearly.",pauseAfterMs:100,
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:"a".repeat(32)}},
+    {id:"narrator",narration:"The narrator adds some context.",pauseAfterMs:0}
+  ];
+  const first=editPreproductionShot(d,base,{shotId:shot,changes:{speechTurns:turns}});
+  const updated=structuredClone(turns);updated[0].animationAction="walk";
+  const second=editPreproductionShot(d,first.bundle,{shotId:shot,changes:{speechTurns:updated}});
+  assert.deepEqual(second.bundle.plan.sound[1].speechTurns,updated);
+  assert.deepEqual(second.impacts.speechRegenerate,[]);
+  assert.deepEqual(second.impacts.visualRerender,[shot]);
+  assert.deepEqual(second.impacts.downstreamRetiming,[]);
+  assert.equal(second.impacts.timelineRecalculate,false);
+});
 test("scene-cast edit is saved in the versioned preproduction bundle and rendered with the pinned voice",()=>{
   const d=source(),before=bundle(),id=before.plan.shots[1].id;
   const speaker={id:"pip",role:"character",provider:"fish",voiceId:"b".repeat(32)};

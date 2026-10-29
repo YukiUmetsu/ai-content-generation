@@ -72,9 +72,14 @@ it never silently substitutes built-in art. The render identity includes the
 exact saved draft ID, revision and archive hash, so checking one version and
 rendering another requires a new preflight. Mouth shapes use approximate
 cycles across measured voice timing, not true phoneme alignment. Blink, idle
-and declared explain actions come from Kumiki; walking and other gestures
-require suitable authored rig actions and scene controls, which are not yet
-exposed throughout the production workflow.
+and gestures run through Kumiki's existing character evaluator. In Video
+Director, a character dialogue line may optionally specify an exact **Rig
+action** name from its saved `character.json` (for example `walk`, `wave`,
+`ask_question` or a custom name). The selected ZIP must declare that action;
+an unknown name blocks the video rather than silently playing built-in
+motion. A blank value retains the automatic explain gesture. This is
+per-dialogue-line action timing, not yet a general per-scene animation
+timeline or a substitute for importing the legacy standalone Pip v1.6 kit.
 
 Start the ContentGen Rust server (`cargo run -p contentgen-server`) before
 saving. With the Vite dev server on 127.0.0.1:5173, requests are proxied to the

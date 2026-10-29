@@ -99,6 +99,7 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     if(sceneSound?.speechTurns){
       job.beats[i].speechTurns=sceneSound.speechTurns.map(turn=>({
         id:turn.id,narration:turn.narration,pauseAfterMs:turn.pauseAfterMs,
+        ...(turn.animationAction?{animationAction:turn.animationAction}:{}),
         ...(turn.speaker?{speaker:{id:turn.speaker.id,role:turn.speaker.role,voiceId:turn.speaker.voiceId}}:{})
       }));
     }else if(assigned)job.beats[i].speaker={id:assigned.id,role:assigned.role,voiceId:assigned.voiceId};

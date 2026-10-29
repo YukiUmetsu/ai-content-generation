@@ -67,7 +67,7 @@ test("measured dialogue audio drives exact per-turn actor frames; inconsistent v
   const job=structuredClone(source), beat=job.beats[1];
   const turns=[
     {id:"ask",narration:"Pip asks a question about the network.",pauseAfterMs:120,
-      speaker:{id:"pip",role:"character",voiceId:"pip-voice"}},
+      speaker:{id:"pip",role:"character",voiceId:"pip-voice"},animationAction:"walk"},
     {id:"reply",narration:"Quill answers and points to the router.",pauseAfterMs:150,
       speaker:{id:"quill",role:"character",voiceId:"quill-voice"}},
     {id:"narrate",narration:"Narrator explains the same scene while the others listen.",pauseAfterMs:0},
@@ -86,6 +86,7 @@ test("measured dialogue audio drives exact per-turn actor frames; inconsistent v
   const plan=compileGeneralVisuals(job,measuredTimeline,speech);
   const dialogue=plan.chapters[1].dialogue;
   assert.deepEqual(dialogue.turns.map(turn=>turn.speakerId),["pip","quill","narrator"]);
+  assert.equal(dialogue.turns[0].animationAction,"walk");
   assert.equal(dialogue.turns[0].startFrame,measuredTimeline.beats[1].startFrame);
   assert.equal(dialogue.turns[1].startFrame,toFrame(measuredTimeline.beats[1].startSample+48000+120*48,job.destination.fps));
   assert.equal(dialogue.turns[2].startFrame,toFrame(measuredTimeline.beats[1].startSample+2*48000+(120+150)*48,job.destination.fps));

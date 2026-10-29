@@ -21,7 +21,7 @@ test("three character and narration turns belong to one uncut, exportable scene"
   const voice="6ab4c6b0f37f4243a99046478647be94";
   const turns=[
     {id:"pip-question",narration:"Pip asks which monthly bills are included in the budget.",
-      speaker:{id:"pip",role:"character",provider:"fish",voiceId:voice},pauseAfterMs:120},
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:voice},pauseAfterMs:120,animationAction:"walk"},
     {id:"quill-answer",narration:"Quill answers that taxes and insurance recur over time.",
       speaker:{id:"quill",role:"character",provider:"fish",voiceId:"b".repeat(32)},pauseAfterMs:140},
     {id:"narrator-explains",narration:"The diagram continues showing those categories while the narrator connects the costs.",pauseAfterMs:0},
@@ -32,6 +32,7 @@ test("three character and narration turns belong to one uncut, exportable scene"
   assert.equal(result.job.beats.length,p.shots.length,"dialogue must not duplicate the visual scene");
   assert.deepEqual(result.job.beats[1].speechTurns,turns.map(turn=>({
     id:turn.id,narration:turn.narration,pauseAfterMs:turn.pauseAfterMs,
+    ...(turn.animationAction?{animationAction:turn.animationAction}:{}),
     ...(turn.speaker?{speaker:{id:turn.speaker.id,role:turn.speaker.role,voiceId:turn.speaker.voiceId}}:{})
   })));
   assert.equal(parseVideoProductionJob(result.job).ok,true);
@@ -39,9 +40,11 @@ test("three character and narration turns belong to one uncut, exportable scene"
     turns.map((turn,index)=>index===1?{...turn,id:turns[0].id}:turn),
     turns.map((turn,index)=>index===1?{...turn,startMs:100}:turn),
     turns.map((turn,index)=>index===1?{...turn,speaker:{...turn.speaker,provider:"local"}}:turn),
+    turns.map((turn,index)=>index===2?{...turn,animationAction:"walk"}:turn),
+    turns.map((turn,index)=>index===0?{...turn,animationAction:"../walk"}:turn),
   ]){
     const bad=structuredClone(p);bad.sound[1].speechTurns=invalid;
-    assert.throws(()=>compilePreproductionBundle(d,bad),/turn|speaker|provider|dialogue|unknown-field/i);
+    assert.throws(()=>compilePreproductionBundle(d,bad),/turn|speaker|provider|dialogue|unknown-field|character-action/i);
   }
 });
 

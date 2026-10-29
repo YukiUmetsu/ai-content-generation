@@ -23,7 +23,7 @@ const RendererScene=lazy(()=>import("./live-renderer-scene"));
 
 type Shot={id:string;family:string;visualChange:string;onScreenText:string;purpose:string;sceneRecipe?:string;visualElements?:VisualElement[];motion?:SceneMotion};
 type SpeakerAssignment={id:string;role:"character"|"narrator";provider:"local"|"fish";voiceId:string};
-type DialogueTurn={id:string;narration:string;pauseAfterMs:number;speaker?:SpeakerAssignment};
+type DialogueTurn={id:string;narration:string;pauseAfterMs:number;speaker?:SpeakerAssignment;animationAction?:string};
 type Sound={shotId:string;narration:string;sfxIntent:string|null;pauseAfterMs:number;speaker?:SpeakerAssignment;speechTurns?:DialogueTurn[]};
 type Phase={shotId:string;visualAction:string;kind:string};
 type Plan={shots:Shot[];sound:Sound[];teachingSequences:Array<{phases:Phase[]}>;story:{question:string}};
@@ -987,6 +987,15 @@ function VideoDirectorWorkspaceContent({locale,projectId,voiceProjectId,research
                           {voice.name} · {voice.provider}{voiceIndex===0?" · primary":voiceIndex===1?" · secondary":""}
                         </option>)}
                       </select>
+                    </label>}
+                    {turn.speaker?.role==="character"&&<label className={header}>Rig action · optional
+                      <input className={field+" mt-1"} aria-label={`Character action line ${index+1}`}
+                        maxLength={80} placeholder="e.g. walk, wave, ask_question"
+                        value={turn.animationAction??""} onChange={event=>changeDialogueTurn(index,
+                          {animationAction:event.target.value||undefined})}/>
+                      <span className="mt-1 block text-xs font-normal normal-case tracking-normal text-muted-foreground">
+                        Use an exact action name declared in the selected Character Studio rig. Blank uses the automatic gesture.
+                      </span>
                     </label>}
                   </div>)}
                   <div className="flex flex-wrap gap-2">

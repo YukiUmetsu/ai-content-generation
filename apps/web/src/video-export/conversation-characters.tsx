@@ -25,9 +25,14 @@ function conversationCues(chapter: Chapter, id: CastId, definition: CharacterDef
         turn.startFrame === undefined || turn.endFrame === undefined || turn.endFrame <= turn.startFrame) continue;
     result.push({ id: `voice-${chapter.id}-${turn.id}`, kind: "speech", instanceId: id,
       startFrame: turn.startFrame, endFrame: turn.endFrame, precision: "approximate" });
-    const action = definition.actions?.[`${id}-explain`] ? `${id}-explain` :
-      definition.actions?.explain ? "explain" : null;
-    if (action && turn.endFrame - turn.startFrame >= 18) result.push({ id: `gesture-${chapter.id}-${turn.id}`,
+    // Explicit dialogue action names come from the selected saved ZIP revision.
+    // A misspelled or removed walk/gesture must never silently become the
+    // bundled explain animation when a customized revision is pinned.
+    if (turn.animationAction && !definition.actions[turn.animationAction])
+      throw Error(`Character action "${turn.animationAction}" is not declared by the selected ${id} rig revision.`);
+    const action = turn.animationAction || (definition.actions?.[`${id}-explain`] ? `${id}-explain` :
+      definition.actions?.explain ? "explain" : null);
+    if (action && (turn.animationAction || turn.endFrame - turn.startFrame >= 18)) result.push({ id: `gesture-${chapter.id}-${turn.id}`,
       kind: "action", instanceId: id, name: action, startFrame: turn.startFrame + 3 });
   }
   return result;

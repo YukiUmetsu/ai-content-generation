@@ -246,6 +246,8 @@ export function createDirectorProduction(deps={}){
   const execute=deps.produce??produceVideo,inspect=deps.inspect??inspectProduction;
   const resolveRigs=deps.loadCharacterRigs??loadProjectCharacterRigs;
   async function characterRigSelection(input,job){
+    const actionRequests=job.beats.flatMap(beat=>(beat.speechTurns??[])
+      .filter(turn=>turn.animationAction).map(turn=>({speakerId:turn.speaker?.id,action:turn.animationAction})));
     const speakers=[...new Set(job.beats.flatMap(beat=>
       (beat.speechTurns??[beat]).map(turn=>turn.speaker?.role==="character"?turn.speaker.id:null)).filter(id=>id==="pip"||id==="quill"))];
     const selectedDraftIds=input.characterDraftIds??{};
@@ -256,12 +258,21 @@ export function createDirectorProduction(deps={}){
       throw Error("Select valid saved Character Studio revisions for characters speaking in this video.");
     if(Object.keys(selectedDraftIds).length&&!input.characterProjectId)
       throw Error("Select the Character Studio project before pinning a saved rig revision.");
-    if(!speakers.length||input.characterProjectId===undefined)
+    if(!speakers.length||input.characterProjectId===undefined){
+      if(actionRequests.some(({speakerId,action})=>!(["pip","quill"].includes(speakerId)&&action===`${speakerId}-explain`)))
+        throw Error("A named walk or gesture requires a selected Character Studio rig containing that action.");
       return {rigs:{},assets:[],identity:[]};
+    }
     if(typeof input.characterProjectId!=="string"||
       !/^[A-Za-z0-9_-]{1,120}$/.test(input.characterProjectId))
       throw Error("Invalid Character Studio project identity.");
-    return resolveRigs({projectId:input.characterProjectId,speakers,selectedDraftIds});
+    const resolved=await resolveRigs({projectId:input.characterProjectId,speakers,selectedDraftIds});
+    for(const {speakerId,action} of actionRequests){
+      const available=resolved.rigs?.[speakerId]?.definition?.actions;
+      if(available ? !Object.hasOwn(available,action) : action!==`${speakerId}-explain`)
+        throw Error(`Character action "${action}" is not declared by the selected ${speakerId} Character Studio revision. Choose an action from that rig or clear it.`);
+    }
+    return resolved;
   }
   const synthesizeSample=deps.synthesizeNarration??synthesizeNarration;
   const compile=deps.compile??compilePreproductionRenderJob;

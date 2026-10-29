@@ -20,6 +20,8 @@ export interface DialogueVisualTurn {
   id: string;
   speakerId: string;
   role: "character" | "narrator";
+  /** Optional exact named action from the pinned Character Studio revision (walk, wave, gestures, etc.). */
+  animationAction?: string;
   /** Present only after a real measured 48 kHz speech sample is available. */
   startFrame?: number;
   endFrame?: number;

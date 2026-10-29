@@ -1632,6 +1632,18 @@ test("custom rig revisions are checked twice and frozen into the actual render r
     produce:async(_job,options)=>{renders++;used=options.characterRigPacks;throw Error("intentional fixture stop");}});
   const payload={...project,settings:config,characterProjectId:"project-custom-rigs",
     characterDraftIds:{pip:"character-draft-"+"b".repeat(32)}};
+  const actionPlan=structuredClone(revised);
+  delete actionPlan.sound[0].speaker;
+  actionPlan.sound[0].speechTurns=[
+    {id:"walk",narration:"Pip walks across the screen as the camera follows.",pauseAfterMs:100,
+      animationAction:"walk",speaker},
+    {id:"narrator",narration:"The narrator introduces the next shot.",pauseAfterMs:0}
+  ];
+  actionPlan.sound[0].narration=actionPlan.sound[0].speechTurns.map(turn=>turn.narration).join(" ");
+  const missingAction=await invoke(server,"POST","/check",{...payload,
+    bundle:compilePreproductionBundle(project.dossier,actionPlan)});
+  assert.equal(missingAction.status,422);
+  assert.match(missingAction.data.error,/action.*not declared|action.*selected.*revision/i);
   const checked=await invoke(server,"POST","/check",payload);
   assert.equal(checked.status,200);
   assert.equal(checked.data.characterRigs[0].revision,"custom-v2");

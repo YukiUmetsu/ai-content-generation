@@ -220,12 +220,16 @@ export function parsePreproductionPlan(plan,dossier){
         let sceneProvider=null;
         for(const [index,turn] of s.speechTurns.entries()){
           const at=p+".speechTurns["+index+"]";
-          if(!v.fields(turn,at,["id","narration","speaker","pauseAfterMs"]))continue;
+          if(!v.fields(turn,at,["id","narration","speaker","pauseAfterMs","animationAction"]))continue;
           if(!id(turn.id)||seen.has(turn.id))v.add("duplicate-dialogue-turn",at+".id","Speech turn IDs must be stable and unique within a scene.");
           seen.add(turn.id);
           v.requireText(turn.narration,at+".narration",2000);
           if(!Number.isSafeInteger(turn.pauseAfterMs)||turn.pauseAfterMs<0||turn.pauseAfterMs>3000)
             v.add("dialogue-turn-pause",at+".pauseAfterMs","Speech turn pause must be 0–3,000 ms.");
+          if(turn.animationAction!==undefined&&
+            (typeof turn.animationAction!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(turn.animationAction)||
+              turn.speaker?.role!=="character"))
+            v.add("invalid-character-action",at+".animationAction","Choose a named rig action on a character dialogue turn.");
           if(turn.speaker!==undefined){
             if(!isProductionSpeaker(turn.speaker))v.add("invalid-dialogue-speaker",at+".speaker","Assign an authorized-looking opaque provider voice ID and character.");
             else {
