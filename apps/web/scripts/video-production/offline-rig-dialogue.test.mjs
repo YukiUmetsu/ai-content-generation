@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { makeOfflineRigDialogue } from "./offline-rig-dialogue.mjs";
+import * as offlineRigDialogue from "./offline-rig-dialogue.mjs";
+
+const {makeOfflineRigDialogue}=offlineRigDialogue;
 
 const run=promisify(execFile);
 test("spoken Pip and Quill fixtures have measured contiguous 48-kHz windows, not a test-tone surrogate",async t=>{
@@ -44,4 +46,37 @@ test("a single offline dialogue turn retains its WAV sample count and accepts no
     ...selected[0],text:"hello;movie=evil"}],fps:{num:30,den:1}}),/safe spoken text/i);
   await assert.rejects(makeOfflineRigDialogue({outDir:root,turns:[{
     ...selected[0],text:"Pip's tail"}],fps:{num:30,den:1}}),/safe spoken text/i);
+});
+
+test("a continuous offline rig film keeps each scene's measured speech at its exact sample offset",async t=>{
+  const {stdout:filters}=await run("ffmpeg",["-hide_banner","-filters"]);
+  if(!/\bflite\b/.test(filters)){t.skip("FFmpeg lacks test-only Flite voices");return;}
+  const root=await mkdtemp(join(tmpdir(),"contentgen-rig-scene-sound-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const first=await makeOfflineRigDialogue({outDir:root,turns:[{id:"first",speakerId:"pip",voice:"kal",text:"Hello Pip"}],
+    fps:{num:30,den:1}});
+  const second=await makeOfflineRigDialogue({outDir:root,turns:[{id:"second",speakerId:"quill",voice:"slt",text:"Hello Quill"}],
+    fps:{num:30,den:1}});
+  const totalSamples=4*48000;
+  assert.equal(typeof offlineRigDialogue.assembleOfflineRigSceneAudio,"function");
+  const assembled=await offlineRigDialogue.assembleOfflineRigSceneAudio({outDir:root,totalSamples,
+    clips:[{wavPath:first.wavPath,startSample:0,samples:first.samples},
+      {wavPath:second.wavPath,startSample:96000,samples:second.samples}]});
+  assert.equal(assembled.samples,totalSamples);
+  const {stdout:probed}=await run("ffprobe",["-v","error","-select_streams","a:0",
+    "-show_entries","stream=duration_ts,sample_rate","-of","json",assembled.wavPath]);
+  assert.equal(Number(JSON.parse(probed).streams[0].duration_ts),totalSamples);
+  const {stdout:pcm}=await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-i",assembled.wavPath,
+    "-f","s16le","-ac","1","-ar","48000","pipe:1"],{encoding:"buffer",maxBuffer:2*1024*1024});
+  const power=(from,to)=>{let sum=0;for(let i=from;i<to;i++)sum+=Math.abs(pcm.readInt16LE(i*2));return sum;};
+  assert.ok(first.samples+9600<96000,"the fixture must have a genuine silent gap between scenes");
+  assert.equal(power(first.samples+4800,96000-4800),0,
+    "speech must not drift into the silence between authored scenes");
+  assert.ok(power(96000,144000)>0,"the second scene must audibly speak after its sample-accurate offset");
+  await assert.rejects(offlineRigDialogue.assembleOfflineRigSceneAudio({outDir:root,totalSamples,clips:[
+    {wavPath:first.wavPath,startSample:0,samples:first.samples},
+    {wavPath:second.wavPath,startSample:1,samples:second.samples}]}),/overlap|boundary/i);
+  await assert.rejects(offlineRigDialogue.assembleOfflineRigSceneAudio({outDir:root,totalSamples,clips:[
+    {wavPath:first.wavPath,startSample:0,samples:first.samples},
+    {wavPath:second.wavPath,startSample:totalSamples-1,samples:second.samples}]}),/duration|length|boundary/i);
 });

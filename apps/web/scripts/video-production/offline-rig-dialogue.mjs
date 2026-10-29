@@ -61,3 +61,34 @@ export async function makeOfflineRigDialogue({outDir,turns,fps}){
   if(Math.abs(measured-samples)>1)fail("joined dialogue changed the spoken sample boundaries");
   return {wavPath,turns:windows,samples:measured,sampleRate};
 }
+
+/** Join independent scene speech at their actual 48-kHz start samples. This is
+ * only an offline QA fixture: production sound still uses its own mixer. */
+export async function assembleOfflineRigSceneAudio({outDir,clips,totalSamples}){
+  if(!outDir||!Array.isArray(clips)||clips.length<2||clips.length>6||
+    !Number.isSafeInteger(totalSamples)||totalSamples<1||totalSamples>48000*180)
+    fail("a continuous test film needs two to six bounded scenes and an exact sample duration");
+  const sorted=[...clips].sort((a,b)=>a.startSample-b.startSample);
+  let lastEnd=0;
+  for(const clip of sorted){
+    if(typeof clip?.wavPath!=="string"||!clip.wavPath||
+      !Number.isSafeInteger(clip.startSample)||clip.startSample<lastEnd||
+      !Number.isSafeInteger(clip.samples)||clip.samples<1||
+      clip.startSample+clip.samples>totalSamples)
+      fail("scene speech overlaps or exceeds its sample-accurate film boundary");
+    if(await samplesInWav(clip.wavPath)!==clip.samples)
+      fail("scene speech WAV length differs from the measured narration samples");
+    lastEnd=clip.startSample+clip.samples;
+  }
+  await mkdir(outDir,{recursive:true,mode:0o700});
+  const wavPath=join(outDir,`${randomUUID()}-continuous-scene-audio.wav`);
+  const filters=sorted.map((clip,index)=>`[${index}:a]adelay=${clip.startSample}S[a${index}]`);
+  filters.push(sorted.map((_,index)=>`[a${index}]`).join("")+
+    `amix=inputs=${sorted.length}:duration=longest:normalize=0,apad=whole_len=${totalSamples},atrim=end_sample=${totalSamples}[out]`);
+  await exec("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+    ...sorted.flatMap(clip=>["-i",clip.wavPath]),
+    "-filter_complex",filters.join(";"),"-map","[out]","-ar",String(sampleRate),
+    "-ac","1","-c:a","pcm_s16le",wavPath],{timeout:45000});
+  if(await samplesInWav(wavPath)!==totalSamples)fail("continuous scene audio changed the authored sample duration");
+  return {wavPath,samples:totalSamples,sampleRate};
+}

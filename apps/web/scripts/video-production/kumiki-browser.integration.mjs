@@ -12,14 +12,14 @@ import {join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {promisify} from "node:util";
 import {chromium} from "playwright-core";
-import {buildSampleTimeline} from "./timeline.mjs";
+import {buildSampleTimeline,toFrame} from "./timeline.mjs";
 import {compileGeneralVisuals} from "./general-visual-plan.mjs";
 import {startLocalStageServer} from "./stage-server.mjs";
 import {loadProjectCharacterRigs,readCharacterZip} from "./character-rig-render.mjs";
 import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
 import {renderSelectedSceneClip} from "./scene-clip.mjs";
 import {renderVideoSegments} from "./render.mjs";
-import {makeOfflineRigDialogue} from "./offline-rig-dialogue.mjs";
+import {makeOfflineRigDialogue,assembleOfflineRigSceneAudio} from "./offline-rig-dialogue.mjs";
 import {planRigQaCoverage} from "./rig-qa-coverage.mjs";
 
 const run=promisify(execFile);
@@ -35,6 +35,38 @@ function firstBlinkFrame(spec,seed){
   const first=((t^(t>>>14))>>>0)/4294967296;
   return spec.intervalFrames.min+Math.floor(first*(spec.intervalFrames.max-spec.intervalFrames.min+1));
 }
+// Make an independently checksummed, valid saved revision of the repository's
+// starter Pip ZIP. Different draft IDs that reference the same ZIP would not
+// catch a renderer accidentally selecting the project default for scene two.
+// The first ZIP member is an uncompressed character.json in this seed only;
+// never rewrite or assume this layout for a user's private Character Studio ZIP.
+function alternateStarterPipRevision(bytes){
+  const changed=Buffer.from(bytes);
+  assert.equal(changed.readUInt32LE(0),0x04034b50);
+  assert.equal(changed.readUInt16LE(8),0,"the starter manifest must be stored uncompressed");
+  const start=30+changed.readUInt16LE(26)+changed.readUInt16LE(28);
+  const length=changed.readUInt32LE(22);
+  const original=changed.toString("utf8",start,start+length);
+  assert.ok(original.includes('"revision": "bundled-vector-1"'));
+  const altered=Buffer.from(original.replace('"revision": "bundled-vector-1"',
+    '"revision": "edited--vector-2"'));
+  assert.equal(altered.length,length,"ZIP manifest offsets must remain unchanged");
+  altered.copy(changed,start);
+  let crc=0xffffffff;
+  for(const byte of altered){
+    crc^=byte;
+    for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);
+  }
+  crc=(crc^0xffffffff)>>>0;
+  changed.writeUInt32LE(crc,14);
+  const eocd=changed.length-22;
+  assert.equal(changed.readUInt32LE(eocd),0x06054b50);
+  const central=changed.readUInt32LE(eocd+16);
+  assert.equal(changed.readUInt32LE(central),0x02014b50);
+  changed.writeUInt32LE(crc,central+16);
+  assert.equal(readCharacterZip(changed).definition.revision,"edited--vector-2");
+  return changed;
+}
 const browserPath=process.env.CONTENTGEN_CHROMIUM_EXECUTABLE;
 if(!browserPath)throw Error("Set CONTENTGEN_CHROMIUM_EXECUTABLE to an installed Chromium browser.");
 const input=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url)));
@@ -45,8 +77,15 @@ const spoken=await makeOfflineRigDialogue({outDir:root,turns:[
   {id:"pip-asks",speakerId:"pip",voice:"kal",text:"Send"},
   {id:"quill-replies",speakerId:"quill",voice:"slt",text:"Route"}
 ],fps:input.destination.fps});
+const sceneSpeech=await Promise.all([
+  [{id:"pip-scene-two",speakerId:"pip",voice:"kal",text:"Follow"}],
+  [{id:"narrator-compares",speakerId:"narrator",voice:"rms",text:"Compare"}],
+  [{id:"narrator-arrives",speakerId:"narrator",voice:"awb",text:"Arrive"}],
+].map(turns=>makeOfflineRigDialogue({outDir:root,turns,fps:input.destination.fps})));
 const timeline=buildSampleTimeline(input.beats.map((beat,index)=>({id:beat.id,
-  samples:index===0?spoken.samples:48000,
+  // Keep the full seeded blink inside scene two while preserving the actual
+  // measured speech window. The remaining scene time is intentional silence.
+  samples:index===0?spoken.samples:Math.max(index===1?96000:48000,sceneSpeech[index-1].samples),
   pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds})),
 {fps:input.destination.fps,events:input.events});
 const plan=compileGeneralVisuals(input,timeline);
@@ -138,7 +177,16 @@ const manifest=plan.manifest;
     rigDrafts.push({id:draftId,projectId:"rig-browser-smoke",characterId:id,
       revision:readCharacterZip(bytes).definition.revision,archiveSha256:sha(bytes),sizeBytes:bytes.length});
   }
+  // Model a saved scene selection through the real owned ZIP catalog rather
+  // than changing the revision string of an in-memory rig after validation.
+  const sceneDraftId=`character-draft-${"e".repeat(32)}`;
+  const sceneBytes=process.env.CONTENTGEN_QA_PIP_ARCHIVE?
+    rigArchives.get(rigDrafts[0].id):alternateStarterPipRevision(rigArchives.get(rigDrafts[0].id));
+  rigArchives.set(sceneDraftId,sceneBytes);
+  rigDrafts.push({...rigDrafts[0],id:sceneDraftId,archiveSha256:sha(sceneBytes),sizeBytes:sceneBytes.length,
+    revision:readCharacterZip(sceneBytes).definition.revision});
   const rigPacks=await loadProjectCharacterRigs({projectId:"rig-browser-smoke",speakers:["pip","quill"],
+    selectedDraftIdsByScene:{[plan.chapters[1].id]:{pip:sceneDraftId}},
     fetchImpl:async url=>{
       const parsed=new URL(url),match=/\/api\/character-drafts\/(character-draft-[a-f0-9]{32})\/archive/.exec(parsed.pathname);
       return match?new Response(rigArchives.get(match[1])??"",{status:rigArchives.has(match[1])?200:404}):
@@ -151,14 +199,21 @@ const manifest=plan.manifest;
     ...(turn.speakerId==="pip"?{animationAction:"pip-explain"}:{}),
     startFrame:turn.startFrame,endFrame:turn.endFrame}))};
   // A second authored scene may select a different immutable Pip revision.
-  // Catalog/hash checks happen in the server tests; this checks Chromium's
-  // per-chapter renderer selection without introducing another animation path.
+  // The scene-specific catalog draft is pinned through the real ZIP resolver.
   const secondChapter=rigPlan.chapters[1];
-  const sceneDraftId=`character-draft-${"e".repeat(32)}`;
-  secondChapter.dialogue={turns:[{id:"pip-scene-two",speakerId:"pip",role:"character",
-    startFrame:secondChapter.startFrame+1,endFrame:secondChapter.startFrame+15}]};
-  rigPlan.characterRigsByScene={[secondChapter.id]:{pip:{...rigPacks.rigs.pip,
-    draftId:sceneDraftId,definition:{...rigPacks.rigs.pip.definition,revision:"pinned-second-scene"}}}};
+  const scopedPip=rigPacks.rigsByScene[secondChapter.id].pip;
+  const sceneAction=Object.hasOwn(scopedPip.definition.actions,"walk")?"walk":"pip-explain";
+  assert.ok(Object.hasOwn(scopedPip.definition.actions,sceneAction),
+    "selected saved revision must expose an authored motion action");
+  if(!process.env.CONTENTGEN_QA_PIP_ARCHIVE)
+    assert.notEqual(scopedPip.definition.revision,rigPacks.rigs.pip.definition.revision,
+      "the CI fixture must pin a genuinely different saved revision in scene two");
+  const secondStartSample=timeline.beats[1].startSample;
+  const secondTurn={id:"pip-scene-two",speakerId:"pip",role:"character",animationAction:sceneAction,
+    startFrame:toFrame(secondStartSample,input.destination.fps),
+    endFrame:toFrame(secondStartSample+sceneSpeech[0].samples,input.destination.fps)};
+  secondChapter.dialogue={turns:[secondTurn]};
+  rigPlan.characterRigsByScene=rigPacks.rigsByScene;
   const blinkSpec=rigPacks.rigs.pip.definition.blink;
   const qaCoverage=blinkSpec?planRigQaCoverage({chapters:rigPlan.chapters,
     spokenChapterId:rigPlan.chapters[0].id,
@@ -206,8 +261,21 @@ const manifest=plan.manifest;
       const secondActor=rigPage.locator('[data-conversation-performer="pip"]');
       assert.equal(await secondActor.getAttribute("data-rig-source"),"character-studio");
       assert.equal(await secondActor.getAttribute("data-rig-draft-id"),sceneDraftId);
-      assert.equal(await secondActor.getAttribute("data-rig-revision"),"pinned-second-scene");
+      assert.equal(scopedPip.draftId,sceneDraftId,
+        "the renderer must use the scene's saved catalog revision, not the project default");
+      assert.equal(await secondActor.getAttribute("data-rig-revision"),scopedPip.definition.revision);
       assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
+      assert.equal(await secondActor.getAttribute("data-speaking"),"true",
+        "the second scene must speak only during its actual measured WAV interval");
+      const motionPart=sceneAction==="walk"?"leg_left":rightArm;
+      const earlyMotion=await secondActor.locator(`[data-part="${motionPart}"]`).getAttribute("transform");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),secondTurn.startFrame+11);
+      const laterMotion=await secondActor.locator(`[data-part="${motionPart}"]`).getAttribute("transform");
+      assert.notEqual(earlyMotion,laterMotion,
+        "the selected scene's saved walk or gesture must change a real articulated sprite");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),secondTurn.endFrame+3);
+      assert.equal(await secondActor.getAttribute("data-speaking"),"false",
+        "the edited scene actor must stop speaking when its measured audio ends");
       const blink=pipRig.definition.blink;
       if(blink){
         const start=qaCoverage.blinkReviewFrames[1];
@@ -300,10 +368,47 @@ const manifest=plan.manifest;
       assert.equal(blinkStream?.r_frame_rate,"30/1");
       blinkMp4=blinkClip.videoOnlyPath;
     }
+    // The two isolated QA clips are helpful for close review, but a completed
+    // film must preserve scene edits, actual saved revisions, speech timing,
+    // silence and blinking across the complete Kumiki/FFmpeg timeline.
+    const fullReviewFrames=[...new Set([2,secondTurn.startFrame+3,
+      ...(qaCoverage?.blinkReviewFrames??[])])].sort((a,b)=>a-b);
+    const fullRender=await renderVideoSegments({stageUrl:rigStage.url,
+      manifest:rigPlan.manifest,visualPlan:rigPlan,planHash:sha(JSON.stringify(rigPlan)),
+      buildHash:rigStage.buildHash,outDir:join(root,"continuous-full-custom-rig"),
+      browserExecutable:browserPath,maxBatchFrames:30,reviewFrames:fullReviewFrames});
+    assert.equal(fullRender.frameCount,rigPlan.manifest.durationFrames,
+      "an edited-scene export must encode every scene, not only the first chapter");
+    assert.equal(fullRender.reviewStills.length,fullReviewFrames.length);
+    const sceneAudio=await assembleOfflineRigSceneAudio({outDir:root,totalSamples:timeline.totalSamples,
+      clips:[{wavPath:spoken.wavPath,startSample:timeline.beats[0].startSample,samples:spoken.samples},
+        ...sceneSpeech.map((voice,index)=>({wavPath:voice.wavPath,
+          startSample:timeline.beats[index+1].startSample,samples:voice.samples}))]});
+    const fullSeconds=fullRender.frameCount*rigPlan.manifest.fps.den/rigPlan.manifest.fps.num;
+    const fullMp4=join(root,"full-edited-custom-rig-voiced.mp4");
+    await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+      "-i",fullRender.videoOnlyPath,"-i",sceneAudio.wavPath,"-map","0:v:0","-map","1:a:0",
+      "-c:v","copy","-c:a","aac","-b:a","128k","-af","apad",
+      "-t",String(fullSeconds),"-movflags","+faststart",fullMp4],{timeout:60000});
+    const fullProbe=await run("ffprobe",["-v","error","-count_frames","-show_entries",
+      "stream=codec_type,codec_name,nb_read_frames,start_time,duration,r_frame_rate","-of","json",fullMp4],{timeout:30000});
+    const fullStreams=JSON.parse(fullProbe.stdout).streams??[];
+    const fullVideo=fullStreams.find(stream=>stream.codec_type==="video");
+    const fullAudio=fullStreams.find(stream=>stream.codec_type==="audio");
+    assert.equal(fullVideo?.codec_name,"h264");
+    assert.equal(Number(fullVideo?.nb_read_frames),fullRender.frameCount);
+    assert.equal(fullVideo?.r_frame_rate,"30/1");
+    assert.equal(fullAudio?.codec_name,"aac");
+    for(const stream of [fullVideo,fullAudio]){
+      assert.ok(Math.abs(Number(stream.start_time))<=1/rigPlan.manifest.fps.num);
+      assert.ok(Math.abs(Number(stream.duration)-fullSeconds)<=1/rigPlan.manifest.fps.num,
+        "full narrated film audio must end within one frame of the final exported picture");
+    }
     if(process.env.CONTENTGEN_QA_ARTIFACT_DIR){
       const target=resolve(process.env.CONTENTGEN_QA_ARTIFACT_DIR);
       await mkdir(target,{recursive:true});
       await copyFile(syncedMp4,join(target,"kumiki-custom-rigs-voiced.mp4"));
+      await copyFile(fullMp4,join(target,"kumiki-edited-scene-full-voiced.mp4"));
       if(blinkMp4)await copyFile(blinkMp4,join(target,"kumiki-pip-blink.mp4"));
       if(rigPacks.rigs.pip.definition.blink){
         await copyFile(join(root,"pip-open.png"),join(target,"pip-open.png"));

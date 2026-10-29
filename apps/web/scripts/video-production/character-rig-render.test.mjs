@@ -190,8 +190,11 @@ test("an explicitly selected revision stays pinned and never downgrades to the n
 });
 test("scene revisions remain independently pinned, share immutable archives, and reject missing scene art",async()=>{
   const pip=await archive("pip"),rev=readCharacterZip(pip).definition.revision;
-  const old=record("pip",pip,rev),newer={...old,id:`character-draft-${"e".repeat(32)}`};
-  const mock=mockCatalog([newer,old],new Map([[old.id,pip],[newer.id,pip]]));
+  const edited=mutateSavedAnimation(pip,'"revision": "bundled-vector-1"',
+    '"revision": "edited--vector-2"');
+  const old=record("pip",pip,rev),newer={...record("pip",edited,readCharacterZip(edited).definition.revision),
+    id:`character-draft-${"e".repeat(32)}`};
+  const mock=mockCatalog([newer,old],new Map([[old.id,pip],[newer.id,edited]]));
   const selected=await loadProjectCharacterRigs({projectId,speakers:["pip"],
     selectedDraftIds:{pip:newer.id},
     selectedDraftIdsByScene:{"first-beat":{pip:old.id},"second-beat":{pip:newer.id}},
@@ -199,6 +202,9 @@ test("scene revisions remain independently pinned, share immutable archives, and
   assert.equal(selected.rigs.pip.draftId,newer.id);
   assert.equal(selected.rigsByScene["first-beat"].pip.draftId,old.id);
   assert.equal(selected.rigsByScene["second-beat"].pip.draftId,newer.id);
+  assert.notEqual(selected.rigsByScene["first-beat"].pip.definition.revision,
+    selected.rigsByScene["second-beat"].pip.definition.revision,
+    "the scene override must resolve the ZIP's distinct revision, not just its catalog ID");
   assert.equal(selected.identity.length,3);
   assert.equal(selected.identity[1].beatId,"first-beat");
   assert.equal(mock.calls.length,3,"a selected archive should only be fetched once per render");
