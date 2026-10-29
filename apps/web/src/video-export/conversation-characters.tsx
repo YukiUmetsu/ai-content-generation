@@ -71,6 +71,11 @@ export function ConversationCharacters({ chapter, frame, portrait = false, compa
         return <div key={id} data-conversation-performer={id} data-speaking={speaking ? "true" : "false"}
           data-rig-source={custom ? "character-studio" : "bundled"} data-rig-revision={definition.revision}
           data-rig-draft-id={custom?.draftId} data-rig-archive-sha256={custom?.archiveSha256}
+          data-rig-mouth-part={custom?.definition.speech?.mouthPart}
+          data-rig-rest-asset={custom ? (() => {
+            const mouth = custom.definition.parts.find(part => part.id === custom.definition.speech?.mouthPart);
+            return mouth ? (mouth.variants?.[custom.definition.speech!.rest] ?? mouth.asset) : undefined;
+          })() : undefined}
           style={{ flex: 1, maxWidth: people.length === 1 ? 355 : 345, minWidth: 0,
             borderRadius: compact ? 19 : 24, border: `2px solid ${speaking ? cast[id].color : "#4E6673"}`,
             background: speaking ? cast[id].tint : "#203643", boxSizing: "border-box",
