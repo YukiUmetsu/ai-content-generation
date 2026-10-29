@@ -229,6 +229,71 @@ function verifyPack(archive, draft, id) {
       parent = parts.get(parent).parent;
     }
   }
+  // Validate the animation graph now, while the immutable ZIP is being
+  // resolved. Browser-side Kumiki validation remains the final guard, but an
+  // invalid saved action/blink must not consume TTS time or render frames.
+  const validPose = (pose, label, channel) => {
+    if (!object(pose)) fail(`${label} has an invalid pose.`);
+    for (const [partId, delta] of Object.entries(pose)) {
+      const part = parts.get(partId);
+      if (!part || (channel && part.channel !== channel) || !object(delta) ||
+        Object.entries(delta).some(([key, value]) => !["x","y","rotation","scaleX","scaleY"].includes(key) ||
+          !Number.isFinite(value))) fail(`${label} references an invalid part, channel or motion value (${partId}).`);
+    }
+  };
+  const validVariants = (variants, label, channel) => {
+    if (!object(variants)) fail(`${label} has invalid image variants.`);
+    for (const [partId, variant] of Object.entries(variants)) {
+      const part = parts.get(partId);
+      if (!part || (channel && part.channel !== channel) ||
+        !safeId(variant) || !Object.hasOwn(part.variants ?? {}, variant))
+        fail(`${label} references an unavailable ${partId} image variant.`);
+    }
+  };
+  if (!safeId(definition.basePose) || !Object.hasOwn(definition.poses, definition.basePose))
+    fail(`Saved ${id} has no valid rest pose.`);
+  for (const [name, pose] of Object.entries(definition.poses)) validPose(pose, `Pose ${name}`);
+  if (!safeId(definition.expressions.default) ||
+    !Object.hasOwn(definition.expressions.sets, definition.expressions.default))
+    fail(`Saved ${id} has no default expression.`);
+  for (const [name, expression] of Object.entries(definition.expressions.sets)) {
+    if (!safeId(name) || !object(expression)) fail("Character expression is invalid.");
+    if (expression.pose !== undefined) validPose(expression.pose, `Expression ${name}`);
+    if (expression.variants !== undefined) validVariants(expression.variants, `Expression ${name}`);
+  }
+  for (const [name, action] of Object.entries(definition.actions)) {
+    if (!safeId(name) || !object(action) || !definition.channels.includes(action.channel) ||
+      !["override","additive"].includes(action.blend) ||
+      !["finish","blend-out","cut"].includes(action.takeover) ||
+      !Number.isFinite(action.priority) || !Array.isArray(action.phases) ||
+      !action.phases.length || action.phases.length > 256)
+      fail(`Saved ${id} has an invalid ${name} action definition.`);
+    for (const phase of action.phases) {
+      if (!object(phase) || !["prepare","act","hold","recover"].includes(phase.name) ||
+        !Number.isSafeInteger(phase.frames) || phase.frames < 1)
+        fail(`Action ${name} has an invalid animation phase.`);
+      validPose(phase.pose ?? {}, `Action ${name}`, action.blend === "override" ? action.channel : undefined);
+      if (phase.variants !== undefined)
+        validVariants(phase.variants, `Action ${name}`, action.blend === "override" ? action.channel : undefined);
+    }
+  }
+  if (definition.blink !== undefined) {
+    const blink = definition.blink;
+    if (!object(blink) || !Array.isArray(blink.parts) || !blink.parts.length ||
+      !safeId(blink.variant) || !object(blink.intervalFrames) ||
+      !Number.isSafeInteger(blink.intervalFrames.min) || blink.intervalFrames.min < 1 ||
+      !Number.isSafeInteger(blink.intervalFrames.max) || blink.intervalFrames.max < blink.intervalFrames.min ||
+      !Number.isSafeInteger(blink.durationFrames) || blink.durationFrames < 1)
+      fail(`Saved ${id} has an invalid blink schedule.`);
+    for (const partId of blink.parts) validVariants({ [partId]: blink.variant }, "Blink");
+  }
+  if (definition.idle !== undefined) {
+    if (!object(definition.idle) || !object(definition.idle.parts)) fail("Character idle motion is invalid.");
+    for (const [partId, track] of Object.entries(definition.idle.parts))
+      if (!parts.has(partId) || !object(track) || !["y","rotation","scaleY"].includes(track.property) ||
+        !Number.isFinite(track.amplitude) || !Number.isSafeInteger(track.periodFrames) || track.periodFrames < 1)
+        fail(`Idle animation references an invalid part or track (${partId}).`);
+  }
   const speech = definition.speech;
   if (!object(speech) || !safeId(speech.mouthPart) || !parts.has(speech.mouthPart) ||
     !Array.isArray(speech.approximateCycle) || speech.approximateCycle.length < 2 ||
@@ -239,6 +304,13 @@ function verifyPack(archive, draft, id) {
   if (!object(mouth.variants) || speech.approximateCycle.some(value =>
     value !== speech.rest && !Object.hasOwn(mouth.variants, value)))
     fail("Character speech mouth references an unavailable image variant.");
+  if (!safeId(speech.rest) || !object(speech.visemes) ||
+    Object.values(speech.visemes).some(variant=>variant!==speech.rest &&
+      !Object.hasOwn(mouth.variants,variant)) ||
+    !Number.isSafeInteger(speech.approximateStepFrames) || speech.approximateStepFrames < 1 ||
+    !Number.isSafeInteger(speech.transitionFrames) || speech.transitionFrames < 0)
+    fail("Character speech timing or viseme artwork is invalid.");
+  if (speech.activeVariants !== undefined) validVariants(speech.activeVariants,"Speech companion");
   return { draftId: draft.id, archiveSha256: draft.archiveSha256, definition, assetUrls, assets };
 }
 

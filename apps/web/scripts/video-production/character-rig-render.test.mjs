@@ -24,6 +24,66 @@ function mockCatalog(drafts, archives) {
   };
   return {fetchImpl,calls};
 }
+
+// The starter ZIP stores character.json without compression. Change only its
+// manifest and both ZIP CRCs, so archive/hash integrity passes and the saved
+// animation itself is what the production preflight must reject.
+function mutateSavedAnimation(bytes, before, after) {
+  assert.equal(Buffer.byteLength(before),Buffer.byteLength(after));
+  const modified=Buffer.from(bytes);
+  assert.equal(modified.readUInt32LE(0),0x04034b50);
+  assert.equal(modified.readUInt16LE(8),0,"fixture's manifest must be stored");
+  const start=30+modified.readUInt16LE(26)+modified.readUInt16LE(28);
+  const length=modified.readUInt32LE(22);
+  const original=modified.toString("utf8",start,start+length);
+  assert.ok(original.includes(before),"expected fixture animation field");
+  const changed=Buffer.from(original.replace(before,after));
+  assert.equal(changed.length,length);
+  changed.copy(modified,start);
+  let crc=0xffffffff;
+  for(const byte of changed){
+    crc^=byte;
+    for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);
+  }
+  crc=(crc^0xffffffff)>>>0;
+  modified.writeUInt32LE(crc,14);
+  const eocd=modified.length-22;
+  assert.equal(modified.readUInt32LE(eocd),0x06054b50);
+  const central=modified.readUInt32LE(eocd+16);
+  assert.equal(modified.readUInt32LE(central),0x02014b50);
+  modified.writeUInt32LE(crc,central+16);
+  return modified;
+}
+
+test("preflight rejects invalid saved animation references before narration or browser rendering",async()=>{
+  const original=await archive("pip");
+  const corruptions=[
+    ["\"parts\": [\n      \"eyes\"", "\"parts\": [\n      \"arms\"", /blink|part|variant/i],
+    ["\"right-arm\": {\n              \"rotation\"", "\"ghost-arm\": {\n              \"rotation\"", /action|part|pose/i],
+    ["\"head\": {\n            \"rotation\"", "\"fake\": {\n            \"rotation\"", /expression|part|pose/i],
+  ];
+  for(const [before,after,diagnostic] of corruptions){
+    // A correct SHA, CRC and image payload must not legitimize bad animation.
+    const altered=mutateSavedAnimation(original,before,after);
+    const parsed=readCharacterZip(altered);
+    assert.equal(parsed.entries.size,readCharacterZip(original).entries.size);
+    const draft=record("pip",altered,parsed.definition.revision);
+    const mock=mockCatalog([draft],new Map([[draft.id,altered]]));
+    await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],fetchImpl:mock.fetchImpl}),
+      diagnostic,"invalid saved rig must fail at the worker boundary");
+  }
+});
+
+test("preflight preserves supported Kumiki hold phases in saved custom animation",async()=>{
+  const original=await archive("pip");
+  const modified=mutateSavedAnimation(original,
+    '"name": "act",\n          "frames"',
+    '"name": "hold",\n         "frames"');
+  const draft=record("pip",modified,readCharacterZip(modified).definition.revision);
+  const mock=mockCatalog([draft],new Map([[draft.id,modified]]));
+  const resolved=await loadProjectCharacterRigs({projectId,speakers:["pip"],fetchImpl:mock.fetchImpl});
+  assert.equal(resolved.rigs.pip.definition.actions["pip-explain"].phases[1].name,"hold");
+});
 test("real starter ZIPs load as articulated raster definitions with exact image checksums",async()=>{
   for(const id of ["pip","quill"]){
     const bytes=await archive(id), parsed=readCharacterZip(bytes);
