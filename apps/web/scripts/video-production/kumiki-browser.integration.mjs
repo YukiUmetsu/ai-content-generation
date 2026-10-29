@@ -183,6 +183,28 @@ try{
     assert.equal(Number(customStream?.nb_read_frames),realRigClip.frameCount,
       "every measured dialogue frame must encode into a real H.264 video");
     assert.equal(customStream?.r_frame_rate,"30/1", "custom rigs cannot be exported at a sampled 3-fps animation rate");
+    // Also verify the real movie's audio/video container contract without a
+    // paid voice provider. The test tone stands in for an already-measured
+    // 48-kHz spoken track; the actual production mux consumes that WAV.
+    const clipSeconds=realRigClip.frameCount*rigPlan.manifest.fps.den/rigPlan.manifest.fps.num;
+    const syncedMp4=join(root,"continuous-custom-rig-with-audio.mp4");
+    await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+      "-i",customMp4,"-f","lavfi","-i",`sine=frequency=440:sample_rate=48000:duration=${clipSeconds}`,
+      "-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","128k",
+      "-t",String(clipSeconds),"-movflags","+faststart",syncedMp4],{timeout:60000});
+    const syncedProbe=await run("ffprobe",["-v","error","-show_entries",
+      "stream=codec_type,codec_name,start_time,duration","-of","json",syncedMp4],{timeout:30000});
+    const streams=JSON.parse(syncedProbe.stdout).streams??[];
+    const videoTrack=streams.find(stream=>stream.codec_type==="video");
+    const audioTrack=streams.find(stream=>stream.codec_type==="audio");
+    assert.equal(videoTrack?.codec_name,"h264");
+    assert.equal(audioTrack?.codec_name,"aac");
+    for(const stream of [videoTrack,audioTrack]){
+      assert.ok(Math.abs(Number(stream.start_time))<=1/rigPlan.manifest.fps.num,
+        "audio/video starts cannot differ from the authored scene by more than a frame");
+      assert.ok(Math.abs(Number(stream.duration)-clipSeconds)<=1/rigPlan.manifest.fps.num,
+        "audio/video durations must stay within a frame of measured dialogue");
+    }
   }finally{await rigStage.close();}
   // Exercise the actual selected-scene API's file publication via the same
   // Chromium page, H.264 encoder and FFprobe. Only three preview frames are
