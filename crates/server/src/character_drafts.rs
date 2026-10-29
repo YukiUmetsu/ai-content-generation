@@ -125,7 +125,7 @@ async fn list(
         tokio::task::spawn_blocking(move || {
             let db = state.connect().map_err(|_| unavailable())?;
             let mut statement = db.prepare(&format!(
-            "{SELECT_DRAFT} WHERE project_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 250"
+            "{SELECT_DRAFT} WHERE project_id = ?1 ORDER BY rowid DESC LIMIT 250"
         )).map_err(|_| unavailable())?;
             statement
                 .query_map([query.project_id], row_draft)
