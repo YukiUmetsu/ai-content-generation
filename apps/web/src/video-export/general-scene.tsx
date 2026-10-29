@@ -32,11 +32,15 @@ function Node({ x, y, width, height, label, note, index, highlight = false }: { 
   // Legacy cards without notes keep their original typography and placement.
   const card = note ? layoutTeachingCard({ label, note, width, height }) : null;
   const title = card?.title ?? fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
+  // Browser-measured Geist glyph boxes can be taller than the original fixed
+  // 36px leading. In taller contrast cards, give wrapped labels enough room
+  // so the export's exact SVG overlap guard does not reject their two lines.
+  const legacyLeading=height>=145?Math.max(36,Math.ceil(title.fontSize*1.55)):36;
   return <g data-general-node={index}>
     <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
     <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
     {title.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5}
-      y={card ? y + card.title.baselines[i] : y + height / 2 - (title.lines.length - 1) * 18 + i * 36 + 11}
+      y={card ? y + card.title.baselines[i] : y + height / 2 - (title.lines.length - 1) * legacyLeading / 2 + i * legacyLeading + 11}
       fontSize={title.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
     {card?.detail.lines.map((line, i) => <text data-teaching-detail="" key={i} x={x + width / 2 + 5}
       y={y + card.detail.baselines[i]} fontSize={card.detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}

@@ -185,6 +185,15 @@ describe("cinematic semantic visual treatments on the actual exported frame",()=
     expect(later).toContain("Repair");
     expect(later).toContain('data-semantic-focus="true"');
   });
+  it("keeps wrapped titles apart in tall contrast cards at the exported SVG font metrics",()=>{
+    const html=asIntent("general-comparison",["Local connection","Internet route"],110);
+    const first=html.match(/<g data-general-node="0">([\s\S]*?)<\/g>/)?.[1];
+    expect(first).toBeDefined();
+    const titleBaselines=[...first!.matchAll(/<text\b[^>]*\by="([\d.]+)"[^>]*>/g)]
+      .map(match=>Number(match[1]));
+    expect(titleBaselines).toHaveLength(2);
+    expect(titleBaselines[1]-titleBaselines[0]).toBeGreaterThanOrEqual(44);
+  });
   it("reveals breakdown parts with no fabricated values or unequal quantitative bar geometry",()=>{
     const late=asIntent("general-breakdown",["Labor","Equipment","Permits","Materials"],119);
     expect(late).toContain('data-semantic-layout="decomposition"');
