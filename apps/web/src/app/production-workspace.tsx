@@ -270,11 +270,13 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     if(!production||step!=="produce")return;
     let active=true;
     const controller=new AbortController();
-    const poll=()=>{void fetch("/api/contentgen-video/status",{signal:controller.signal,cache:"no-store"})
+    let inFlight=false;
+    const poll=()=>{if(inFlight)return;inFlight=true;void fetch("/api/contentgen-video/status",{signal:controller.signal,cache:"no-store"})
       .then(response=>response.ok?response.json():null)
       .then(data=>{if(active&&data?.productionId===production.id)setActiveRender(data);})
-      .catch(()=>{/* Jobs remain accessible when the Director worker is offline. */});};
-    poll();const timer=window.setInterval(poll,2500);
+      .catch(()=>{/* Jobs remain accessible when the Director worker is offline. */})
+      .finally(()=>{inFlight=false;});};
+    poll();const timer=window.setInterval(poll,1000);
     return ()=>{active=false;controller.abort();window.clearInterval(timer);};
   },[production,step]);
   const [board,setBoard]=useState(()=>loadProjectStoryboard(productionKey).board);

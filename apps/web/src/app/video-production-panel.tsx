@@ -454,16 +454,20 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
     // that request acquires the worker would overwrite the visible progress.
     if(state.state!=="rendering")return;
     let mounted=true;
+    let inFlight=false;
     const poll=async()=>{
+      if(inFlight)return;
+      inFlight=true;
       try{
         const scoped=productionId&&state.phase==="recovering"?
           `status/${encodeURIComponent(productionId)}${sourceRevision===undefined?"":`?sourceRevision=${encodeURIComponent(sourceRevision)}`}`:"status";
         const next=await request(scoped) as unknown as Status;
         if(mounted)setState(next);
       }catch(error){if(mounted)setNotice(error instanceof Error?error.message:"Progress connection interrupted.");}
+      finally{inFlight=false;}
     };
     void poll();
-    const timer=window.setInterval(()=>void poll(),1800);
+    const timer=window.setInterval(()=>void poll(),1000);
     return ()=>{mounted=false;window.clearInterval(timer);};
   },[state.state,state.phase,productionId,sourceRevision]);
   const progress=state.progress;

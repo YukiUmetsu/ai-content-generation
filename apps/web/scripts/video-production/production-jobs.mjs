@@ -103,6 +103,15 @@ function validatedOutput(nodeKey,payload){
     // Third-party errors sometimes embed machine paths or credentials. Leave
     // detailed warnings in the private scene catalog, not the durable Jobs DB.
   }
+  if(payload.timingAdjustments!==undefined){
+    if(nodeKey!=="timeline"||!Array.isArray(payload.timingAdjustments)||payload.timingAdjustments.length>60)
+      throw Error("Jobs timing adjustments must belong to the timeline step and be bounded.");
+    output.timingAdjustments=payload.timingAdjustments.map(item=>{
+      if(typeof item?.id!=="string"||!BEAT_ID.test(item.id)||!Number.isSafeInteger(item.addedPauseMs)||item.addedPauseMs<1||item.addedPauseMs>60000)
+        throw Error("Jobs timing adjustment must name a scene and an added silence duration.");
+      return {id:item.id,addedPauseMs:item.addedPauseMs};
+    });
+  }
   if(payload.artifactLedger!==undefined)
     output.artifactLedger=validatedLedger(payload.artifactLedger,nodeKey);
   return output;
@@ -119,6 +128,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
   let jobId=null,nodes=[],keys=PRODUCTION_NODES,active=-1,attemptId=null,terminal=null,priorRunId=null;
   let sceneScope=null,abortController=null,leaseError=null,activeLease=null;
   const sceneAttempts=new Map();
+  const startedScenes=[];
   const priorLedgers=new Map();
   async function request(path,body){
     let response;
@@ -180,7 +190,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
   return {
     get jobId(){return jobId;},
     get priorRunId(){return priorRunId;},
-    async start({productionId,revision,runId,sourceRevision=null,workerAbortController}){
+    async start({productionId,revision,runId,sourceRevision=null,workerAbortController,expectedJobId}){
       if(jobId)throw Error("Production job already started.");
       abortController=workerAbortController??null;
       if(!/^production-[a-f0-9]{24}$/u.test(productionId)||!revision||!RUN_ID.test(runId))
@@ -194,6 +204,8 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
           // immutable content-addressed media can be reused after recovery.
           maxAttempts:3,input:{productionId,revision,runId,sourceRevision},
           dependsOn:index?[PRODUCTION_NODES[index-1]]:[]}))});
+      if(expectedJobId&&(data.created===true||data.job?.id!==expectedJobId))
+        throw Error("The saved production no longer matches this job. Open the production editor to review it.");
       if(data.created!==true&&data.job?.state==="RUNNING"&&
         data.nodes?.some(node=>node.state==="RUNNING")){
         // Do not steal a live claim. Rust re-arms only attempts whose persisted
@@ -265,18 +277,42 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       while(active<keys.length-1){await succeed();await begin(active+1);}
       await succeed(finalOutput);terminal="completed";
     },
+    async releaseScene(record,options={}){
+      if(!record||record.released)return;
+      stopLease(record.lease);
+      if(record.key)sceneAttempts.delete(record.key);
+      const cancel=()=>request(`/api/jobs/${record.jobId}/cancel`,{});
+      const failClaim=()=>request(`/api/jobs/${record.jobId}/nodes/${record.nodeId}/fail`,{
+        attemptId:record.attemptId,errorCode:"scene_failed",
+        errorDetail:"Scene work was interrupted. Retry to reuse verified completed media."});
+      try{await cancel();}
+      catch{
+        try{await cancel();}
+        catch(cancelError){
+          // Cancel can be rejected while the claim is still RUNNING. Failing
+          // that attempt releases the next retry; leaving it claimed blocks
+          // the same scene until the lease expires.
+          if(!record.nodeId||!record.attemptId){
+            if(options.required)throw cancelError;
+            return;
+          }
+          try{await failClaim();}
+          catch(failError){if(options.required)throw failError;return;}
+        }
+      }
+      record.released=true;
+    },
     async fail(code="render_failed",detail="Video rendering failed"){
       stopLease(activeLease);activeLease=null;
       if(terminal||!attemptId)return;
       terminal="failed";
-      const activeChildren=[...sceneAttempts.values()];
-      for(const attempt of activeChildren)stopLease(attempt.lease);
+      // Cancel every scene claim this worker started and did not finish.
+      // A thumbnail or segment failure used to return the parent to Jobs
+      // while the child attempt stayed RUNNING and blocked the next claim.
+      const abandoned=startedScenes.filter(item=>!item.released);
       sceneAttempts.clear();
-      // A parent failure cannot leave child attempts actively claimed. Rust
-      // cancellation is idempotent; a child already succeeded stays intact.
-      await Promise.allSettled(activeChildren.map(attempt=>
-        request(`/api/jobs/${attempt.jobId}/cancel`,{})));
-      await request(`/api/jobs/${jobId}/nodes/${nodes[active].id}/fail`,{
+      await Promise.all(abandoned.map(item=>this.releaseScene(item)));
+      return await request(`/api/jobs/${jobId}/nodes/${nodes[active].id}/fail`,{
         attemptId,errorCode:code.slice(0,80),errorDetail:detail.slice(0,240)});
     },
     /** Each photo download, narration beat and encoded render chunk has a separately claimed,
@@ -320,12 +356,14 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       const node=data.nodes[0];
       const reservation=await request(`/api/jobs/${data.job.id}/nodes/${node.id}/start`,{});
       if(typeof reservation.attempt?.id!=="string")throw Error("Jobs did not reserve the scene attempt.");
+      const record={key,jobId:data.job.id,nodeId:node.id,attemptId:reservation.attempt.id,
+        lease:startLease(data.job.id,node.id,reservation.attempt.id),released:false};
+      startedScenes.push(record);
       if(terminal){
-        await request(`/api/jobs/${data.job.id}/cancel`,{});
+        await this.releaseScene(record,{required:true});
         throw Error("Scene work was cancelled before it could start.");
       }
-      sceneAttempts.set(key,{jobId:data.job.id,nodeId:node.id,attemptId:reservation.attempt.id,
-        lease:startLease(data.job.id,node.id,reservation.attempt.id)});
+      sceneAttempts.set(key,record);
       return key;
     },
     async completeScene(key,{sha256,samples,frameCount,reused=false}){
@@ -338,6 +376,7 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
       stopLease(attempt.lease);
       await request(`/api/jobs/${attempt.jobId}/nodes/${attempt.nodeId}/succeed`,
         {attemptId:attempt.attemptId,output});
+      attempt.released=true;
       sceneAttempts.delete(key);
     },
     async failScene(key,error){
@@ -351,15 +390,15 @@ export function createProductionJobTracker({origin=process.env.CONTENTGEN_JOBS_O
         "Scene processing failed. Retry this draft to reuse completed scene media.";
       await request(`/api/jobs/${attempt.jobId}/nodes/${attempt.nodeId}/fail`,{
         attemptId:attempt.attemptId,errorCode:"scene_failed",errorDetail:detail});
+      attempt.released=true;
       sceneAttempts.delete(key);
     },
     async cancel(){
-      if(terminal||!jobId)return;
+      if(terminal==="cancelled"||terminal==="completed"||!jobId)return;
       terminal="cancelled";
       stopLease(activeLease);activeLease=null;
-      for(const attempt of sceneAttempts.values())stopLease(attempt.lease);
-      const sceneResults=await Promise.allSettled([...sceneAttempts.values()].map(attempt=>
-        request(`/api/jobs/${attempt.jobId}/cancel`,{})));
+      const pending=startedScenes.filter(item=>!item.released);
+      const sceneResults=await Promise.allSettled(pending.map(item=>this.releaseScene(item,{required:true})));
       sceneAttempts.clear();
       await request(`/api/jobs/${jobId}/cancel`,{});
       if(sceneResults.some(result=>result.status==="rejected"))

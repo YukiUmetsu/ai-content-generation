@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join, parse, resolve } from "node:path";
 import { synthesizeFishBeat } from "./fish.mjs";
 import { synthesizeLocalBeat } from "./local.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const execFileAsync = promisify(execFile);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -16,7 +17,9 @@ async function execMedia(program, args, { signal, timeoutMs = 60000 } = {}) {
   try {
     return await execFileAsync(program, args, { signal, timeout: timeoutMs, maxBuffer: 256 * 1024 });
   } catch (error) {
-    fail(`${program} failed (${error.code ?? error.signal ?? "unknown"}). Check the installed media tools and source WAV.`);
+    const reason = mediaToolFailureReason(program, error);
+    if (!reason) throw error;
+    fail(reason);
   }
 }
 

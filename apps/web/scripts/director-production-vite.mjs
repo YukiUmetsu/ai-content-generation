@@ -36,6 +36,17 @@ import {listRecoveryIntents,reserveRecoveryAttempt,writeRecoveryIntent} from "./
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
+function identityParts(input){
+  const voiceSettings=Object.fromEntries(Object.entries(input.settings).filter(([key])=>key!=="apiKeyHash"));
+  const {voice: jobVoice,...storyJob}=input.job;
+  return {
+    story:sha({source:input.source,job:storyJob,productionId:input.productionId,sourceRevision:input.sourceRevision}),
+    media:sha({sceneMediaFingerprint:input.sceneMediaFingerprint,searchFreeMedia:input.searchFreeMedia,autoPrepareFreeMedia:input.autoPrepareFreeMedia}),
+    characters:sha({characterRigs:input.characterRigs,authorizedVoiceIds:input.authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent}),
+    voice:sha({voiceSettings,jobVoice}),
+  };
+}
+
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"};
 const productionIdPattern=/^[a-z0-9][a-z0-9_-]{1,79}$/iu;
 const sceneIdPattern=/^[a-z0-9][a-z0-9_-]{0,95}$/iu;
@@ -45,15 +56,52 @@ const failureRecovery={
   "browser-preflight":["renderer_unavailable","Renderer setup failed. Check Chromium and the local build, then retry."],
   "asset-search":["asset_search_failed","Media discovery stopped unexpectedly. Disable online search or retry the draft."],
   "asset-preparation":["asset_preparation_failed","Selected scene media could not be verified. Open Find the right visuals, replace or remove the affected asset, then retry."],
+  "asset-prepared":["asset_preparation_failed","Selected scene media could not be verified. Open Find the right visuals, replace or remove the affected asset, then retry."],
   narration:["narration_failed","Narration failed. Check the authorized voice provider and retry; verified completed speech can be reused."],
-  timeline:["timeline_failed","Scene timing failed. Reopen the visual editor, check the affected scenes and retry."],
+  "speech-reused":["narration_failed","Narration failed. Check the authorized voice provider and retry; verified completed speech can be reused."],
+  timeline:["timeline_failed","The renderer stopped while preparing scene timing. The specific cause and affected scene were not captured. Retry to check again; no script or audio has been changed."],
   audio:["audio_mix_failed","Audio mixing failed. Review selected sounds and FFmpeg, then retry."],
+  captions:["caption_failed","Caption export failed. Retry the draft. Completed speech and scenes can be reused."],
   rendering:["scene_render_failed","Scene rendering failed. Check Chromium and visual assets, then retry the draft."],
+  "segment-reused":["scene_render_failed","Scene rendering failed. Check Chromium and visual assets, then retry the draft."],
+  starting:["startup_failed","The draft stopped before rendering started. Check the storyboard, voice settings and local tools, then retry."],
+  thumbnails:["thumbnail_failed","Thumbnail export failed. Check the local browser and retry. Completed scenes can be reused."],
   mux:["video_mux_failed","MP4 assembly failed. Check FFmpeg and available disk space, then retry."],
   qa:["technical_qa_failed","Video quality checks failed. Review the media and audio requirements, then retry."],
   review:["export_failed","Final export failed. Check the local output directory and retry."],
 };
-function renderFailure(phase,error){
+const mediaToolJobs={
+  media_tool_missing:"FFmpeg or FFprobe is not installed. Install the local media tools, then retry. Completed speech and scenes can be reused.",
+  media_permission:"FFmpeg could not read or write local media. Check folder permissions, then retry. Completed scenes can be reused.",
+  media_invalid:"FFmpeg rejected a local media file as invalid. Retry the draft. Verified speech and scenes can be reused.",
+  media_timeout:"A local media tool stopped because the step took too long. Retry the draft. Verified scenes can be reused.",
+};
+function recognizedMediaToolFailure(error){
+  const text=String(error?.message??"");
+  if(/\bis not installed\b/u.test(text))return{code:"media_tool_missing",message:mediaToolJobs.media_tool_missing};
+  if(/cannot access a local media file/u.test(text))return{code:"media_permission",message:mediaToolJobs.media_permission};
+  const decoder=/no decoder found for:\s*([a-z0-9_]{1,32})/iu.exec(text);
+  if(decoder)return{code:"media_decoder_missing",message:`This FFmpeg build cannot decode ${decoder[1].toLowerCase()}. Install a build with that decoder, then retry. Completed scenes can be reused.`};
+  const encoder=/unknown encoder ([a-z0-9_]{1,32})/iu.exec(text);
+  if(encoder)return{code:"media_encoder_missing",message:`This FFmpeg build cannot encode ${encoder[1].toLowerCase()}. Install that encoder, then retry. Completed scenes can be reused.`};
+  if(/rejected a local media file/u.test(text))return{code:"media_invalid",message:mediaToolJobs.media_invalid};
+  if(/\b(?:ffmpeg|ffprobe|media tool) timed out\b/u.test(text))return{code:"media_timeout",message:mediaToolJobs.media_timeout};
+  return null;
+}
+function mediaToolMessage(code,detail){
+  if(code==="media_decoder_missing"||code==="media_encoder_missing"){
+    const text=String(detail??"");
+    const pattern=code==="media_decoder_missing"
+      ?/^This FFmpeg build cannot decode [a-z0-9_]{1,32}\. Install a build with that decoder, then retry\. Completed scenes can be reused\.$/u
+      :/^This FFmpeg build cannot encode [a-z0-9_]{1,32}\. Install that encoder, then retry\. Completed scenes can be reused\.$/u;
+    if(pattern.test(text))return text;
+    return code==="media_decoder_missing"
+      ?"This FFmpeg build is missing a required decoder. Install that decoder, then retry. Completed scenes can be reused."
+      :"This FFmpeg build is missing a required encoder. Install that encoder, then retry. Completed scenes can be reused.";
+  }
+  return mediaToolJobs[code]??null;
+}
+function renderFailure(phase,error,context={}){
   // Diagnostic strings can contain provider responses, script text, local
   // paths or credentials. Only recognize a small set of safe machine errors.
   if(/\bENOSPC\b|no space left on device/iu.test(String(error?.message??"")))
@@ -64,6 +112,57 @@ function renderFailure(phase,error){
     return{code:"scene_review_limit",message:"This draft exceeds the 64-scene review evidence limit. Split the storyboard before generating narration."};
   if(error?.message==="QA_REPORT_INTEGRITY_FAILED")
     return{code:"qa_integrity_failed",message:"The QA report was missing or changed during export. No completed Jobs release was recorded. Check local storage, then retry the draft."};
+  if(phase==="timeline"){
+    const text=String(error?.message??"");
+    const cases=[
+      [/^Visual SFX timing unavailable: Shot ([A-Za-z0-9_-]+) has no measurable visible-element reveal after its opening frame\.$/u,
+        "The visual reveal cannot be found within the measured narration. Add a visible reveal or remove its sound cue."],
+      [/^Visual SFX timing unavailable: Shot ([A-Za-z0-9_-]+) has an unsupported dynamic visual presentation without authoritative element-reveal cues\.$/u,
+        "The selected visual does not provide a measurable reveal for its sound cue. Choose another cue or visual."],
+      [/^Visual SFX timing unavailable: Shot ([A-Za-z0-9_-]+) visual cue is outside its measured audio beat\.$/u,
+        "The visual sound cue falls outside the measured narration. Review the scene timing and cue."],
+      [/^General explainer visual plan invalid: beat ([A-Za-z0-9_-]+) is too short to render$/u,
+        "The measured narration is too short for a video frame. Check the scene audio and retry."],
+      [/^General explainer visual plan invalid: beat ([A-Za-z0-9_-]+) (?:timeline mismatch|has mismatched measured dialogue|measured turns do not fill the scene speech range|character speech differs from measured narration)$/u,
+        "The scene's measured narration does not match its visual or dialogue timing. Review its narration and retry."],
+      [/^General explainer visual plan invalid: beat ([A-Za-z0-9_-]+) turn [A-Za-z0-9_-]+ differs from measured voice identity or timing$/u,
+        "A dialogue turn does not match its measured voice or timing. Review the scene's speaker and narration."],
+      [/^Invalid sample timeline: (?:invalid measured scene |beat )([A-Za-z0-9_-]+)(?: must have positive measured samples| has an invalid pause)?$/u,
+        "The measured scene audio or pause is invalid. Check its narration and retry."],
+    ];
+    if(text==="General explainer visual plan invalid: unexpected-endpoint")
+      return {code:"timeline_failed",message:"Fish narration received a local speech address. Generate the draft again; speech stays on Fish and completed audio can be reused."};
+    const eventMismatch=/^Visual SFX timing unavailable: Shot for event ([A-Za-z0-9_-]+) is not matched to its measured beat\.$/u.exec(text);
+    const eventBeat=eventMismatch&&context.job?.events?.find(event=>event.id===eventMismatch[1])?.beatId;
+    if(typeof eventBeat==="string"&&/^[A-Za-z0-9_-]{1,96}$/u.test(eventBeat)){
+      const index=(context.shotMap??[]).findIndex(shot=>shot.beatId===eventBeat);
+      const shot=index>=0?context.shotMap[index].shotId:null;
+      const label=typeof shot==="string"&&/^[A-Za-z0-9_-]{1,96}$/u.test(shot)?`Scene ${index+1} (${shot})`:`Scene ${eventBeat}`;
+      return {code:"timeline_failed",message:`${label}: A visual sound cue is not linked to the measured narration. Review the scene cue and retry.`.slice(0,240)};
+    }
+    for(const [pattern,explanation] of cases){
+      const match=pattern.exec(text);if(!match)continue;
+      const index=(context.shotMap??[]).findIndex(shot=>shot.beatId===match[1]);
+      const shot=index>=0?context.shotMap[index].shotId:null;
+      const label=typeof shot==="string"&&/^[A-Za-z0-9_-]{1,96}$/u.test(shot)?`Scene ${index+1} (${shot})`:`Scene ${match[1]}`;
+      return {code:"timeline_failed",message:`${label}: ${explanation}`.slice(0,240)};
+    }
+  }
+  if(phase==="thumbnails"){
+    const text=`${error?.stderr??""}\n${error?.message??""}`;
+    if(/no decoder found for:\s*svg/iu.test(text)||/^Thumbnail export needs a local Chromium/u.test(String(error?.message??"")))
+      return{code:"thumbnail_failed",message:"This FFmpeg build cannot read SVG thumbnails. Check the local browser and retry. Completed scenes can be reused."};
+    if(/not a valid 1280×720 PNG/u.test(String(error?.message??"")))
+      return{code:"thumbnail_failed",message:"A title card was not a valid 1280×720 image. Retry the draft. Finished title cards can be reused."};
+    if(/unsafe or incomplete thumbnail composition/u.test(String(error?.message??"")))
+      return{code:"thumbnail_failed",message:"A title card composition was incomplete. Retry the draft. Finished title cards can be reused."};
+    if(/already being produced or has completed/u.test(String(error?.message??"")))
+      return{code:"thumbnail_failed",message:"A previous title card is still claimed. Wait two minutes, then retry. Finished title cards can be reused."};
+    if(/Jobs service unavailable|database is locked/iu.test(String(error?.message??"")))
+      return{code:"thumbnail_failed",message:"Thumbnail tracking was busy. Retry the draft. Finished title cards can be reused."};
+  }
+  const mediaTool=recognizedMediaToolFailure(error);
+  if(mediaTool)return mediaTool;
   const [code,message]=failureRecovery[phase]??["render_failed","Draft production failed. Open Jobs for the failed step, check local tools and retry."];
   return{code,message};
 }
@@ -77,6 +176,10 @@ function persistedFailure(job){
   for(const [phase,[code,message]] of Object.entries(failureRecovery)){
     if(failing?.errorCode===code)return{code,message,phase};
   }
+  const storedDetail=failing?.errorDetail??job?.attempts?.find(attempt=>
+    attempt.nodeId===failing?.id&&attempt.errorCode===failing?.errorCode)?.errorDetail;
+  const reloadedMediaTool=mediaToolMessage(failing?.errorCode,storedDetail);
+  if(reloadedMediaTool)return{code:failing.errorCode,message:reloadedMediaTool};
   if(failing?.errorCode==="jobs_unavailable")return{code:"jobs_unavailable",
     message:"Jobs tracking stopped responding. Restart the local Rust server, then retry the draft."};
   return{code:"render_failed",message:"The draft stopped before completion. Inspect the failed step in Jobs and retry."};
@@ -368,16 +471,22 @@ export function createDirectorProduction(deps={}){
     mediaDigests.set(signature,valid);
     return valid;
   }
-  const latestProductionJob=deps.latestProductionJob??(async productionId=>{
+  async function readLocalJob(path){
     const origin=new URL((deps.env??process.env).CONTENTGEN_JOBS_ORIGIN??"http://127.0.0.1:8787");
     if(origin.protocol!=="http:"||!["localhost","127.0.0.1"].includes(origin.hostname)||
       origin.username||origin.password||origin.pathname!=="/"||origin.search||origin.hash)
       throw Error("Jobs requires a local server address.");
-    const response=await fetch(new URL(`/api/jobs/production/${productionId}/latest`,origin),{
-      signal:AbortSignal.timeout(4000),redirect:"error",headers:{"Accept":"application/json"}});
-    if(!response.ok)throw Error("Jobs could not load the last production.");
-    return response.json();
-  });
+    let response;
+    try{response=await fetch(new URL(path,origin),{
+      signal:AbortSignal.timeout(4000),redirect:"error",headers:{"Accept":"application/json"}});}
+    catch{throw Error("Cannot reach the local Jobs service. Start it and retry the production.");}
+    if(!response.ok)throw Error("Jobs could not load the production. Check the local Jobs service and retry.");
+    try{return await response.json();}
+    catch{throw Error("The local Jobs service returned invalid data. Restart it and retry.");}
+  }
+  const latestProductionJob=deps.latestProductionJob??(productionId=>
+    readLocalJob(`/api/jobs/production/${productionId}/latest`));
+  const productionJobById=deps.productionJobById??(jobId=>readLocalJob(`/api/jobs/${jobId}`));
   async function readMediaIndex(){
     let raw;
     try{raw=await readFile(mediaIndexPath,"utf8");}
@@ -623,7 +732,7 @@ export function createDirectorProduction(deps={}){
   }
   const newJobTracker=deps.jobTracker??(()=>createProductionJobTracker());
   let busy=false,checked=null,controller=null,lastOutput=null,preview=null;
-  let activeJobTracker=null;
+  let activeJobTracker=null,retryTimer=null,retryPresentation=null;
   let sample=null,sampleController=null;
   let sampleStatus={state:"idle",message:"No voice sample generated.",audioUrl:null};
   let sceneClipController=null;
@@ -650,7 +759,7 @@ export function createDirectorProduction(deps={}){
         respond(res,200,{dossier,bundle,
           note:"Synthetic example only. No factual claims are verified. Character voice IDs in the conversation demo are starter placeholders and must be reviewed."});return;
       }
-      if(req.method==="GET"&&route==="/status"){respond(res,200,status);return;}
+      if(req.method==="GET"&&route==="/status"){respond(res,200,retryPresentation??status);return;}
       if(req.method==="GET"&&route.startsWith("/version-policy/")){
         const productionId=route.slice("/version-policy/".length);
         if(!/^production-[a-f0-9]{24}$/u.test(productionId)){
@@ -667,6 +776,9 @@ export function createDirectorProduction(deps={}){
         const sourceRevision=params.get("sourceRevision");
         if(sourceRevision!==null&&(sourceRevision.length>300||/[\u0000-\u001f]/u.test(sourceRevision))){
           respond(res,422,{error:"Invalid source revision."});return;
+        }
+        if(retryPresentation?.productionId===productionId&&retryPresentation.sourceRevision===sourceRevision){
+          respond(res,200,retryPresentation);return;
         }
         if(status.productionId===productionId&&status.sourceRevision===sourceRevision&&
           status.state!=="idle"){
@@ -792,13 +904,66 @@ export function createDirectorProduction(deps={}){
         respond(res,202,{cancelRequested:true});return;
       }
       if(route==="/cancel"){
-        if(!busy||!controller){respond(res,409,{error:"No active render."});return;}
+        if((!busy&&!retryTimer)||!controller){respond(res,409,{error:"No active render."});return;}
+        if(retryTimer){clearTimeout(retryTimer);retryTimer=null;}
         controller.abort(Error("Cancelled by editor."));
         if(activeJobTracker){
           try{await activeJobTracker.cancel();}
-          catch(error){respond(res,503,{error:"Render cancellation requested, but Jobs could not confirm it. "+String(error?.message??"").slice(0,160)});return;}
+          catch(error){
+            if(!busy)status={...status,state:"failed",message:"Cancellation could not be confirmed. Open Jobs to check the draft."};
+            respond(res,503,{error:"Render cancellation requested, but Jobs could not confirm it. "+String(error?.message??"").slice(0,160)});return;}
         }
+        if(!busy){status={...status,state:"cancelled",message:"Render cancelled; no completed release published."};
+          controller=null;activeJobTracker=null;}
         respond(res,202,{cancelRequested:true});return;
+      }
+      if(route==="/jobs/retry"){
+        const input=await readBody(req);
+        if(!input||Object.keys(input).some(key=>key!=="jobId")||
+          typeof input.jobId!=="string"||!/^[A-Za-z0-9_-]{1,128}$/u.test(input.jobId))
+          throw Error("Choose a valid production job to retry.");
+        if(busy||retryTimer){respond(res,409,{error:"A production is already running or preparing to retry. Wait or cancel it before retrying."});return;}
+        const persisted=await productionJobById(input.jobId);
+        const source=persisted?.nodes?.find(node=>node.nodeKey==="scene-plan")?.input;
+        const readyFailure=persisted?.job?.state==="RUNNING"&&persisted.nodes?.some(node=>
+          node.state==="READY"&&typeof node.errorCode==="string")&&
+          !persisted.nodes?.some(node=>node.state==="RUNNING");
+        if(persisted?.job?.id!==input.jobId||persisted.job.jobKind!=="video-production"||
+          !(persisted.job.state==="FAILED"||readyFailure)){
+          respond(res,409,{error:"This production cannot be retried: it is already running, completed, or has no failed step."});return;
+        }
+        const intent=(await listRecoveryIntents(outputRoot)).find(item=>item.productionId===source?.productionId&&
+          item.revision===source?.revision&&item.sourceRevision===source?.sourceRevision);
+        if(!intent){respond(res,409,{error:"The saved production request is unavailable. Open the production editor and generate the draft again."});return;}
+        const payload={...intent.request};
+        if(payload.sourceRevision===null)delete payload.sourceRevision;
+        const preflight=await checkSavedRetry(payload,intent);
+        if(preflight.code!==200){
+          respond(res,409,{error:typeof preflight.data?.error==="string"?preflight.data.error:
+            "Readiness checks could not run. Check the local Studio service and retry."});return;
+        }
+        if(preflight.data?.report?.ready!==true){
+          const findings=Array.isArray(preflight.data?.report?.findings)?preflight.data.report.findings
+            .filter(item=>item?.severity==="error"&&typeof item.message==="string")
+            .slice(0,12).map(item=>({code:typeof item.code==="string"?item.code.slice(0,80):"readiness_failed",
+              message:item.message.slice(0,300)})):[];
+          respond(res,409,{error:findings.length?"The draft did not pass readiness checks. Resolve the items below and retry.":
+            "The draft did not pass readiness checks, but no details were provided. Open the production editor and run the readiness check.",findings});return;
+        }
+        if(checked?.identity!==intent.revision){
+          const labels={story:"scene plan or render settings",media:"selected scene media or media search settings",
+            characters:"character revisions or cast authorization",voice:"voice settings or provider credentials"};
+          const changed=intent.identityParts?Object.keys(labels).filter(key=>intent.identityParts[key]!==checked.components[key]).map(key=>labels[key]):[];
+          if(intent.identityParts&&!changed.length)changed.push("voice settings or provider credentials");
+          respond(res,409,{error:intent.identityParts?
+            "The saved draft passed readiness checks, but inputs differ from the original job. Review the listed inputs in the production editor and generate a new draft.":
+            "The saved draft passed readiness checks, but its production inputs no longer match the original job. This older job did not record which input changed. Check the scene plan, selected media, character revisions, voice settings and provider credentials in the production editor, then generate a new draft.",changedInputs:changed});return;
+        }
+        const started=await localAction("/start",{...payload,confirmRender:true,
+          confirmUpdatedVersion:intent.request.confirmUpdatedVersion===true},true,input.jobId);
+        if(started.code!==202){respond(res,409,{error:typeof started.data?.error==="string"?started.data.error:
+          "The production worker could not start the retry. Check Jobs and retry."});return;}
+        respond(res,202,{started:true,jobId:started.data.jobId});return;
       }
       if(route==="/scene-clip/cancel"){
         if(!sceneClipController||sceneClip.state!=="rendering"){
@@ -926,7 +1091,7 @@ export function createDirectorProduction(deps={}){
               audioUrl:"/api/contentgen-video/narration-sample/"+id+".wav"};
             if(previous)await rm(previous.root,{recursive:true,force:true}).catch(()=>{});
           }catch(error){
-            const detail=[settings.apiKey,settings.voiceId,job.beats[0].narration]
+            const detail=[settings.apiKey,input.settings?.apiKey,settings.voiceId,job.beats[0].narration]
               .filter(value=>typeof value==="string"&&value.length>0)
               .reduce((message,secret)=>message.replaceAll(secret,"[redacted]"),
                 String(error?.message??"Speech service unavailable.")).slice(0,180);
@@ -1010,8 +1175,9 @@ export function createDirectorProduction(deps={}){
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
         const characterRigPacks=await characterRigSelection(input,job,compiled.shotMap);
-        const identity=sha({characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
-          ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
+        const identityInput={characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+          ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}};
+        const identity=sha(identityInput),components=identityParts(identityInput);
         busy=true;status={state:"checking",phase:"build",message:"Building and checking local tools…",
           progress:null,report:null,runId:null,mediaUrl:null,regeneration:null};
         try{
@@ -1030,7 +1196,7 @@ export function createDirectorProduction(deps={}){
           // Provider diagnostics are untrusted and may embed the submitted key.
           const report=JSON.parse(JSON.stringify(inspected,(_field,value)=>
             typeof value==="string"?redact(value):value));
-          checked=report.ready?{identity}:null;
+          checked=report.ready?{identity,components}:null;
           status={...status,state:report.ready?"ready":"blocked",phase:"preflight",
             message:report.ready?"Ready to render an unverified test draft.":"Resolve the readiness findings below.",report};
           respond(res,200,{ready:report.ready,report,warnings:compiled.warnings,
@@ -1052,8 +1218,9 @@ export function createDirectorProduction(deps={}){
         const authorizedVoiceIds=resolveCastVoiceIds(compiled,input.bundle,settings,input.castVoiceConsent);
         const sceneMedia=await sceneMediaIdentity(compiled,input.dossier,input.bundle);
         const characterRigPacks=await characterRigSelection(input,job,compiled.shotMap);
-        const identity=sha({characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
-          ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}});
+        const identityInput={characterRigs:characterRigPacks.identity,source:compiled.sourcePlanSha256,job,productionId:input.productionId??null,sourceRevision:input.sourceRevision??null,searchFreeMedia,autoPrepareFreeMedia,authorizedVoiceIds,castVoiceConsent:input.castVoiceConsent===true,sceneMediaFingerprint:sceneMedia.identityFingerprint,settings:{
+          ...settings,apiKeyHash:settings.apiKey?sha(settings.apiKey):"",apiKey:undefined}};
+        const identity=sha(identityInput),components=identityParts(identityInput);
         if(busy){respond(res,409,{error:"Complete or cancel the current operation first."});return;}
         if(input.confirmRender!==true||checked?.identity!==identity||status.state!=="ready"){
           respond(res,409,{error:"Check readiness with the exact current settings before rendering."});return;
@@ -1085,14 +1252,14 @@ export function createDirectorProduction(deps={}){
             // Persist the exact, nonsecret authorized intent before claiming
             // Jobs or launching any provider/media work.
             await writeRecoveryIntent(outputRoot,runId,{productionId:input.productionId,
-              sourceRevision:input.sourceRevision??null,revision:identity,
-              autoRecover:req.__contentgenRecovery!==true,
+              sourceRevision:input.sourceRevision??null,revision:identity,identityParts:components,
+              autoRecover:req.__contentgenRecovery!==true||req.__contentgenRetry===true,
               request:{...input,sourceRevision:input.sourceRevision??null}});
           }
           if(tracker){
             trackedJobId=await tracker.start({productionId:input.productionId,
               revision:identity,runId,sourceRevision:input.sourceRevision??null,
-              workerAbortController:abort});
+              workerAbortController:abort,expectedJobId:req.__contentgenExpectedJobId});
           }
           if(abort.signal.aborted){
             // /cancel may have arrived before tracker.start acquired its ID.
@@ -1129,7 +1296,7 @@ export function createDirectorProduction(deps={}){
           mediaUrl:null,regeneration:null};
         respond(res,202,{started:true,runId,jobId:trackedJobId});
         void (async()=>{
-          let journal=Promise.resolve(),journalError=null;
+          let journal=Promise.resolve(),journalError=null,retryQueued=false;
           let assetSearchSummary=null;
           try{
             await mkdir(out,{recursive:true,mode:0o700});
@@ -1206,9 +1373,10 @@ export function createDirectorProduction(deps={}){
                 reuseFrom:previousReleaseRoot??lastOutput,reuseFromOptional:!!input.productionId}:{}),onProgress:event=>{
                 progress(event);
                 if(tracker)journal=journal.then(()=>tracker.advance(event.phase,
-                  event.artifactLedger||event.phase==="asset-preparation"&&event.assetSearchSummary?
+                  event.artifactLedger||event.timingAdjustments||event.phase==="asset-preparation"&&event.assetSearchSummary?
                     {...(event.phase==="asset-preparation"&&event.assetSearchSummary?{assetSearch:event.assetSearchSummary}:{}),
-                      ...(event.artifactLedger?{artifactLedger:event.artifactLedger}:{})}:undefined)).catch(error=>{
+                      ...(event.artifactLedger?{artifactLedger:event.artifactLedger}:{}),
+                      ...(event.timingAdjustments?{timingAdjustments:event.timingAdjustments}:{})}:undefined)).catch(error=>{
                   journalError=error;
                   abort.abort(error);
                 });
@@ -1287,15 +1455,22 @@ export function createDirectorProduction(deps={}){
               message:"Video generation was interrupted. Retry the draft; completed media will be checked and reused."}:
               journalError?{code:"jobs_unavailable",
               message:"Jobs tracking stopped responding. Restart the local Rust server, then retry the draft."}:
-              renderFailure(status.phase,error);
+              renderFailure(status.phase,error,{shotMap:compiled.shotMap,job});
             if(tracker&&!cancelled){
-              try{await tracker.fail(failure.code,failure.message);}
+              try{const failed=await tracker.fail(failure.code,failure.message);
+                retryQueued=failed?.job?.state==="RUNNING"&&failed.nodes?.some(node=>node.state==="READY"&&node.errorCode===failure.code);}
               catch(journalFailure){status={...status,message:"Jobs failed to record the renderer error: "+String(journalFailure?.message??"unknown")};}
             }
-            status={...status,state:cancelled?"cancelled":"failed",phase:"production",
+            status={...status,state:cancelled?"cancelled":retryQueued?"rendering":"failed",phase:"production",
               message:cancelled?"Render cancelled; no completed release published.":
-                failure.message};
-          }finally{busy=false;controller=null;activeJobTracker=null;}
+                failure.message+(retryQueued?" Retrying the failed step automatically.":"")};
+          }finally{busy=false;
+            if(retryQueued){
+              retryTimer=setTimeout(()=>{retryTimer=null;controller=null;activeJobTracker=null;
+                void recover().then(started=>{if(!started&&status.state==="rendering")status={...status,state:"failed",
+                  message:"Automatic retry could not start. Open Jobs and retry the draft."};});},1000);
+              retryTimer.unref?.();
+            }else{controller=null;activeJobTracker=null;}}
         })();
         return;
       }
@@ -1306,11 +1481,11 @@ export function createDirectorProduction(deps={}){
       respond(res,422,{error:redact(error?.message||"Production request failed").slice(0,280)});
     }
   }
-  async function localAction(route,payload){
+  async function localAction(route,payload,retry=false,expectedJobId){
     // Drive the same validated check/start paths as a browser click. This
     // private request marker is never accepted from network-supplied headers.
     const req=Readable.from([Buffer.from(JSON.stringify(payload))]);
-    Object.assign(req,{method:"POST",url:route,__contentgenRecovery:true,headers:{
+    Object.assign(req,{method:"POST",url:route,__contentgenRecovery:true,__contentgenRetry:retry,__contentgenExpectedJobId:expectedJobId,headers:{
       host:"127.0.0.1:5173",origin:"http://127.0.0.1:5173",
       "x-contentgen-director":"local-only"}});
     let code=0,body="";
@@ -1319,6 +1494,27 @@ export function createDirectorProduction(deps={}){
     let data;
     try{data=JSON.parse(body);}catch{data={error:"Recovery response was unreadable."};}
     return{code,data};
+  }
+  // Earlier snapshots reordered these settings while saving them. Try the
+  // original Studio field order only for such snapshots, and accept it only
+  // if the complete production identity matches the persisted job exactly.
+  async function checkSavedRetry(payload,intent){
+    let result=await localAction("/check",payload);
+    if(!intent.identityParts&&result.code===200&&result.data?.report?.ready===true&&checked?.identity!==intent.revision){
+      const saved=payload.settings;
+      const keys=["provider","voiceId","providerRevision","modelId","endpoint","voiceConsent","transmitText","localVoiceAuthorized"];
+      const reordered=Object.fromEntries(keys.filter(key=>Object.hasOwn(saved,key)).map(key=>[key,saved[key]]));
+      if(JSON.stringify(saved)!==JSON.stringify(reordered)){
+        const alternate={...payload,settings:reordered};
+        const checkedAlternate=await localAction("/check",alternate);
+        if(checkedAlternate.code===200&&checkedAlternate.data?.report?.ready===true&&checked?.identity===intent.revision){
+          payload.settings=reordered;
+          return checkedAlternate;
+        }
+        result=checkedAlternate;
+      }
+    }
+    return result;
   }
   async function recoverEligible(){
     if(busy)return 0;
@@ -1339,12 +1535,15 @@ export function createDirectorProduction(deps={}){
       // Historical attempts can include an earlier lease loss followed by a
       // genuinely failed manual retry. Only the *current* recoverable node
       // authorizes unattended replay; attempt history is not a replay token.
+      const retryReady=persisted?.job?.state==="RUNNING"&&persisted?.nodes?.some(node=>
+        node.state==="READY"&&node.errorCode&&!["worker_lease_expired","orphaned_after_restart"].includes(node.errorCode)&&persisted.attempts?.some(attempt=>
+          attempt.nodeId===node.id&&attempt.state==="FAILED"&&attempt.errorCode===node.errorCode));
       const interrupted=persisted?.nodes?.some(node=>
         ["READY","FAILED"].includes(node.state)&&
         ["worker_lease_expired","orphaned_after_restart"].includes(node.errorCode));
       if(persisted?.job?.jobKind!=="video-production"||
         source?.sourceRevision!==intent.sourceRevision||source?.revision!==intent.revision||
-        !interrupted||
+        !(interrupted||retryReady)||
         ["SUCCEEDED","CANCELLED"].includes(persisted.job.state)||
         persisted.job.state==="RUNNING"&&persisted.nodes?.some(node=>node.state==="RUNNING"))
         continue;
@@ -1366,9 +1565,14 @@ export function createDirectorProduction(deps={}){
       }
       const payload={...intent.request};
       if(payload.sourceRevision===null)delete payload.sourceRevision;
-      const preflight=await localAction("/check",payload);
+      retryPresentation={...status,state:"rendering",phase:"retrying",productionId:intent.productionId,
+        sourceRevision:intent.sourceRevision,jobId:persisted.job.id,
+        message:retryReady?"A production step failed. Checking the draft before retrying automatically.":
+          "Checking the interrupted draft before resuming."};
+      const preflight=await checkSavedRetry(payload,intent);
       if(preflight.code!==200||preflight.data?.report?.ready!==true||
         checked?.identity!==intent.revision){
+        retryPresentation=null;
         status={state:"failed",phase:"recovery",productionId:intent.productionId,
           sourceRevision:intent.sourceRevision,jobId:persisted.job.id,progress:null,report:null,
           message:preflight.code!==200?"Draft recovery preflight failed. Check voice setup, Chromium and FFmpeg, then retry in Jobs.":
@@ -1378,9 +1582,10 @@ export function createDirectorProduction(deps={}){
       // A temporary browser/FFmpeg outage has performed no production work;
       // do not spend the one automatic replay on a failed readiness check.
       // Once ready, reserve atomically *before* the Jobs/producer claim.
-      if(!await reserveRecoveryAttempt(outputRoot,intent.runId))continue;
+      if(!await reserveRecoveryAttempt(outputRoot,intent.runId)){retryPresentation=null;continue;}
       const started=await localAction("/start",{...payload,confirmRender:true,
-        confirmUpdatedVersion:intent.request.confirmUpdatedVersion===true});
+        confirmUpdatedVersion:intent.request.confirmUpdatedVersion===true},!!retryReady);
+      retryPresentation=null;
       if(started.code!==202){
         status={state:"failed",phase:"recovery",productionId:intent.productionId,
           sourceRevision:intent.sourceRevision,jobId:persisted.job.id,progress:null,report:null,
@@ -1394,6 +1599,7 @@ export function createDirectorProduction(deps={}){
   async function recover(){
     try{return await recoverEligible();}
     catch{
+      retryPresentation=null;
       status={...status,state:"failed",phase:"recovery",
         message:"Draft recovery could not read or reserve its saved attempt. Review Jobs and retry the draft."};
       return 0;

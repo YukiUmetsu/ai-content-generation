@@ -3,8 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { promisify } from "node:util";
-import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { listRenderChunks, reusableChapter } from "./media-reuse.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 import { characterRasterPreflightList } from "./character-rig-render.mjs";
 import { assertReviewStillBudget, MAX_SCENE_REVIEW_STILLS } from "./scene-review-coverage.mjs";
 import { constants } from "node:fs";
@@ -80,7 +81,11 @@ export async function probeBrowserExecutable(browserExecutable) {
 
 async function runTool(program, args, { signal, timeout = 600000 } = {}) {
   try { return await exec(program, args, { signal, timeout, maxBuffer: 512 * 1024 }); }
-  catch (error) { fail(`${program} exited unsuccessfully (${error.code ?? error.signal ?? "unknown"}).`); }
+  catch (error) {
+    const reason = mediaToolFailureReason(program, error);
+    if (!reason) throw error;
+    fail(reason);
+  }
 }
 
 function verifyManifest(manifest) {
@@ -245,6 +250,10 @@ export async function renderVideoSegments(options, dependencies = {}) {
   const probe = dependencies.probeSegment ?? ((path) => probeVideo(path, { ffprobe: options.ffprobe ?? "ffprobe", signal: options.signal }));
   const concat = dependencies.concatSegments ?? ((paths, path) => defaultConcat(paths, path, { ffmpeg: options.ffmpeg ?? "ffmpeg", signal: options.signal }));
   const probeFinal = dependencies.probeFinal ?? probe;
+  const publishReusableSegment = dependencies.copyReusableSegment ?? (async (from, to) => {
+    await copyFile(from, to, constants.COPYFILE_EXCL);
+    await chmod(to, 0o600);
+  });
   const started = performance.now();
   const allChunks = listRenderChunks(manifest,limit,options.visualPlan);
   const selectedChapter=selectedId===undefined?null:options.visualPlan.chapters.find(chapter=>chapter.id===selectedId);
@@ -268,12 +277,18 @@ export async function renderVideoSegments(options, dependencies = {}) {
   let peakScratchBytes = 0;
   let reusedSegmentCount = 0, renderedSegmentCount = 0;
   await safeRenderDirectory(segmentsDir);
-  let capture;
-  try {
-    // Even resume must establish the correct live visual page, not stale/bypassed output.
+  let capture = null;
+  // Chromium is only needed for a missing or damaged frame. A retry whose
+  // saved scenes and review stills still match must not launch a browser.
+  async function ensureCapture() {
+    if (capture) return capture;
     capture = await openCapture(options.stageUrl, manifest);
     if (!isDeepStrictEqual(capture?.manifest, manifest)) fail("live Kumiki export manifest differs from the validated render plan");
     if (capture?.buildHash !== options.buildHash) fail("live browser export handshake has a mismatched built-scene fingerprint");
+    return capture;
+  }
+  const priorStillsDir = prior?.stillsDir ? resolve(prior.stillsDir) : null;
+  try {
     for (const { index,startFrame,frameCount,chapterIndex } of chunks) {
       if (options.signal?.aborted) fail("video capture cancelled");
       const sceneAttempt=await options.sceneJobs?.beginScene({kind:"render-segment",
@@ -332,9 +347,9 @@ export async function renderVideoSegments(options, dependencies = {}) {
             const oldMeta=JSON.parse(await readFile(oldMetaFile,"utf8"));
             if(oldMeta.fingerprint===priorFingerprint&&oldMeta.startFrame===startFrame&&
               oldMeta.frameCount===frameCount&&/^[a-f0-9]{64}$/u.test(oldMeta.sha256??"")){
-              const bytes=await readFile(oldFile);
-              if(sha256(bytes)===oldMeta.sha256&&matchProbe(await probe(oldFile),manifest,frameCount)){
-                reusableBytes=bytes;oldHash=oldMeta.sha256;
+              if(await sha256File(oldFile)===oldMeta.sha256&&matchProbe(await probe(oldFile),manifest,frameCount)){
+                oldHash=oldMeta.sha256;
+                reusableBytes=true;
               }
             }
           }
@@ -344,17 +359,29 @@ export async function renderVideoSegments(options, dependencies = {}) {
           if(options.signal?.aborted)throw error;
         }
         if(reusableBytes){
-          if(options.signal?.aborted)fail("video capture cancelled");
-          // Write the already-verified exact bytes; copying from the old path
-          // here would reopen a TOCTOU window after the checksum check.
-          await writeFile(path,reusableBytes,{flag:"wx",mode:0o600});
-          await writeFile(metadataPath,JSON.stringify({
-            fingerprint,name,startFrame,frameCount,sha256:oldHash
-          },null,2),{flag:"wx"});
-          segmentHash=oldHash;
-          completed=true;
-          reusedSegmentCount++;
-          options.onProgress?.({phase:"segment-reused",startFrame,frameCount,chapterIndex});
+          // The checksum and probe already passed. Copy the file instead of
+          // holding the whole scene in memory; exclusive create refuses a race.
+          // A failed copy redraws that scene. A full disk still fails the draft.
+          let published=false;
+          try {
+            if(options.signal?.aborted)fail("video capture cancelled");
+            await publishReusableSegment(oldFile,path);
+            await writeFile(metadataPath,JSON.stringify({
+              fingerprint,name,startFrame,frameCount,sha256:oldHash
+            },null,2),{flag:"wx"});
+            published=true;
+          } catch (error) {
+            if(options.signal?.aborted||error?.name==="AbortError"||error?.code==="ABORT_ERR")throw error;
+            if(error?.code==="ENOSPC"||/\bENOSPC\b|no space left on device/iu.test(error?.message??""))throw error;
+            await rm(path,{force:true});
+            await rm(metadataPath,{force:true});
+          }
+          if(published){
+            segmentHash=oldHash;
+            completed=true;
+            reusedSegmentCount++;
+            options.onProgress?.({phase:"segment-reused",startFrame,frameCount,chapterIndex});
+          }
         }
       }
       if (!completed) {
@@ -362,10 +389,11 @@ export async function renderVideoSegments(options, dependencies = {}) {
         const partialPath = join(segmentsDir, `.partial-${randomUUID()}.mp4`);
         try {
           let scratch = 0;
+          const live = await ensureCapture();
           for (let j = 0; j < frameCount; j++) {
             if (options.signal?.aborted) fail("video capture cancelled");
             const file = join(batchDir, `frame-${String(j).padStart(5, "0")}.png`);
-            await capture.captureFrame(startFrame + j, file);
+            await live.captureFrame(startFrame + j, file);
             const png = await stat(file);
             if (png.size <= 0) fail(`empty PNG screenshot for absolute frame ${startFrame + j}`);
             scratch += png.size;
@@ -434,10 +462,36 @@ export async function renderVideoSegments(options, dependencies = {}) {
           options.onProgress?.({phase:"rendering",message:"Restoring a damaged video preview image.",frame});
         }
       }
+      if (!digest && priorStillsDir && priorFingerprint) {
+        const oldImage = join(priorStillsDir, `frame-${String(frame).padStart(6, "0")}.png`);
+        const oldMetaPath = `${oldImage}.json`;
+        try {
+          const [imageInfo, metaInfo] = await Promise.all([lstat(oldImage), lstat(oldMetaPath)]);
+          if (imageInfo.isFile() && !imageInfo.isSymbolicLink() && imageInfo.size > 0 && imageInfo.size <= 20 * 1024 * 1024 &&
+            metaInfo.isFile() && !metaInfo.isSymbolicLink() && metaInfo.size > 16 && metaInfo.size < 8192) {
+            const oldMeta = JSON.parse(await readFile(oldMetaPath, "utf8"));
+            if (oldMeta.fingerprint === priorFingerprint && oldMeta.frame === frame &&
+              /^[a-f0-9]{64}$/u.test(oldMeta.sha256 ?? "") && await sha256File(oldImage) === oldMeta.sha256) {
+              const bytes = await readFile(oldImage);
+              verifyScreenshot(bytes, manifest);
+              if (sha256(bytes) === oldMeta.sha256) {
+                await copyFile(oldImage, path, constants.COPYFILE_EXCL);
+                await chmod(path, 0o600);
+                digest = oldMeta.sha256;
+                await writeFile(metadataPath, JSON.stringify({ fingerprint, frame, sha256: digest }, null, 2), { flag: "wx" });
+              }
+            }
+          }
+        } catch (error) {
+          if (options.signal?.aborted || error?.name === "AbortError" || error?.code === "ABORT_ERR") throw error;
+          if (error?.code === "ENOSPC" || /\bENOSPC\b|no space left on device/iu.test(error?.message ?? "")) throw error;
+          digest = undefined;
+        }
+      }
       if (!digest) {
         const temporary = join(dir, "stills", `.frame-${randomUUID()}.png`);
         try {
-          await capture.captureFrame(frame, temporary);
+          await (await ensureCapture()).captureFrame(frame, temporary);
           const bytes = await readFile(temporary);
           verifyScreenshot(bytes, manifest);
           digest = sha256(bytes);

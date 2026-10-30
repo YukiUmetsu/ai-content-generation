@@ -4,8 +4,9 @@
 import { createHash,randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { lstat,mkdir,readFile,rename,rm,writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { access,lstat,mkdir,readdir,readFile,rename,rm,writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const exec = promisify(execFile);
@@ -92,8 +93,150 @@ async function reusableConcept(directory,name,svgHash){
     // affected concept, but never paper over a symlink or filesystem denial.
     if(error instanceof SyntaxError||error?.code==="ENOENT"||
       ["Cached thumbnail failed checksum verification.",
-        "Kumiki thumbnail export is not a valid 1280×720 PNG."].includes(error?.message))return null;
+        "Kumiki thumbnail export is not a valid 1280×720 PNG.",
+        "A cached thumbnail artifact is unsafe or too large."].includes(error?.message))return null;
     throw error;
+  }
+}
+
+const ffmpegSvgArgs = svgPath => ["-hide_banner", "-loglevel", "error", "-nostdin", "-n",
+  "-protocol_whitelist", "file,pipe", "-i", svgPath, "-frames:v", "1",
+  "-vf", "scale=1280:720:flags=lanczos", "-pix_fmt", "rgb24"];
+
+function ffmpegLacksSvgDecoder(error) {
+  return /no decoder found for:\s*svg/iu.test(`${error?.stderr ?? ""}\n${error?.message ?? ""}`);
+}
+
+async function installedChromium() {
+  const configured = process.env.CONTENTGEN_CHROMIUM_EXECUTABLE;
+  const bundled = process.platform === "darwin" ? [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+  ] : process.platform === "win32" ? [
+    join(process.env.PROGRAMFILES || "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+  ] : ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+  const candidates = [configured, ...bundled].filter(Boolean);
+  for (const path of candidates) {
+    try { await access(path, constants.X_OK); return path; } catch { /* try the next installed browser */ }
+  }
+  throw Error("Thumbnail export needs a local Chromium because this FFmpeg build cannot read SVG.");
+}
+
+async function launchThumbnailBrowser(browserExecutable) {
+  const executable = browserExecutable || await installedChromium();
+  let chromium;
+  try { ({ chromium } = await import("playwright-core")); }
+  catch { throw Error("Thumbnail export needs a local Chromium because this FFmpeg build cannot read SVG."); }
+  return chromium.launch({ executablePath: executable, headless: true, timeout: 30_000,
+    args: process.env.CONTENTGEN_BROWSER_TEST_NO_SANDBOX === "1" ? ["--no-sandbox"] : [] });
+}
+
+function sharedThumbnailBrowser(browserExecutable, launch = launchThumbnailBrowser) {
+  let pending = null;
+  return {
+    launchBrowser: () => pending ??= launch(browserExecutable),
+    close: async () => {
+      const browser = pending ? await pending.catch(() => null) : null;
+      pending = null;
+      await browser?.close?.();
+    },
+  };
+}
+
+/** FFmpeg draws the PNG when it has an SVG decoder. Homebrew builds often do
+ * not, so the same local Chromium that rendered the scenes draws the three
+ * thumbnails instead of failing the finished video. */
+export async function rasterizeThumbnailSvg(svgPath, pngPath, {
+  signal, ffmpeg = "ffmpeg", browserExecutable, run = exec, launchBrowser,
+} = {}) {
+  try {
+    await run(ffmpeg, [...ffmpegSvgArgs(svgPath), pngPath],
+      { signal, timeout: 90_000, maxBuffer: 64 * 1024 });
+  } catch (error) {
+    await rm(pngPath, { force: true });
+    if (!ffmpegLacksSvgDecoder(error)) throw error;
+    // Callers that share one browser across the three concepts close it
+    // themselves. A one-off export must close the browser it opened.
+    let owned = null;
+    const open = launchBrowser ?? (async executable => { owned = await launchThumbnailBrowser(executable); return owned; });
+    try {
+      await rasterizeThumbnailWithChromium(svgPath, pngPath, { signal, browserExecutable, launchBrowser: open });
+    } finally { await owned?.close?.(); }
+  }
+}
+
+async function rasterizeThumbnailWithChromium(svgPath, pngPath, { signal, browserExecutable, launchBrowser }) {
+  if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
+  const svg = await readFile(svgPath, "utf8");
+  if (svg.length > 2_000_000 || /<(?:script|foreignObject|image)\b|url\s*\(\s*['"]?(?:https?:|file:|\/\/)/iu.test(svg))
+    throw Error("Kumiki returned an unsafe or incomplete thumbnail composition.");
+  let browser, page;
+  try {
+    browser = await launchBrowser(browserExecutable);
+    page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, reducedMotion: "reduce" });
+    if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
+    await page.setContent(
+      `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;width:1280px;height:720px;overflow:hidden}svg{width:1280px;height:720px;display:block}</style></head><body>${svg}</body></html>`,
+      { waitUntil: "load", timeout: 15_000 });
+    const png = await page.screenshot({ type: "png", clip: { x: 0, y: 0, width: 1280, height: 720 }, animations: "disabled" });
+    await writeFile(pngPath, png, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    await rm(pngPath, { force: true });
+    if (error?.name === "AbortError" || [
+      "Thumbnail generation cancelled.",
+      "Kumiki returned an unsafe or incomplete thumbnail composition.",
+    ].includes(error?.message) || /^Thumbnail export needs a local Chromium/u.test(error?.message ?? "")) throw error;
+    const wrapped = Error("Thumbnail export needs a local Chromium because this FFmpeg build cannot read SVG.");
+    wrapped.cause = error;
+    throw wrapped;
+  } finally {
+    await page?.close?.().catch(() => {});
+  }
+}
+
+const DRAFT_DIR = /^draft-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+/** Earlier attempts store finished title cards in their own draft folder.
+ * The Jobs retry still points at the original run, which may have none. */
+async function siblingThumbnailCaches(cacheDir) {
+  if (!cacheDir) return [];
+  const renderDir = resolve(cacheDir, "..");
+  const draftDir = resolve(renderDir, "..");
+  const outputRoot = resolve(draftDir, "..");
+  if (basename(renderDir) !== ".render" || basename(cacheDir) !== "thumbnails" ||
+    !DRAFT_DIR.test(basename(draftDir))) return [];
+  let names;
+  try { names = await readdir(outputRoot); }
+  catch { return []; }
+  const found = [];
+  for (const name of names) {
+    if (!DRAFT_DIR.test(name) || name === basename(draftDir)) continue;
+    const sibling = join(outputRoot, name);
+    const thumbs = join(sibling, ".render", "thumbnails");
+    try {
+      const [parent, info] = await Promise.all([lstat(sibling), lstat(thumbs)]);
+      if (!parent.isDirectory() || parent.isSymbolicLink() || !info.isDirectory() || info.isSymbolicLink()) continue;
+      found.push({ path: thumbs, mtimeMs: info.mtimeMs });
+    } catch (error) { if (error?.code !== "ENOENT") throw error; }
+  }
+  found.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return found.slice(0, 8).map(item => item.path);
+}
+
+function transientClaimFailure(error) {
+  return /database is locked|Jobs service unavailable|HTTP 5\d\d|\bETIMEDOUT\b|timed out/iu.test(String(error?.message ?? ""));
+}
+
+async function claimThumbnail(sceneJobs, name, sourceSha256) {
+  if (!sceneJobs) return null;
+  try {
+    return await sceneJobs.beginScene({ kind: "thumbnail-concept", sceneId: name, fingerprint: sourceSha256 });
+  } catch (error) {
+    if (!transientClaimFailure(error)) throw error;
+    await new Promise(resolveRetry => setTimeout(resolveRetry, 250));
+    return sceneJobs.beginScene({ kind: "thumbnail-concept", sceneId: name, fingerprint: sourceSha256 });
   }
 }
 
@@ -114,7 +257,7 @@ async function persistConcept(directory,name,source,png,sourceSha256,sha256){
 }
 
 export async function generateProductionThumbnails(job, { outputDir,cacheDir,reuseCacheDir,sceneJobs,
-  ffmpeg = "ffmpeg", signal,
+  ffmpeg = "ffmpeg", signal, browserExecutable,
   compose = loadKumikiComposer, convert } = {}) {
   if (!outputDir) throw Error("Thumbnails need an owned production output directory.");
   if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
@@ -127,6 +270,8 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
     throw Error("Kumiki did not produce three distinct thumbnail compositions.");
   }
   const outputs = new Array(artworks.length);
+  const extraCaches = await siblingThumbnailCaches(cacheDir);
+  const thumbnailsBrowser = sharedThumbnailBrowser(browserExecutable);
   async function generateConcept(index) {
     if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
     const art = artworks[index];
@@ -141,6 +286,12 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
     let cached=await reusableConcept(cacheDir,name,sourceSha256);
     const cachedLocally=Boolean(cached);
     if(!cached)cached=await reusableConcept(reuseCacheDir,name,sourceSha256);
+    if(!cached){
+      for(const dir of extraCaches){
+        cached=await reusableConcept(dir,name,sourceSha256);
+        if(cached)break;
+      }
+    }
     let attempt=null;
     try{
       if(cached){
@@ -150,17 +301,12 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
         if(cacheDir&&!cachedLocally)
           await persistConcept(cacheDir,name,cached.source,cached.png,sourceSha256,cached.sha256);
       }else{
-        if(sceneJobs){
-          attempt=await sceneJobs.beginScene({kind:"thumbnail-concept",sceneId:name,
-            fingerprint:sourceSha256});
-        }
+        attempt=await claimThumbnail(sceneJobs,name,sourceSha256);
         if(signal?.aborted)throw signal.reason??Error("Thumbnail generation cancelled.");
         await writeFile(svgPath,source,{flag:"wx",mode:0o600});
         if (convert) await convert(svgPath, pngPath, { signal, ffmpeg });
-        else await exec(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-n",
-          "-protocol_whitelist", "file,pipe", "-i", svgPath, "-frames:v", "1",
-          "-vf", "scale=1280:720:flags=lanczos", "-pix_fmt", "rgb24", pngPath],
-        { signal, timeout: 90_000, maxBuffer: 64 * 1024 });
+        else await rasterizeThumbnailSvg(svgPath, pngPath, {
+          signal, ffmpeg, browserExecutable, launchBrowser: thumbnailsBrowser.launchBrowser });
       }
       const bytes=await readFile(pngPath);
       verifyPng(bytes);
@@ -179,8 +325,10 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
   // All three may execute together. Drain all in-flight work on failure before
   // the caller cleans up or advances the parent Job; successful concepts stay
   // hash-verified in the cache for a targeted retry.
-  const results=await Promise.allSettled(artworks.map((_,index)=>generateConcept(index)));
-  const failed=results.find(result=>result.status==="rejected");
-  if(failed)throw failed.reason;
-  return outputs;
+  try {
+    const results=await Promise.allSettled(artworks.map((_,index)=>generateConcept(index)));
+    const failed=results.find(result=>result.status==="rejected");
+    if(failed)throw failed.reason;
+    return outputs;
+  } finally { await thumbnailsBrowser.close(); }
 }

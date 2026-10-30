@@ -24,15 +24,27 @@ function validateIntent(runId,intent){
   // Use a narrow schema, not a spread of unrecognized browser-supplied keys.
   // apiKey and unexpected future settings must never become durable metadata.
   const raw=intent.request.settings;
-  const settings=Object.fromEntries(["provider","voiceId","providerRevision","modelId",
-    "endpoint","localVoiceAuthorized","voiceConsent","transmitText"]
-    .filter(key=>Object.hasOwn(raw,key)).map(key=>[key,raw[key]]));
+  const allowedSettings=new Set(["provider","voiceId","providerRevision","modelId",
+    "endpoint","localVoiceAuthorized","voiceConsent","transmitText"]);
+  const settings=Object.fromEntries(Object.keys(raw).filter(key=>allowedSettings.has(key)).map(key=>[key,raw[key]]));
   const characterProjectId=intent.request.characterProjectId;
   if(characterProjectId!==undefined&&
     (typeof characterProjectId!=="string"||!/^[A-Za-z0-9_-]{1,120}$/.test(characterProjectId)))
     throw Error("Recovery Character Studio project identity is invalid.");
+  const draftIds=intent.request.characterDraftIds;
+  const draftIdsByScene=intent.request.characterDraftIdsByScene;
+  const validPicks=picks=>picks&&typeof picks==="object"&&!Array.isArray(picks)&&
+    Object.entries(picks).length<=2&&Object.entries(picks).every(([speaker,id])=>
+      ["pip","quill"].includes(speaker)&&typeof id==="string"&&/^character-draft-[a-f0-9]{32}$/u.test(id));
+  if(draftIds!==undefined&&!validPicks(draftIds)||draftIdsByScene!==undefined&&
+    (!draftIdsByScene||typeof draftIdsByScene!=="object"||Array.isArray(draftIdsByScene)||
+      Object.entries(draftIdsByScene).length>64||Object.entries(draftIdsByScene).some(([scene,picks])=>
+        !/^[a-z0-9][a-z0-9_-]{0,95}$/iu.test(scene)||!validPicks(picks)||!Object.keys(picks).length)))
+    throw Error("Saved Character Studio selections are invalid. Reopen the production editor.");
   const request={productionId:intent.productionId,sourceRevision:intent.sourceRevision,
     ...(characterProjectId===undefined?{}:{characterProjectId}),
+    ...(draftIds===undefined?{}:{characterDraftIds:draftIds}),
+    ...(draftIdsByScene===undefined?{}:{characterDraftIdsByScene:draftIdsByScene}),
     dossier:intent.request.dossier,bundle:intent.request.bundle,settings,
     // Preserve the exact consent that was included in the checked render identity;
     // dropping it would make an authorized multi-voice draft unrecoverable.
@@ -40,9 +52,14 @@ function validateIntent(runId,intent){
     searchFreeMedia:intent.request.searchFreeMedia===true,
     autoPrepareFreeMedia:intent.request.autoPrepareFreeMedia!==false,
     confirmUpdatedVersion:intent.request.confirmUpdatedVersion===true};
+  const identityParts=intent.identityParts;
+  if(identityParts!==undefined&&(!identityParts||typeof identityParts!=="object"||Array.isArray(identityParts)||
+    Object.keys(identityParts).length!==4||["story","media","characters","voice"].some(key=>!SHA.test(identityParts[key]??""))))
+    throw Error("Recovery input fingerprints are invalid. Reopen the production editor.");
   const document={schemaVersion:1,runId,productionId:intent.productionId,
     sourceRevision:intent.sourceRevision,revision:intent.revision,
-    createdAt:Date.now(),autoRecover:intent.autoRecover!==false,request};
+    createdAt:Date.now(),autoRecover:intent.autoRecover!==false,request,
+    ...(identityParts===undefined?{}:{identityParts})};
   document.contentHash=digest(request);
   const bytes=JSON.stringify(document);
   if(Buffer.byteLength(bytes)>MAX_BYTES)throw Error("Recovery snapshot exceeds the size limit.");

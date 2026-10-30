@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
-import { buildSampleTimeline } from "./timeline.mjs";
+import { buildSampleTimeline, fitSceneDurations } from "./timeline.mjs";
 import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
@@ -24,6 +24,7 @@ import { buildQaReport } from "./report.mjs";
 import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
 import { prepareAutomaticCommonsMedia } from "./automatic-commons-assets.mjs";
 import { generateProductionThumbnails } from "./premium-thumbnails.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const run = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -37,7 +38,11 @@ const exists = async (path) => stat(path).then(() => true, (error) => error.code
 
 async function subprocess(command, args, signal, timeout = 600000) {
   try { return await run(command, args, { signal, timeout, maxBuffer: 512 * 1024 }); }
-  catch (error) { fail(`${command} failed (${error.code ?? error.signal ?? "unknown"}).`); }
+  catch (error) {
+    const reason = mediaToolFailureReason(command, error);
+    if (!reason) throw error;
+    fail(reason);
+  }
 }
 
 export async function muxVideo(videoPath, audioPath, outputPath, { ffmpeg = "ffmpeg", signal } = {}) {
@@ -104,7 +109,7 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
       !saved.plan?.manifest || !Array.isArray(saved.plan.chapters) ||
       sha256(JSON.stringify(saved.plan)) !== saved.planHash)
       return null;
-    return { sourcePlan: saved.plan, buildHash, segmentsDir };
+    return { sourcePlan: saved.plan, buildHash, segmentsDir, stillsDir: join(renderRoot, "stills") };
   } catch (error) {
     if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
     throw error;
@@ -206,6 +211,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       sourcePlan:priorManifest.plan,
       buildHash:priorManifest.buildHash,
       segmentsDir:join(priorDir,".render","segments"),
+      stillsDir:join(priorDir,".render","stills"),
       cacheRoot:join(priorDir,".cache")
     };
   }
@@ -226,7 +232,12 @@ export async function produceVideo(candidate, options, deps = {}) {
   }
   const interruptedVisual = options.reuseRenderSegmentsFrom && !previous ?
     await interruptedRenderCache(options.reuseRenderSegmentsFrom, out, preflight.buildHash) : null;
-  const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
+  // Studio keeps the local speech address in the same settings object as Fish.
+  // Copy it only for the local provider. A Fish voice with endpoint fails
+  // scene-timing validation after narration has already been generated.
+  const job = options.provider === "local" && options.localEndpoint
+    ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } }
+    : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
   const reusedSpeechIds = [];
@@ -284,7 +295,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       ...(selectedSceneMedia.length?{artifactLedger:{kind:"asset-preparation",
         fingerprint:sceneMedia.fingerprint,selected:selectedSceneMedia}}:{}),
       message: `Generating ${job.beats.reduce((count,beat)=>count+(beat.speechTurns?.length??1),0)} authorized speech turns…` });
-    const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
+    let speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
       reuseCacheRoot:previous?.cacheRoot??interruptedCache,
       skipInvalidPriorCache:!!interruptedCache&&!previous,
@@ -302,6 +313,8 @@ export async function produceVideo(candidate, options, deps = {}) {
     });
     await options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…",
       artifactLedger:{kind:"narration",beats:speech.map(({id,sha256,samples})=>({id,sha256,samples}))} });
+    const fitted=fitSceneDurations(speech,{fps:job.destination.fps});
+    speech=fitted.beats;
     let timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const captionReadability = analyzeCaptionReadability(
       timeline, Object.fromEntries(job.beats.map((beat) => [beat.id, beat.narration])),
@@ -348,7 +361,8 @@ export async function produceVideo(candidate, options, deps = {}) {
     const sfx = job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
     }));
-    await options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…" });
+    await options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…",
+      ...(fitted.adjustments.length?{timingAdjustments:fitted.adjustments}:{}) });
     const audio = await (deps.renderMasterAudio ?? renderMasterAudio)({ beats: speech, timeline, sfx }, {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
@@ -405,7 +419,8 @@ export async function produceVideo(candidate, options, deps = {}) {
       outputDir:working,cacheDir:join(out,".render","thumbnails"),
       reuseCacheDir:options.reuseSpeechCacheFrom?
         join(options.reuseSpeechCacheFrom,".render","thumbnails"):undefined,
-      ffmpeg:options.ffmpeg,signal:options.signal,sceneJobs:options.sceneJobs});
+      ffmpeg:options.ffmpeg,browserExecutable:options.browserExecutable,
+      signal:options.signal,sceneJobs:options.sceneJobs});
     if(!Array.isArray(thumbnails)||thumbnails.length!==3||new Set(thumbnails.map(x=>x.file)).size!==3||
       thumbnails.some((item,i)=>item.file!==`thumbnail-${i+1}.png`||
         !/^[a-f0-9]{64}$/u.test(item.sha256??"")||

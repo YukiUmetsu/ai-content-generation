@@ -129,6 +129,18 @@ test("full export carries authorized character voices and speaker provenance int
   ]);
 });
 
+test("the producer fits a short scene to measured speech and records the added silence",async t=>{
+  const ctx=await context(t);
+  const general=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...general,voice:ctx.job.voice};ctx.job.beats[0].pauseAfterMs=0;
+  const original=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{const speech=await original(...args);speech[0].samples=48;return speech;};
+  let adjustments;
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,onProgress:event=>{if(event.phase==="audio"){
+    adjustments=event.timingAdjustments;throw Error("fixture stopped after timing");}}},ctx.injected),/fixture stopped after timing/);
+  assert.deepEqual(adjustments,[{id:ctx.job.beats[0].id,addedPauseMs:16}]);
+});
+
 test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
   const ctx = await context(t);
   const general = JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
@@ -500,6 +512,36 @@ test("final release cannot silently overwrite prior output", async (t) => {
   await produceVideo(ctx.job, ctx.opts, ctx.injected);
   await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /exists|release/i);
   assert.equal(ctx.status().browserCalls, 1);
+});
+
+test("Fish production ignores a leftover local speech endpoint", async (t) => {
+  const ctx = await context(t);
+  const { compilePreproductionBundle } = await import("./preproduction.mjs");
+  const { compilePreproductionRenderJob } = await import("./preproduction-render-bridge.mjs");
+  const read = (name) => JSON.parse(readFileSync(new URL("../../../../examples/" + name, import.meta.url), "utf8"));
+  const dossier = read("preproduction-research-smoke.json");
+  const job = compilePreproductionRenderJob(dossier, compilePreproductionBundle(dossier, read("preproduction-plan-smoke.json"))).job;
+  job.voice = { ...job.voice, voiceId: "licensed-reference" };
+  let seenEndpoint = "unset";
+  ctx.injected.synthesizeNarration = async (rendered) => {
+    seenEndpoint = rendered.voice.endpoint;
+    return rendered.beats.map((beat) => ({
+      id: beat.id, samples: 48000, pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds,
+      text: beat.narration, wavPath: "mocked", sha256: hash(beat.narration), provider: "fish",
+      modelId: "s2.1-pro-free", providerRevision: "fish-api-v1",
+      voiceId: rendered.voice.voiceId, speakerId: "narrator", speakerRole: "narrator",
+    }));
+  };
+  ctx.injected.startLocalStageServer = async () => ({
+    url: "http://127.0.0.1:9/", buildHash: "b".repeat(64), close: async () => {},
+  });
+  await assert.rejects(produceVideo(job, {
+    ...ctx.opts, provider: "fish", providerRevision: "fish-api-v1",
+    allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true,
+    apiKey: "dummy", localEndpoint: "http://127.0.0.1:8765",
+    onProgress: (event) => { if (event.phase === "audio") throw Error("reached-audio"); },
+  }, ctx.injected), /reached-audio/);
+  assert.equal(seenEndpoint, undefined);
 });
 
 test("blocks paid Fish models before any provider call when per-job spending is not metered", async (t) => {

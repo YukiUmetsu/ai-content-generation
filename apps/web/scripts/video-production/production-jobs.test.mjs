@@ -73,6 +73,14 @@ test("video production submits a real dependent DAG and advances stages in order
   assert.ok(scheduler.nodes.every(x=>x.state==="SUCCEEDED"));
 });
 
+test("automatic scene silence is recorded on the timeline step",async()=>{
+  const scheduler=fakeScheduler();const tracker=createProductionJobTracker({fetcher:scheduler.fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision",runId:FIRST_RUN});
+  await tracker.advance("timeline");
+  await tracker.advance("audio",{timingAdjustments:[{id:"beat-01",addedPauseMs:17}]});
+  assert.deepEqual(scheduler.calls.find(call=>call.path.endsWith("/node-5/succeed"))?.body.output.timingAdjustments,[{id:"beat-01",addedPauseMs:17}]);
+});
+
 test("Jobs refuses malformed or wrong-stage ledgers before marking steps successful",async()=>{
   const scheduler=fakeScheduler();
   const tracker=createProductionJobTracker({fetcher:scheduler.fetcher});
@@ -105,6 +113,22 @@ test("durable job update errors fail closed before a renderer can claim success"
   await tracker.fail("voice_unavailable","Authorized voice endpoint unavailable");
   assert.ok(scheduler.calls.some(x=>x.path.endsWith("/fail")&&x.body.errorCode==="voice_unavailable"));
   await assert.rejects(tracker.complete(),/failed|cancelled/i);
+});
+
+test("a failed attempt can still cancel its queued retry",async()=>{
+  const scheduler=fakeScheduler();
+  const tracker=createProductionJobTracker({fetcher:scheduler.fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision",runId:FIRST_RUN});
+  await tracker.fail("timeline_failed","Timing failed");
+  await tracker.cancel();
+  assert.ok(scheduler.calls.some(call=>call.path==="/api/jobs/job-test/cancel"));
+});
+
+test("a job-page retry refuses a different idempotent job before claiming it",async()=>{
+  const scheduler=fakeScheduler();
+  const tracker=createProductionJobTracker({fetcher:scheduler.fetcher});
+  await assert.rejects(tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision",runId:FIRST_RUN,expectedJobId:"another-job"}),/no longer matches/i);
+  assert.equal(scheduler.calls.filter(call=>call.path.endsWith("/start")).length,0);
 });
 
 test("duplicate active production jobs do not execute twice",async()=>{
@@ -316,6 +340,72 @@ test("individual scene Jobs reserve attempts, persist hashes, retry and cancel i
   assert.ok(records.size===5&&[...records.values()][4].state==="CANCELLED");
   await assert.rejects(tracker.completeScene(orphan,{sha256:"d".repeat(64)}),/active scene/i);
   assert.equal(base.calls.filter(item=>item.path==="/api/jobs/job-test/cancel").length,1);
+});
+
+test("a parent failure cancels a scene claim that was not finished",async()=>{
+  const base=fakeScheduler(),records=new Map();
+  const fetcher=async(url,init)=>{
+    const path=new URL(url).pathname,body=init?.body?JSON.parse(init.body):null;
+    if(path==="/api/jobs"&&body?.idempotencyKey?.startsWith("video-scene:")){
+      const row={jobId:`scene-job-${records.size}`,nodeId:`scene-node-${records.size}`,state:"READY",request:body};
+      records.set(body.idempotencyKey,row);
+      return Response.json({created:true,job:{id:row.jobId,state:"RUNNING"},
+        nodes:[{id:row.nodeId,nodeKey:body.nodes[0].nodeKey,state:"READY"}]});
+    }
+    const row=[...records.values()].find(item=>path.startsWith(`/api/jobs/${item.jobId}/`));
+    if(!row)return base.fetcher(url,init);
+    if(path.endsWith("/start")){
+      row.state="RUNNING";
+      return Response.json({attempt:{id:`attempt-${row.jobId}`}});
+    }
+    if(path.endsWith("/cancel")){
+      row.state="CANCELLED";
+      return Response.json({job:{id:row.jobId,state:"CANCELLED"}});
+    }
+    throw Error(`unexpected ${path}`);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:FIRST_RUN});
+  await tracker.beginScene({kind:"thumbnail-concept",sceneId:"thumbnail-1",fingerprint:"a".repeat(64)});
+  await tracker.fail("thumbnail_failed","Thumbnail export failed.");
+  assert.equal([...records.values()][0].state,"CANCELLED");
+});
+
+test("a parent failure fails the scene attempt when cancel is rejected",async()=>{
+  const base=fakeScheduler(),records=new Map();
+  let cancels=0;
+  const fetcher=async(url,init)=>{
+    const path=new URL(url).pathname,body=init?.body?JSON.parse(init.body):null;
+    if(path==="/api/jobs"&&body?.idempotencyKey?.startsWith("video-scene:")){
+      const row={jobId:`scene-job-${records.size}`,nodeId:`scene-node-${records.size}`,state:"READY",request:body};
+      records.set(body.idempotencyKey,row);
+      return Response.json({created:true,job:{id:row.jobId,state:"RUNNING"},
+        nodes:[{id:row.nodeId,nodeKey:body.nodes[0].nodeKey,state:"READY"}]});
+    }
+    const row=[...records.values()].find(item=>path.startsWith(`/api/jobs/${item.jobId}/`));
+    if(!row)return base.fetcher(url,init);
+    if(path.endsWith("/start")){
+      row.state="RUNNING";
+      return Response.json({attempt:{id:`attempt-${row.jobId}`}});
+    }
+    if(path.endsWith("/cancel")){
+      cancels++;
+      return Response.json({error:"jobs unavailable"},{status:503});
+    }
+    if(path.endsWith("/fail")){
+      row.state="FAILED";
+      return Response.json({job:{id:row.jobId,state:"FAILED"}});
+    }
+    throw Error(`unexpected ${path}`);
+  };
+  const tracker=createProductionJobTracker({fetcher});
+  await tracker.start({productionId:"production-"+"a".repeat(24),revision:"revision-1",runId:FIRST_RUN});
+  await tracker.beginScene({kind:"thumbnail-concept",sceneId:"thumbnail-1",fingerprint:"a".repeat(64)});
+  await tracker.fail("thumbnail_failed","Thumbnail export failed.");
+  const row=[...records.values()][0];
+  assert.equal(cancels,2);
+  assert.equal(row.state,"FAILED");
+  assert.equal(base.calls.some(call=>call.path.endsWith("/node-0/fail")&&call.body.errorCode==="thumbnail_failed"),true);
 });
 
 test("cancelling during scene submission leaves no unclaimed child job running",async()=>{

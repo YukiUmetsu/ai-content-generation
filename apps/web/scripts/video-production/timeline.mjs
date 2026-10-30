@@ -19,6 +19,32 @@ export function toFrame(sample, fps) {
   return Number(rounded);
 }
 
+/** Keep measured speech intact; add the minimum whole milliseconds of silence
+ * only when a narrated scene would otherwise occupy zero video frames. */
+export function fitSceneDurations(beats, {fps} = {}) {
+  checkFps(fps);
+  if (!Array.isArray(beats) || !beats.length) fail("narrated beats are required");
+  let cursor=0;
+  const adjustments=[];
+  const fitted=beats.map(beat=>{
+    if(!beat || typeof beat.id!=="string" || !beat.id.trim() || !validInteger(beat.samples,1) ||
+      !validInteger(beat.pauseAfterMs,0) || beat.pauseAfterMs>60000)
+      fail(`invalid measured scene ${typeof beat?.id==="string"?beat.id:"(unknown)"}`);
+    let pause=beat.pauseAfterMs;
+    while(toFrame(cursor+beat.samples+pause*48,fps)<=toFrame(cursor,fps)){
+      if(pause>=60000)fail(`scene ${beat.id} cannot fit a video frame within the silence limit`);
+      pause++;
+    }
+    const end=cursor+beat.samples+pause*48;
+    if(!Number.isSafeInteger(end))fail("timeline exceeds safe sample range");
+    cursor=end;
+    if(pause===beat.pauseAfterMs)return beat;
+    adjustments.push({id:beat.id,addedPauseMs:pause-beat.pauseAfterMs});
+    return {...beat,pauseAfterMs:pause};
+  });
+  return {beats:adjustments.length?fitted:beats,adjustments};
+}
+
 /**
  * @param {Array<{id:string,samples:number,pauseAfterMs:number,eventIds?:string[]}>} beats
  * @param {{fps:{num:number,den:number},events:Array<{id:string,beatId:string}>}} options

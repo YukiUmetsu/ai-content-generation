@@ -190,6 +190,61 @@ test("same narrative plan with changed built scene cannot reuse stale H264 segme
   await assert.rejects(renderVideoSegments({ ...config(dir, 151), buildHash: "c".repeat(64) }, dependencies), /stale|fingerprint|resume|build/i);
 });
 
+test("a matching interrupted render reuses scenes and stills without launching Chromium",async t=>{
+  const {dir,dependencies,stats}=await harness(t);
+  const first=join(dir,"first"),retry=join(dir,"retry");
+  const manifest=config(first,151).manifest;
+  const visualPlan={kind:"test-explainer",manifest,
+    chapters:[{id:"scene-1",startFrame:0,endFrame:151,visual:{headline:"Roof costs"}}]};
+  const planHash=createHash("sha256").update(JSON.stringify(visualPlan)).digest("hex");
+  const original=dependencies.openCapture;
+  dependencies.openCapture=async(...args)=>{
+    const driver=await original(...args);
+    return {...driver,captureFrame:async(frame,path)=>{
+      if(path.includes("/stills/"))return writeFile(path,pngFrame(frame%255));
+      return driver.captureFrame(frame,path);
+    }};
+  };
+  await renderVideoSegments({...config(first,151),planHash,visualPlan,reviewFrames:[0,150]},dependencies);
+  const opened=stats().opened;
+  dependencies.openCapture=async()=>{throw Error("Chromium must stay closed when every scene and still is reusable");};
+  const result=await renderVideoSegments({...config(retry,151),planHash,visualPlan,reviewFrames:[0,150],
+    reuseFrom:{sourcePlan:visualPlan,buildHash:"b".repeat(64),
+      segmentsDir:join(first,"segments"),stillsDir:join(first,"stills")}},dependencies);
+  assert.equal(stats().opened,opened);
+  assert.equal(result.renderedSegmentCount,0);
+  assert.equal(result.reusedSegmentCount,2);
+  assert.deepEqual(result.reviewStills.map(item=>item.frame),[0,150]);
+  for(const still of result.reviewStills){
+    const bytes=await readFile(still.path);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"),still.sha256);
+    assert.equal(bytes.readUInt32BE(16),32);
+  }
+});
+
+test("a failed scene copy is redrawn, and a full disk is not",async t=>{
+  const {dir,dependencies}=await harness(t);
+  const first=join(dir,"first"),retry=join(dir,"retry"),blocked=join(dir,"blocked");
+  const manifest=config(first,151).manifest;
+  const visualPlan={kind:"test-explainer",manifest,
+    chapters:[{id:"scene-1",startFrame:0,endFrame:151,visual:{headline:"Roof costs"}}]};
+  const planHash=createHash("sha256").update(JSON.stringify(visualPlan)).digest("hex");
+  await renderVideoSegments({...config(first,151),planHash,visualPlan},dependencies);
+  const reuseFrom={sourcePlan:visualPlan,buildHash:"b".repeat(64),segmentsDir:join(first,"segments")};
+  dependencies.copyReusableSegment=async()=>{throw Object.assign(Error("busy"),{code:"EIO"});};
+  const redrawn=await renderVideoSegments({...config(retry,151),planHash,visualPlan,reuseFrom},dependencies);
+  assert.equal(redrawn.reusedSegmentCount,0);
+  assert.equal(redrawn.renderedSegmentCount,2);
+  let opened=false;
+  dependencies.copyReusableSegment=async()=>{
+    throw Object.assign(Error("ENOSPC: no space left on device, copyfile '/Users/secret/segment.mp4'"),{code:"ENOSPC"});
+  };
+  dependencies.openCapture=async()=>{opened=true;throw Error("Chromium must stay closed when the disk is full");};
+  await assert.rejects(renderVideoSegments({...config(blocked,151),planHash,visualPlan,reuseFrom},dependencies),
+    /ENOSPC|no space left on device/u);
+  assert.equal(opened,false);
+});
+
 test("damaged segments in a failed previous attempt are redrawn, never reused or made fatal",async t=>{
   const {dir,dependencies,stats}=await harness(t);
   const first=join(dir,"interrupted"),retry=join(dir,"retry");

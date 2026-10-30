@@ -6,6 +6,7 @@ import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join, parse, resolve } from "node:path";
 import { probeNormalizedWav } from "./speech.mjs";
 import { writeSceneSpeechSrt } from "./timeline.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const run = promisify(execFile);
 const SAMPLE_RATE = 48000;
@@ -50,7 +51,11 @@ function readPcmData(bytes) {
 
 async function mediaExec(program, args, { signal, timeoutMs = 180000 } = {}) {
   try { return await run(program, args, { signal, timeout: timeoutMs, maxBuffer: 1024 * 1024 }); }
-  catch (error) { fail(`${program} failed (${error.code ?? error.signal ?? "unknown"}); inspect local audio tools.`); }
+  catch (error) {
+    const reason = mediaToolFailureReason(program, error);
+    if (!reason) throw error;
+    fail(reason);
+  }
 }
 
 async function saveVoiceStem(beats, timeline, outputPath) {

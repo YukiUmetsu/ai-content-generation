@@ -11,6 +11,8 @@ const intent={productionId,sourceRevision:"script-rev-1",revision:"f".repeat(64)
   request:{productionId,sourceRevision:"script-rev-1",characterProjectId:"project-custom-rigs",settings:{provider:"fish",voiceId:"approved-voice",
     providerRevision:"fish-v1",voiceConsent:true,transmitText:true,apiKey:"do-not-store-my-key",
     privateApiCredential:"unrecognized-secret-value"},
+    characterDraftIds:{pip:"character-draft-"+"b".repeat(32)},
+    characterDraftIdsByScene:{"shot-1":{pip:"character-draft-"+"c".repeat(32)}},
     dossier:{id:"test-project"},bundle:{plan:{shots:[]}},castVoiceConsent:true,
     searchFreeMedia:false,confirmUpdatedVersion:false}};
 
@@ -29,6 +31,8 @@ test("recovery snapshots are private, version-bound and never contain a provider
     "recovered renders must revalidate the same saved custom character revisions");
   assert.equal(listed[0].request.castVoiceConsent,true,
     "an authorized multi-speaker draft must retain its exact approved render intent after restart");
+  assert.deepEqual(listed[0].request.characterDraftIds,intent.request.characterDraftIds);
+  assert.deepEqual(listed[0].request.characterDraftIdsByScene,intent.request.characterDraftIdsByScene);
   assert.equal(listed[0].request.settings.apiKey,undefined);
   assert.equal(listed[0].autoRecover,true);
   assert.equal(await reserveRecoveryAttempt(root,runId),true);
