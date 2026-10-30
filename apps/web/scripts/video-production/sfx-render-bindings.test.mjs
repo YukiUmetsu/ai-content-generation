@@ -55,7 +55,8 @@ test("a changed or ambiguous shot-to-beat map cannot silently time the wrong SFX
 });
 
 test("check and start can resolve the same trusted bank; changed sound choice changes the job identity",async()=>{
-  const compiled=bridge(),bundle={kind:"preproduction-bundle",researchId:"my-project"};
+  const compiled=bridge(),bundle={kind:"preproduction-bundle",researchId:"my-project",
+    plan:{shots:[{id:"shot0"},{id:"shot1"},{id:"shot2"}]}};
   const sources=[];
   const resolve=async input=>{
     sources.push(input);

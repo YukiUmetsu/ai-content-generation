@@ -4,6 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startLocalStageServer, fingerprintBuiltStage } from "./stage-server.mjs";
+import { createHash } from "node:crypto";
+import { get } from "node:http";
 
 test("loopback server returns validated plan and built stage with restrictive headers", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "contentgen-stage-test-"));
@@ -54,4 +56,87 @@ test("renderer identity changes with served scene JS/fonts but not an unrelated 
   assert.notEqual(second, first);
   await writeFile(join(root, "assets", "ignored.map"), "not-a-served-asset");
   assert.equal(await fingerprintBuiltStage(root), second);
+});
+
+test("capture host serves only frozen media with a valid SHA-256 and a safe content type", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-media-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "video-export.html"), "stage");
+  const source = join(root, "private-photo.jpg");
+  const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8, 0xff, 0xd9]);
+  await writeFile(source, bytes);
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const url = `/__video_media/${sha256}.jpg`;
+  const server = await startLocalStageServer({ distRoot: root, validatedPlan: { schemaVersion: 1 },
+    approvedMedia: [{ url, path: source, sha256, assetType: "photo" }] });
+  t.after(() => server.close());
+  const served = await fetch(new URL(url, server.url));
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get("content-type"), "image/jpeg");
+  assert.deepEqual(Buffer.from(await served.arrayBuffer()), bytes);
+  const partial = await fetch(new URL(url, server.url), { headers: { Range: "bytes=2-6" } });
+  assert.equal(partial.status, 206, "Chromium needs byte ranges to seek through reviewed MP4s");
+  assert.equal(partial.headers.get("content-range"), `bytes 2-6/${bytes.length}`);
+  assert.equal(partial.headers.get("accept-ranges"), "bytes");
+  assert.deepEqual(Buffer.from(await partial.arrayBuffer()), bytes.subarray(2, 7));
+  const lastFour = await fetch(new URL(url, server.url), { headers: { Range: "bytes=-4" } });
+  assert.equal(lastFour.status, 206, "Chromium may request the tail of an MP4 to inspect its index");
+  assert.deepEqual(Buffer.from(await lastFour.arrayBuffer()), bytes.subarray(-4));
+  const beyondEnd = await fetch(new URL(url, server.url), { headers: { Range: "bytes=5-50000" } });
+  assert.equal(beyondEnd.status, 206, "a byte-range end beyond EOF should clamp to the last byte");
+  assert.deepEqual(Buffer.from(await beyondEnd.arrayBuffer()), bytes.subarray(5));
+  assert.equal((await fetch(new URL(url, server.url), { headers: { Range: "bytes=9999-" } })).status, 416);
+  assert.equal((await fetch(new URL("/__video_media/unknown.jpg", server.url))).status, 404);
+  await writeFile(source, "tampered media");
+  assert.equal((await fetch(new URL(url, server.url))).status, 404, "a changed frozen file must not reach Chromium");
+  await assert.rejects(startLocalStageServer({ distRoot: root, validatedPlan: {},
+    approvedMedia: [{ url: "/__video_media/../secret.jpg", path: source, sha256, assetType: "photo" }] }),
+  /invalid|media|path/i);
+});
+
+test("abandoning a long MP4 request does not delay stage shutdown", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-abort-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "video-export.html"), "stage");
+  const content = Buffer.alloc(1024 * 1024, 0x42);
+  const source = join(root, "footage.mp4");
+  await writeFile(source, content);
+  const sha256 = createHash("sha256").update(content).digest("hex");
+  const url = `/__video_media/${sha256}.mp4`;
+  const server = await startLocalStageServer({ distRoot: root, validatedPlan: {},
+    approvedMedia: [{ url, path: source, sha256, assetType: "video" }] });
+  t.after(() => server.close().catch(() => {}));
+  await new Promise((resolve, reject) => {
+    const request = get(new URL(url, server.url), response => {
+      response.once("data", () => { response.destroy(); resolve(); });
+      response.once("error", reject);
+    });
+    request.once("error", reject);
+  });
+  let timeout;
+  try {
+    await Promise.race([server.close(), new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(Error("Aborted media stream prevented stage shutdown")), 2000);
+    })]);
+  } finally { clearTimeout(timeout); }
+});
+
+test("custom character raster layers are checksum-pinned, private, and same-origin only", async t => {
+  const root = await mkdtemp(join(tmpdir(), "contentgen-stage-rig-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, "video-export.html"), "rig");
+  const bytes = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1]);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const url = `/__character_assets/${digest}.png`;
+  const server = await startLocalStageServer({distRoot:root,validatedPlan:{schemaVersion:1},
+    characterAssets:[{url,sha256:digest,mediaType:"image/png",bytes}]});
+  t.after(()=>server.close());
+  const response=await fetch(new URL(url,server.url));
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("content-type"),"image/png");
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);
+  assert.equal((await fetch(new URL("/__character_assets/other.png",server.url))).status,404);
+  assert.equal((await fetch(new URL(url,server.url),{method:"POST"})).status,405);
+  await assert.rejects(startLocalStageServer({distRoot:root,validatedPlan:{schemaVersion:1},
+    characterAssets:[{url,sha256:"0".repeat(64),mediaType:"image/png",bytes}]}),/invalid|checksum/i);
 });

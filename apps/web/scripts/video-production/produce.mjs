@@ -1,33 +1,48 @@
 /** One-command generated narration → exact audio/scene timeline → bounded MP4 → gated draft. */
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseVideoProductionJob } from "./job.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { synthesizeNarration } from "./speech.mjs";
-import { buildSampleTimeline, toFrame } from "./timeline.mjs";
+import { buildSampleTimeline, fitSceneDurations } from "./timeline.mjs";
 import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
+import { assertReviewStillBudget, assertSceneReviewCapacity, selectSceneReviewFrames, summarizeSceneReviewCoverage } from "./scene-review-coverage.mjs";
 import { startLocalStageServer } from "./stage-server.mjs";
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
 import { buildQaReport } from "./report.mjs";
+import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
+import { prepareAutomaticCommonsMedia } from "./automatic-commons-assets.mjs";
+import { generateProductionThumbnails } from "./premium-thumbnails.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const run = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+async function sha256File(path){
+  const digest=createHash("sha256");
+  for await (const chunk of createReadStream(path))digest.update(chunk);
+  return digest.digest("hex");
+}
 const fail = (message) => { throw new Error(`ContentGen production blocked: ${message}`); };
 const exists = async (path) => stat(path).then(() => true, (error) => error.code !== "ENOENT");
 
 async function subprocess(command, args, signal, timeout = 600000) {
   try { return await run(command, args, { signal, timeout, maxBuffer: 512 * 1024 }); }
-  catch (error) { fail(`${command} failed (${error.code ?? error.signal ?? "unknown"}).`); }
+  catch (error) {
+    const reason = mediaToolFailureReason(command, error);
+    if (!reason) throw error;
+    fail(reason);
+  }
 }
 
 export async function muxVideo(videoPath, audioPath, outputPath, { ffmpeg = "ffmpeg", signal } = {}) {
@@ -69,14 +84,79 @@ async function toolVersions() {
   return records;
 }
 
+// A crashed render has no published release, but may have committed complete
+// SHA-verified H.264 segments. Read only its own non-symlinked render ledger;
+// damaged or older plans are hints to discard, never reasons to block a retry.
+async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
+  const dir = resolve(priorRoot);
+  if (dir === currentOutput || [parse(dir).root, homedir(), process.cwd(), "/tmp", "/workspace"].includes(dir))
+    fail("interrupted video cache must be a distinct, narrow job-owned directory");
+  const renderRoot = join(dir, ".render");
+  const planFile = join(renderRoot, "render-source-plan.json");
+  const segmentsDir = join(renderRoot, "segments");
+  try {
+    const [parent, folder, file, segments] = await Promise.all([
+      lstat(dir), lstat(renderRoot), lstat(planFile), lstat(segmentsDir),
+    ]);
+    if (!parent.isDirectory() || parent.isSymbolicLink() ||
+      !folder.isDirectory() || folder.isSymbolicLink() ||
+      !segments.isDirectory() || segments.isSymbolicLink() ||
+      !file.isFile() || file.isSymbolicLink() || file.size < 32 || file.size > 2 * 1024 * 1024)
+      return null;
+    const saved = JSON.parse(await readFile(planFile, "utf8"));
+    if (saved.schemaVersion !== 1 || saved.buildHash !== buildHash ||
+      !/^[a-f0-9]{64}$/u.test(saved.planHash ?? "") ||
+      !saved.plan?.manifest || !Array.isArray(saved.plan.chapters) ||
+      sha256(JSON.stringify(saved.plan)) !== saved.planHash)
+      return null;
+    return { sourcePlan: saved.plan, buildHash, segmentsDir, stillsDir: join(renderRoot, "stills") };
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void}} options
- * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,toolVersions?:object}} deps
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
+ * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,generateThumbnails?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
   const parsed = parseVideoProductionJob(candidate);
   if (!parsed.ok) fail(`invalid job: ${parsed.findings.filter((f) => f.severity === "error").map((f) => f.code).join(", ")}`);
+  assertSceneReviewCapacity(parsed.job.beats.length); // Fail before TTS/provider work, not after capturing a long film.
+  const characterPacks = options?.characterRigPacks ?? { rigs: {}, assets: [], identity: [] };
+  if (!characterPacks || !characterPacks.rigs || !Array.isArray(characterPacks.assets) ||
+    !Array.isArray(characterPacks.identity) ||
+    Object.keys(characterPacks.rigs).some(id => !["pip", "quill"].includes(id)) ||
+    Object.keys(characterPacks.rigs).some(id => !parsed.job.beats.some(beat =>
+      (beat.speechTurns ?? [beat]).some(turn => turn.speaker?.role === "character" && turn.speaker.id === id))))
+    fail("custom Character Studio rig does not match a speaking character in this job");
+  const sceneRigs=characterPacks.rigsByScene ?? {};
+  if (!sceneRigs || typeof sceneRigs !== "object" || Array.isArray(sceneRigs))
+    fail("selected Character Studio scene revisions are invalid");
+  const beatsById=new Map(parsed.job.beats.map(beat=>[beat.id,beat]));
+  const speaks=(beat,id)=>(beat.speechTurns ?? [beat]).some(turn=>
+    turn.speaker?.role==="character" && turn.speaker.id===id);
+  for(const [beatId,actors] of Object.entries(sceneRigs)) {
+    const beat=beatsById.get(beatId);
+    if (!beat || !actors || typeof actors!=="object" || Array.isArray(actors) || !Object.keys(actors).length)
+      fail("selected Character Studio scene revision no longer matches the storyboard");
+    for(const [id,rig] of Object.entries(actors))
+      if (!["pip","quill"].includes(id) || !speaks(beat,id) || !rig?.definition ||
+        rig.definition.characterId!==id)
+        fail(`selected Character Studio scene speaker ${id} does not match a speaking character`);
+  }
+  for(const beat of parsed.job.beats) for(const turn of beat.speechTurns ?? []) {
+    if (turn.speaker?.role!=="character" || !turn.animationAction) continue;
+    const id=turn.speaker.id;
+    const pinned=sceneRigs[beat.id]?.[id] ?? characterPacks.rigs[id];
+    if (pinned && !Object.hasOwn(pinned.definition?.actions ?? {},turn.animationAction))
+      fail(`action ${turn.animationAction} is not declared by the selected ${id} rig revision for scene ${beat.id}`);
+  }
+  if ((Object.keys(characterPacks.rigs).length || Object.keys(sceneRigs).length) &&
+    parsed.job.visualFamily !== "general-explainer-v1")
+    fail("custom character rigs require the general-scene Kumiki renderer");
   if (!options?.out || !options.providerRevision) fail("explicit output and provider/engine revision are required");
   if (options.provider !== parsed.job.voice.provider) fail("provider substitution is forbidden; change the job voice configuration first");
   if (!Number.isFinite(options.budgetUsd ?? 0) || (options.budgetUsd ?? 0) < 0 ||
@@ -99,7 +179,7 @@ export async function produceVideo(candidate, options, deps = {}) {
   if (await exists(releaseDir)) fail("release already exists; choose a new output directory instead of overwriting published files");
   const distRoot = options.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
   // This potentially costly browser/build check MUST finish before provider transmission.
-  options.onProgress?.({ phase: "browser-preflight", message: "Opening Chromium to verify the render environment…" });
+  await options.onProgress?.({ phase: "browser-preflight", message: "Opening Chromium to verify the render environment…" });
   const preflight = await (deps.preflightExport ?? (async () => {
     const buildHash = await fingerprintBuiltStage(distRoot);
     await probeBrowserExecutable(options.browserExecutable);
@@ -115,41 +195,126 @@ export async function produceVideo(candidate, options, deps = {}) {
       fail("previous production must be a distinct, narrow job-owned directory");
     let priorManifest;
     try{priorManifest=JSON.parse(await readFile(join(priorDir,"release","render-manifest.json"),"utf8"));}
-    catch{fail("previous release lacks a readable render manifest");}
-    if(priorManifest.schemaVersion!==1 || !priorManifest.plan ||
+    catch{if(options.reuseFromOptional)priorManifest=null;
+      else fail("previous release lacks a readable render manifest");}
+    if(priorManifest && (priorManifest.schemaVersion!==1 || !priorManifest.plan ||
         priorManifest.planHash!==sha256(JSON.stringify(priorManifest.plan)) ||
-        !/^[a-f0-9]{64}$/i.test(priorManifest.buildHash??""))
-      fail("previous render manifest has invalid or tampered scene provenance");
-    if(priorManifest.buildHash!==preflight.buildHash)
-      fail("previous render uses a different Kumiki build; unsafe to reuse frames");
-    previous={
+        !/^[a-f0-9]{64}$/i.test(priorManifest.buildHash??""))) {
+      if(options.reuseFromOptional)priorManifest=null;
+      else fail("previous render manifest has invalid or tampered scene provenance");
+    }
+    if(priorManifest&&priorManifest.buildHash!==preflight.buildHash){
+      if(options.reuseFromOptional)priorManifest=null;
+      else fail("previous render uses a different Kumiki build; unsafe to reuse frames");
+    }
+    if(priorManifest)previous={
       sourcePlan:priorManifest.plan,
       buildHash:priorManifest.buildHash,
       segmentsDir:join(priorDir,".render","segments"),
+      stillsDir:join(priorDir,".render","stills"),
       cacheRoot:join(priorDir,".cache")
     };
   }
-  const job = options.localEndpoint ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } } : parsed.job;
+  // A failed render has no immutable release manifest, but completed speech
+  // beats were written to a content-addressed, hash-verified cache. Retrying
+  // may reuse those beats without claiming the aborted video was successful.
+  let interruptedCache=null;
+  if(options.reuseSpeechCacheFrom){
+    const priorDir=resolve(options.reuseSpeechCacheFrom);
+    if(priorDir===out||[parse(priorDir).root,homedir(),process.cwd(),"/tmp","/workspace"].includes(priorDir))
+      fail("interrupted production must be a distinct, narrow job-owned directory");
+    try{
+      const parent=await lstat(priorDir),cachePath=join(priorDir,".cache"),cache=await lstat(cachePath);
+      if(!parent.isDirectory()||parent.isSymbolicLink()||!cache.isDirectory()||cache.isSymbolicLink())
+        fail("interrupted narration cache must be an owned directory, not a link");
+      interruptedCache=cachePath;
+    }catch(error){if(error?.code!=="ENOENT")throw error;}
+  }
+  const interruptedVisual = options.reuseRenderSegmentsFrom && !previous ?
+    await interruptedRenderCache(options.reuseRenderSegmentsFrom, out, preflight.buildHash) : null;
+  // Studio keeps the local speech address in the same settings object as Fish.
+  // Copy it only for the local provider. A Fish voice with endpoint fails
+  // scene-timing validation after narration has already been generated.
+  const job = options.provider === "local" && options.localEndpoint
+    ? { ...parsed.job, voice: { ...parsed.job.voice, endpoint: options.localEndpoint } }
+    : parsed.job;
   await mkdir(out, { recursive: true });
   const working = await mkdtemp(join(out, ".release-staging-"));
   const reusedSpeechIds = [];
   let stage;
   try {
-    options.onProgress?.({ phase: "narration", message: `Generating ${job.beats.length} authorized narration beats…` });
-    const speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
+    // Metadata search is optional, never a stock-media substitution or a
+    // publication license decision. This step executes after browser preflight
+    // and before external voice transmission, inside the tracked render job.
+    await options.onProgress?.({phase:"asset-search",message:options.prepareAssetSuggestions?
+      "Finding optional scene media suggestions…":"Using Kumiki-generated scenes…"});
+    const assetSearch=options.prepareAssetSuggestions?
+      await options.prepareAssetSuggestions({signal:options.signal}):{status:"skipped"};
+    if(options.signal?.aborted)fail("cancelled during scene media discovery");
+    await options.onProgress?.({phase:"asset-preparation",assetSearchSummary:assetSearch,
+      message:"Validating approved imagery and preparing scene assets…"});
+    if (Boolean(options.sceneAssetProjectId) !== Boolean(options.sceneShotMap))
+      fail("both the scene asset project and shot mapping are required");
+    let sceneMedia = options.sceneAssetProjectId ? await
+      (deps.prepareApprovedSceneMedia ?? prepareApprovedSceneMedia)({
+        projectId: options.sceneAssetProjectId, shotMap: options.sceneShotMap,
+        outputDir: join(out, ".render", "scene-media"),
+        expectedFingerprint: options.expectedSceneMediaFingerprint, signal: options.signal,
+        autoApprovedBundle:options.sceneAssetBundle,
+      }, { ffprobe: options.ffprobe }) : { bindings: {}, assets: [] };
+    if(job.visualFamily==="general-explainer-v1"&&options.autoPrepareFreeMedia===true&&options.sceneShotMap&&
+      options.prepareAssetSuggestions){
+      let savedSuggestions=null;
+      try{
+        const path=join(out,"asset-suggestions.json"),metadata=await lstat(path);
+        if(metadata.isFile()&&!metadata.isSymbolicLink()&&metadata.size<900_000){
+          const saved=JSON.parse(await readFile(path,"utf8"));
+          if(saved?.suggestions?.kind==="contentgen-scene-asset-suggestions")
+            savedSuggestions=saved.suggestions;
+        }
+      }catch(error){if(error?.code!=="ENOENT")throw error;}
+      if(savedSuggestions){
+        sceneMedia=await (deps.prepareAutomaticCommonsMedia ?? prepareAutomaticCommonsMedia)({
+          suggestions:savedSuggestions,shotMap:options.sceneShotMap,existing:sceneMedia,
+          outputDir:join(out,".render","scene-media"),
+          previousOutputDir:options.reuseSpeechCacheFrom?
+            join(options.reuseSpeechCacheFrom,".render","scene-media"):undefined,
+          signal:options.signal,sceneJobs:options.sceneJobs,
+          ffprobe:options.ffprobe,
+        });
+        await options.onProgress?.({phase:"asset-prepared",autoMedia:sceneMedia.prepared,
+          message:sceneMedia.prepared?`${sceneMedia.prepared} CC0 Commons scene images prepared; remaining visuals use Kumiki.`:
+            "Using approved images and Kumiki visuals for the draft."});
+      }
+    }
+    if (Object.keys(sceneMedia.bindings).length && job.visualFamily !== "general-explainer-v1")
+      fail("reviewed scene media requires the general Kumiki explainer; change the selected visual recipe");
+    const selectedSceneMedia=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({
+      beatId,assetType:media.assetType,sha256:media.sha256}));
+    await options.onProgress?.({ phase: "narration",
+      ...(selectedSceneMedia.length?{artifactLedger:{kind:"asset-preparation",
+        fingerprint:sceneMedia.fingerprint,selected:selectedSceneMedia}}:{}),
+      message: `Generating ${job.beats.reduce((count,beat)=>count+(beat.speechTurns?.length??1),0)} authorized speech turns…` });
+    let speech = await (deps.synthesizeNarration ?? synthesizeNarration)(job, {
       provider: options.provider, providerRevision: options.providerRevision, cacheRoot: join(out, ".cache"),
-      reuseCacheRoot:previous?.cacheRoot,
+      reuseCacheRoot:previous?.cacheRoot??interruptedCache,
+      skipInvalidPriorCache:!!interruptedCache&&!previous,
       onReuse:event=>{
         reusedSpeechIds.push(event.beatId);
         options.onProgress?.({phase:"speech-reused",...event});
       },
       allowNetwork: options.allowNetwork, voiceReferenceConsent: options.voiceReferenceConsent,
       textTransmissionApproved: options.textTransmissionApproved, localVoiceAuthorized: options.localVoiceAuthorized,
+      authorizedVoiceIds: options.authorizedVoiceIds,
       apiKey: options.apiKey, paidUsageApproved: options.paidUsageApproved, budgetUsd: options.budgetUsd ?? 0, signal: options.signal,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe,
+      sceneJobs:options.sceneJobs,
       onDiagnostic: options.onProgress,
     });
-    options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…" });
+    await options.onProgress?.({ phase: "timeline", message: "Aligning measured speech to the visual timeline…",
+      artifactLedger:{kind:"narration",beats:speech.map(({id,sha256,samples})=>({id,sha256,samples}))} });
+    const fitted=fitSceneDurations(speech,{fps:job.destination.fps});
+    speech=fitted.beats;
     let timeline = buildSampleTimeline(speech, { fps: job.destination.fps, events: job.events });
     const captionReadability = analyzeCaptionReadability(
       timeline, Object.fromEntries(job.beats.map((beat) => [beat.id, beat.narration])),
@@ -157,43 +322,76 @@ export async function produceVideo(candidate, options, deps = {}) {
     );
     if (!captionReadability.ok) fail("caption-readability preflight found missing or invalid beat captions");
     let plan = job.visualFamily === "general-explainer-v1"
-      ? compileGeneralVisuals(job, timeline) : compileHouseMathVisuals(job, timeline);
+      ? compileGeneralVisuals(job, timeline, speech) : compileHouseMathVisuals(job, timeline);
     const visualCueTimeline=resolveVisualSfxTimeline(job,timeline,plan);
     if(visualCueTimeline!==timeline){
       timeline=visualCueTimeline;
-      plan=compileGeneralVisuals(job,timeline);
+      plan=compileGeneralVisuals(job,timeline,speech);
+    }
+    if (Object.keys(characterPacks.rigs).length || Object.keys(characterPacks.rigsByScene ?? {}).length) {
+      if (plan.kind !== "general-explainer-visual-plan")
+        fail("custom character rigs require the general-scene Kumiki renderer");
+      const chapters=new Set(plan.chapters.map(chapter=>chapter.id));
+      if (Object.keys(characterPacks.rigsByScene ?? {}).some(beatId=>!chapters.has(beatId)))
+        fail("selected Character Studio scene revision no longer matches the rendered storyboard");
+      plan = { ...plan, characterRigs: characterPacks.rigs,
+        ...(characterPacks.rigsByScene?{characterRigsByScene:characterPacks.rigsByScene}:{}) };
+    }
+    if (Object.keys(sceneMedia.bindings).length) {
+      const known = new Set(plan.chapters.map(chapter => chapter.id));
+      if (Object.keys(sceneMedia.bindings).some(beatId => !known.has(beatId)))
+        fail("a selected scene no longer matches the narrated storyboard");
+      plan = { ...plan, chapters: plan.chapters.map(chapter => ({ ...chapter,
+        visual: { ...chapter.visual,
+          ...(sceneMedia.bindings[chapter.id] ? { stockMedia: sceneMedia.bindings[chapter.id] } : {}),
+        },
+      })) };
     }
     const frames = plan.manifest.durationFrames;
-    const payoffFrame = toFrame(timeline.eventSamples[job.topic.payoffEventId], job.destination.fps);
-    const afterPayoff = Math.min(frames - 1, payoffFrame + Math.round(job.destination.fps.num / job.destination.fps.den));
-    const reviewFrames = [...new Set([0, Math.floor(frames / 2), afterPayoff, frames - 1])].sort((a, b) => a - b);
+    const reviewFrames = selectSceneReviewFrames(plan);
     const sourcePlan = JSON.stringify(plan);
     const planHash = sha256(sourcePlan);
+    const renderRoot = join(out, ".render");
+    await mkdir(renderRoot, { recursive: true, mode: 0o700 });
+    // Persist the exact plan before Chromium begins. Failed runs never publish
+    // their release, yet a later Jobs retry can prove which frames were done.
+    await writeFile(join(renderRoot, "render-source-plan.json"), JSON.stringify({
+      schemaVersion: 1, buildHash: preflight.buildHash, planHash, plan,
+    }), { flag: "wx", mode: 0o600 });
     const sfx = job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
     }));
-    options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…" });
+    await options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…",
+      ...(fitted.adjustments.length?{timingAdjustments:fitted.adjustments}:{}) });
     const audio = await (deps.renderMasterAudio ?? renderMasterAudio)({ beats: speech, timeline, sfx }, {
       outputDir: join(working, "audio"), allowTestAssets: options.allowTestAssets,
       ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
     });
-    stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan });
+    const masterHash=await sha256File(audio.wavPath);
+    await options.onProgress?.({phase:"captions",message:"Checking generated scene captions…",
+      artifactLedger:{kind:"sound-mix",masterSha256:masterHash,samples:timeline.totalSamples}});
+    const captionBytes=await readFile(audio.srtPath);
+    if(!captionBytes.length)fail("caption generation produced an empty subtitle file");
+    stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan,
+      approvedMedia: sceneMedia.assets, characterAssets: characterPacks.assets });
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {
-      options.onProgress?.({ phase: "rendering", completedFrames: 0, totalFrames: frames });
+      if(options.signal?.aborted)fail("cancelled before scene capture");
+      await options.onProgress?.({ phase: "rendering", completedFrames: 0, totalFrames: frames,
+        artifactLedger:{kind:"captions",sha256:sha256(captionBytes),bytes:captionBytes.length} });
       render = await (deps.renderVideoSegments ?? renderVideoSegments)({
         stageUrl: stage.url, manifest: plan.manifest, planHash, buildHash: stage.buildHash,
         outDir: join(out, ".render"), browserExecutable: options.browserExecutable, onProgress: options.onProgress,
         maxBatchFrames: 150, reviewFrames, ffmpeg: options.ffmpeg, ffprobe: options.ffprobe, signal: options.signal,
-        visualPlan:plan,reuseFrom:previous?{
-          sourcePlan:previous.sourcePlan,buildHash:previous.buildHash,segmentsDir:previous.segmentsDir
-        }:undefined,
+        sceneJobs:options.sceneJobs,
+        visualPlan:plan,reuseFrom:previous??interruptedVisual??undefined,
       });
     } finally { await stage.close(); stage = null; }
 
     if (!Array.isArray(render.reviewStills) || render.reviewStills.length !== reviewFrames.length) fail("review stills are missing or incomplete");
     const publishedStills = [];
+    let publishedStillBytes = 0;
     await mkdir(join(working, "stills"));
     for (let i = 0; i < reviewFrames.length; i++) {
       const still = render.reviewStills[i], frame = reviewFrames[i];
@@ -202,11 +400,40 @@ export async function produceVideo(candidate, options, deps = {}) {
       if (still?.frame !== frame || resolve(still.path) !== source || !/^[a-f0-9]{64}$/i.test(still.sha256 ?? "")) fail("review still has an invalid frame, path or SHA-256 hash");
       const bytes = await readFile(source);
       if (sha256(bytes) !== still.sha256) fail("review still hash changed after browser capture");
+      publishedStillBytes = assertReviewStillBudget(publishedStillBytes, bytes.length);
       await copyFile(source, join(working, "stills", filename));
       publishedStills.push({ frame, file: `stills/${filename}`, sha256: still.sha256 });
     }
+    const visualCoverage = summarizeSceneReviewCoverage(plan, publishedStills, options.sceneShotMap);
+    // Export a genuine, renderer-captured first-frame image as the draft cover.
+    // This is an editable starting still, not a claim that a designed thumbnail
+    // or platform artwork was generated. The existing Kumiki composer handles design.
+    const firstStill=publishedStills[0];
+    if(!firstStill||firstStill.frame!==0)fail("draft cover requires a verified first-frame still");
+    await copyFile(join(working,firstStill.file),join(working,"cover-still.png"));
 
-    options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…" });
+    await options.onProgress?.({phase:"thumbnails",message:"Composing three script-grounded Kumiki thumbnails…",
+      artifactLedger:{kind:"scene-render",planHash,buildHash:preflight.buildHash,
+        segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))}});
+    const thumbnails=await (deps.generateThumbnails??generateProductionThumbnails)(job,{
+      outputDir:working,cacheDir:join(out,".render","thumbnails"),
+      reuseCacheDir:options.reuseSpeechCacheFrom?
+        join(options.reuseSpeechCacheFrom,".render","thumbnails"):undefined,
+      ffmpeg:options.ffmpeg,browserExecutable:options.browserExecutable,
+      signal:options.signal,sceneJobs:options.sceneJobs});
+    if(!Array.isArray(thumbnails)||thumbnails.length!==3||new Set(thumbnails.map(x=>x.file)).size!==3||
+      thumbnails.some((item,i)=>item.file!==`thumbnail-${i+1}.png`||
+        !/^[a-f0-9]{64}$/u.test(item.sha256??"")||
+        !/^[a-f0-9]{64}$/u.test(item.sourceSha256??"")))
+      fail("Kumiki must export three distinct, hashed thumbnail compositions");
+    for(const item of thumbnails){
+      if(sha256(await readFile(join(working,item.file)))!==item.sha256||
+        sha256(await readFile(join(working,item.source)))!==item.sourceSha256)
+        fail("thumbnail output changed after export");
+    }
+
+    await options.onProgress?.({ phase: "mux", message: "Combining verified H.264 video and the 48 kHz sound master…",
+      artifactLedger:{kind:"thumbnails",concepts:thumbnails.map(({id,sha256,sourceSha256})=>({id,sha256,sourceSha256}))} });
     const video = join(working, "video.mp4");
     await (deps.mux ?? muxVideo)(render.videoOnlyPath, audio.wavPath, video, options);
     const mp4 = await (deps.probeMp4 ?? probeMuxedMp4)(video, {
@@ -221,20 +448,34 @@ export async function produceVideo(candidate, options, deps = {}) {
       video: sha256(await readFile(video)), master: sha256(await readFile(master)),
       voice: sha256(await readFile(voice)),
       captions: sha256(await readFile(captions)),
+      coverStill:sha256(await readFile(join(working,"cover-still.png"))),
     };
     for (const still of publishedStills) artifactHashes[`still-${still.frame}`] = still.sha256;
-    options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…" });
+    for(const item of thumbnails)artifactHashes[item.id]=item.sha256;
+    await options.onProgress?.({ phase: "qa", message: "Probing finished media and generating the technical QA report…",
+      artifactLedger:{kind:"final-mux",artifacts:{video:artifactHashes.video,captions:artifactHashes.captions,
+        master:artifactHashes.master,coverStill:artifactHashes.coverStill}} });
     const versions = deps.toolVersions ?? await toolVersions();
-    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability });
+    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability, visualCoverage });
+    const qaBytes = JSON.stringify(qa, null, 2);
     const manifestPath = join(working, "render-manifest.json");
     const narration = speech.map((beat) => ({
       id: beat.id, sha256: beat.sha256, samples: beat.samples,
       provider: beat.provider, modelId: beat.modelId, providerRevision: beat.providerRevision,
+      voiceId: beat.voiceId, speakerId: beat.speakerId, speakerRole: beat.speakerRole,
       licenseStatus: beat.licenseStatus ?? job.voice.licenseStatus,
       commercialRightsVerified: beat.commercialRightsVerified === true,
+      ...(beat.turns?{kind:"scene-speech-turns/v1",turns:beat.turns.map(turn=>({
+        id:turn.id,sha256:turn.sha256,samples:turn.samples,pauseAfterMs:turn.pauseAfterMs,
+        provider:turn.provider,modelId:turn.modelId,providerRevision:turn.providerRevision,
+        voiceId:turn.voiceId,speakerId:turn.speakerId,speakerRole:turn.speakerRole,
+        licenseStatus:turn.licenseStatus,commercialRightsVerified:turn.commercialRightsVerified===true
+      }))}:{})
     }));
+    const speechUnitCount=speech.reduce((count,beat)=>count+(beat.turns?.length??1),0);
     const regeneration = { previousOutputUsed: !!previous,
-      reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:job.beats.length-reusedSpeechIds.length,
+      interruptedSegmentCacheFound: !!interruptedVisual,
+      reusedSpeechBeatIds: [...reusedSpeechIds], speechBeatsNotImportedFromPrevious:speechUnitCount-reusedSpeechIds.length,
       reusedVideoSegments:render.reusedSegmentCount??0, newlyEncodedVideoSegments:render.renderedSegmentCount??null,
       audioRemixed:true,videoRemuxed:true,editorialReviewRequired:true };
     const soundEffects=job.sounds.map(({id,eventId,licenseStatus,assetSha256,kind,offsetMs,gainDb,fadeInMs,fadeOutMs})=>({
@@ -243,14 +484,21 @@ export async function produceVideo(candidate, options, deps = {}) {
       ...(offsetMs!==undefined?{offsetMs}:{}),...(gainDb!==undefined?{gainDb}:{}),
       ...(fadeInMs!==undefined?{fadeInMs}:{}),...(fadeOutMs!==undefined?{fadeOutMs}:{})
     }));
-    await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects, segmentHashes: render.segmentHashes, reviewStills: publishedStills, artifacts: artifactHashes, regeneration }, null, 2), { flag: "wx" });
-    await writeFile(join(working, "qa-report.json"), JSON.stringify(qa, null, 2), { flag: "wx" });
+    const mediaProvenance=Object.entries(sceneMedia.bindings).map(([beatId,media])=>({beatId,...media}));
+    const manifestBytes=JSON.stringify({ schemaVersion: 1, jobId: job.id, buildHash: preflight.buildHash, planHash, plan, narration, soundEffects,
+      soundDucking:audio.ducking??null,sceneMedia:mediaProvenance,thumbnails,segmentHashes: render.segmentHashes,
+      reviewStills: publishedStills, visualCoverage, artifacts: { ...artifactHashes, qaReport: sha256(qaBytes) }, regeneration }, null, 2);
+    await writeFile(manifestPath,manifestBytes,{flag:"wx"});
+    const manifestHash=sha256(manifestBytes);
+    await writeFile(join(working, "qa-report.json"), qaBytes, { flag: "wx" });
     await rm(join(working, "audio"), { recursive: true, force: true });
     // Multi-artifact commit: until this rename, there is no top-level successful release.
     if (await exists(releaseDir)) fail("release appeared concurrently; refusing to overwrite");
     await rename(working, releaseDir);
-    options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening." });
-    return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration };
+    await options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening.",
+      artifactLedger:{kind:"technical-qa",technicalPass:qa.technicalPass===true,manifestHash} });
+    return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration,
+      artifactHashes,manifestHash,thumbnails };
   } finally {
     if (stage) await stage.close();
     // Only the uniquely allocated staging directory is eligible for cleanup.

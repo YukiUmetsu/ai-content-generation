@@ -5,6 +5,7 @@ import {mkdtemp,mkdir,readFile,writeFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {setSoundDesign,resolveSoundDesign} from "./sound-design.mjs";
+import {resolveAndBindApprovedSfx} from "./sfx-render-bindings.mjs";
 
 const assetId="f0012345-1234-1234-1234-123456789abc";
 const bundle={plan:{shots:[{id:"intro"},{id:"detail"}]}};
@@ -54,6 +55,81 @@ test("ambience is a separate optional reviewed loop with conservative gain",asyn
   await setSoundDesign({action:"ambience",projectId:"p1",assetId:null},{root});
   resolved=await resolveSoundDesign({projectId:"p1",bundle},{root});
   assert.equal(resolved.ambience,null);
+});
+
+test("reviewed music can become the video bed but cannot be added as a one-shot effect",async t=>{
+  const {root,sha256}=await setup(t);
+  const path=join(root,"bank","asset_"+"a".repeat(24),"manifest.json");
+  const manifest=JSON.parse(await readFile(path,"utf8"));
+  await writeFile(path,JSON.stringify({...manifest,assetType:"music"}));
+  await assert.rejects(setSoundDesign(cue(sha256),{root}),/approved|missing|damaged/i);
+  await setSoundDesign({action:"ambience",projectId:"p1",assetId,sha256,
+    gainDb:-32,fadeInMs:1100,fadeOutMs:1500},{root});
+  const sound=await resolveSoundDesign({projectId:"p1",bundle},{root});
+  assert.equal(sound.ambience.title,"Quiet wind");
+  assert.equal(sound.ambience.gainDb,-32);
+});
+
+test("new productions automatically choose relevant reviewed CC0 music with quiet narration-safe levels",async t=>{
+  const {root,sha256,localPath}=await setup(t);
+  const path=join(root,"bank","asset_"+"a".repeat(24),"manifest.json");
+  const manifest=JSON.parse(await readFile(path,"utf8"));
+  await writeFile(path,JSON.stringify({...manifest,assetType:"music",
+    title:"Gentle instrumental ambient underscore",tags:["calm","background","instrumental"]}));
+  const production={plan:{shots:[{id:"intro"}],story:{question:"Why do homeowners pay so much for their roof?"},
+    sound:[{shotId:"intro",narration:"We examine the true cost of repairs."}]}};
+  const music=await resolveSoundDesign({projectId:"new-video",bundle:production},{root});
+  assert.equal(music.ambienceMode,"auto");
+  assert.equal(music.ambience?.assetId,assetId);
+  assert.equal(music.ambience?.sha256,sha256);
+  assert.equal(music.ambience?.localPath,localPath);
+  assert.equal(music.ambience?.gainDb,-34);
+  await assert.rejects(readFile(join(root,"projects","new-video","sound-design.json")),/ENOENT/,
+    "automatic direction should not overwrite or silently pin an editorial choice");
+});
+
+test("explicit music off, pinned music and return to automatic choice persist across storyboard regeneration",async t=>{
+  const {root,sha256}=await setup(t);
+  const path=join(root,"bank","asset_"+"a".repeat(24),"manifest.json");
+  const manifest=JSON.parse(await readFile(path,"utf8"));
+  await writeFile(path,JSON.stringify({...manifest,assetType:"music",title:"Quiet calm background music",tags:["ambient"]}));
+  await setSoundDesign({action:"ambience",projectId:"p3",assetId:null},{root});
+  assert.deepEqual({mode:(await resolveSoundDesign({projectId:"p3",bundle},{root})).ambienceMode,
+    bed:(await resolveSoundDesign({projectId:"p3",bundle},{root})).ambience}, {mode:"off",bed:null});
+  await setSoundDesign({action:"ambience",projectId:"p3",assetId,sha256,gainDb:-29,
+    fadeInMs:800,fadeOutMs:900},{root});
+  const pinned=await resolveSoundDesign({projectId:"p3",bundle},{root});
+  assert.equal(pinned.ambienceMode,"pin");
+  assert.equal(pinned.ambience.gainDb,-29);
+  await setSoundDesign({action:"auto-ambience",projectId:"p3"},{root});
+  const automatic=await resolveSoundDesign({projectId:"p3",bundle},{root});
+  assert.equal(automatic.ambienceMode,"auto");
+  assert.equal(automatic.ambience.assetId,assetId);
+  assert.equal(automatic.ambience.gainDb,-34);
+});
+
+test("automatic CC0 music is bound to an actual render beat with verified bytes and authoring-safe defaults",async t=>{
+  const {root,sha256,localPath}=await setup(t);
+  const manifestPath=join(root,"bank","asset_"+"a".repeat(24),"manifest.json");
+  const manifest=JSON.parse(await readFile(manifestPath,"utf8"));
+  await writeFile(manifestPath,JSON.stringify({...manifest,assetType:"music",title:"Soft ambient instrumental",tags:["subtle","minimal"]}));
+  const input={dossier:{id:"draft-video"},bundle:{researchId:"draft-video",plan:{shots:[{id:"intro"}],
+    story:{question:"What does home insurance really cost?"},
+    sound:[{shotId:"intro",narration:"An unexpected annual expense."}]}}};
+  const compiled={job:{kind:"video-production-job",visualFamily:"general-explainer-v1",topic:{},
+    beats:[{id:"beat-intro",eventIds:[]}],events:[],sounds:[]},
+  shotMap:[{shotId:"intro",beatId:"beat-intro"}]};
+  const {job,sfxSummary}=await resolveAndBindApprovedSfx(compiled,input,
+    {resolve:async()=>[],resolveDesign:selection=>resolveSoundDesign(selection,{root})});
+  assert.equal(sfxSummary.ambience,1);
+  assert.deepEqual(job.sounds.map(({kind,assetRef,assetSha256,gainDb})=>({kind,assetRef,assetSha256,gainDb})),
+    [{kind:"ambience",assetRef:localPath,assetSha256:sha256,gainDb:-34}]);
+  assert.equal(job.events[0].beatId,"beat-intro");
+  await setSoundDesign({action:"ambience",projectId:"draft-video",assetId:null},{root});
+  const muted=await resolveAndBindApprovedSfx(compiled,input,
+    {resolve:async()=>[],resolveDesign:selection=>resolveSoundDesign(selection,{root})});
+  assert.deepEqual(muted.job.sounds,[],"explicit mute must never keep an earlier automatic music bed");
+  assert.equal(muted.sfxSummary.ambience,undefined);
 });
 
 test("invalid rights, bad IDs, out-of-bounds envelope and full shot fail without touching saved data",async t=>{

@@ -7,6 +7,9 @@ import { ShortSafeFrame } from "@/components/visual/short-safe-frame";
 import type { SafeFrameItem } from "@/components/visual/safe-frame";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
 import { portraitProfile } from "./portrait-profile";
+import { ConversationCharacters } from "./conversation-characters";
+import { characterRigsForChapter } from "./scene-character-rigs";
+import type { ExportRigPlan } from "./scene-character-rigs";
 
 const colors = ["#8CDAD2", "#EFC08B", "#BCAEF0", "#D6E9AC", "#F3ACC4"];
 const bg = "#101D2D", ink = "#F8F6F0", muted = "#C0CDD6", accent = "#EFC08B";
@@ -74,7 +77,7 @@ export function PortraitGeneralExportScene({ plan, frame }: { plan: GeneralVisua
           x="118" y={659 + index * 43} fill={muted} fontSize={subheading.fontSize}>{line}</text>)}
       </g>}
       <path d="M116 810 H893" stroke="#446777" strokeWidth="2"/>
-      {items.map((label, i) => {
+      {!chapter.dialogue && items.map((label, i) => {
         if (split) {
           return <PortraitCard key={i} label={label} index={i} x={118 + i * 392} y={975} width={370} height={230} emphasized={false} />;
         }
@@ -83,11 +86,12 @@ export function PortraitGeneralExportScene({ plan, frame }: { plan: GeneralVisua
         return <PortraitCard key={i} label={label} index={i} x={118} y={858 + i * (height + gap)}
           width={772} height={height} emphasized={state.intent === "general-payoff" && i === state.visual.items.length - 1} />;
       })}
-      {split && items.length === 2 && <text x="497" y="1101" textAnchor="middle" fill={accent} fontSize="29" fontWeight="750">VS</text>}
-      {state.intent === "general-breakdown" && <text data-portrait-copy="qualitative" x="118" y="1518"
+      {!chapter.dialogue && split && items.length === 2 && <text x="497" y="1101" textAnchor="middle" fill={accent} fontSize="29" fontWeight="750">VS</text>}
+      {!chapter.dialogue && state.intent === "general-breakdown" && <text data-portrait-copy="qualitative" x="118" y="1518"
         fill={accent} fontSize="20" letterSpacing="2">QUALITATIVE · NOT TO SCALE</text>}
       <path d="M116 1532 H893" stroke="#4F6C78" strokeWidth="2"/>
       <rect x="116" y="1532" width={777 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="4" fill={accent}/>
     </svg>
+    {chapter.dialogue && <ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} portrait/>}
   </ShortSafeFrame>;
 }

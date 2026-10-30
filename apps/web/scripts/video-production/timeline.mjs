@@ -19,6 +19,32 @@ export function toFrame(sample, fps) {
   return Number(rounded);
 }
 
+/** Keep measured speech intact; add the minimum whole milliseconds of silence
+ * only when a narrated scene would otherwise occupy zero video frames. */
+export function fitSceneDurations(beats, {fps} = {}) {
+  checkFps(fps);
+  if (!Array.isArray(beats) || !beats.length) fail("narrated beats are required");
+  let cursor=0;
+  const adjustments=[];
+  const fitted=beats.map(beat=>{
+    if(!beat || typeof beat.id!=="string" || !beat.id.trim() || !validInteger(beat.samples,1) ||
+      !validInteger(beat.pauseAfterMs,0) || beat.pauseAfterMs>60000)
+      fail(`invalid measured scene ${typeof beat?.id==="string"?beat.id:"(unknown)"}`);
+    let pause=beat.pauseAfterMs;
+    while(toFrame(cursor+beat.samples+pause*48,fps)<=toFrame(cursor,fps)){
+      if(pause>=60000)fail(`scene ${beat.id} cannot fit a video frame within the silence limit`);
+      pause++;
+    }
+    const end=cursor+beat.samples+pause*48;
+    if(!Number.isSafeInteger(end))fail("timeline exceeds safe sample range");
+    cursor=end;
+    if(pause===beat.pauseAfterMs)return beat;
+    adjustments.push({id:beat.id,addedPauseMs:pause-beat.pauseAfterMs});
+    return {...beat,pauseAfterMs:pause};
+  });
+  return {beats:adjustments.length?fitted:beats,adjustments};
+}
+
 /**
  * @param {Array<{id:string,samples:number,pauseAfterMs:number,eventIds?:string[]}>} beats
  * @param {{fps:{num:number,den:number},events:Array<{id:string,beatId:string}>}} options
@@ -91,4 +117,40 @@ export function writeSrt(timeline, beatTexts) {
     const safeText = text.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
     return `${index + 1}\n${timecode(beat.startSample)} --> ${timecode(beat.endSample)}\n${safeText}\n`;
   }).join("\n");
+}
+
+/** A scene remains one visual chapter while its separately timed voices get
+ * accurate, speaker-labeled captions. Legacy single-speaker scenes keep their
+ * previous SRT bytes and numbering through the same writeSrt function. */
+export function writeSceneSpeechSrt(timeline, speech) {
+  if(!Array.isArray(speech)||!Array.isArray(timeline?.beats))fail("scene speech and timeline are required");
+  const byId=new Map(speech.map(beat=>[beat.id,beat]));
+  if(byId.size!==speech.length)fail("scene speech IDs must be unique");
+  const cues=[],texts=Object.create(null);
+  for(const range of timeline.beats){
+    const scene=byId.get(range.id);
+    if(!scene)fail(`missing caption scene ${range.id}`);
+    if(!Array.isArray(scene.turns)){
+      cues.push(range);texts[range.id]=scene.text;continue;
+    }
+    if(!scene.turns.length)fail(`scene ${range.id} has no caption turns`);
+    let cursor=range.startSample;
+    for(const turn of scene.turns){
+      if(typeof turn.id!=="string"||!turn.id.trim()||
+        !validInteger(turn.samples,1)||!validInteger(turn.pauseAfterMs,0)||turn.pauseAfterMs>3000)
+        fail(`scene ${range.id} has an invalid caption turn`);
+      const end=cursor+turn.samples;
+      if(!Number.isSafeInteger(end)||end>range.endSample)fail(`scene ${range.id} caption exceeds speech time`);
+      const name=turn.speakerRole==="character"&&typeof turn.speakerId==="string"&&
+        /^[a-zA-Z0-9_-]{1,80}$/u.test(turn.speakerId)?
+        turn.speakerId[0].toUpperCase()+turn.speakerId.slice(1):"Narrator";
+      const cueId=`${range.id}.${turn.id}`;
+      if(Object.hasOwn(texts,cueId))fail(`duplicate caption turn ${cueId}`);
+      texts[cueId]=`${name}: ${turn.text}`;
+      cues.push({id:cueId,startSample:cursor,endSample:end});
+      cursor=end+turn.pauseAfterMs*48;
+    }
+    if(cursor!==range.endSample)fail(`scene ${range.id} captions disagree with measured speech`);
+  }
+  return writeSrt({beats:cues},texts);
 }

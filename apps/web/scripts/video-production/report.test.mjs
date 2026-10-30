@@ -61,6 +61,13 @@ test("missing, tampered or incomplete first/end visual review frames block techn
   assert.throws(() => buildQaReport({ ...base, render: { ...base.render, reviewStills: [base.render.reviewStills[0], { frame: 149, file: "../escape.png", sha256: "e".repeat(64) }] } }), /review still|file/i);
 });
 
+test("QA accepts more than five hash-verified scene review stills but rejects unbounded collections", () => {
+  const withStills = count => ({ ...base, render: { ...base.render, reviewStills: Array.from({ length: count }, (_, i) =>
+    ({ frame: i === count - 1 ? 149 : i, file: `stills/frame-${String(i === count - 1 ? 149 : i).padStart(6, "0")}.png`, sha256: "a".repeat(64) })) } });
+  assert.equal(buildQaReport(withStills(6)).reviewStills.length, 6);
+  assert.throws(() => buildQaReport(withStills(65)), /review still|frame/i);
+});
+
 test("measured caption readability warnings appear in draft QA without blocking technical completion", () => {
   const captionReadability = {
     ok: true, findings: [{ code: "caption-reading-speed", severity: "warning", beatId: "intro", message: "Beat intro may be too fast to read" }],

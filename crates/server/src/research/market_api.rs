@@ -239,25 +239,21 @@ async fn explore(
         let db = state.connect().map_err(db_error)?;
         if !market_store::reserve_explore_search(&db, epoch_now()).map_err(market_error)? {
             return Err(ApiError::RateLimited {
-                message: "The shared YouTube search budget is exhausted (20 searches / 24h)"
-                    .into(),
+                message: "The shared YouTube search budget is exhausted (20 searches / 24h)".into(),
             });
         }
     }
-    let observations = client
-        .collect(query, "US", "en")
-        .await
-        .map_err(|error| {
-            use super::youtube_api::YoutubeError;
-            match error {
-                YoutubeError::Quota | YoutubeError::RateLimited => ApiError::RateLimited {
-                    message: error.to_string(),
-                },
-                _ => ApiError::Unavailable {
-                    message: error.to_string(),
-                },
-            }
-        })?;
+    let observations = client.collect(query, "US", "en").await.map_err(|error| {
+        use super::youtube_api::YoutubeError;
+        match error {
+            YoutubeError::Quota | YoutubeError::RateLimited => ApiError::RateLimited {
+                message: error.to_string(),
+            },
+            _ => ApiError::Unavailable {
+                message: error.to_string(),
+            },
+        }
+    })?;
     let now = epoch_now();
     Ok(Json(ExploreResults {
         videos: observations

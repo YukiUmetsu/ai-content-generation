@@ -10,7 +10,31 @@ import { HouseMathExportScene } from "./house-math-scene";
 import { GeneralExportScene } from "./general-scene";
 import { PortraitGeneralExportScene } from "./portrait-general-scene";
 import { waitForChartStoryReadiness } from "./chart-story-preflight";
+import { validateCharacterDefinition } from "@/components/character/validate";
+import type { ExportRigMap } from "./conversation-characters";
+import { prepareStockMediaFrame } from "./stock-media-readiness";
 declare global { interface Window { __contentgenBuildHash?: string } }
+
+const decodedRigImages = new Map<string, Promise<void>>();
+async function waitForRigImages(stage: HTMLElement) {
+  const images = stage.querySelectorAll<SVGImageElement>('[data-rig-source="character-studio"] svg image');
+  for (const layer of images) {
+    const url = layer.getAttribute("href");
+    if (!url || !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(url))
+      throw new Error("Saved character layer has an invalid capture URL.");
+    if (!decodedRigImages.has(url)) {
+      const loading = (async () => {
+        const picture = new Image();
+        picture.src = url;
+        await picture.decode();
+        if (picture.naturalWidth < 1 || picture.naturalHeight < 1)
+          throw new Error("Saved character image decoded without visible dimensions.");
+      })();
+      decodedRigImages.set(url, loading);
+    }
+    await decodedRigImages.get(url);
+  }
+}
 
 /** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
 async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" | "general-explainer-visual-plan", payoffFrame: number, portrait: boolean) {
@@ -24,6 +48,43 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   if (!stage || stage.dataset.frame !== String(target)) throw new Error(`Video scene frame ${target} did not settle`);
   await document.fonts.ready;
   await waitForChartStoryReadiness(stage);
+  await prepareStockMediaFrame(stage);
+  await waitForRigImages(stage);
+  for (const conversation of stage.querySelectorAll<HTMLElement>("[data-conversation-characters]")) {
+    const bounds = conversation.getBoundingClientRect();
+    const performers = conversation.querySelectorAll<HTMLElement>("[data-conversation-performer]");
+    if (!performers.length || performers.length > 2 || !bounds.width || !bounds.height) {
+      throw new Error(`Conversation characters are incomplete at frame ${target}`);
+    }
+    for (const performer of performers) {
+      const rig = performer.querySelector<HTMLElement>("[data-km-character-presenter]");
+      const rect = rig?.getBoundingClientRect();
+      if (!rig || rig.dataset.diagnostics !== "0" || !rect || rect.width < 100 || rect.height < 100 ||
+        rect.left < bounds.left - 2 || rect.right > bounds.right + 2 ||
+        rect.top < bounds.top - 2 || rect.bottom > bounds.bottom + 2 ||
+        !rig.querySelector("svg [data-asset]") ||
+        (performer.dataset.rigSource === "character-studio" &&
+          !rig.querySelector('svg image[href^="/__character_assets/"]'))) {
+        throw new Error(`Character rig ${performer.dataset.conversationPerformer ?? "unknown"} failed render validation at frame ${target}`);
+      }
+      // A saved rig must draw its own raster layers and return its own mouth to
+      // rest during another speaker's turn. Never accept a vector fallback or
+      // an accidentally animated, silent character in an exported frame.
+      if (performer.dataset.rigSource === "character-studio") {
+        const images = [...rig.querySelectorAll<SVGImageElement>("svg image")];
+        if (!images.length || images.some(image =>
+          !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(image.getAttribute("href") ?? "")))
+          throw new Error(`Saved character art was not used at frame ${target}`);
+        const mouth = [...rig.querySelectorAll<SVGGElement>("[data-part]")].find(part =>
+          part.dataset.part === performer.dataset.rigMouthPart);
+        if (!mouth || !performer.dataset.rigRestAsset)
+          throw new Error(`Saved character mouth is missing at frame ${target}`);
+        if (performer.dataset.speaking !== "true" &&
+          !mouth.querySelector(`[data-asset="${performer.dataset.rigRestAsset}"]`))
+          throw new Error(`Silent character mouth did not return to rest at frame ${target}`);
+      }
+    }
+  }
   const isHouse = kind === "house-math-visual-plan";
   const copy = stage.querySelectorAll<SVGGraphicsElement>(isHouse ? "[data-house-copy]" : "[data-general-copy]");
   if (!portrait && !copy.length && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
@@ -136,6 +197,35 @@ async function boot() {
     !Array.isArray(plan.chapters) || plan.chapters.length === 0 ||
     typeof plan.events?.[plan.payoffEventId] !== "number") {
     throw new Error("Video plan has an unsupported or incomplete scene contract");
+  }
+  const rigPlan = plan as ExportPlan & { characterRigs?: ExportRigMap;
+    characterRigsByScene?: Record<string, ExportRigMap> };
+  const rigs = rigPlan.characterRigs;
+  const perScene = rigPlan.characterRigsByScene;
+  if (rigs !== undefined || perScene !== undefined) {
+    if (plan.kind !== "general-explainer-visual-plan" || (rigs !== undefined && (!rigs || typeof rigs !== "object" || Array.isArray(rigs))) ||
+      (perScene !== undefined && (!perScene || typeof perScene !== "object" || Array.isArray(perScene))))
+      throw new Error("Custom character rigs require a general explainer video.");
+    for (const [sceneId, sceneRigs] of Object.entries(perScene ?? {})) {
+      if (!plan.chapters.some(chapter=>chapter.id===sceneId) || !sceneRigs ||
+        typeof sceneRigs!=="object" || Array.isArray(sceneRigs) || !Object.keys(sceneRigs).length)
+        throw new Error("Saved character scene revision no longer matches the rendered scene.");
+    }
+    for (const [sceneId, group] of [[null,rigs??{}] as const,
+      ...Object.entries(perScene??{})] as [string|null,ExportRigMap][]) for (const [id, rig] of Object.entries(group)) {
+      if (!["pip", "quill"].includes(id) || !rig || !/^character-draft-[a-f0-9]{32}$/.test(rig.draftId) ||
+        !/^[a-f0-9]{64}$/.test(rig.archiveSha256) || rig.definition?.characterId !== id ||
+        !rig.definition.revision || !rig.assetUrls || typeof rig.assetUrls !== "object" ||
+        validateCharacterDefinition(rig.definition).some(item => item.severity === "error"))
+        throw new Error(`Saved character ${id} has an invalid Kumiki animation definition.`);
+      for (const asset of Object.values(rig.definition.assets)) {
+        if (asset.kind !== "image" || !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(rig.assetUrls[asset.uri] ?? ""))
+          throw new Error(`Saved character ${id} is missing a verified raster layer.`);
+      }
+      if (!plan.chapters.some(chapter => (sceneId===null||chapter.id===sceneId) && chapter.dialogue?.turns.some(turn =>
+        turn.role === "character" && turn.speakerId === id)))
+        throw new Error(`Saved character ${id} has no matching spoken scene.`);
+    }
   }
   createRoot(root).render(<ExportApp plan={plan} />);
 }

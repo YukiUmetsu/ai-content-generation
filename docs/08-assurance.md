@@ -35,6 +35,57 @@ Block unresolved commercial rights for voice provider/model/clone, font, soundtr
 
 For subjective craft, compare trusted reference scenes with human review plus task measurements (comprehension, errors, correction time, clarity). Don't optimize to a single aesthetic score. Test key actions via accessibility tooling *and* keyboard/manual checks; automated axe cannot guarantee full accessibility.
 
+### Reproducible real media smoke tests
+
+From `apps/web` after `pnpm build`:
+
+```sh
+pnpm test:video:thumbnails
+CONTENTGEN_CHROMIUM_EXECUTABLE=/absolute/path/to/chrome pnpm test:video:browser
+```
+
+The first test uses pinned Kumiki compositions, actual FFmpeg SVG-to-PNG
+exports and FFprobe to verify three distinct 1280×720 PNGs, their SHA-256
+identities and verified cache reuse. The second launches the actual built
+Kumiki export page in Chromium, checks its build/manifest handshake and
+deterministic 1920×1080 frame seeking, encodes twelve frames to H.264 with
+FFmpeg, and measures each bento thumbnail heading's visual bounds in the
+browser. Neither contacts an external provider or publishes a video.
+
+Some root-runner containers cannot start Chromium with its sandbox enabled.
+Only in an isolated local **test** container, set
+`CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1` to opt into Chromium's `--no-sandbox`
+flag for this standalone smoke script; production browser export never sets
+this flag automatically. A passing smoke test does not replace a complete
+voice/sound/scene/assembly production and human visual review.
+
+### Interrupted scene and final assembly recovery
+
+`pnpm test:video:headless` also exercises an interrupted H.264 segment commit,
+damaged segment/still verification, and a missing final assembly sidecar. In
+the dedicated render work folder, the renderer moves incomplete or corrupt
+files to uniquely named `.recovery-*` siblings and regenerates **only** the
+affected artifact. Intact segment and still hashes are reverified before reuse;
+files from a different plan/build are rejected rather than reused. A real
+FFmpeg test edits the middle of three scenes and confirms that the other two
+encoded segments are retained in a decodable six-frame MP4. Another real
+FFmpeg test resumes an interrupted final assembly with no frame recapture.
+
+These checks prove artifact-level recovery on a restarted invocation. They do
+**not** yet prove that an application restart automatically launches and
+finishes the complete production run without a user-initiated retry.
+
+Video Director also offers **Render this scene MP4** beside the immediate
+Kumiki timeline preview. It builds and renders only the selected chapter to a
+silent H.264 MP4 using the full, build-checked scene source. It records an
+independent, lease-validated Rust `video-render-segment` Job with bounded
+attempts and cancellation; a mismatched SHA-256 result is never exposed as a
+playable preview. Scene-only playback uses estimated narration timing and has
+no voice or music. The full draft performs measured narration and sound mixing.
+The single-chapter real FFmpeg test confirms only that chapter's frames were
+captured and the result decodes; final exported video regeneration still uses
+the separate chapter-aware segment cache.
+
 ## Security and privacy baseline
 
 - Local API binds loopback; enforce origin checks, scoped file paths, size limits, request validation, CSP for rendered previews, safe Markdown/HTML sanitization and restricted embeds. Do not run content from scraped pages; they are untrusted and can contain prompt injection.

@@ -26,12 +26,13 @@ import { PlatformOptimization, type PlatformOptimizationInput } from "@/features
 import { loadPlatformOptimization } from "@/features/platform-optimization/storage";
 import { sourceSignature, type PlatformAsset } from "@/features/platform-optimization/model";
 import { resolveProjectAppearance, snapshotProjectAppearance } from "./project-brand-appearance";
-import { scriptToStoryboard } from "./script-storyboard-handoff";
+import { scriptToStoryboard, syncScriptStoryboard } from "./script-storyboard-handoff";
 
 import { scriptClaimSnapshot } from "./script-claim-evidence";
 import type { ClaimEvidenceSnapshot } from "./claim-evidence";
 import { productionMediaSource } from "./production-lineage";
 import { productionEvidence, type ProductionEvidenceSnapshot } from "@/lib/api/production-evidence";
+import { VideoDirectorWorkspace } from "./video-director-workspace";
 
 interface JobState {
   jobId: string;
@@ -51,15 +52,21 @@ interface MediaSnapshot {
   error?:string;
 }
 interface Props {
+  workspaceId?:string|null;
   locale: Locale;
   catalog: StudioCatalog;
   onSelectProject: (projectId:string)=>void;
   onOpenResearch: ()=>void;
+  onOpenJobs?: ()=>void;
   onOpenStoryboard: (productionId?:string)=>void;
   onOpenVisuals: (artifactId?:string,productionId?:string)=>void;
   onOpenAudio: (artifactId?:string,productionId?:string)=>void;
+  onOpenDraft: (artifactId?:string,productionId?:string)=>void;
   onOpenExport: (artifactId?:string,productionId?:string)=>void;
   onOpenNav: ()=>void;
+  directorEntry?:{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"draft"|"export"}|null;
+  directorDirty?:boolean;
+  onDirectorDirtyChange?:(dirty:boolean)=>void;
   onOpenProjects?: ()=>void;
   onCreateStoryboard: (draft:EditorialDraft,research?:ResearchDraftResult)=>boolean;
   onUseVideo: (idea:{title:string;sourceUrl:string})=>boolean;
@@ -70,7 +77,7 @@ const stageLabels:Record<ProductionStageId,{en:string;ja:string;enDetail:string;
   select:{en:"Select Idea",ja:"テーマ選択",enDetail:"Compare evidence and decide which original idea to produce.",jaDetail:"根拠を比較し、制作するアイデアを選びます。"},
   script:{en:"Script",ja:"台本",enDetail:"Review the AI-written draft, regenerate individual sections or edit when needed.",jaDetail:"AI作成の台本を確認し、必要な箇所だけ再生成します。"},
   storyboard:{en:"Plan Scenes",ja:"構成案",enDetail:"Your script becomes a scene-by-scene visual plan. Check that the ideas flow, then continue.",jaDetail:"台本をシーンごとの映像計画に変換し、流れを確認します。"},
-  produce:{en:"Create Video",ja:"映像制作",enDetail:"Build visuals, add narration and sound, then preview the cut in the Director.",jaDetail:"映像を作成し、ナレーションと効果音を追加してからプレビューします。"},
+  produce:{en:"Create Video",ja:"映像制作",enDetail:"Edit scenes, choose voices, add sound, and watch your draft without leaving Production.",jaDetail:"制作画面を離れずにシーンと音声を編集し、下書き映像を確認できます。"},
   optimize:{en:"Publish Kit",ja:"投稿準備",enDetail:"Find your platform-specific titles, captions, covers, and illustrated blog files together.",jaDetail:"配信先ごとのタイトル、説明文、カバー画像、ブログ素材を準備します。"},
   export:{en:"Export",ja:"書き出し",enDetail:"Inspect and export your approved platform packages. Publishing stays under your control.",jaDetail:"承認したパッケージを確認・書き出しします。"},
 };
@@ -136,8 +143,8 @@ const statusToStepper:Record<ProductionStageStatus,string>={
 export function ProductionWorkspace(props:Props){
   return <ProductionWorkspaceProject key={props.catalog.activeProjectId} {...props}/>;
 }
-function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenStoryboard,
-  onOpenVisuals,onOpenAudio,onOpenExport,onOpenNav}:Props){
+function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjects,onOpenResearch,onOpenJobs,onOpenStoryboard,
+  onOpenVisuals,onOpenAudio,onOpenDraft,onOpenExport,onOpenNav,directorEntry,directorDirty=false,onDirectorDirtyChange,workspaceId="workspace"}:Props){
   const ja=locale==="ja";
   const tr=(en:string,jp:string)=>ja?jp:en;
   const projectId=catalog.activeProjectId;
@@ -200,6 +207,8 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     mediaResult?.productionId===production.id&&mediaResult.refresh===mediaRefresh?mediaResult:
       {productionId:production.id,status:"loading",assets:[]}:null;
   const productionKey=production?.id??projectId;
+  const currentDirectorEntry=directorEntry?.projectId===productionKey?directorEntry:null;
+  const directorRegion=useRef<HTMLDivElement>(null);
   const renderAssets=mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"?mediaSnapshot.assets:[];
   useEffect(()=>{
     if(!production)return;
@@ -248,6 +257,28 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const video=catalog.content.filter(item=>item.projectId===projectId&&item.kind==="video").at(-1);
   const topic=production?.brief?.title??video?.name??"";
   const [step,setStep]=useState<ProductionStageId>(()=>previousStep(productionKey));
+  useEffect(()=>{
+    if(!currentDirectorEntry)return;
+    setStep("produce");
+    try{localStorage.setItem(stagesKey(productionKey),"produce");}catch{/* Keep navigation available. */}
+    const frame=requestAnimationFrame(()=>directorRegion.current?.focus());
+    return ()=>cancelAnimationFrame(frame);
+  },[currentDirectorEntry,productionKey]);
+  const [activeRender,setActiveRender]=useState<{productionId?:string|null;state:string;phase?:string;
+    message?:string;jobId?:string|null;progress?:{completedFrames?:number;totalFrames?:number}|null}|null>(null);
+  useEffect(()=>{
+    if(!production||step!=="produce")return;
+    let active=true;
+    const controller=new AbortController();
+    let inFlight=false;
+    const poll=()=>{if(inFlight)return;inFlight=true;void fetch("/api/contentgen-video/status",{signal:controller.signal,cache:"no-store"})
+      .then(response=>response.ok?response.json():null)
+      .then(data=>{if(active&&data?.productionId===production.id)setActiveRender(data);})
+      .catch(()=>{/* Jobs remain accessible when the Director worker is offline. */})
+      .finally(()=>{inFlight=false;});};
+    poll();const timer=window.setInterval(poll,1000);
+    return ()=>{active=false;controller.abort();window.clearInterval(timer);};
+  },[production,step]);
   const [board,setBoard]=useState(()=>loadProjectStoryboard(productionKey).board);
   const [boardError,setBoardError]=useState<string|null>(()=>loadProjectStoryboard(productionKey).warning);
   const [jobId,setJobId]=useState<string|null>(()=>storedForTopic(lastJobKey,topic,"jobId"));
@@ -282,8 +313,8 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const videoScript=production&&platforms.includes("youtube")?
     loadScriptDraft(production.id,"youtube").draft:null;
   const boardScriptStale=Boolean(production&&board&&(
-    primaryScript?.status!=="approved"||
-    !board.assumptions.includes(`Approved script revision: ${primaryScript.updatedAt}.`)));
+    !primaryScript||![`Script revision: ${primaryScript.updatedAt}.`,
+      `Approved script revision: ${primaryScript.updatedAt}.`].some(note=>board.assumptions.includes(note))));
   const currentMediaPrefix=board&&videoScript?productionMediaSource(videoScript.updatedAt,board):null;
   const currentRenderAssets=currentMediaPrefix?renderAssets.filter(asset=>asset.sourceRevision?.startsWith(currentMediaPrefix)):[];
   const hasCurrentVideo=currentRenderAssets.some(asset=>asset.kind==="video");
@@ -436,8 +467,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     (issue.kind==="needs_factual_review"&&!reviewedClaims.has(issue.claimId))).length;
   const storyboardResearchArtifactId=board?.assumptions.find(value=>value.startsWith("Research artifact: "))?.slice("Research artifact: ".length);
   const activeDiscovery=sessionDiscovery?.sessionId===sessionId?sessionDiscovery:null;
+  const youtubeReady=Boolean(videoScript?.sections.length&&videoScript.sections.every(section=>section.text.trim()));
   const stages=getProductionStages({setupReady:Boolean(project&&platforms.length),sessionId,
-    ideaId:production?.ideaId,scriptReady:scriptApproved,scriptStale,discoveryReady:Boolean(production?.ideaId),
+    ideaId:production?.ideaId,scriptReady:platforms.includes("youtube")?youtubeReady:scriptApproved,
+    scriptStale:platforms.includes("youtube")&&youtubeReady?false:scriptStale,discoveryReady:Boolean(production?.ideaId),
     discoveryArtifactId:sessionId?null:artifactId,discoveryJob:sessionId?null:job,
     discoverySessionRun:activeDiscovery?.run,discoveryIdeaCount:activeDiscovery?.ideaCount,
     storyboardReady:Boolean(board),storyboardScriptStale:boardScriptStale,
@@ -445,8 +478,8 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     storyboardEditorialWarnings:repeatedScenes.length,optimizationReady,
     scriptActivity:step==="script"?scriptActivity:"idle",
     visualReady:hasCurrentVideo,audioReady:hasCurrentVideo,exportReady:hasCurrentVideo});
-  const canOpenDirector=Boolean(matchingDraft?.artifactId||
-    production&&videoScript?.status==="approved"&&scriptApproved&&board&&!boardScriptStale);
+  const canOpenDirector=Boolean(matchingDraft?.artifactId||production&&videoScript&&
+    videoScript.sections.length>0&&videoScript.sections.every(section=>section.text.trim()));
   const current=stages.find(item=>item.id===step)!;
   const stepperStates:StepperStates={
     "not-started":{label:statusLabel("not_started",ja)},
@@ -461,36 +494,55 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     status:statusToStepper[item.status],hint:step===item.id?item.reason:undefined,
   }));
   function selectStep(next:ProductionStageId){
+    if(currentDirectorEntry&&directorDirty&&next!=="produce"){
+      setError("Save or discard the edited scene before leaving Create Video. Your changes are still in the scene editor.");
+      return;
+    }
+    setError("");
     setStep(next);
     try{localStorage.setItem(stagesKey(productionKey),next);}catch{/* Navigation still works without local storage. */}
   }
-  async function openDirector(stage:"visuals"|"audio"|"export"){
+  async function openDirector(stage:"visuals"|"audio"|"draft"|"export"){
     if(openingDirector)return;
-    if(matchingDraft?.artifactId){
-      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(matchingDraft.artifactId,productionKey);
+    if(!production&&matchingDraft?.artifactId){
+      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:stage==="draft"?onOpenDraft:onOpenExport)(matchingDraft.artifactId,productionKey);
       return;
     }
-    if(!production||!videoScript||videoScript.status!=="approved"||!scriptApproved||!board||boardScriptStale){
-      setError("Approve the current YouTube script and update its storyboard before opening Director. Other formats cannot yet render in this local video exporter.");
+    if(!production||!videoScript||!videoScript.sections.length||videoScript.sections.some(section=>!section.text.trim())){
+      setError("Finish the YouTube script first. Other platform scripts can remain unfinished.");
       return;
     }
     setOpeningDirector(true);setError("");
     try{
+      const saved=loadProjectStoryboard(production.id);
+      if(saved.warning)throw Error(saved.warning);
+      const refreshed=syncScriptStoryboard(videoScript,currentIdea?.evidence??[],saved.board);
+      const changed=JSON.stringify(saved.board)!==JSON.stringify(refreshed);
+      if(changed){
+        // Back up before overwriting; a storage failure must not discard edits.
+        if(saved.board){
+          localStorage.setItem(storyboardBackupKey(production.id),JSON.stringify(saved.board));
+          setHasStoryboardBackup(true);
+        }
+        saveProjectStoryboard(production.id,refreshed);
+        setBoard(refreshed);
+        setConfirmStoryboardRefresh(false);
+      }
       const response=await fetch("/api/contentgen-director/compile-approved-script",{
         method:"POST",headers:{"Content-Type":"application/json","X-Contentgen-Director":"local-only"},
         body:JSON.stringify({productionId:production.id,script:videoScript,
-          evidence:currentIdea?.evidence??[],sources:currentIdea?.sources??[],storyboard:board}),
+          evidence:currentIdea?.evidence??[],sources:currentIdea?.sources??[],storyboard:refreshed}),
         signal:AbortSignal.timeout(20000),
       });
       const result=await response.json() as Record<string,unknown>;
-      if(!response.ok)throw Error(String(result.error??"Cannot compile the approved script into a Director draft."));
+      if(!response.ok)throw Error(String(result.error??"Cannot create the draft scene plan."));
       if((result.dossier as {kind?:string}|undefined)?.kind!=="research-dossier"||
         (result.bundle as {kind?:string}|undefined)?.kind!=="preproduction-bundle")
         throw Error("The local Director returned an invalid draft.");
       sessionStorage.setItem("contentgen:director-approved-script:v1:"+production.id,JSON.stringify({
-        productionId:production.id,scriptRevision:videoScript.updatedAt,sourcePrefix:productionMediaSource(videoScript.updatedAt,board),...result}));
-      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:onOpenExport)(undefined,production.id);
-    }catch(reason){setError(reason instanceof Error?reason.message:"Could not open approved script in Director.");}
+        productionId:production.id,scriptRevision:videoScript.updatedAt,sourcePrefix:productionMediaSource(videoScript.updatedAt,refreshed),...result}));
+      (stage==="visuals"?onOpenVisuals:stage==="audio"?onOpenAudio:stage==="draft"?onOpenDraft:onOpenExport)(undefined,production.id);
+    }catch(reason){setError(reason instanceof Error?reason.message:"Could not open video production. Check local server and retry.");}
     finally{setOpeningDirector(false);}
   }
   function editScene(beatId:string){
@@ -547,7 +599,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     }catch(reason){setError(reason instanceof Error?reason.message:"Storyboard repair could not be saved.");}
   }
   function createStoryboardOutline(script:ScriptDraft){
-    if(board){setError("An editable storyboard already exists. Review it before importing a different script revision.");return;}
+    if(board){setError("A scene plan already exists. Use Update scenes to refresh it while keeping your edits.");return;}
     try{
       const next=scriptToStoryboard(script,currentIdea?.evidence??[]);
       saveProjectStoryboard(productionKey,next);
@@ -556,9 +608,9 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
     }catch(reason){setError(reason instanceof Error?reason.message:"The script could not be mapped to a storyboard outline.");}
   }
   function refreshStoryboardOutline(){
-    if(!board||!primaryScript||primaryScript.status!=="approved"||!scriptApproved)return;
+    if(!board||!primaryScript)return;
     try{
-      const next=scriptToStoryboard(primaryScript,currentIdea?.evidence??[]);
+      const next=syncScriptStoryboard(primaryScript,currentIdea?.evidence??[],board);
       // Existing hand-edited scenes are recoverable; refuse to overwrite if
       // the backup cannot be persisted.
       localStorage.setItem(storyboardBackupKey(productionKey),JSON.stringify(board));
@@ -582,7 +634,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
   const contentCard="rounded-surface border border-border bg-surface p-5 sm:p-6";
   const primaryButton="rounded-control bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
   const secondaryButton="rounded-control border border-border px-4 py-2.5 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
-  return <section id="workspace" aria-label={tr("Guided production","制作ガイド")}
+  return <section id={workspaceId??undefined} aria-label={tr("Guided production","制作ガイド")}
     className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="z-10 flex shrink-0 items-center border-b border-border bg-surface-subtle px-3 py-1 lg:px-5">
       <button type="button" onClick={onOpenNav} aria-label={tr("Open navigation","メニューを開く")}
@@ -593,7 +645,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
         onStepSelect={selected=>selectStep(selected.id as ProductionStageId)}/>
     </div>
     <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-5 py-4 sm:px-8">
-        <div className="mx-auto flex max-w-5xl flex-col gap-5">
+        <div className={"mx-auto flex flex-col gap-5 "+(step==="produce"&&currentDirectorEntry?"max-w-7xl":"max-w-5xl")}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
                <h2 className="font-serif text-2xl font-semibold">{ja?stageLabels[step].ja:stageLabels[step].en}</h2>
@@ -707,10 +759,11 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 selectStep("storyboard");
               }
             }}/>}
-            {!scriptApproved&&platforms.length>1&&<p className="rounded-control border border-border bg-surface-subtle px-4 py-3 text-sm text-muted-foreground" role="status">
-              {tr("Approve each selected destination's script before moving to the storyboard. Completed destinations remain saved while you work on the others.",
-                "構成案へ進む前に、配信先ごとの台本を承認してください。承認済みの内容は保存されます。")}
-            </p>}
+            {platforms.includes("youtube")&&<div className="flex flex-wrap items-center justify-between gap-3 rounded-surface border border-primary/25 bg-primary/5 p-4">
+              <p className="text-sm text-muted-foreground">Your YouTube draft can be made independently of other scripts.</p>
+              <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector}
+                onClick={()=>void openDirector("draft")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4"/></button>
+            </div>}
           </div>:<div className={contentCard}>
             <p className="text-sm text-muted-foreground">{tr("Choose a discovery idea to let AI draft the script.","アイデアを選択するとAIが台本を作成します。")}</p>
             <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select an idea","テーマを選択")}</button>
@@ -718,10 +771,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
           {step==="storyboard"&&<>
             <div className="rounded-surface border border-primary/20 bg-primary/5 p-5">
               <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Next · {board?"Check the scene plan":"Create the scene plan"}</p>
-              <h3 className="mt-1 font-serif text-xl font-semibold">{board?"Make sure every scene teaches something new":"Turn your approved script into a visual outline"}</h3>
+              <h3 className="mt-1 font-serif text-xl font-semibold">{board?"Make sure every scene teaches something new":"Turn your script into a visual outline"}</h3>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{board?
                 "The cards below are scenes in viewing order. Review the headline and visual idea for each one. Click Edit only if something needs changing—your work is saved.":
-                "ContentGen will turn the approved script into scenes automatically. Then you can check the order before building the video. No drawing is required here."}</p>
+                "ContentGen creates scenes from your script automatically. Review or edit anything before rendering."}</p>
               {board&&!boardScriptStale&&<button type="button" className={primaryButton+" mt-4 inline-flex items-center gap-2"}
                 onClick={()=>selectStep("produce")}>Looks good · Create video <ArrowRight className="size-4" aria-hidden /></button>}
             </div>
@@ -742,16 +795,16 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 </div>
               </div>
               {boardScriptStale&&<div role="status" className="mt-4 rounded-control border border-amber-400/40 bg-amber-400/10 p-3 text-sm">
-                <p>The approved script changed after this storyboard was created. Old narration and visuals are preserved, but this outline needs an explicit update before production.</p>
-                {primaryScript?.status==="approved"&&scriptApproved&&
+                <p>Your script changed. Generate draft video will update the scene plan automatically and keep unaffected edits.</p>
+                {primaryScript&&
                   (confirmStoryboardRefresh?<div className="mt-3 space-y-2">
-                    <p>Replace the current scene outline with the approved script? Existing scene edits will be saved as a restorable backup.</p>
+                    <p>Update the outline now? Existing scene edits will be backed up and unchanged scenes preserved.</p>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" className={primaryButton} onClick={refreshStoryboardOutline}>Save backup and update</button>
                       <button type="button" className={secondaryButton} onClick={()=>setConfirmStoryboardRefresh(false)}>Keep existing scenes</button>
                     </div>
                   </div>:<button type="button" className={secondaryButton+" mt-3"}
-                    onClick={()=>setConfirmStoryboardRefresh(true)}>Update from approved script</button>)}
+                    onClick={()=>setConfirmStoryboardRefresh(true)}>Update scenes now</button>)}
               </div>}
               {hasStoryboardBackup&&<button type="button" className={secondaryButton+" mt-3"}
                 onClick={restorePreviousStoryboard}>Restore previous storyboard outline</button>}
@@ -783,10 +836,10 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
               </ol>
             </div>:<div className={contentCard}>
               <h3 className="font-serif text-xl font-semibold">{tr("Create your storyboard","構成案を作成")}</h3>
-              <p className="mt-2 text-sm text-muted-foreground">{tr("Start with your approved script. Use the existing storyboard planner to arrange the scenes.","承認した台本からシーンを構成します。")}</p>
-              {production&&primaryScript?.status==="approved"&&<button type="button" className={primaryButton+" mt-4"}
-                onClick={()=>createStoryboardOutline(primaryScript)}>{tr("Create editable outline from approved script","承認済み台本から構成案を生成")}</button>}
-              {(!production||primaryScript?.status!=="approved")&&<button type="button" className={primaryButton+" mt-4"}
+              <p className="mt-2 text-sm text-muted-foreground">Your completed script is enough to plan scenes.</p>
+              {production&&primaryScript?.sections.every(section=>section.text.trim())&&<button type="button" className={primaryButton+" mt-4"}
+                onClick={()=>createStoryboardOutline(primaryScript)}>Create scene outline</button>}
+              {(!production||!primaryScript?.sections.every(section=>section.text.trim()))&&<button type="button" className={primaryButton+" mt-4"}
                 onClick={()=>selectStep("script")}>{tr("Review script first","先に台本を確認")}</button>}
             </div>}
             {board&&<ProductionClaimIssues issues={issues} draft={claimDraft} locale={locale}
@@ -797,17 +850,26 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
           {step==="produce"&&!platforms.includes("youtube")&&<div className={contentCard+" space-y-4"}>
             <p className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Your next step</p>
             <h3 className="font-serif text-2xl font-semibold">Prepare your selected destinations</h3>
-            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">The current Video Director exports YouTube-format videos. Your selected destinations still get their own approved scripts, platform captions and generated covers. Blog articles also receive illustrations and downloadable HTML.</p>
+            <p className="max-w-2xl text-sm leading-6 text-muted-foreground">Video drafts use your YouTube script. Other destinations can be finished separately, including their titles, captions, covers and illustrated articles.</p>
             <button type="button" className={primaryButton+" inline-flex items-center gap-2"} onClick={()=>selectStep("optimize")}>Open Publish Kit <ArrowRight className="size-4" aria-hidden /></button>
           </div>}
-          {step==="produce"&&platforms.includes("youtube")&&<div className={contentCard}>
+          {step==="produce"&&platforms.includes("youtube")&&!currentDirectorEntry&&<div className={contentCard}>
             <span className="text-[11px] font-semibold uppercase tracking-[.14em] text-primary">Video draft</span>
             <h3 className="mt-2 font-serif text-2xl font-semibold">Turn your script into a video</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Choose a voice, then select <strong>Generate draft video</strong>. ContentGen prepares scenes, checks your local tools and makes a playable MP4. You can refine the scenes afterward.</p>
-            {!matchingDraft?.artifactId&&<p role="status" className="mt-4 rounded-control border border-status-warning/40 bg-surface-subtle p-3 text-sm text-muted-foreground">
-              {tr("Approved YouTube scripts can become editable, source-linked Director drafts. Schematic animation requires further visual editing, and claims, media rights and playback still require review. Shorts, social videos and articles need dedicated exporters.",
-                "承認したYouTube台本を編集可能なディレクター下書きに変換できます。映像、引用、利用権の確認が必要です。")}
-            </p>}
+            {activeRender&&activeRender.productionId===production?.id&&activeRender.state!=="idle"&&
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-control border border-primary/25 bg-primary/5 p-4" role="status">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{activeRender.state==="rendering"?"Creating your video":
+                    activeRender.state==="done"?"Draft video ready":activeRender.state==="failed"?"Video needs attention":
+                    activeRender.state==="cancelled"?"Video cancelled":"Production status"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{activeRender.message??activeRender.phase}</p>
+                  {activeRender.progress?.totalFrames&&activeRender.progress.completedFrames!==undefined&&
+                    <progress aria-label="Video frames rendered" className="mt-2 h-2 w-full" max={activeRender.progress.totalFrames}
+                      value={activeRender.progress.completedFrames}/>}
+                </div>
+                {onOpenJobs&&activeRender.jobId&&<button className={secondaryButton} type="button" onClick={onOpenJobs}>View in Jobs</button>}
+              </div>}
             {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&<div className="mt-4 rounded-control border border-border bg-surface-subtle p-3 text-sm" role="status">
               {mediaSnapshot.status==="loading"?"Checking saved local render files…":
                 mediaSnapshot.status==="error"?`Unable to read saved renders: ${mediaSnapshot.error}`:
@@ -818,15 +880,14 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                 Refresh files
               </button>
             </div>}
-            {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">First, approve your YouTube script and make sure its scene outline is current. Then video generation becomes available.</p>}
+            {!canOpenDirector&&<p role="status" className="mt-4 text-sm text-muted-foreground">Finish the YouTube script to generate a playable draft. Other destinations can wait.</p>}
             <div className="mt-5 rounded-xl border border-primary/30 bg-primary/5 p-5">
-              <p className="text-xs font-semibold text-primary">START HERE</p>
-              <button type="button" className={primaryButton+" mt-3 inline-flex items-center gap-2"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("audio")}>{openingDirector?"Preparing your draft…":"Set up voice & generate draft"}<ArrowRight className="size-4" aria-hidden /></button>
-              <p className="mt-3 text-xs text-muted-foreground">No upload or publishing. If your voice or renderer needs setup, you’ll see exactly what is missing.</p>
+              <button type="button" className={primaryButton+" inline-flex items-center gap-2"} disabled={openingDirector} onClick={()=>void openDirector("draft")}>{openingDirector?"Preparing scenes…":"Generate draft video"}<ArrowRight className="size-4" aria-hidden /></button>
+              <p className="mt-3 text-xs text-muted-foreground">Your storyboard refreshes automatically. You can opt in to public free-media searches when generating the draft; stock suggestions are never downloaded without review. Voice setup is requested only when needed. Nothing is published.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-3">
-              <button type="button" className={secondaryButton} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("visuals")}>Edit video scenes</button>
-              <button type="button" className={secondaryButton} disabled={openingDirector||!canOpenDirector}
+              <button type="button" className={secondaryButton} disabled={openingDirector} onClick={()=>void openDirector("visuals")}>Edit video scenes</button>
+              <button type="button" className={secondaryButton} disabled={openingDirector}
                 onClick={()=>hasCurrentVideo?selectStep("export"):void openDirector("export")}>
                 {hasCurrentVideo?"Watch & export MP4":"Open render controls"}
               </button>
@@ -837,17 +898,24 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
             </div>
             <p className="mt-3 text-xs leading-relaxed text-muted-foreground">YouTube video drafts are supported here. Shorts and social video presets are still in development. Their captions and covers are available in Publish Kit.</p>
           </div>}
-          {step==="optimize"&&(production&&(platforms.every(platform=>platform==="blog")||
-            mediaSnapshot?.productionId===production.id&&mediaSnapshot.status==="ready")?
-            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>:<div className={contentCard}>
-            <p className="text-sm text-muted-foreground">{!production?
-              tr("Select an idea and create a production to prepare platform metadata.","制作するアイデアを選んでください。"):
-              mediaSnapshot?.status==="error"?
-                `The local renderer's saved-file catalog is unavailable: ${mediaSnapshot.error} Your existing metadata has not been changed.`:
-                "Checking local rendered assets before opening saved metadata. This prevents an incomplete file list from invalidating previous approvals."}</p>
-            {production?<button type="button" className={secondaryButton+" mt-4"} onClick={()=>setMediaRefresh(value=>value+1)}>
-              Retry rendered-file lookup</button>:
-              <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select idea","テーマを選択")}</button>}
+          {currentDirectorEntry&&<div ref={directorRegion} tabIndex={-1}
+            className={step==="produce"?"min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring":"hidden"}
+            aria-hidden={step!=="produce"} inert={step!=="produce"}>
+            <VideoDirectorWorkspace embedded locale={locale}
+              projectId={currentDirectorEntry.projectId} voiceProjectId={projectId}
+              researchArtifactId={currentDirectorEntry.artifactId}
+              focusStage={currentDirectorEntry.stage} onOpenJobs={onOpenJobs}
+              onUnsavedChange={onDirectorDirtyChange}/>
+          </div>}
+          {step==="optimize"&&(production?<>
+            {mediaSnapshot?.status==="error"&&<div className="mb-4 flex flex-wrap items-center gap-3 rounded-control border border-amber-500/25 bg-amber-500/5 p-3 text-xs text-muted-foreground" role="status">
+              <span>Saved video files could not be checked. You can still edit covers and metadata; verify video attachments before publishing.</span>
+              <button type="button" className="font-semibold text-primary underline" onClick={()=>setMediaRefresh(value=>value+1)}>Retry file lookup</button>
+            </div>}
+            <PlatformOptimization input={optimizationInput} onManifestChange={()=>refreshScriptState(value=>value+1)}/>
+          </>:<div className={contentCard}>
+            <p className="text-sm text-muted-foreground">{tr("Select an idea and create a production to prepare platform metadata.","制作するアイデアを選んでください。")}</p>
+            <button type="button" className={primaryButton+" mt-4"} onClick={()=>selectStep("select")}>{tr("Select idea","テーマを選択")}</button>
           </div>)}
           {step==="export"&&<div className={contentCard}>
             <h3 className="font-serif text-xl font-semibold">{tr("Preview before exporting","書き出し前に確認")}</h3>
@@ -855,7 +923,7 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
               {tr("Review playback, captions, source claims and rights. Download local renders and platform metadata here; no upload or publishing happens automatically.",
                 "再生、字幕、根拠と利用権を確認します。映像ファイルや投稿情報をダウンロードできますが、自動公開は行われません。")}
             </p>
-            {!canOpenDirector&&<p role="status" className="mt-3 text-sm text-muted-foreground">Approve a YouTube script and its storyboard to enable MP4 preview and export.</p>}
+            {!canOpenDirector&&<p role="status" className="mt-3 text-sm text-muted-foreground">Finish the YouTube script to preview or export its draft. Approval is not required.</p>}
             <button type="button" className={primaryButton+" mt-5"} disabled={openingDirector||!canOpenDirector} onClick={()=>void openDirector("export")}>
               {tr("Open preview & export","確認と書き出しを開く")}</button>
             {mediaSnapshot&&mediaSnapshot.productionId===production?.id&&mediaSnapshot.status==="ready"&&
@@ -867,10 +935,15 @@ function ProductionWorkspaceProject({locale,catalog,onSelectProject,onOpenProjec
                     src={currentRenderAssets.find(asset=>asset.kind==="video"&&asset.downloadUrl)?.downloadUrl}/>}
                 {renderAssets.length?renderAssets.map(asset=><a key={asset.id} href={asset.downloadUrl}
                   download={asset.filename} className={secondaryButton+" mr-2 inline-flex items-center gap-2"}>
-                  {asset.kind==="video"?"Download MP4":asset.kind==="captions"?"Download captions":`Download ${asset.kind}`}
+                  {asset.kind==="video"?"Download MP4":asset.kind==="captions"?"Download captions":
+                    asset.kind==="thumbnail"?(asset.filename?.startsWith("thumbnail-")?
+                      `Download ${asset.filename.replaceAll("-"," ")}`:"Download cover frame"):`Download ${asset.kind}`}
                   {!currentRenderAssets.includes(asset)&&" · previous / untracked revision"}
                   <ExternalLink className="size-3"/></a>):<p className="text-sm text-muted-foreground">
-                  No completed renders are registered. Open Director to render an MP4 before preparing an upload.</p>}
+                  No completed renders are registered. Open Create Video to render an MP4 before preparing an upload.</p>}
+                {renderAssets.some(asset=>asset.filename?.startsWith("thumbnail-"))&&<p className="text-xs text-muted-foreground">
+                  Three distinct 1280×720 thumbnail designs are exported automatically. Select one in Publish Kit to preview or download it, and edit the headline, composition and colors in the thumbnail designer.
+                </p>}
               </div>}
             {production&&mediaSnapshot?.status!=="ready"&&<p className="mt-4 text-sm text-muted-foreground">
               The render catalog is loading or unavailable. Retry from Produce; previous metadata is preserved.</p>}

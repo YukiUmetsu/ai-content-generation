@@ -10,7 +10,6 @@ import { CatalogWorkspace } from "./catalog-workspace";
 import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type StudioCatalog } from "./catalog-model";
 import { ResearchWorkspace, type ResearchIdeaHandoff } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
-import { VideoDirectorWorkspace } from "./video-director-workspace";
 import { ProductionWorkspace } from "./production-workspace";
 import { CharacterPackInspector } from "@/features/character-studio/CharacterPackInspector";
 import { ShortcutsDialog } from "./shortcuts-dialog";
@@ -31,10 +30,19 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function Shell() {
   const { locale } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionId>("production");
-  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"export"}|null>(null);
+  const [directorEntry,setDirectorEntry] = useState<{projectId:string;artifactId?:string;stage:"visuals"|"audio"|"draft"|"export"}|null>(null);
+  const [directorDirty,setDirectorDirty] = useState(false);
+  const [directorNavigationWarning,setDirectorNavigationWarning]=useState("");
   const [storyboardOwnerId,setStoryboardOwnerId] = useState<string|null>(null);
   const selectSection = (next:SectionId) => {
-    if(next==="video-director")setDirectorEntry(null);
+    const retainedEditorRoute=directorEntry!==null&&
+      (activeSection==="production"||activeSection==="jobs-qa")&&
+      (next==="production"||next==="jobs-qa");
+    if(directorDirty&&next!==activeSection&&!retainedEditorRoute){
+      setDirectorNavigationWarning("Save or discard the edited scene in Production before leaving. Your changes have not been lost.");
+      return;
+    }
+    setDirectorNavigationWarning("");
     if(next==="create")setStoryboardOwnerId(null);
     setActiveSection(next);
   };
@@ -162,6 +170,9 @@ export function Shell() {
   }, [activeSection]);
 
   const activeMeta = FEATURE_METADATA[activeFeatureId];
+  // Keep the in-progress Director alive while inspecting Jobs. The browser's
+  // editor state, selected shot, sound preview and render status stay intact.
+  const keepProductionMounted=activeSection==="production"||(activeSection==="jobs-qa"&&directorEntry!==null);
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-canvas text-foreground">
@@ -196,31 +207,48 @@ export function Shell() {
             Local catalog: {catalogError}. Existing data has not been overwritten.
           </div>
         )}
+        {directorDirty&&directorNavigationWarning&&(activeSection==="production"||activeSection==="jobs-qa")&&<div role="alert" className="border-b border-status-warning/40 bg-surface-subtle px-4 py-2 text-sm text-status-warning">{directorNavigationWarning}</div>}
         {activeSection !== "create" && activeSection !== "production" && (
           <Header activeSection={activeSection} onOpenNav={() => setMobileNavOpen(true)} />
         )}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-          {activeSection === "production" ? (
+          {keepProductionMounted&&<div className={activeSection==="production"?
+            "flex min-h-0 min-w-0 flex-1 flex-col":"hidden"}
+            aria-hidden={activeSection!=="production"} inert={activeSection!=="production"}>
             <ProductionWorkspace
               key={catalog.activeProjectId}
               locale={locale}
+              workspaceId={activeSection==="production"?"workspace":null}
               catalog={catalog}
               onSelectProject={(projectId) => {
-                if(catalog.projects.some(project=>project.id===projectId))
+                if(projectId!==catalog.activeProjectId&&catalog.projects.some(project=>project.id===projectId)){
+                  if(directorDirty){
+                    setDirectorNavigationWarning("Save or discard the edited scene before switching projects. Your changes are still in Production.");
+                    return;
+                  }
+                  setDirectorEntry(null);setDirectorDirty(false);
                   saveCatalog({...catalog,activeProjectId:projectId});
+                }
               }}
               onOpenNav={() => setMobileNavOpen(true)}
-              onOpenProjects={() => setActiveSection("projects")}
-              onOpenResearch={() => setActiveSection("research")}
-              onOpenStoryboard={(productionId) => {setStoryboardOwnerId(productionId??catalog.activeProjectId);setActiveFeatureId("storyboard-planner");setActiveSection("create");}}
-              onOpenVisuals={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"visuals"});setActiveSection("video-director");}}
-              onOpenAudio={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"audio"});setActiveSection("video-director");}}
-              onOpenExport={(artifactId,productionId) => {setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"export"});setActiveSection("video-director");}}
+              onOpenProjects={() => selectSection("projects")}
+              onOpenResearch={() => selectSection("research")}
+              onOpenJobs={() => selectSection("jobs-qa")}
+              onOpenStoryboard={(productionId) => {
+                if(directorDirty){selectSection("create");return;}
+                setStoryboardOwnerId(productionId??catalog.activeProjectId);setActiveFeatureId("storyboard-planner");selectSection("create");
+              }}
+              onOpenVisuals={(artifactId,productionId) => setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"visuals"})}
+              onOpenAudio={(artifactId,productionId) => setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"audio"})}
+              onOpenDraft={(artifactId,productionId) => setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"draft"})}
+              onOpenExport={(artifactId,productionId) => setDirectorEntry({projectId:productionId??catalog.activeProjectId,artifactId,stage:"export"})}
+              directorEntry={directorEntry} directorDirty={directorDirty} onDirectorDirtyChange={setDirectorDirty}
               onCreateStoryboard={startEditorialStoryboard}
               onUseVideo={saveVideoIdea}
             />
-          ) : activeSection === "create" ? (
+          </div>}
+          {activeSection === "production" ? null : activeSection === "create" ? (
             <Workspace
               key={storyboardOwnerId??catalog.activeProjectId}
               locale={locale}
@@ -231,12 +259,6 @@ export function Shell() {
               toolGuideOpen={toolGuideOpen}
               onToolGuideOpenChange={setToolGuideOpen}
             />
-          ) : activeSection === "video-director" ? (
-            <VideoDirectorWorkspace
-              key={(directorEntry?.projectId??catalog.activeProjectId)+":"+(directorEntry?.artifactId??"manual")+":"+(directorEntry?.stage??"manual")}
-              locale={locale} projectId={directorEntry?.projectId??catalog.activeProjectId}
-              researchArtifactId={directorEntry?.artifactId}
-              focusStage={directorEntry?.stage}/>
           ) : activeSection === "research" ? (
             <ResearchWorkspace key={catalog.activeProjectId+":"+(researchHandoff?.title??"")} locale={locale}
               handoff={researchHandoff} onUseVideo={saveVideoIdea} onCreateStoryboard={startEditorialStoryboard}

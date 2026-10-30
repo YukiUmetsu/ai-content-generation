@@ -5,10 +5,12 @@ import { promisify } from "node:util";
 import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
 import { join, parse, resolve } from "node:path";
 import { probeNormalizedWav } from "./speech.mjs";
-import { writeSrt } from "./timeline.mjs";
+import { writeSceneSpeechSrt } from "./timeline.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const run = promisify(execFile);
 const SAMPLE_RATE = 48000;
+const NARRATION_DUCKING = Object.freeze({threshold:0.018,ratio:8,attackMs:70,releaseMs:350});
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const fail = (message) => { throw new Error(`Audio mastering failed: ${message}`); };
 
@@ -49,7 +51,11 @@ function readPcmData(bytes) {
 
 async function mediaExec(program, args, { signal, timeoutMs = 180000 } = {}) {
   try { return await run(program, args, { signal, timeout: timeoutMs, maxBuffer: 1024 * 1024 }); }
-  catch (error) { fail(`${program} failed (${error.code ?? error.signal ?? "unknown"}); inspect local audio tools.`); }
+  catch (error) {
+    const reason = mediaToolFailureReason(program, error);
+    if (!reason) throw error;
+    fail(reason);
+  }
 }
 
 async function saveVoiceStem(beats, timeline, outputPath) {
@@ -60,23 +66,44 @@ async function saveVoiceStem(beats, timeline, outputPath) {
     await handle.writeFile(pcmHeader(timeline.totalSamples));
     for (const range of timeline.beats) {
       const beat = byId.get(range.id);
-      if (!beat || !beat.wavPath) fail(`missing WAV speech for beat ${range.id}`);
-      let bytes;
-      try { bytes = await readFile(beat.wavPath); }
-      catch { fail(`missing or unreadable WAV speech for beat ${range.id}`); }
-      if (hash(bytes) !== beat.sha256) fail(`corrupt WAV speech hash for beat ${range.id}`);
-      const data = readPcmData(bytes);
-      if (data.length / 2 !== range.endSample - range.startSample || beat.samples !== data.length / 2) {
+      if (!beat) fail(`missing WAV speech for beat ${range.id}`);
+      const composite=Array.isArray(beat.turns);
+      const segments=composite?beat.turns:[beat];
+      if(!segments.length)fail(`scene ${range.id} has no speech turns`);
+      if(composite){
+        const expected=hash(Buffer.from(JSON.stringify({kind:"scene-speech-turns/v1",
+          turns:segments.map(turn=>({id:turn.id,sha256:turn.sha256,samples:turn.samples,
+            pauseAfterMs:turn.pauseAfterMs}))})));
+        if(expected!==beat.sha256)fail(`scene ${range.id} speech manifest changed after synthesis`);
+      }
+      let measuredSamples=0;
+      for(const segment of segments){
+        if(!segment.wavPath)fail(`missing WAV for ${segment.id}`);
+        let bytes;
+        try { bytes = await readFile(segment.wavPath); }
+        catch { fail(`missing or unreadable WAV speech for ${segment.id}`); }
+        if (hash(bytes) !== segment.sha256) fail(`corrupt WAV speech hash for ${segment.id}`);
+        const data = readPcmData(bytes);
+        if (segment.samples !== data.length / 2) fail(`measured speech samples changed for ${segment.id}`);
+        let hasSignal = false;
+        for (let i = 0; i < data.length; i += 2) {
+          const value = data.readInt16LE(i);
+          if (Math.abs(value) >= 32766) fail(`clipping in generated speech beat ${segment.id}`);
+          if (value !== 0) hasSignal = true;
+        }
+        if (!hasSignal) fail(`unexpected silence in generated narration beat ${segment.id}`);
+        await handle.writeFile(data);
+        measuredSamples+=segment.samples;
+        if(composite){
+          if(!Number.isSafeInteger(segment.pauseAfterMs)||segment.pauseAfterMs<0||segment.pauseAfterMs>3000)
+            fail(`invalid speech turn pause in ${segment.id}`);
+          const innerPause=segment.pauseAfterMs*48;
+          measuredSamples+=innerPause;
+          if(innerPause)await handle.writeFile(Buffer.alloc(innerPause*2));
+        }
+      }
+      if(measuredSamples!==range.endSample-range.startSample||measuredSamples!==beat.samples)
         fail(`measured speech sample count mismatch for beat ${range.id}`);
-      }
-      let hasSignal = false;
-      for (let i = 0; i < data.length; i += 2) {
-        const value = data.readInt16LE(i);
-        if (Math.abs(value) >= 32766) fail(`clipping in generated speech beat ${range.id}`);
-        if (value !== 0) hasSignal = true;
-      }
-      if (!hasSignal) fail(`unexpected silence in generated narration beat ${range.id}`);
-      await handle.writeFile(data);
       const pauseSamples = range.pauseEndSample - range.endSample;
       if (pauseSamples > 0) await handle.writeFile(Buffer.alloc(pauseSamples * 2));
     }
@@ -135,7 +162,9 @@ export async function renderMasterAudio(input, config) {
   if (!timeline || timeline.sampleRate !== SAMPLE_RATE || !Array.isArray(timeline.beats) || !Number.isSafeInteger(timeline.totalSamples)) fail("48 kHz measured speech timeline is required");
   if (!Array.isArray(beats) || beats.length !== timeline.beats.length) fail("narrated WAV beat count must match the timeline");
   if (!Array.isArray(sfx) || sfx.length > 200) fail("SFX declarations are required and must be bounded");
-  if (music) fail("music has not been implemented; do not silently omit a requested music bed");
+  const ambienceCount=sfx.filter(effect=>effect?.kind==="ambience").length;
+  if(ambienceCount>4)fail("maximum four sustained ambience beds per video");
+  if (music) fail("standalone music input is unsupported; select a reviewed music bed through Sound Studio's looping ambience track");
   if (!config?.outputDir) fail("an explicit output directory is required");
   const dir = resolve(config.outputDir);
   if (dir === parse(dir).root) fail("filesystem root is not a safe mastering output directory");
@@ -173,8 +202,7 @@ export async function renderMasterAudio(input, config) {
   }
   await mkdir(dir, { recursive: true });
   await saveVoiceStem(beats, timeline, voiceStemPath);
-  const captions = Object.fromEntries(beats.map((beat) => [beat.id, beat.text]));
-  const srtText = writeSrt(timeline, captions);
+  const srtText = writeSceneSpeechSrt(timeline, beats);
   await writeFile(srtPath, srtText, { flag: "wx" });
 
   for (const [index, effect] of sfx.entries()) {
@@ -199,7 +227,12 @@ export async function renderMasterAudio(input, config) {
   const args = ["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-i", voiceStemPath];
   for (const path of inputPaths) args.push("-i", path);
   const filters = [];
-  const lanes = ["[0:a]"];
+  // Duck only sustained beds. Keep the voice untouched, and give each bed a
+  // separate sidechain copy so SFX transient hits remain as authored.
+  if(ambienceCount)filters.push(`[0:a]asplit=${ambienceCount+1}[voice]${Array.from(
+    {length:ambienceCount},(_,i)=>`[voice-side-${i}]`).join("")}`);
+  const lanes = [ambienceCount?"[voice]":"[0:a]"];
+  let ambienceIndex=0;
   for (const [index, effect] of sfx.entries()) {
     const start=sfxCueSamples[effect.id],ambience=effect.kind==="ambience";
     const usable=ambience?timeline.totalSamples:Math.min(clipSamples[index],timeline.totalSamples-start);
@@ -214,12 +247,22 @@ export async function renderMasterAudio(input, config) {
     if(fadeIn>0)filtersForClip.push(`afade=t=in:st=0:d=${fadeIn}`);
     if(fadeOut>0)filtersForClip.push(`afade=t=out:st=${Math.max(0,clipDuration-fadeOut)}:d=${fadeOut}`);
     // FFmpeg's S suffix means exact audio samples, not milliseconds.
-    filtersForClip.push(`adelay=${start}S[s${index}]`);
+    filtersForClip.push(`adelay=${start}S${ambience?",asetpts=N/SR/TB":""}`+
+      `[${ambience?`bed-${index}`:`s${index}`}]`);
     filters.push(`[${index+1}:a]${filtersForClip.join(",")}`);
+    if(ambience){
+      // The real voice waveform (not an estimated section boundary) drives
+      // smooth, short attenuation. It releases during genuine speech pauses.
+      filters.push(`[bed-${index}][voice-side-${ambienceIndex++}]`+
+        `sidechaincompress=threshold=${NARRATION_DUCKING.threshold}:ratio=${NARRATION_DUCKING.ratio}`+
+        `:attack=${NARRATION_DUCKING.attackMs}:release=${NARRATION_DUCKING.releaseMs}:mix=1[s${index}]`);
+    }
     lanes.push(`[s${index}]`);
   }
   const mixed = lanes.length === 1 ? lanes[0] : `${lanes.join("")}amix=inputs=${lanes.length}:duration=longest:normalize=0`;
-  filters.push(`${mixed}${lanes.length === 1 ? "" : ","}atrim=end_sample=${timeline.totalSamples},alimiter=limit=0.84:latency=1,loudnorm=I=-16:TP=-1.5:LRA=11:linear=false,aresample=48000,atrim=end_sample=${timeline.totalSamples},asetpts=N/SR/TB[m]`);
+  // Sidechain and loudness filters may negotiate internally at 192 kHz.
+  // Convert back to the measured 48 kHz sample domain *before* sample trims.
+  filters.push(`${mixed}${lanes.length === 1 ? "" : ","}aresample=48000,atrim=end_sample=${timeline.totalSamples},alimiter=limit=0.84:latency=1,loudnorm=I=-16:TP=-1.5:LRA=11:linear=false,aresample=48000,atrim=end_sample=${timeline.totalSamples},asetpts=N/SR/TB[m]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[m]", "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", wavPath);
   await mediaExec(ffmpeg, args, { signal: config.signal });
   const measured = await probeNormalizedWav(wavPath, { ffprobe, signal: config.signal });
@@ -228,6 +271,7 @@ export async function renderMasterAudio(input, config) {
   return {
     wavPath, voiceStemPath, srtPath, srtText,
     samples: measured.samples, loudness, sfxCueSamples: { ...sfxCueSamples },
+    ducking:ambienceCount?{mode:"voice-sidechain",beds:ambienceCount,...NARRATION_DUCKING}:null,
     stems: { voice: voiceStemPath, effects: inputPaths }, findings: rightsFindings,
   };
 }

@@ -7,7 +7,7 @@ const hash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(valu
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
 
 /** No caller can set commercialReady. A separate verified human-review workflow is mandatory. */
-export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, toolVersions, reviewStatus = "not-reviewed", captionReadability }) {
+export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, toolVersions, reviewStatus = "not-reviewed", captionReadability, visualCoverage }) {
   const fps = job?.destination?.fps;
   if (!integer(fps?.num, 1) || !integer(fps?.den, 1) || fps.num / fps.den > 120) fail("invalid rational FPS");
   if (job.destination.presetId !== "youtube") fail("unsupported release output profile");
@@ -37,7 +37,7 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
   }
   if (frameCursor !== render.frameCount) fail("the concatenated frame range is incomplete");
   const reviewStills = render.reviewStills;
-  if (!Array.isArray(reviewStills) || reviewStills.length < 2 || reviewStills.length > 5 ||
+  if (!Array.isArray(reviewStills) || reviewStills.length < 2 || reviewStills.length > 64 ||
     reviewStills[0].frame !== 0 || reviewStills.at(-1).frame !== render.frameCount - 1 ||
     reviewStills.some((still, i) => !integer(still.frame) || still.frame >= render.frameCount ||
       (i > 0 && still.frame <= reviewStills[i - 1].frame) || !hash(still.sha256) ||
@@ -59,7 +59,7 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
     rightsVerified, reviewStatus, durationSeconds, frameCount: mp4.frameCount,
     audioVideoDriftSeconds: Math.abs(durationSeconds - videoFromFrames), namedPayoffFrame,
     peakScratchBytes: render.peakScratchBytes, loudness: audio.loudness,
-    artifacts, segments: render.segmentHashes, reviewStills, tools: toolVersions,
+    artifacts, segments: render.segmentHashes, reviewStills, ...(visualCoverage ? { visualCoverage } : {}), tools: toolVersions,
     findings: [...audio.findings, ...(captionReadability?.findings ?? []), {
       severity: "warning", code: "human-review-required",
       message: "Watch and listen to the entire exported film at normal speed and verify commercial rights before publication.",

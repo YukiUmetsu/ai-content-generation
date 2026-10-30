@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promise
 import { join, parse, resolve } from "node:path";
 import { synthesizeFishBeat } from "./fish.mjs";
 import { synthesizeLocalBeat } from "./local.mjs";
+import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const execFileAsync = promisify(execFile);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
@@ -16,7 +17,9 @@ async function execMedia(program, args, { signal, timeoutMs = 60000 } = {}) {
   try {
     return await execFileAsync(program, args, { signal, timeout: timeoutMs, maxBuffer: 256 * 1024 });
   } catch (error) {
-    fail(`${program} failed (${error.code ?? error.signal ?? "unknown"}). Check the installed media tools and source WAV.`);
+    const reason = mediaToolFailureReason(program, error);
+    if (!reason) throw error;
+    fail(reason);
   }
 }
 
@@ -60,7 +63,7 @@ function validateProbe(probe) {
 
 /**
  * @param {object} job validated video-production-job v1
- * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,paidUsageApproved?:boolean,budgetUsd?:number,direction?:object}} options
+ * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],paidUsageApproved?:boolean,budgetUsd?:number,direction?:object,skipInvalidPriorCache?:boolean}} options
  */
 export async function synthesizeNarration(job, options) {
   const voice = job?.voice;
@@ -74,6 +77,57 @@ export async function synthesizeNarration(job, options) {
     fail("Fish requires explicit network and voice/text transmission consent, including on cache hits");
   }
   if (job.approval === "approved" && (voice.licenseStatus !== "verified" || job.policy?.commercialRightsVerified !== true)) fail("approved narration requires verified commercial voice rights");
+
+  // A visual beat remains one continuous scene. Its speech turns have their
+  // own stable cache/Jobs identities and are assembled into one scene audio
+  // range only after all provider results have been checked.
+  const units=[];
+  for(const beat of job.beats){
+    if(beat.speechTurns===undefined){units.push(beat);continue;}
+    if(beat.speaker!==undefined||!Array.isArray(beat.speechTurns)||
+      beat.speechTurns.length<2||beat.speechTurns.length>16)
+      fail("multi-speaker scenes require 2–16 explicitly ordered turns and no scene-wide voice");
+    const seen=new Set();
+    for(const turn of beat.speechTurns){
+      if(!turn||typeof turn!=="object"||Array.isArray(turn)||
+        Object.keys(turn).some(key=>!["id","narration","speaker","pauseAfterMs"].includes(key))||
+        typeof turn.id!=="string"||!/^[a-zA-Z0-9_-]{1,80}$/u.test(turn.id)||
+        beat.id.length+turn.id.length+1>127||seen.has(turn.id)||
+        !valid(turn.narration)||turn.narration.length>2000||/[\u0000-\u001f\u007f]/u.test(turn.narration)||
+        !Number.isSafeInteger(turn.pauseAfterMs)||turn.pauseAfterMs<0||turn.pauseAfterMs>3000)
+        fail("invalid dialogue turn identity, text or pause; reopen the scene editor");
+      seen.add(turn.id);
+      units.push({...turn,id:`${beat.id}.${turn.id}`,eventIds:[]});
+    }
+    if(beat.speechTurns.map(turn=>turn.narration.trim()).join(" ")!==beat.narration?.trim())
+      fail("scene narration differs from the approved dialogue turn transcript");
+  }
+  if(units.length>160)fail("too many speech turns for one video (maximum 160); split the conversation before submitting a voice request");
+
+  // Non-default cast voices require separate, explicit authorization. Validate
+  // ALL beats before any TTS or cache reuse so a late unauthorized character
+  // cannot leave earlier provider requests half-completed.
+  if (options.authorizedVoiceIds !== undefined &&
+      (!Array.isArray(options.authorizedVoiceIds) || options.authorizedVoiceIds.length > 16 ||
+        options.authorizedVoiceIds.some(id => typeof id !== "string" || !id.trim() ||
+          id.length > 128 || id.trim() !== id || /[\u0000-\u001f\u007f]/u.test(id))))
+    fail("authorized cast voice IDs must be a bounded list of nonsecret provider references");
+  const authorized = new Set(options.authorizedVoiceIds ?? []);
+  for (const beat of units) {
+    if (beat?.speaker === undefined) continue;
+    const speaker = beat.speaker;
+    if (!speaker || typeof speaker !== "object" || Array.isArray(speaker) ||
+        typeof speaker.id !== "string" || !/^[a-zA-Z0-9_-]{1,80}$/u.test(speaker.id) ||
+        !["narrator", "character"].includes(speaker.role) ||
+        typeof speaker.voiceId !== "string" || !speaker.voiceId.trim() ||
+        speaker.voiceId.length > 128 || speaker.voiceId.trim() !== speaker.voiceId ||
+        /[\u0000-\u001f\u007f]/u.test(speaker.voiceId))
+      fail("invalid beat speaker assignment; reopen the cast editor");
+    if (speaker.voiceId !== voice.voiceId && !authorized.has(speaker.voiceId))
+      fail("an additional speaker voice is not authorized; review each cast voice before generating speech");
+    if (job.approval === "approved" && speaker.voiceId !== voice.voiceId)
+      fail("commercial multi-voice export requires individually verified cast voice rights; use a private draft until rights can be verified");
+  }
 
   const root = resolve(options.cacheRoot);
   if (parse(root).root === root) fail("filesystem root cannot be used as a narration cache");
@@ -92,17 +146,23 @@ export async function synthesizeNarration(job, options) {
     }, { signal: options.signal }));
 
   const outputs = [];
-  for (const beat of job.beats) {
+  for (const beat of units) {
     if (options.signal?.aborted) fail("narration synthesis cancelled");
     if (!valid(beat?.id) || !valid(beat?.narration)) fail("each beat needs an ID and nonempty narration");
+    const selectedVoiceId = beat.speaker?.voiceId ?? voice.voiceId;
+    const speakerId = beat.speaker?.id ?? "narrator";
+    const speakerRole = beat.speaker?.role ?? "narrator";
     const signature = {
       schemaVersion: 1, text: beat.narration.trim().normalize("NFC"),
       locale: job.locale, provider: options.provider, providerRevision: options.providerRevision,
-      modelId: voice.modelId, voiceId: voice.voiceId, profileId: voice.profileId,
+      modelId: voice.modelId, voiceId: selectedVoiceId, profileId: voice.profileId,
+      ...(beat.speaker ? {speakerId,speakerRole} : {}),
       direction, encoding: "wav/pcm_s16le/mono/48000", approval: job.approval,
       licenseStatus: voice.licenseStatus, commercialRightsVerified: job.policy?.commercialRightsVerified === true,
     };
     const key = sha256(JSON.stringify(signature));
+    const sceneAttempt=await options.sceneJobs?.beginScene({kind:"narration-scene",sceneId:beat.id,fingerprint:key});
+    try {
     const keyDir = join(root, "narration", key.slice(0, 2), key);
     const wavPath = join(keyDir, "speech.wav");
     const metaPath = join(keyDir, "metadata.json");
@@ -142,7 +202,12 @@ export async function synthesizeNarration(job, options) {
           fail("previous narration cache samples mismatch for beat " + beat.id);
         earlier = {meta, wavBytes};
       } catch (error) {
-        if (error?.code !== "ENOENT") throw error;
+        const invalidPrior=error instanceof SyntaxError ||
+          /^Narration preparation failed: previous narration cache /u.test(error?.message??"");
+        if(error?.code!=="ENOENT"&&!(options.skipInvalidPriorCache===true&&invalidPrior&&!options.signal?.aborted))throw error;
+        // A draft retry may discard a corrupt, untrusted cache entry and
+        // synthesize again under fresh voice consent. A trusted released
+        // cache still fails closed on mismatched provenance by default.
       }
       if (earlier) {
         await mkdir(keyDir, { recursive:true });
@@ -152,15 +217,16 @@ export async function synthesizeNarration(job, options) {
         options.onReuse?.({beatId:beat.id,source:"previous-verified-cache"});
       }
     }
+    const reused=Boolean(cached);
     if (!cached) {
       await mkdir(keyDir, { recursive: true });
       const staging = await mkdtemp(join(keyDir, ".staging-"));
       try {
-        const request = { text: signature.text, locale: job.locale, voiceId: voice.voiceId, modelId: voice.modelId, direction };
+        const request = { text: signature.text, locale: job.locale, voiceId: selectedVoiceId, modelId: voice.modelId, direction };
         const result = await synthesize(request, beat.id);
         if (!(result?.audio instanceof Uint8Array) || result.audio.length === 0 ||
           result.provider !== options.provider || result.modelId !== voice.modelId ||
-          result.voiceId !== voice.voiceId || result.encoding !== "wav") fail(`provider returned invalid speech identity/audio for beat ${beat.id}`);
+          result.voiceId !== selectedVoiceId || result.encoding !== "wav") fail(`provider returned invalid speech identity/audio for beat ${beat.id}`);
         if (options.provider === "local" && result.engineVersion !== options.providerRevision) fail("local engine version differs from the pinned cache revision");
         const generatedPath = join(staging, "generated.wav");
         const outputPath = join(staging, "normalized.wav");
@@ -188,10 +254,30 @@ export async function synthesizeNarration(job, options) {
     outputs.push({
       id: beat.id, text: beat.narration, samples: cached.samples,
       wavPath, sha256: cached.sha256, provider: options.provider,
-      providerRevision: options.providerRevision, modelId: voice.modelId, voiceId: voice.voiceId,
+      providerRevision: options.providerRevision, modelId: voice.modelId, voiceId: selectedVoiceId,
+      speakerId, speakerRole,
       licenseStatus: cached.licenseStatus, commercialRightsVerified: cached.commercialRightsVerified,
       pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds ?? [],
     });
+    if(sceneAttempt)await options.sceneJobs.completeScene(sceneAttempt,{
+      sha256:cached.sha256,samples:cached.samples,reused});
+    } catch(error){
+      if(sceneAttempt)await options.sceneJobs.failScene(sceneAttempt,error);
+      throw error;
+    }
   }
-  return outputs;
+  const completed=new Map(outputs.map(unit=>[unit.id,unit]));
+  return job.beats.map(beat=>{
+    if(beat.speechTurns===undefined)return completed.get(beat.id);
+    const turns=beat.speechTurns.map(turn=>completed.get(`${beat.id}.${turn.id}`));
+    const samples=turns.reduce((total,turn)=>total+turn.samples+turn.pauseAfterMs*48,0);
+    if(!Number.isSafeInteger(samples)||samples<1)fail("scene speech exceeds safe sample count");
+    // An exact composite manifest hash; the audio writer independently checks
+    // every turn's WAV hash and measured samples before creating the stem.
+    const sha256Composite=sha256(JSON.stringify({kind:"scene-speech-turns/v1",
+      turns:turns.map(turn=>({id:turn.id,sha256:turn.sha256,samples:turn.samples,
+        pauseAfterMs:turn.pauseAfterMs}))}));
+    return {id:beat.id,text:beat.narration,samples,sha256:sha256Composite,
+      pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds??[],turns};
+  });
 }

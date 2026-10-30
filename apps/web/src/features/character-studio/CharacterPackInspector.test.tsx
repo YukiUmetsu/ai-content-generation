@@ -3,7 +3,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CharacterPackInspector } from "./CharacterPackInspector";
 import { inspectCharacterZip } from "./character-pack";
 import { listCharacterDrafts, loadCharacterDraft, saveCharacterDraft } from "./character-drafts-api";
+import {loadSavedCharacterVoices,writeSavedCharacterVoices} from "./character-voice-bindings-api";
+import {readCharacterVoiceBindings,type CharacterVoiceBindings} from "./character-voice-bindings";
 import type { InspectedCharacterPack } from "./character-pack";
+import { loadStarterArchive, STARTER_CHARACTERS } from "./starter-characters";
 
 vi.mock("./character-pack", async importOriginal => {
   const module = await importOriginal<typeof import("./character-pack")>();
@@ -13,6 +16,10 @@ vi.mock("./character-drafts-api", async importOriginal => {
   const module = await importOriginal<typeof import("./character-drafts-api")>();
   return { ...module, listCharacterDrafts: vi.fn(), loadCharacterDraft: vi.fn(), saveCharacterDraft: vi.fn() };
 });
+vi.mock("./character-voice-bindings-api",()=>({loadSavedCharacterVoices:vi.fn(),writeSavedCharacterVoices:vi.fn()}));
+vi.mock("./starter-characters",async importOriginal=>({
+  ...(await importOriginal<typeof import("./starter-characters")>()),loadStarterArchive:vi.fn(),
+}));
 
 const sprite = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
 const fixture: InspectedCharacterPack = {
@@ -28,12 +35,20 @@ const fixture: InspectedCharacterPack = {
   images: new Map([["layers/torso.png", sprite]]), issues: [], compressedBytes: 500, expandedBytes: 1200,
 };
 const existingArrayBuffer = Object.getOwnPropertyDescriptor(File.prototype, "arrayBuffer");
+let storedVoices:{revision:number;registry:CharacterVoiceBindings|null};
 
 beforeEach(() => {
+  storedVoices={revision:0,registry:null};
+  vi.mocked(loadSavedCharacterVoices).mockReset().mockImplementation(async()=>storedVoices);
+  vi.mocked(writeSavedCharacterVoices).mockReset().mockImplementation(async(_projectId,revision,registry)=>{
+    if(revision!==storedVoices.revision)throw Error("Character assignments changed in another editor.");
+    storedVoices={revision:revision+1,registry};return storedVoices;
+  });
   vi.mocked(inspectCharacterZip).mockReset();
   vi.mocked(listCharacterDrafts).mockReset().mockResolvedValue([]);
   vi.mocked(loadCharacterDraft).mockReset();
   vi.mocked(saveCharacterDraft).mockReset();
+  vi.mocked(loadStarterArchive).mockReset();
   vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:local-character"), revokeObjectURL: vi.fn() });
   Object.defineProperty(File.prototype, "arrayBuffer", { configurable: true, value: vi.fn(async () => new ArrayBuffer(8)) });
 });
@@ -44,6 +59,157 @@ afterEach(() => {
 });
 
 describe("CharacterPackInspector", () => {
+  it("shows real Pip and Quill rigs by default and adds a tested starter to this project in one click",async()=>{
+    const pip=STARTER_CHARACTERS[0],bytes=new ArrayBuffer(64);
+    const saved={id:"character-draft-"+"7".repeat(32),projectId:"project-local",
+      characterId:"pip",revision:pip.definition.revision,archiveSha256:"a".repeat(64),
+      sizeBytes:bytes.byteLength,status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(loadStarterArchive).mockResolvedValue(bytes);
+    vi.mocked(inspectCharacterZip).mockResolvedValue({...fixture,definition:{...fixture.definition,
+      characterId:"pip",revision:pip.definition.revision}});
+    vi.mocked(saveCharacterDraft).mockResolvedValue(saved);
+    render(<CharacterPackInspector locale="en" projectId="project-local"/>);
+    expect(screen.getByLabelText("Included starter characters")).toBeInTheDocument();
+    expect(screen.getByLabelText("Pip original animated character")).toBeInTheDocument();
+    expect(screen.getByLabelText("Quill original animated character")).toBeInTheDocument();
+    const addPip=screen.getByRole("button",{name:"Use Pip"});
+    await waitFor(()=>expect(addPip).toBeEnabled());
+    fireEvent.click(addPip);
+    await waitFor(()=>expect(saveCharacterDraft).toHaveBeenCalledWith("project-local","pip",pip.definition.revision,bytes));
+    expect(await screen.findByText("Draft saved")).toBeInTheDocument();
+    expect(loadStarterArchive).toHaveBeenCalledWith("pip");
+    expect(screen.getByRole("button",{name:"Open saved rig"})).toBeInTheDocument();
+    expect(vi.mocked(saveCharacterDraft)).toHaveBeenCalledTimes(1);
+  });
+
+  it("reopens an existing Pip without replacing its custom revision or calling the starter archive",async()=>{
+    const custom={id:"character-draft-"+"8".repeat(32),projectId:"project-local",characterId:"pip",
+      revision:"owner-v5",archiveSha256:"b".repeat(64),sizeBytes:64,status:"unverified" as const,
+      createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([custom]);
+    vi.mocked(loadCharacterDraft).mockResolvedValue(new ArrayBuffer(64));
+    vi.mocked(inspectCharacterZip).mockResolvedValue({...fixture,
+      definition:{...fixture.definition,characterId:"pip",revision:custom.revision}});
+    render(<CharacterPackInspector locale="en" projectId="project-local"/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Open saved rig"}));
+    await waitFor(()=>expect(loadCharacterDraft).toHaveBeenCalledWith("project-local",custom));
+    expect(loadStarterArchive).not.toHaveBeenCalled();
+    expect(saveCharacterDraft).not.toHaveBeenCalled();
+  });
+
+  it("shows a recoverable error when a local bundled ZIP is missing and never claims it saved",async()=>{
+    vi.mocked(loadStarterArchive).mockRejectedValue(Error("Pip's built-in ZIP is missing (HTTP 404)."));
+    render(<CharacterPackInspector locale="en" projectId="project-local"/>);
+    const addPip=screen.getByRole("button",{name:"Use Pip"});
+    await waitFor(()=>expect(addPip).toBeEnabled());
+    fireEvent.click(addPip);
+    expect(await screen.findByText(/built-in ZIP is missing.*404/u)).toBeInTheDocument();
+    expect(saveCharacterDraft).not.toHaveBeenCalled();
+  });
+
+  it("binds a project favorite voice to a saved character revision without sending audio", async () => {
+    const projectId="character-voice-test";
+    const savedDraft={
+      id:"character-draft-"+"c".repeat(32),projectId,characterId:"pip",revision:"3",
+      archiveSha256:"a".repeat(64),sizeBytes:80,status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z",
+    };
+    vi.mocked(listCharacterDrafts).mockResolvedValue([savedDraft]);
+    try {
+      render(<CharacterPackInspector locale="en" projectId={projectId} />);
+      const select=await screen.findByRole("combobox",{name:"Voice for pip, revision 3"});
+      await waitFor(()=>expect(select).toBeEnabled());
+      fireEvent.change(select,{target:{value:"1"}});
+      await waitFor(()=>expect(select).toHaveValue("1"));
+      const stored=JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null");
+      expect(stored.bindings).toMatchObject([{draftId:savedDraft.id,characterId:"pip",revision:"3",
+        voice:{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94"}}]);
+      fireEvent.change(select,{target:{value:""}});
+      await waitFor(()=>expect(JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null").bindings).toEqual([]));
+      localStorage.setItem("contentgen:project-voice-favorites:v1:"+projectId,JSON.stringify({
+        schemaVersion:1,projectId,voices:[{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94",
+          name:"Changed in another tab",gender:"unspecified",situation:"narration",language:"und"}],
+      }));
+      fireEvent.change(select,{target:{value:"1"}});
+      expect(screen.getByRole("alert")).toHaveTextContent("changed in another tab");
+      expect(JSON.parse(localStorage.getItem("contentgen:character-voices:v1:"+projectId)??"null").bindings).toEqual([]);
+    } finally {
+      localStorage.removeItem("contentgen:character-voices:v1:"+projectId);
+      localStorage.removeItem("contentgen:project-voice-favorites:v1:"+projectId);
+    }
+  });
+
+  it("requires an explicit choice before replacing browser character voices with server data",async()=>{
+    const projectId="voice-conflict", draft={id:"character-draft-"+"b".repeat(32),projectId,
+      characterId:"quill",revision:"v1",archiveSha256:"d".repeat(64),sizeBytes:80,
+      status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    const browser:{schemaVersion:1;projectId:string;bindings:[]}={schemaVersion:1,projectId,bindings:[]};
+    const server=JSON.parse(JSON.stringify(browser)) as CharacterVoiceBindings;
+    server.bindings.push({draftId:draft.id,characterId:draft.characterId,revision:draft.revision,
+      voice:{provider:"fish",voiceId:"6ab4c6b0f37f4243a99046478647be94",
+        name:"Fish default",gender:"unspecified",situation:"narration",language:"und"}});
+    localStorage.setItem("contentgen:character-voices:v1:"+projectId,JSON.stringify(browser));
+    storedVoices={revision:3,registry:server};
+    try{
+      render(<CharacterPackInspector locale="en" projectId={projectId}/>);
+      expect(await screen.findByRole("alert")).toHaveTextContent(/differ between this browser and the server/);
+      expect(localStorage.getItem("contentgen:character-voices:v1:"+projectId)).toBe(JSON.stringify(browser));
+      const select=screen.getByRole("combobox",{name:"Voice for quill, revision v1"});
+      expect(select).toBeDisabled();
+      fireEvent.click(screen.getByRole("button",{name:"Use server assignments"}));
+      expect(select).toHaveValue("1");
+      expect(readCharacterVoiceBindings(projectId).bindings).toHaveLength(1);
+    }finally{localStorage.removeItem("contentgen:character-voices:v1:"+projectId);}
+  });
+
+  it("keeps the voice selector disabled and offers retry when the character voice backend fails",async()=>{
+    vi.mocked(loadSavedCharacterVoices).mockRejectedValue(Error("Character voice backend offline"));
+    const projectId="voice-offline",draft={id:"character-draft-"+"c".repeat(32),projectId,
+      characterId:"pip",revision:"v1",archiveSha256:"a".repeat(64),sizeBytes:80,
+      status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    render(<CharacterPackInspector locale="en" projectId={projectId}/>);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/backend offline/);
+    expect(screen.getByRole("combobox",{name:"Voice for pip, revision v1"})).toBeDisabled();
+    expect(screen.getByRole("button",{name:"Retry character voice sync"})).toBeEnabled();
+  });
+
+  it("does not update the browser assignment when a stale server revision rejects the save",async()=>{
+    const projectId="voice-stale",draft={id:"character-draft-"+"f".repeat(32),projectId,
+      characterId:"pip",revision:"v1",archiveSha256:"a".repeat(64),sizeBytes:80,
+      status:"unverified" as const,createdAt:"2026-10-28T00:00:00Z"};
+    vi.mocked(listCharacterDrafts).mockResolvedValue([draft]);
+    render(<CharacterPackInspector locale="en" projectId={projectId}/>);
+    const select=await screen.findByRole("combobox",{name:"Voice for pip, revision v1"});
+    await waitFor(()=>expect(select).toBeEnabled());
+    vi.mocked(writeSavedCharacterVoices).mockRejectedValueOnce(Error("Character assignments changed in another editor."));
+    fireEvent.change(select,{target:{value:"1"}});
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed in another editor/);
+    expect(select).toHaveValue("");
+    expect(readCharacterVoiceBindings(projectId).bindings).toEqual([]);
+    localStorage.removeItem("contentgen:character-voices:v1:"+projectId);
+  });
+
+  it("explains the real manifest schema and offers both importable ZIP and matching JSON downloads", () => {
+    const clicked = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      render(<CharacterPackInspector locale="en" projectId="project-local" />);
+      fireEvent.click(screen.getByText(/ZIP format and rig instructions · examples & downloads/));
+      expect(screen.getByText("1 · Arrange the ZIP files")).toBeInTheDocument();
+      expect(screen.getByText("2 · What each field means")).toBeInTheDocument();
+      expect(screen.getByText("3 · Complete example character.json")).toBeInTheDocument();
+      expect(screen.getByLabelText("Example character.json")).toHaveTextContent('"characterId": "example-sprite"');
+      expect(screen.getByText(/ZIP ≤16 MB compressed/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Download example character.json" }));
+      fireEvent.click(screen.getByRole("button", { name: "Download example ZIP" }));
+      expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
+      expect(clicked).toHaveBeenCalledTimes(2);
+      vi.mocked(URL.createObjectURL).mockImplementationOnce(() => { throw Error("Downloads are blocked."); });
+      fireEvent.click(screen.getByRole("button", { name: "Download example ZIP" }));
+      expect(screen.getByRole("alert")).toHaveTextContent("Downloads are blocked.");
+    } finally { clicked.mockRestore(); }
+  });
+
   it("previews safely inspected layers and revokes temporary URLs when unmounted", async () => {
     vi.mocked(inspectCharacterZip).mockResolvedValue(fixture);
     const { unmount } = render(<CharacterPackInspector locale="en" projectId="project-local" />);

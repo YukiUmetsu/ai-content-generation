@@ -1,5 +1,5 @@
 /** Same-origin, local-only Studio bridge for third-party CC0 SFX. */
-import {approveSfx,discoverSfx,listApprovedSfx,resolveSceneSfxChoices,setSceneSfxChoice}
+import {approveSfx,discoverMusic,discoverSfx,listApprovedSfx,resolveSceneSfxChoices,setSceneSfxChoice}
   from "./video-production/sfx-discovery.mjs";
 import {setSoundDesign,resolveSoundDesign} from "./video-production/sound-design.mjs";
 import {readFile} from "node:fs/promises";
@@ -12,7 +12,8 @@ const projectEditorFields=(item,fields)=>Object.fromEntries(fields.filter(key=>
   Object.hasOwn(item,key)).map(key=>[key,item[key]]));
 function forSoundEditor(design){
   return {layers:design.layers.map(item=>projectEditorFields(item,editorFields)),
-    ambience:design.ambience?projectEditorFields(design.ambience,mixFields):null};
+    ambience:design.ambience?projectEditorFields(design.ambience,mixFields):null,
+    ambienceMode:design.ambienceMode??(design.ambience?"pin":"off")};
 }
 function send(res,status,value){res.writeHead(status,{"Content-Type":"application/json; charset=utf-8",
   "Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer"});
@@ -39,6 +40,10 @@ export async function handleSfxDiscoveryRequest(req,res,deps={}){
       const payload=await jsonBody(req);
       if(payload?.allowExternalSearch!==true)throw Error("Explicit SFX search approval required.");
       send(res,200,await (deps.search??discoverSfx)(payload,opts));
+    }else if(req.method==="POST"&&pathname==="/suggest-music"){
+      const payload=await jsonBody(req);
+      if(payload?.allowExternalSearch!==true)throw Error("Explicit music search approval required.");
+      send(res,200,await (deps.searchMusic??discoverMusic)(payload,opts));
     }else if(req.method==="POST"&&pathname==="/approve"){
       const payload=await jsonBody(req);
       if(payload?.confirmRights!==true||payload?.confirmDownload!==true)
@@ -69,11 +74,12 @@ export async function handleSfxDiscoveryRequest(req,res,deps={}){
       send(res,200,await (deps.choice??setSceneSfxChoice)(payload,opts));
     }else if(req.method==="POST"&&pathname==="/sound-design"){
       const payload=await jsonBody(req),action=payload?.action;
-      if(!ID.test(payload?.projectId??"")||!["resolve","upsert","remove","ambience"].includes(action))
+      if(!ID.test(payload?.projectId??"")||!["resolve","upsert","remove","ambience","auto-ambience"].includes(action))
         throw Error("Invalid sound-design request.");
       const accepted=new Set(action==="resolve"?["action","projectId","bundle"]:
         action==="upsert"?["action","projectId","layerId","shotId","assetId","sha256","trigger","offsetMs","gainDb","fadeInMs","fadeOutMs"]:
         action==="remove"?["action","projectId","layerId"]:
+        action==="auto-ambience"?["action","projectId"]:
         ["action","projectId","assetId","sha256","gainDb","fadeInMs","fadeOutMs"]);
       if(Object.keys(payload).some(key=>!accepted.has(key)))throw Error("Unexpected sound-design input field.");
       if(action==="resolve")send(res,200,forSoundEditor(await (deps.soundDesignRead??resolveSoundDesign)(payload,opts)));

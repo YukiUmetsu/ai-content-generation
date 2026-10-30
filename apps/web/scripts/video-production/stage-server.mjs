@@ -1,7 +1,8 @@
 /** Private, ephemeral static host for the built Kumiki capture page and a validated plan. */
 import { createServer } from "node:http";
+import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { readFile, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
 const mime = {
@@ -54,12 +55,42 @@ export async function fingerprintBuiltStage(distRoot) {
  * @param {{distRoot:string,validatedPlan:object,host?:'127.0.0.1'}} options
  * @returns {Promise<{url:string,close:()=>Promise<void>}>}
  */
-export async function startLocalStageServer({ distRoot, validatedPlan, host = "127.0.0.1" }) {
+export async function startLocalStageServer({ distRoot, validatedPlan, approvedMedia = [], characterAssets = [], host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") throw new Error("Export stage must bind a loopback-only host.");
   if (typeof distRoot !== "string" || !distRoot.trim() || !validatedPlan || typeof validatedPlan !== "object") {
     throw new Error("A built page directory and validated plan are required.");
   }
   const root = await realpath(resolve(distRoot));
+  if (!Array.isArray(approvedMedia) || approvedMedia.length > 60) throw Error("Invalid approved scene media list.");
+  const media = new Map();
+  for (const asset of approvedMedia) {
+    const extension = asset?.assetType === "photo" ? "jpg" : asset?.assetType === "video" ? "mp4" : null;
+    if (!extension || !/^[a-f0-9]{64}$/u.test(asset?.sha256 ?? "") ||
+      asset.url !== `/__video_media/${asset.sha256}.${extension}` ||
+      typeof asset.path !== "string" || !asset.path.startsWith("/") || media.has(asset.url))
+      throw Error("Invalid or duplicate approved scene media path.");
+    media.set(asset.url, { ...asset, verifiedKey: null });
+  }
+  // Only verified, immutable ZIP layer bytes may enter the private capture host.
+  // Do not serve arbitrary project files or filesystem paths to Chromium.
+  if (!Array.isArray(characterAssets) || characterAssets.length > 256)
+    throw Error("Character export has too many image layers.");
+  const characterImages = new Map();
+  let characterBytes = 0;
+  for (const item of characterAssets) {
+    const ext = item?.mediaType === "image/png" ? "png" : item?.mediaType === "image/webp" ? "webp" : null;
+    if (!ext || !Buffer.isBuffer(item.bytes) || item.bytes.length < 12 ||
+      !/^[a-f0-9]{64}$/.test(item.sha256 ?? "") ||
+      item.url !== `/__character_assets/${item.sha256}.${ext}`)
+      throw Error("Invalid Character Studio export image.");
+    if (createHash("sha256").update(item.bytes).digest("hex") !== item.sha256)
+      throw Error("Character Studio export image checksum mismatch.");
+    characterBytes += item.bytes.length;
+    if (characterBytes > 64 * 1024 * 1024) throw Error("Character export image budget exceeded.");
+    const previous = characterImages.get(item.url);
+    if (previous && !previous.bytes.equals(item.bytes)) throw Error("Character image hash collision.");
+    characterImages.set(item.url, { bytes: item.bytes, mediaType: item.mediaType });
+  }
   const buildHash = await fingerprintBuiltStage(root);
   const entry = await stat(join(root, "video-export.html"));
   if (!entry.isFile()) throw new Error("Built video-export.html is required before starting capture.");
@@ -76,6 +107,62 @@ export async function startLocalStageServer({ distRoot, validatedPlan, host = "1
     catch { send(400, "Malformed path"); return; }
     if (pathname === "/__video_job") { send(200, json, mime[".json"]); return; }
     if (pathname === "/__video_build") { send(200, JSON.stringify({ sha256: buildHash }), mime[".json"]); return; }
+    if (pathname.startsWith("/__character_assets/")) {
+      const layer = characterImages.get(pathname);
+      if (!layer) { send(404); return; }
+      send(200, layer.bytes, layer.mediaType);
+      return;
+    }
+    if (pathname.startsWith("/__video_media/")) {
+      const asset = media.get(pathname);
+      if (!asset) { send(404); return; }
+      try {
+        const metadata = await lstat(asset.path, { bigint: true });
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 12n ||
+          metadata.size > 80n * 1024n * 1024n) { send(404); return; }
+        const key = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+        if (key !== asset.verifiedKey) {
+          // Frozen files are immutable during capture. Recheck their checksum
+          // only if inode, size or nanosecond modification/change time moves;
+          // hashing an 80 MB MP4 for every 30-fps frame is prohibitively slow.
+          const contents = await readFile(asset.path);
+          if (createHash("sha256").update(contents).digest("hex") !== asset.sha256) { send(404); return; }
+          asset.verifiedKey = key;
+        }
+        const size = Number(metadata.size);
+        const type = asset.assetType === "photo" ? "image/jpeg" : "video/mp4";
+        let start = 0, end = size - 1, code = 200;
+        if (request.headers.range !== undefined) {
+          const range = /^bytes=(\d+)-(\d*)$/u.exec(request.headers.range);
+          const suffix = /^bytes=-(\d+)$/u.exec(request.headers.range);
+          if ((!range && !suffix) || (range && (!Number.isSafeInteger(Number(range[1])) ||
+            (range[2] && !Number.isSafeInteger(Number(range[2]))))) ||
+            (suffix && (!Number.isSafeInteger(Number(suffix[1])) || Number(suffix[1]) < 1))) {
+            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${size}` });
+            response.end(); return;
+          }
+          if (suffix) start = Math.max(0, size - Number(suffix[1]));
+          else { start = Number(range[1]); end = range[2] ? Math.min(size - 1, Number(range[2])) : end; }
+          if (start > end) {
+            response.writeHead(416, { ...securityHeaders, "Content-Range": `bytes */${size}` });
+            response.end(); return;
+          }
+          code = 206;
+        }
+        response.writeHead(code, { ...securityHeaders, "Content-Type": type, "Accept-Ranges": "bytes",
+          "Content-Length": end - start + 1,
+          ...(code === 206 ? { "Content-Range": `bytes ${start}-${end}/${size}` } : {}) });
+        // Stream just the requested portion rather than copying the whole MP4
+        // into every response. Errors abort capture instead of serving a
+        // truncated, apparently successful video asset.
+        const stream = createReadStream(asset.path, { start, end });
+        // Chromium can abandon a long-running MP4 range when seeking elsewhere
+        // or when the editor cancels capture. Stop reading from disk at once.
+        response.once("close", () => stream.destroy());
+        stream.on("error", () => response.destroy()).pipe(response);
+      } catch { send(404); }
+      return;
+    }
     if (!/^\/(?:assets\/[A-Za-z0-9._/-]+|video-export\.html)$/.test(pathname) || pathname.includes("..")) {
       send(404); return;
     }

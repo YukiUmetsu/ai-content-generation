@@ -20,7 +20,8 @@ import {
   updateCopy,
 } from "./model/edit";
 import { downloadBlob, downloadSvg, thumbnailFileName, thumbnailPng, thumbnailSvg } from "./model/export";
-import { createThumbnailDocument, HVAC_EXAMPLE_JA, VARIANT_ID_BY_CONCEPT } from "./model/fixtures";
+import { VARIANT_ID_BY_CONCEPT } from "./model/fixtures";
+import { loadThumbnailDraft, saveThumbnailDraft, thumbnailDocumentKey } from "./model/storage";
 import { issuesFor } from "./model/qa";
 import type { ConceptId, Locale, ThumbnailCopy } from "./model/types";
 import "./composer.css";
@@ -51,14 +52,16 @@ function joinClasses(...values: Array<string | undefined | false>): string {
  * Local-only: a deterministic fixture document, a typed authoring model and the
  * vendored Kumiki media pipeline. No backend, model call or upload is involved.
  */
-export function ThumbnailComposer({ projectId, locale, className, onPreviewChange }: FeatureSlotProps) {
+export function ThumbnailComposer(props: FeatureSlotProps) {
+  return <ThumbnailComposerProject key={props.projectId} {...props} />;
+}
+
+function ThumbnailComposerProject({ projectId, locale, className, onPreviewChange }: FeatureSlotProps) {
   const copy = copyFor(locale);
-  const [document, setDocument] = useState(() =>
-    createThumbnailDocument({
-      projectId,
-      ...(locale === "ja" ? HVAC_EXAMPLE_JA : {}),
-    })
-  );
+  const [loaded] = useState(() => loadThumbnailDraft(projectId, locale));
+  const [document, setDocument] = useState(loaded.document);
+  const [storageBlocked, setStorageBlocked] = useState(loaded.blocked);
+  const [storageError, setStorageError] = useState(loaded.warning);
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
   const mounted = useRef(true);
   const previousLocale = useRef<Locale>(locale);
@@ -69,6 +72,28 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
       mounted.current = false;
     };
   }, []);
+
+  // Store the complete per-production working document, including all three
+  // concepts and the selected variant. A corrupt old draft is never replaced
+  // by the visible fallback template without a deliberate recovery action.
+  useEffect(() => {
+    if (storageBlocked) return;
+    let message = "", active = true;
+    try { saveThumbnailDraft(document); }
+    catch { message = "Could not save this thumbnail locally. Export a copy or retry when storage is available."; }
+    queueMicrotask(() => { if (active) setStorageError(previous => previous === message ? previous : message); });
+    return () => { active = false; };
+  }, [document, storageBlocked]);
+
+  function recoverUnusableDraft() {
+    try {
+      const key = thumbnailDocumentKey(projectId), original = localStorage.getItem(key);
+      if (original !== null) localStorage.setItem(`${key}:recovery:${Date.now()}`, original);
+      localStorage.removeItem(key);
+      setStorageBlocked(false);
+      setStorageError("");
+    } catch { setStorageError("Could not preserve the old draft. Local storage may be full or unavailable."); }
+  }
 
   // Follow the interface language for untouched example copy only. Anything the
   // person typed is preserved across a language switch.
@@ -185,6 +210,13 @@ export function ThumbnailComposer({ projectId, locale, className, onPreviewChang
         </div>
         <p className="tc-header__note">{copy.localOnlyNote}</p>
       </header>
+
+      {storageError&&<div role="alert" className="rounded-control border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+        <p>{storageError}</p>
+        {storageBlocked&&<Button size="sm" variant="outline" onClick={recoverUnusableDraft}>
+          Back up old data and start a fresh design
+        </Button>}
+      </div>}
 
       <Surface variant="outline" className="tc-brief">
         <div className="tc-fields">

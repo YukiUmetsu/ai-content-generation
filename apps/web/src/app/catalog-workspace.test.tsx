@@ -1,8 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "@/App";
 import { CATALOG_KEY } from "./catalog-model";
+import { CatalogWorkspace } from "./catalog-workspace";
+import {defaultProjectVoices,saveProjectVoices,voiceFavoritesKey} from "./project-voice-favorites";
+import {readAudioSettings} from "./audio-settings";
+
+it("keeps project voices if deletion fails and clears them only after a successful confirmed catalog save",async()=>{
+  const catalog={version:1 as const,activeProjectId:"project-one",projects:[
+    {id:"project-one",name:"First",notes:"",createdAt:"2026-10-28T00:00:00Z"},
+    {id:"project-two",name:"Second",notes:"",createdAt:"2026-10-28T00:00:00Z"}],
+    content:[],assets:[],products:[]};
+  saveProjectVoices(defaultProjectVoices("project-one"));
+  saveProjectVoices(defaultProjectVoices("project-two"));
+  const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+  const save=vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+  const user=userEvent.setup();
+  render(<CatalogWorkspace section="projects" locale="en" catalog={catalog}
+    save={save} onCreate={()=>{}} onDeleteProject={()=>true}/>);
+  const remove=screen.getByRole("button",{name:"Delete First"});
+  await user.click(remove);
+  await waitFor(()=>expect(save).toHaveBeenCalledTimes(1));
+  expect(localStorage.getItem(voiceFavoritesKey("project-one"))).not.toBeNull();
+  await user.click(remove);
+  await waitFor(()=>expect(save).toHaveBeenCalledTimes(2));
+  expect(localStorage.getItem(voiceFavoritesKey("project-one"))).toBeNull();
+  expect(localStorage.getItem(voiceFavoritesKey("project-two"))).not.toBeNull();
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("saved voices"));
+  confirm.mockRestore();
+});
 
 describe("Studio menu workspaces", () => {
   beforeEach(() => localStorage.clear());
@@ -83,15 +110,22 @@ describe("Studio menu workspaces", () => {
 });
 
 describe("Settings navigation", () => {
-  it("groups model assignments, connections, appearance, prompt templates and local data in five keyboard tabs", async () => {
+  it("groups model assignments, connections, project audio, appearance, prompts and local data in six keyboard tabs", async () => {
     const user=userEvent.setup();
     render(<App />);
     await user.click(screen.getByRole("link",{name:"Settings"}));
     const tabs=within(screen.getByRole("tablist",{name:"Settings sections"}));
-    expect(tabs.getAllByRole("tab")).toHaveLength(5);
+    expect(tabs.getAllByRole("tab")).toHaveLength(6);
     expect(screen.getByRole("tab",{name:"AI models"})).toHaveAttribute("aria-selected","true");
     await user.click(screen.getByRole("tab",{name:"Connections"}));
     expect(screen.getByRole("tab",{name:"Connections"})).toHaveAttribute("aria-selected","true");
+    await user.click(screen.getByRole("tab",{name:"Audio"}));
+    expect(screen.getByRole("combobox",{name:"Audio voice provider"})).toHaveValue("fish");
+    expect(screen.getByRole("textbox",{name:"Audio engine revision"})).toHaveValue("fish-api-v1");
+    await user.clear(screen.getByRole("textbox",{name:"Audio engine revision"}));
+    await user.type(screen.getByRole("textbox",{name:"Audio engine revision"}),"fish-api-v2");
+    const currentProject=(JSON.parse(localStorage.getItem(CATALOG_KEY)??"null") as {activeProjectId?:string}|null)?.activeProjectId??"project-local";
+    expect(readAudioSettings(currentProject).providerRevision).toBe("fish-api-v2");
     await user.click(screen.getByRole("tab",{name:"Prompts"}));
     expect(screen.getByRole("tab",{name:"Prompts"})).toHaveAttribute("aria-selected","true");
     await user.click(screen.getByRole("tab",{name:"AI models"}));

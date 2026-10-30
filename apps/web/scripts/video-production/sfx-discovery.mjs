@@ -8,6 +8,7 @@ import {dirname,join,resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
+import {setTimeout as pause} from "node:timers/promises";
 
 const exec=promisify(execFile);
 const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-sfx",import.meta.url));
@@ -47,15 +48,17 @@ export function planSfxNeeds(bundle){
     return subject?[{shotId:shot.id,intent,query:subject}]:[];
   });
 }
-function soundMeta(data){
+function soundMeta(data,{assetType="sfx"}={}){
+  const category=assetType==="music"?"music":"sound_effect";
   if(!data||typeof data!=="object"||!UUID.test(data.id??"")||String(data.license??"").toLowerCase()!=="cc0"||
-    data.category!=="sound_effect")return null;
+    data.category!==category)return null;
   let sourceUrl,previewUrl;
   try{sourceUrl=safeUrl(data.foreign_landing_url,["commons.wikimedia.org","freesound.org","www.freesound.org"]);
     previewUrl=safeMediaUrl(data.url);}catch{return null;}
   // Openverse returns milliseconds, whereas Studio shows seconds.
-  if(!Number.isFinite(data.duration)||data.duration<=0||data.duration>90_000)return null;
-  return {provider:"openverse",assetId:data.id,assetType:"sfx",title:clean(data.title,140)||"Untitled SFX",
+  // Existing reviewed-audio bank is capped at 16 MiB after PCM conversion.
+  if(!Number.isFinite(data.duration)||data.duration<=0||data.duration>(assetType==="music"?150_000:90_000))return null;
+  return {provider:"openverse",assetId:data.id,assetType,title:clean(data.title,140)||"Untitled audio",
     creator:clean(data.creator,120),durationSeconds:data.duration/1000,sourceUrl,previewUrl,
     license:"cc0",licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",
     source:clean(data.source,40),tags:(Array.isArray(data.tags)?data.tags:[]).slice(0,16)
@@ -94,10 +97,27 @@ export async function discoverSfx(input,{fetchImpl=fetch}={}){
       .sort((a,b)=>b.matchCount-a.matchCount||a.assetId.localeCompare(b.assetId))})),warnings};
 }
 
+/** Explicit, one-query metadata-only search for a quiet music bed. No media is downloaded. */
+export async function discoverMusic(input,{fetchImpl=fetch}={}){
+  if(input?.allowExternalSearch!==true)throw Error("Explicit approval required for public music search.");
+  const query=clean(input.query,90);
+  if(query.length<3||!terms(query).length)throw Error("Enter a meaningful music mood or instrument to search.");
+  const params=new URLSearchParams({q:query,license:"cc0",category:"music",page_size:"12"});
+  const response=await fetchImpl(`https://api.openverse.org/v1/audio/?${params}`,{
+    headers:{Accept:"application/json","User-Agent":"ContentGen-Music/1.0"},redirect:"error",signal:AbortSignal.timeout(12_000)});
+  const json=await readJson(response);
+  const candidates=(Array.isArray(json.results)?json.results:[]).slice(0,12)
+    .map(item=>soundMeta(item,{assetType:"music"})).filter(Boolean)
+    .map(item=>({...item,matchCount:similarity(query,item)}))
+    .sort((a,b)=>b.matchCount-a.matchCount||a.assetId.localeCompare(b.assetId));
+  return {schemaVersion:1,kind:"contentgen-cc0-music-suggestions",query,candidates};
+}
+
 /** Candidate bank items must come from hash-verified listApprovedSfx, not provider responses. */
 export function recommendApprovedSfx(bundle,library){
   return planSfxNeeds(bundle).map(need=>{
     const ranked=(Array.isArray(library)?library:[]).filter(x=>x?.rightsStatus==="user-reviewed"&&
+      (x.assetType===undefined||x.assetType==="sfx")&&
       x.license==="cc0"&&/^[a-f\d]{64}$/iu.test(x.sha256??"")&&typeof x.localPath==="string")
       .map(x=>({...x,matchCount:similarity(need.query,x)}))
       .filter(x=>x.matchCount>0).sort((a,b)=>b.matchCount-a.matchCount||a.assetId.localeCompare(b.assetId));
@@ -131,15 +151,19 @@ function wavVerified(bytes){
   }
   if(!format||!data)invalid();
 }
-async function transcodeWav(input,output,{ffmpeg="ffmpeg"}={}){
+function assertImportActive(signal){if(signal?.aborted)throw Error("Audio import cancelled.");}
+async function transcodeWav(input,output,{ffmpeg="ffmpeg",signal}={}){
   try{await exec(ffmpeg,["-hide_banner","-loglevel","error","-nostdin","-n",
     "-protocol_whitelist","file,pipe","-i",input,"-vn","-sn","-dn",
-    "-ar","48000","-ac","1","-c:a","pcm_s16le",output],{timeout:60_000,maxBuffer:400_000});}
-  catch{throw Error("FFmpeg could not decode the selected sound effect.");}
+    "-ar","48000","-ac","1","-c:a","pcm_s16le",output],{timeout:60_000,maxBuffer:400_000,signal});}
+  catch(error){assertImportActive(signal);throw Error("FFmpeg could not decode the selected sound effect.",{cause:error});}
 }
 async function downloadAudio(response){
   if(!response.ok)throw Error(`SFX download returned HTTP ${response.status}.`);
-  const declared=Number(response.headers.get("content-length")??"0");
+  const rawLength=response.headers.get("content-length");
+  if(rawLength!==null&&(!/^\d+$/u.test(rawLength)||!Number.isSafeInteger(Number(rawLength))))
+    throw Error("Audio provider returned an invalid file length.");
+  const declared=Number(rawLength??"0");
   if(declared>MAX_AUDIO)throw Error("SFX file exceeds 16 MB limit.");
   const chunks=[];let size=0;
   for await(const chunk of response.body??[]){size+=chunk.length;
@@ -148,37 +172,82 @@ async function downloadAudio(response){
   return Buffer.concat(chunks,size);
 }
 
+/** A reviewed media URL is retried only for transient, idempotent GET failures.
+ * All attempts share a deadline, and no file is committed before validation.
+ */
+async function downloadReviewedAudio(url,{fetchImpl=fetch,signal}={}){
+  const deadline=AbortSignal.timeout(45_000);
+  const combined=signal?AbortSignal.any([signal,deadline]):deadline;
+  for(let attempt=0;attempt<3;attempt++){
+    if(combined.aborted)throw Error("Audio download cancelled or timed out.");
+    try{
+      const response=await fetchImpl(url,{redirect:"error",signal:combined});
+      if(response.status===429){
+        try{await response.body?.cancel?.();}catch{/* The error below is authoritative. */}
+        throw Error("Audio provider rate limit reached. Retry later.");
+      }
+      if([408,500,502,503,504].includes(response.status)){
+        try{await response.body?.cancel?.();}catch{/* The server failure below is authoritative. */}
+        const error=Error("Audio provider temporarily unavailable.");error.retryable=true;throw error;
+      }
+      if(!response.ok){
+        try{await response.body?.cancel?.();}catch{/* Preserve the original HTTP rejection. */}
+        throw Error(`SFX download returned HTTP ${response.status}.`);
+      }
+      const bytes=await downloadAudio(response);
+      const declared=Number(response.headers.get("content-length")??"0");
+      if(declared&&declared!==bytes.length){
+        const error=Error("Incomplete audio download.");error.retryable=true;throw error;
+      }
+      return bytes;
+    }catch(error){
+      if(combined.aborted)throw Error("Audio download cancelled or timed out.",{cause:error});
+      if(!(error.retryable||error instanceof TypeError))throw error;
+      if(attempt===2)throw Error("Audio download failed after three attempts. Check the source and retry import.",{cause:error});
+      await pause(250*2**attempt,undefined,{signal:combined});
+    }
+  }
+}
+
 /** First-time, explicit human approval; client cannot submit download URL or file path. */
-export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transcode=transcodeWav,now=()=>new Date(),ffmpeg}={}){
+export async function approveSfx(input,{fetchImpl=fetch,root=DEFAULT_ROOT,transcode=transcodeWav,now=()=>new Date(),ffmpeg,signal}={}){
   if(input?.confirmDownload!==true||input?.confirmRights!==true)
     throw Error("SFX license review and download approval required.");
+  assertImportActive(signal);
   const assetId=validId(input.assetId,"sound identifier",UUID);
+  const assetType=input.assetType??"sfx";
+  if(!["sfx","music"].includes(assetType))throw Error("Unsupported approved audio kind.");
   const detailUrl=`https://api.openverse.org/v1/audio/${assetId}/`;
+  const metadataSignal=signal?AbortSignal.any([signal,AbortSignal.timeout(12_000)]):AbortSignal.timeout(12_000);
   const item=soundMeta(await readJson(await fetchImpl(detailUrl,{redirect:"error",
-    headers:{Accept:"application/json","User-Agent":"ContentGen-SFX/1.0"},signal:AbortSignal.timeout(12_000)})));
+    headers:{Accept:"application/json","User-Agent":"ContentGen-SFX/1.0"},signal:metadataSignal})),{assetType});
+  assertImportActive(signal);
   if(!item)throw Error("Sound license is not acceptable CC0 or URL host is untrusted.");
   const mediaUrl=safeMediaUrl(item.previewUrl);
-  const bytes=await downloadAudio(await fetchImpl(mediaUrl,{redirect:"error",signal:AbortSignal.timeout(45_000)}));
+  const bytes=await downloadReviewedAudio(mediaUrl,{fetchImpl,signal});
+  assertImportActive(signal);
   const base=resolve(root),bank=join(base,"bank");
   await mkdir(bank,{recursive:true,mode:0o700});
   const temp=await mkdtemp(join(bank,".sfx-import-"));
   try{
     const inputPath=join(temp,"source.bin"),outputPath=join(temp,"sfx.wav");
     await writeFile(inputPath,bytes,{mode:0o600,flag:"wx"});
-    await transcode(inputPath,outputPath,{ffmpeg});
+    await transcode(inputPath,outputPath,{ffmpeg,signal});
+    assertImportActive(signal);
     const normalized=await readFile(outputPath);
     if(normalized.length>MAX_AUDIO)throw Error("Normalized SFX exceeds 16 MB limit.");
     wavVerified(normalized);
     const soundSha=sha(normalized),originalSha=sha(bytes);
-    const digest=sha(JSON.stringify({provider:"openverse",assetId,soundSha,originalSha}));
+    const digest=sha(JSON.stringify({provider:"openverse",assetId,assetType,soundSha,originalSha}));
     const folder=join(bank,`asset_${digest.slice(0,24)}`);
-    const manifest={schemaVersion:1,kind:"contentgen-approved-sfx",provider:"openverse",assetId,
+    const manifest={schemaVersion:1,kind:"contentgen-approved-sfx",provider:"openverse",assetId,assetType,
       title:item.title,creator:item.creator,source:item.source,sourceUrl:item.sourceUrl,
       license:"cc0",licenseUrl:item.licenseUrl,rightsStatus:"user-reviewed",
       tags:item.tags,durationSeconds:item.durationSeconds,approvedAt:now().toISOString(),
       originalSha256:originalSha,sha256:soundSha,sizeBytes:normalized.length};
     await writeFile(join(temp,"manifest.json"),JSON.stringify(manifest,null,2)+"\n",{flag:"wx",mode:0o600});
     await rm(inputPath);
+    assertImportActive(signal);
     try{await rename(temp,folder);}catch(error){
       if(error.code!=="EEXIST"&&error.code!=="ENOTEMPTY")throw error;
       const existing=JSON.parse(await readFile(join(folder,"manifest.json"),"utf8"));
@@ -201,6 +270,7 @@ export async function listApprovedSfx({root=DEFAULT_ROOT}={}){
       const dir=join(bank,folder.name),item=JSON.parse(await readFile(join(dir,"manifest.json"),"utf8"));
       if(item?.schemaVersion!==1||item.kind!=="contentgen-approved-sfx"||item.provider!=="openverse"||
         item.license!=="cc0"||item.rightsStatus!=="user-reviewed"||!UUID.test(item.assetId)||
+        (item.assetType!==undefined&&!["sfx","music"].includes(item.assetType))||
         !/^[a-f\d]{64}$/iu.test(item.sha256)||!Number.isSafeInteger(item.sizeBytes)||item.sizeBytes>MAX_AUDIO)continue;
       const localPath=join(dir,"sfx.wav"),bytes=await readFile(localPath);
       if(bytes.length!==item.sizeBytes||sha(bytes)!==item.sha256)continue;
@@ -231,7 +301,7 @@ export async function setSceneSfxChoice(input,{root=DEFAULT_ROOT}={}){
     return {mode:"pin",assetId:input.assetId,sha256:input.sha256,trigger};})():{mode:input.mode,trigger};
   if(choice.mode==="pin"){
     const approved=await listApprovedSfx({root});
-    if(!approved.some(x=>x.assetId===choice.assetId&&x.sha256===choice.sha256))
+    if(!approved.some(x=>x.assetId===choice.assetId&&x.sha256===choice.sha256&&x.assetType!=="music"))
       throw Error("Cannot pin a sound absent from the approved and hash-verified library.");
   }
   const saved=await readChoices(root,projectId);
@@ -248,7 +318,8 @@ export async function setSceneSfxChoice(input,{root=DEFAULT_ROOT}={}){
 
 export async function resolveSceneSfxChoices({projectId,bundle},{root=DEFAULT_ROOT}={}){
   validId(projectId,"project identifier");
-  const approved=await listApprovedSfx({root}),byId=new Map(approved.map(x=>[x.assetId,x]));
+  const approved=(await listApprovedSfx({root})).filter(x=>x.assetType!=="music"),
+    byId=new Map(approved.map(x=>[x.assetId,x]));
   const saved=await readChoices(root,projectId),automatic=recommendApprovedSfx(bundle,approved);
   return automatic.map(suggestion=>{
     const override=saved[suggestion.shotId],mode=override?.mode==="mute"?"mute":override?.mode==="pin"?"pin":"auto";

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createPlatformOptimizationManifest, sourceSignature, type PlatformOptimizationInput } from "./model";
-import { generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog } from "./generated-art";
+import { generateBlogHtml, generateBlogMarkdown, generatePlatformArtwork, generatedArtworkCatalog,
+  suggestCoverHeadlines } from "./generated-art";
 
 const input: PlatformOptimizationInput = {
   productionId: "production-1", projectId: "project-1", title: "How workflows move from paper to reports",
@@ -18,6 +19,16 @@ const input: PlatformOptimizationInput = {
 };
 
 describe("Kumiki-generated publishing artwork", () => {
+  it("offers three script-specific thumbnail promises instead of repeating the upload title",()=>{
+    const suggestions=suggestCoverHeadlines(input.title,input.scriptSections);
+    expect(new Set(suggestions.map(s=>s.toLowerCase()))).toHaveProperty("size",3);
+    expect(suggestions[0]).toContain("workflows");
+    expect(suggestions[1]).toContain("initial question");
+    expect(suggestions[2]).toContain("current process");
+    const art=generatePlatformArtwork(input,"youtube",input.title,{headlines:suggestions});
+    expect(art).toHaveLength(3);
+    for(let i=0;i<3;i++)expect(JSON.stringify(art[i].media)).toContain(suggestions[i]);
+  });
   it("produces real SVG previews for platform covers and long-form article illustrations", () => {
     for (const target of ["youtube", "youtube-shorts", "tiktok", "instagram", "facebook"] as const) {
       const artwork = generatePlatformArtwork(input, target, input.title);
@@ -75,12 +86,29 @@ describe("Kumiki-generated publishing artwork", () => {
     expect(sourceSignature(input, "youtube")).toBe(sourceSignature(input, "youtube"));
   });
 
-  it("cannot generate covers or download article prose from unapproved or stale scripts", () => {
+  it("allows private draft covers and articles without script approval but requires actual text", () => {
     const unapproved = { ...input, approvedPlatforms: ["youtube"] };
-    expect(generatePlatformArtwork(unapproved, "blog", unapproved.title)).toHaveLength(0);
-    expect(generatedArtworkCatalog(unapproved).some((asset) => asset.platform === "blog")).toBe(false);
-    expect(() => generateBlogMarkdown(unapproved, unapproved.title, [])).toThrow(/Approve/);
-    expect(() => generateBlogHtml(unapproved, unapproved.title, "", "", [])).toThrow(/Approve/);
+    expect(generatePlatformArtwork(unapproved, "blog", unapproved.title)).toHaveLength(4);
+    expect(generatedArtworkCatalog(unapproved).some((asset) => asset.platform === "blog")).toBe(true);
+    expect(generateBlogMarkdown(unapproved, unapproved.title, [])).toContain("## The initial question");
+    expect(generateBlogHtml(unapproved, unapproved.title, "", "", [])).toContain("<article>");
+    const empty = {...unapproved, scriptSections:[],platformScripts:{blog:[]}};
+    expect(generatePlatformArtwork(empty,"blog",empty.title)).toHaveLength(0);
+    expect(() => generateBlogMarkdown(empty,empty.title,[])).toThrow(/section/i);
+  });
+
+  it("supports distinct colors and safe embedded user images in actual Kumiki PNG documents", () => {
+    const changed = {...input,brandColors:{...input.brandColors!,primary:"#192943",accent:"#FFCC44"}};
+    const photo="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nlr8AAAAASUVORK5CYII=";
+    const without=generatePlatformArtwork(changed,"youtube",changed.title);
+    const withPhoto=generatePlatformArtwork(changed,"youtube",changed.title,{imageDataUri:photo});
+    expect(withPhoto).toHaveLength(3);
+    expect(withPhoto[0].svg).toContain("data:image/png;base64,");
+    expect(withPhoto[0].media?.assets["cover-image"]?.uri).toBe(photo);
+    expect(withPhoto[0].description).toMatch(/permissions and commercial rights still require review/i);
+    expect(withPhoto[0].svg).not.toBe(without[0].svg);
+    expect(without[0].svg).not.toBe(generatePlatformArtwork(input,"youtube",input.title)[0].svg);
+    expect(() => generatePlatformArtwork(changed,"youtube",changed.title,{imageDataUri:"data:image/svg+xml;base64,PHN2Zz4="})).toThrow(/image/i);
   });
 
   it("exports safe, fully inline HTML and links only the article's actual cited sources", () => {

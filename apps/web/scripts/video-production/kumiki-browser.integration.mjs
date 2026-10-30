@@ -1,0 +1,472 @@
+/** Optional actual Chromium -> Kumiki -> PNG -> FFmpeg -> FFprobe integration.
+ * Run after `pnpm build` with CONTENTGEN_CHROMIUM_EXECUTABLE set. No voice
+ * provider, credentials, external requests or published media are involved.
+ */
+import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
+import {execFile} from "node:child_process";
+import {readFileSync} from "node:fs";
+import {copyFile,mkdir,mkdtemp,readFile,rm,writeFile} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join,resolve} from "node:path";
+import {fileURLToPath} from "node:url";
+import {promisify} from "node:util";
+import {chromium} from "playwright-core";
+import {buildSampleTimeline,toFrame} from "./timeline.mjs";
+import {compileGeneralVisuals} from "./general-visual-plan.mjs";
+import {startLocalStageServer} from "./stage-server.mjs";
+import {loadProjectCharacterRigs,readCharacterZip} from "./character-rig-render.mjs";
+import {generateProductionThumbnails} from "./premium-thumbnails.mjs";
+import {renderSelectedSceneClip} from "./scene-clip.mjs";
+import {renderVideoSegments} from "./render.mjs";
+import {makeOfflineRigDialogue,assembleOfflineRigSceneAudio} from "./offline-rig-dialogue.mjs";
+import {planRigQaCoverage} from "./rig-qa-coverage.mjs";
+
+const run=promisify(execFile);
+const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
+// The app's fixed Pip seed (117) makes the first blink reproducible across
+// interactive playback, seek and exported frames. This test intentionally
+// checks the *actual* variant selected by Chromium, not a synthetic eye swap.
+function firstBlinkFrame(spec,seed){
+  let state=(seed+0x6d2b79f5)>>>0;
+  let t=state;
+  t=Math.imul(t^(t>>>15),t|1);
+  t^=t+Math.imul(t^(t>>>7),t|61);
+  const first=((t^(t>>>14))>>>0)/4294967296;
+  return spec.intervalFrames.min+Math.floor(first*(spec.intervalFrames.max-spec.intervalFrames.min+1));
+}
+// Make an independently checksummed, valid saved revision of the repository's
+// starter Pip ZIP. Different draft IDs that reference the same ZIP would not
+// catch a renderer accidentally selecting the project default for scene two.
+// The first ZIP member is an uncompressed character.json in this seed only;
+// never rewrite or assume this layout for a user's private Character Studio ZIP.
+function alternateStarterPipRevision(bytes){
+  const changed=Buffer.from(bytes);
+  assert.equal(changed.readUInt32LE(0),0x04034b50);
+  assert.equal(changed.readUInt16LE(8),0,"the starter manifest must be stored uncompressed");
+  const start=30+changed.readUInt16LE(26)+changed.readUInt16LE(28);
+  const length=changed.readUInt32LE(22);
+  const original=changed.toString("utf8",start,start+length);
+  assert.ok(original.includes('"revision": "bundled-vector-1"'));
+  const altered=Buffer.from(original.replace('"revision": "bundled-vector-1"',
+    '"revision": "edited--vector-2"'));
+  assert.equal(altered.length,length,"ZIP manifest offsets must remain unchanged");
+  altered.copy(changed,start);
+  let crc=0xffffffff;
+  for(const byte of altered){
+    crc^=byte;
+    for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);
+  }
+  crc=(crc^0xffffffff)>>>0;
+  changed.writeUInt32LE(crc,14);
+  const eocd=changed.length-22;
+  assert.equal(changed.readUInt32LE(eocd),0x06054b50);
+  const central=changed.readUInt32LE(eocd+16);
+  assert.equal(changed.readUInt32LE(central),0x02014b50);
+  changed.writeUInt32LE(crc,central+16);
+  assert.equal(readCharacterZip(changed).definition.revision,"edited--vector-2");
+  return changed;
+}
+const browserPath=process.env.CONTENTGEN_CHROMIUM_EXECUTABLE;
+if(!browserPath)throw Error("Set CONTENTGEN_CHROMIUM_EXECUTABLE to an installed Chromium browser.");
+const input=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url)));
+const root=await mkdtemp(join(tmpdir(),"contentgen-real-kumiki-"));
+let stage,browser;
+try{
+const spoken=await makeOfflineRigDialogue({outDir:root,turns:[
+  {id:"pip-asks",speakerId:"pip",voice:"kal",text:"Send"},
+  {id:"quill-replies",speakerId:"quill",voice:"slt",text:"Route"}
+],fps:input.destination.fps});
+const sceneSpeech=await Promise.all([
+  [{id:"pip-scene-two",speakerId:"pip",voice:"kal",text:"Follow"}],
+  [{id:"narrator-compares",speakerId:"narrator",voice:"rms",text:"Compare"}],
+  [{id:"narrator-arrives",speakerId:"narrator",voice:"awb",text:"Arrive"}],
+].map(turns=>makeOfflineRigDialogue({outDir:root,turns,fps:input.destination.fps})));
+const timeline=buildSampleTimeline(input.beats.map((beat,index)=>({id:beat.id,
+  // Keep the full seeded blink inside scene two while preserving the actual
+  // measured speech window. The remaining scene time is intentional silence.
+  samples:index===0?spoken.samples:Math.max(index===1?96000:48000,sceneSpeech[index-1].samples),
+  pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds})),
+{fps:input.destination.fps,events:input.events});
+const plan=compileGeneralVisuals(input,timeline);
+const manifest=plan.manifest;
+  stage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
+    validatedPlan:plan});
+  // Chromium refuses to start as root inside some CI containers. This flag is
+  // intentionally opt-in for this standalone test, never for production.
+  const unsafeTestSandbox=process.env.CONTENTGEN_BROWSER_TEST_NO_SANDBOX==="1";
+  browser=await chromium.launch({executablePath:browserPath,headless:true,
+    args:unsafeTestSandbox?["--no-sandbox"]:[]});
+  const page=await browser.newPage({viewport:{width:manifest.width,height:manifest.height},
+    deviceScaleFactor:1,reducedMotion:"reduce"});
+  const pageErrors=[];
+  page.on("pageerror",error=>pageErrors.push(error.message));
+  await page.goto(stage.url,{waitUntil:"networkidle",timeout:30000});
+  await page.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+  assert.deepEqual(await page.evaluate(()=>window.__kmVideoExport.manifest),manifest,
+    "the live Kumiki page must adopt the validated plan manifest");
+  assert.equal(await page.evaluate(()=>window.__contentgenBuildHash),stage.buildHash,
+    "a browser render must be bound to the exact built assets");
+  const viewport=page.locator("[data-km-video-capture]");
+  assert.equal(await viewport.count(),1,"Kumiki capture region must be present");
+  const screenshots=[];
+  for(let frame=0;frame<12;frame++){
+    await page.evaluate(index=>window.__kmVideoExport.seek(index),frame);
+    const bytes=await viewport.screenshot({path:join(root,`frame-${String(frame).padStart(5,"0")}.png`),
+      animations:"disabled",scale:"css"});
+    assert.equal(bytes.subarray(0,8).toString("hex"),"89504e470d0a1a0a");
+    assert.equal(bytes.readUInt32BE(16),manifest.width);
+    assert.equal(bytes.readUInt32BE(20),manifest.height);
+    screenshots.push(sha(bytes));
+  }
+  await page.evaluate(()=>window.__kmVideoExport.seek(0));
+  const repeated=await viewport.screenshot({animations:"disabled",scale:"css"});
+  assert.equal(sha(repeated),screenshots[0],"seeking to a frame must render deterministically");
+  assert.deepEqual(pageErrors,[],"the real built Kumiki page must not throw during capture");
+  const video=join(root,"kumiki-smoke.mp4");
+  await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+    "-framerate",`${manifest.fps.num}/${manifest.fps.den}`,
+    "-i",join(root,"frame-%05d.png"),"-frames:v","12","-c:v","libx264",
+    "-pix_fmt","yuv420p",video],{timeout:60000});
+  const {stdout}=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+    "-show_entries","stream=codec_name,width,height,nb_read_frames","-of","json",video],{timeout:30000});
+  const stream=JSON.parse(stdout).streams?.[0];
+  assert.equal(stream?.codec_name,"h264");
+  assert.equal(stream.width,manifest.width);
+  assert.equal(stream.height,manifest.height);
+  assert.equal(Number(stream.nb_read_frames),12);
+  // The same real compositor must consume a frozen, verified CC0 photo; this
+  // guards the full automatic-media -> loopback asset -> Kumiki image boundary.
+  const photoFile=join(root,"commons-scene.jpg");
+  await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y","-f","lavfi",
+    "-i","color=c=blue:s=1280x720","-frames:v","1",photoFile],{timeout:30000});
+  const photoHash=sha(await readFile(photoFile));
+  const photoUrl=`/__video_media/${photoHash}.jpg`;
+  const enriched=structuredClone(plan);
+  enriched.chapters[0].visual.stockMedia={assetType:"photo",url:photoUrl,sha256:photoHash,
+    provider:"wikimedia-commons",rightsStatus:"draft-provider-license",
+    license:"CC0-1.0",licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",
+    assetId:"sample-scene",width:1280,height:720};
+  const mediaStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
+    validatedPlan:enriched,approvedMedia:[{url:photoUrl,path:photoFile,sha256:photoHash,assetType:"photo"}]});
+  try{
+    const mediaPage=await browser.newPage({viewport:{width:manifest.width,height:manifest.height}});
+    try{
+      await mediaPage.goto(mediaStage.url,{waitUntil:"networkidle",timeout:30000});
+      await mediaPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      await mediaPage.evaluate(()=>window.__kmVideoExport.seek(0));
+      const photo=mediaPage.locator("[data-contentgen-stock-photo]");
+      await photo.waitFor({timeout:10000});
+      await mediaPage.waitForFunction(()=>{
+        const image=document.querySelector("[data-contentgen-stock-photo]");
+        return Boolean(image?.complete&&image.naturalWidth===1280&&image.naturalHeight===720);
+      });
+      const seen=await mediaPage.locator("[data-km-video-capture]").screenshot();
+      assert.notEqual(sha(seen),screenshots[0],"verified Commons photo must visibly change the scene");
+    }finally{await mediaPage.close();}
+  }finally{await mediaStage.close();}
+  // Saved Character Studio ZIP sprites must animate in real Chromium, not only SSR.
+  const rigArchives=new Map();
+  const rigDrafts=[];
+  for(const id of ["pip","quill"]){
+    const bytes=id==="pip"&&process.env.CONTENTGEN_QA_PIP_ARCHIVE?
+      await readFile(process.env.CONTENTGEN_QA_PIP_ARCHIVE):
+      await readFile(new URL("../../public/starter-characters/"+id+".zip",import.meta.url));
+    const draftId=("character-draft-"+(id==="pip"?"a":"b")).padEnd(48,"0");
+    rigArchives.set(draftId,bytes);
+    rigDrafts.push({id:draftId,projectId:"rig-browser-smoke",characterId:id,
+      revision:readCharacterZip(bytes).definition.revision,archiveSha256:sha(bytes),sizeBytes:bytes.length});
+  }
+  // Model a saved scene selection through the real owned ZIP catalog rather
+  // than changing the revision string of an in-memory rig after validation.
+  const sceneDraftId=`character-draft-${"e".repeat(32)}`;
+  const sceneBytes=process.env.CONTENTGEN_QA_PIP_ARCHIVE?
+    rigArchives.get(rigDrafts[0].id):alternateStarterPipRevision(rigArchives.get(rigDrafts[0].id));
+  rigArchives.set(sceneDraftId,sceneBytes);
+  rigDrafts.push({...rigDrafts[0],id:sceneDraftId,archiveSha256:sha(sceneBytes),sizeBytes:sceneBytes.length,
+    revision:readCharacterZip(sceneBytes).definition.revision});
+  const rigPacks=await loadProjectCharacterRigs({projectId:"rig-browser-smoke",speakers:["pip","quill"],
+    selectedDraftIdsByScene:{[plan.chapters[1].id]:{pip:sceneDraftId}},
+    fetchImpl:async url=>{
+      const parsed=new URL(url),match=/\/api\/character-drafts\/(character-draft-[a-f0-9]{32})\/archive/.exec(parsed.pathname);
+      return match?new Response(rigArchives.get(match[1])??"",{status:rigArchives.has(match[1])?200:404}):
+        new Response(JSON.stringify({drafts:rigDrafts}),{headers:{"content-type":"application/json"}});
+    }});
+  const rigPlan=structuredClone(plan);
+  rigPlan.characterRigs=rigPacks.rigs;
+  rigPlan.chapters[0].dialogue={turns:spoken.turns.map(turn=>({id:turn.id,
+    speakerId:turn.speakerId,role:"character",
+    ...(turn.speakerId==="pip"?{animationAction:"pip-explain"}:{}),
+    startFrame:turn.startFrame,endFrame:turn.endFrame}))};
+  // A second authored scene may select a different immutable Pip revision.
+  // The scene-specific catalog draft is pinned through the real ZIP resolver.
+  const secondChapter=rigPlan.chapters[1];
+  const scopedPip=rigPacks.rigsByScene[secondChapter.id].pip;
+  const sceneAction=Object.hasOwn(scopedPip.definition.actions,"walk")?"walk":"pip-explain";
+  assert.ok(Object.hasOwn(scopedPip.definition.actions,sceneAction),
+    "selected saved revision must expose an authored motion action");
+  if(!process.env.CONTENTGEN_QA_PIP_ARCHIVE)
+    assert.notEqual(scopedPip.definition.revision,rigPacks.rigs.pip.definition.revision,
+      "the CI fixture must pin a genuinely different saved revision in scene two");
+  const secondStartSample=timeline.beats[1].startSample;
+  const secondTurn={id:"pip-scene-two",speakerId:"pip",role:"character",animationAction:sceneAction,
+    startFrame:toFrame(secondStartSample,input.destination.fps),
+    endFrame:toFrame(secondStartSample+sceneSpeech[0].samples,input.destination.fps)};
+  secondChapter.dialogue={turns:[secondTurn]};
+  rigPlan.characterRigsByScene=rigPacks.rigsByScene;
+  const blinkSpec=rigPacks.rigs.pip.definition.blink;
+  const qaCoverage=blinkSpec?planRigQaCoverage({chapters:rigPlan.chapters,
+    spokenChapterId:rigPlan.chapters[0].id,
+    blinkStartFrame:firstBlinkFrame(blinkSpec,117),blinkDurationFrames:blinkSpec.durationFrames}):null;
+  const rigStage=await startLocalStageServer({distRoot:fileURLToPath(new URL("../../dist",import.meta.url)),
+    validatedPlan:rigPlan,characterAssets:rigPacks.assets});
+  try{
+    const rigPage=await browser.newPage({viewport:{width:manifest.width,height:manifest.height},deviceScaleFactor:1});
+    try{
+      await rigPage.goto(rigStage.url,{waitUntil:"networkidle",timeout:30000});
+      await rigPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      const pipRig=rigPacks.rigs.pip;
+      const mouth=pipRig.definition.parts.find(part=>part.id===pipRig.definition.speech.mouthPart);
+      const restAsset=mouth.variants?.[pipRig.definition.speech.rest]??mouth.asset;
+      const rightArm=pipRig.definition.parts.find(part=>["right-arm","arm_right"].includes(part.id))?.id;
+      assert.ok(rightArm,"a supplied Pip rig must expose an articulated right forepaw");
+      const quillStart=spoken.turns[1].startFrame,quillEnd=spoken.turns[1].endFrame;
+      const sampleFrames=[2,10,quillStart+3,quillEnd+2];
+      const frames=[];
+      const armTransforms=[];
+      for(const [index,frame] of sampleFrames.entries()){
+        await rigPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
+        const actor=rigPage.locator('[data-conversation-performer="pip"]');
+        assert.equal(await actor.getAttribute("data-rig-source"),"character-studio");
+        assert.equal(await actor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
+        assert.ok(await actor.locator("svg image").count()>=4);
+        armTransforms.push(await actor.locator(`[data-part="${rightArm}"]`).getAttribute("transform"));
+        if(frame>=quillStart){
+          assert.equal(await actor.getAttribute("data-speaking"),"false");
+          assert.ok(await actor.locator(`[data-part="${pipRig.definition.speech.mouthPart}"] [data-asset="${restAsset}"]`).count()>0,
+            "the selected saved raster mouth must close when the recorded Pip speech ends");
+        }
+        frames.push(sha(await actor.screenshot({animations:"disabled"})));
+        await rigPage.locator("[data-km-video-capture]").screenshot({path:join(root,`custom-rig-${String(index).padStart(2,"0")}.png`),animations:"disabled"});
+      }
+      assert.notEqual(armTransforms[0],armTransforms[1],
+        "saved Pip arm must actually gesture during a long measured speech turn");
+      assert.notEqual(frames[0],frames[1],"saved Pip mouth/arm layers must visibly animate during measured speech");
+      assert.notEqual(frames[1],frames[2],"Pip must return to listening when Quill speaks");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),quillStart+3);
+      assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-rig-source"),"character-studio");
+      assert.equal(await rigPage.locator('[data-conversation-performer="quill"]').getAttribute("data-speaking"),"true");
+      assert.equal(await rigPage.locator('[data-conversation-performer="quill"] [data-km-character-presenter]').getAttribute("data-diagnostics"),"0");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),secondChapter.startFrame+4);
+      const secondActor=rigPage.locator('[data-conversation-performer="pip"]');
+      assert.equal(await secondActor.getAttribute("data-rig-source"),"character-studio");
+      assert.equal(await secondActor.getAttribute("data-rig-draft-id"),sceneDraftId);
+      assert.equal(scopedPip.draftId,sceneDraftId,
+        "the renderer must use the scene's saved catalog revision, not the project default");
+      assert.equal(await secondActor.getAttribute("data-rig-revision"),scopedPip.definition.revision);
+      assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-diagnostics"),"0");
+      assert.equal(await secondActor.getAttribute("data-speaking"),"true",
+        "the second scene must speak only during its actual measured WAV interval");
+      const motionPart=sceneAction==="walk"?"leg_left":rightArm;
+      const earlyMotion=await secondActor.locator(`[data-part="${motionPart}"]`).getAttribute("transform");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),secondTurn.startFrame+11);
+      const laterMotion=await secondActor.locator(`[data-part="${motionPart}"]`).getAttribute("transform");
+      assert.notEqual(earlyMotion,laterMotion,
+        "the selected scene's saved walk or gesture must change a real articulated sprite");
+      await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),secondTurn.endFrame+3);
+      assert.equal(await secondActor.getAttribute("data-speaking"),"false",
+        "the edited scene actor must stop speaking when its measured audio ends");
+      const blink=pipRig.definition.blink;
+      if(blink){
+        const start=qaCoverage.blinkReviewFrames[1];
+        assert.equal(qaCoverage.blinkChapterId,secondChapter.id,
+          "the second authored rig scene must contain the complete blink transition");
+        const blinkPart=blink.parts[0];
+        const part=pipRig.definition.parts.find(candidate=>candidate.id===blinkPart);
+        const closedAsset=part?.variants?.[blink.variant];
+        assert.ok(closedAsset,"saved ZIP must include the actual closed-eye art");
+        await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),start-1);
+        const open=await secondActor.locator(`[data-part="${blinkPart}"]`).screenshot({animations:"disabled"});
+        await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),start);
+        assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-blinking"),"",
+          "saved Character Studio rig must blink at its deterministic seeded frame");
+        assert.equal(await secondActor.locator(`[data-part="${blinkPart}"] [data-asset="${closedAsset}"]`).count(),1,
+          "Kumiki must draw the selected saved closed-eye raster, never a bundled Pip substitute");
+        const closed=await secondActor.locator(`[data-part="${blinkPart}"]`).screenshot({animations:"disabled"});
+        assert.notEqual(sha(closed),sha(open),"the verified closed-eye sprite must change actual pixels");
+        await writeFile(join(root,"pip-open.png"),open);
+        await writeFile(join(root,"pip-closed.png"),closed);
+        await rigPage.evaluate(frame=>window.__kmVideoExport.seek(frame),start+blink.durationFrames);
+        assert.equal(await secondActor.locator("[data-km-character-presenter]").getAttribute("data-blinking"),null,
+          "blinking must return to the saved open-eye art after its declared duration");
+      }
+    }finally{await rigPage.close();}
+    // Encode the *continuous* Kumiki scene at the real manifest FPS. Three
+    // sampled PNGs at 3 fps prove artwork differences, but cannot prove that
+    // speech closes at frame 24 or that exported timing survives FFmpeg.
+    assert.ok(rigPlan.chapters[0].endFrame>=spoken.turns[1].endFrame+2);
+    const realRigClip=await renderVideoSegments({stageUrl:rigStage.url,
+      manifest:rigPlan.manifest,visualPlan:rigPlan,onlyChapterId:rigPlan.chapters[0].id,
+      planHash:sha(JSON.stringify(rigPlan)),buildHash:rigStage.buildHash,
+      outDir:join(root,"continuous-custom-rig"),browserExecutable:browserPath,
+      maxBatchFrames:30,reviewFrames:[2,10,spoken.turns[1].startFrame+3]});
+    assert.equal(realRigClip.frameCount,rigPlan.chapters[0].endFrame-rigPlan.chapters[0].startFrame);
+    assert.equal(realRigClip.reviewStills.length,3);
+    const customMp4=realRigClip.videoOnlyPath;
+    const customProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+      "-show_entries","stream=codec_name,width,height,nb_read_frames,r_frame_rate","-of","json",customMp4],{timeout:30000});
+    const customStream=JSON.parse(customProbe.stdout).streams?.[0];
+    assert.equal(customStream?.codec_name,"h264");
+    assert.equal(customStream?.width,1920);
+    assert.equal(customStream?.height,1080);
+    assert.equal(Number(customStream?.nb_read_frames),realRigClip.frameCount,
+      "every measured dialogue frame must encode into a real H.264 video");
+    assert.equal(customStream?.r_frame_rate,"30/1", "custom rigs cannot be exported at a sampled 3-fps animation rate");
+    // Also verify the real movie's audio/video contract with a test-only,
+    // offline *spoken* 48-kHz track. Each character's mouth turns were bound
+    // to these actual measured WAV sample ranges, not a sine-wave surrogate.
+    const clipSeconds=realRigClip.frameCount*rigPlan.manifest.fps.den/rigPlan.manifest.fps.num;
+    const syncedMp4=join(root,"continuous-custom-rig-with-audio.mp4");
+    await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+      "-i",customMp4,"-i",spoken.wavPath,
+      "-map","0:v:0","-map","1:a:0","-c:v","copy","-c:a","aac","-b:a","128k",
+      "-af","apad","-t",String(clipSeconds),"-movflags","+faststart",syncedMp4],{timeout:60000});
+    const syncedProbe=await run("ffprobe",["-v","error","-show_entries",
+      "stream=codec_type,codec_name,start_time,duration","-of","json",syncedMp4],{timeout:30000});
+    const streams=JSON.parse(syncedProbe.stdout).streams??[];
+    const videoTrack=streams.find(stream=>stream.codec_type==="video");
+    const audioTrack=streams.find(stream=>stream.codec_type==="audio");
+    assert.equal(videoTrack?.codec_name,"h264");
+    assert.equal(audioTrack?.codec_name,"aac");
+    for(const stream of [videoTrack,audioTrack]){
+      assert.ok(Math.abs(Number(stream.start_time))<=1/rigPlan.manifest.fps.num,
+        "audio/video starts cannot differ from the authored scene by more than a frame");
+      assert.ok(Math.abs(Number(stream.duration)-clipSeconds)<=1/rigPlan.manifest.fps.num,
+        "audio/video durations must stay within a frame of measured dialogue");
+    }
+    // The voiced scene ends before Pip's first blink. Export the separate
+    // chapter at native FPS so the QA MP4 evidence includes the actual blink,
+    // not only two browser still images of closed and open eyelids.
+    let blinkMp4;
+    if(qaCoverage?.blinkChapterId){
+      const blinkChapter=rigPlan.chapters.find(chapter=>chapter.id===qaCoverage.blinkChapterId);
+      const blinkClip=await renderVideoSegments({stageUrl:rigStage.url,
+        manifest:rigPlan.manifest,visualPlan:rigPlan,onlyChapterId:blinkChapter.id,
+        planHash:sha(JSON.stringify(rigPlan)),buildHash:rigStage.buildHash,
+        outDir:join(root,"continuous-pip-blink"),browserExecutable:browserPath,
+        maxBatchFrames:30,reviewFrames:qaCoverage.blinkReviewFrames});
+      assert.equal(blinkClip.frameCount,blinkChapter.endFrame-blinkChapter.startFrame);
+      assert.equal(blinkClip.reviewStills.length,3,
+        "the encoded blink chapter must include open, closed and reopened review frames");
+      const blinkProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+        "-show_entries","stream=codec_name,nb_read_frames,r_frame_rate","-of","json",
+        blinkClip.videoOnlyPath],{timeout:30000});
+      const blinkStream=JSON.parse(blinkProbe.stdout).streams?.[0];
+      assert.equal(blinkStream?.codec_name,"h264");
+      assert.equal(Number(blinkStream?.nb_read_frames),blinkClip.frameCount,
+        "all open, closed and reopened Pip frames must survive MP4 encoding");
+      assert.equal(blinkStream?.r_frame_rate,"30/1");
+      blinkMp4=blinkClip.videoOnlyPath;
+    }
+    // The two isolated QA clips are helpful for close review, but a completed
+    // film must preserve scene edits, actual saved revisions, speech timing,
+    // silence and blinking across the complete Kumiki/FFmpeg timeline.
+    const fullReviewFrames=[...new Set([2,secondTurn.startFrame+3,
+      ...(qaCoverage?.blinkReviewFrames??[])])].sort((a,b)=>a-b);
+    const fullRender=await renderVideoSegments({stageUrl:rigStage.url,
+      manifest:rigPlan.manifest,visualPlan:rigPlan,planHash:sha(JSON.stringify(rigPlan)),
+      buildHash:rigStage.buildHash,outDir:join(root,"continuous-full-custom-rig"),
+      browserExecutable:browserPath,maxBatchFrames:30,reviewFrames:fullReviewFrames});
+    assert.equal(fullRender.frameCount,rigPlan.manifest.durationFrames,
+      "an edited-scene export must encode every scene, not only the first chapter");
+    assert.equal(fullRender.reviewStills.length,fullReviewFrames.length);
+    const sceneAudio=await assembleOfflineRigSceneAudio({outDir:root,totalSamples:timeline.totalSamples,
+      clips:[{wavPath:spoken.wavPath,startSample:timeline.beats[0].startSample,samples:spoken.samples},
+        ...sceneSpeech.map((voice,index)=>({wavPath:voice.wavPath,
+          startSample:timeline.beats[index+1].startSample,samples:voice.samples}))]});
+    const fullSeconds=fullRender.frameCount*rigPlan.manifest.fps.den/rigPlan.manifest.fps.num;
+    const fullMp4=join(root,"full-edited-custom-rig-voiced.mp4");
+    await run("ffmpeg",["-hide_banner","-loglevel","error","-nostdin","-y",
+      "-i",fullRender.videoOnlyPath,"-i",sceneAudio.wavPath,"-map","0:v:0","-map","1:a:0",
+      "-c:v","copy","-c:a","aac","-b:a","128k","-af","apad",
+      "-t",String(fullSeconds),"-movflags","+faststart",fullMp4],{timeout:60000});
+    const fullProbe=await run("ffprobe",["-v","error","-count_frames","-show_entries",
+      "stream=codec_type,codec_name,nb_read_frames,start_time,duration,r_frame_rate","-of","json",fullMp4],{timeout:30000});
+    const fullStreams=JSON.parse(fullProbe.stdout).streams??[];
+    const fullVideo=fullStreams.find(stream=>stream.codec_type==="video");
+    const fullAudio=fullStreams.find(stream=>stream.codec_type==="audio");
+    assert.equal(fullVideo?.codec_name,"h264");
+    assert.equal(Number(fullVideo?.nb_read_frames),fullRender.frameCount);
+    assert.equal(fullVideo?.r_frame_rate,"30/1");
+    assert.equal(fullAudio?.codec_name,"aac");
+    for(const stream of [fullVideo,fullAudio]){
+      assert.ok(Math.abs(Number(stream.start_time))<=1/rigPlan.manifest.fps.num);
+      assert.ok(Math.abs(Number(stream.duration)-fullSeconds)<=1/rigPlan.manifest.fps.num,
+        "full narrated film audio must end within one frame of the final exported picture");
+    }
+    if(process.env.CONTENTGEN_QA_ARTIFACT_DIR){
+      const target=resolve(process.env.CONTENTGEN_QA_ARTIFACT_DIR);
+      await mkdir(target,{recursive:true});
+      await copyFile(syncedMp4,join(target,"kumiki-custom-rigs-voiced.mp4"));
+      await copyFile(fullMp4,join(target,"kumiki-edited-scene-full-voiced.mp4"));
+      if(blinkMp4)await copyFile(blinkMp4,join(target,"kumiki-pip-blink.mp4"));
+      if(rigPacks.rigs.pip.definition.blink){
+        await copyFile(join(root,"pip-open.png"),join(target,"pip-open.png"));
+        await copyFile(join(root,"pip-closed.png"),join(target,"pip-closed.png"));
+      }
+    }
+  }finally{await rigStage.close();}
+  // Exercise the actual selected-scene API's file publication via the same
+  // Chromium page, H.264 encoder and FFprobe. Only three preview frames are
+  // requested, keeping the provider-free smoke run bounded.
+  const clipPlan=structuredClone(plan);
+  clipPlan.manifest.durationFrames=3;
+  clipPlan.chapters=[{...clipPlan.chapters[0],endFrame:3}];
+  const selectedShot="selected-first-scene",clipOut=join(root,"selected-preview");
+  await mkdir(clipOut);
+  const clip=await renderSelectedSceneClip({shotId:selectedShot,outDir:clipOut,
+    browserExecutable:browserPath},{compile:()=>({plan:clipPlan,
+      renderPlanSha256:sha(Buffer.from(JSON.stringify(clipPlan))),
+      shotMap:[{shotId:selectedShot,beatId:clipPlan.chapters[0].id}]}),
+    render:options=>renderVideoSegments(options,{openCapture:async(url,expected)=>{
+      const clipPage=await browser.newPage({viewport:{width:expected.width,height:expected.height}});
+      await clipPage.goto(url,{waitUntil:"networkidle",timeout:30000});
+      await clipPage.waitForFunction(()=>Boolean(window.__kmVideoExport?.manifest),undefined,{timeout:20000});
+      return {manifest:await clipPage.evaluate(()=>window.__kmVideoExport.manifest),
+        buildHash:await clipPage.evaluate(()=>window.__contentgenBuildHash),
+        captureFrame:async(frame,path)=>{await clipPage.evaluate(index=>window.__kmVideoExport.seek(index),frame);
+          await clipPage.locator("[data-km-video-capture]").screenshot({path,animations:"disabled",scale:"css"});},
+        close:async()=>clipPage.close()};
+    }})});
+  assert.equal(clip.durationFrames,3);
+  const clipProbe=await run("ffprobe",["-v","error","-count_frames","-select_streams","v:0",
+    "-show_entries","stream=codec_name,width,height,nb_read_frames","-of","json",
+    join(clipOut,"video.mp4")],{timeout:30000});
+  const clipStream=JSON.parse(clipProbe.stdout).streams?.[0];
+  assert.equal(clipStream?.codec_name,"h264");
+  assert.equal(Number(clipStream.nb_read_frames),3);
+  assert.equal(clipStream.width,manifest.width);
+  assert.equal(clipStream.height,manifest.height);
+  const concepts=await generateProductionThumbnails(input,{outputDir:root});
+  assert.equal(concepts.length,3);
+  await page.setViewportSize({width:1920,height:1080});
+  await page.setContent(await readFile(join(root,"thumbnail-2.svg"),"utf8"));
+  const textFit=await page.evaluate(()=>{
+    const svg=document.querySelector("svg");
+    const boxes=[...svg.querySelectorAll("rect")].map(node=>node.getBoundingClientRect());
+    const panels=boxes.filter(box=>box.width>500&&box.width<600&&box.height>330&&box.height<370);
+    const labels=[...svg.querySelectorAll("text")].map(node=>node.getBoundingClientRect())
+      .filter(box=>panels.some(panel=>box.top>=panel.top&&box.top<panel.bottom));
+    return {panels:panels.length,labels:labels.length,outside:labels.filter(label=>
+      !panels.some(panel=>label.left>=panel.left+12&&label.right<=panel.right-12&&
+        label.top>=panel.top+12&&label.bottom<=panel.bottom-12)).length};
+  });
+  assert.equal(textFit.panels,3,"bento thumbnail needs three separate visual panels");
+  assert.ok(textFit.labels>=6,"bento thumbnail needs meaningful visible headings");
+  assert.equal(textFit.outside,0,"no tile heading may overlap adjacent thumbnails or escape its panel");
+  process.stdout.write(`PASS: real Kumiki Chromium export, a three-frame selected-scene H.264 preview, deterministic ${manifest.width}x${manifest.height} PNGs, FFprobe and three bounded thumbnail panels.\n`);
+}finally{
+  await browser?.close().catch(()=>{});
+  await stage?.close().catch(()=>{});
+  await rm(root,{recursive:true,force:true});
+}

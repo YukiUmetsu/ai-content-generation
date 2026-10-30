@@ -40,6 +40,22 @@ function clipText(text:string,max=62){
   return (short||normalized.slice(0,max-1))+"…";
 }
 
+/** Fixed-width bento tiles need deliberate line breaks. SVG viewers and
+ * FFmpeg's font renderer measure text differently, so a browser-only
+ * `fit: shrink` promise is not sufficient to prevent neighboring bleed. */
+function tileCaption(value:string){
+  const tokens=clipText(value,48).split(/\s+/u);
+  const lines:string[]=[];
+  for(const original of tokens){
+    const word=clipText(original,18);
+    const last=lines.length-1;
+    if(last>=0&&lines[last].length+1+word.length<=14)lines[last]+=" "+word;
+    else if(lines.length<3)lines.push(word);
+    else lines[2]=clipText(lines[2]+" "+word,18);
+  }
+  return lines.join("\n");
+}
+
 type Palette={dark:string;cream:string;accent:string;secondary:string;ink:string};
 function palette(colors:PlatformBrandColors|undefined):Palette{
   return {dark:colors?.primary??"#152D36",cream:colors?.background??"#F8F4EC",
@@ -73,8 +89,9 @@ function landscape(variant:number,w:number,h:number,title:string,heads:string[],
     for(let i=0;i<3;i++){
       const x=m+i*(cell+gap);
       add(rect(`tile-${i}`,x,h*.55,cell,h*.32,i===1?p.accent:i===2?p.secondary:p.cream,1,18),
-        words(`tile-title-${i}`,heads[i]??`Part ${i+1}`,x+cell*.065,h*.615,cell*.87,h*.20,h*.053,
-          i===2?p.cream:p.ink,2,{font:"body",maxLines:3,minSize:h*.034}));
+        words(`tile-title-${i}`,tileCaption(heads[i]??`Part ${i+1}`),x+cell*.065,h*.605,
+          cell*.87,h*.23,h*.043,i===2?p.cream:p.ink,2,
+          {font:"body",maxLines:3,minSize:h*.029}));
     }
   }else{
     // Editorial: high-impact typography balanced by a giant question mark.
@@ -83,7 +100,9 @@ function landscape(variant:number,w:number,h:number,title:string,heads:string[],
       words("question","?",w*.77,h*.18,w*.22,h*.46,h*.39,p.cream,2,{maxLines:1,minSize:h*.25}));
     add(rect("top-rule",m,h*.12,w*.08,h*.012,p.accent,2,3),
       words("eyebrow","UNDER THE SURFACE",m,h*.055,w*.45,h*.07,h*.035,p.ink,3,{font:"body",maxLines:1}),
-      words("headline",title,m,h*.22,w*.61,h*.45,h*.135,p.ink,3,{maxLines:3,minSize:h*.066}),
+      // SVG export uses conservative font-width estimates; leave extra room
+      // so long words cannot run into the right-hand question illustration.
+      words("headline",title,m,h*.22,w*.56,h*.45,h*.106,p.ink,3,{maxLines:3,minSize:h*.056}),
       rect("footer-rule",m,h*.78,w*.54,h*.006,p.ink,2),
       words("first-idea",heads[0]??"",m,h*.82,w*.57,h*.10,h*.051,p.ink,3,{font:"body",maxLines:2}));
   }
@@ -124,19 +143,44 @@ function upright(variant:number,w:number,h:number,title:string,heads:string[],p:
 }
 
 export function createCoverArtwork(title:string,sections:readonly PlatformScriptSection[],profile:OutputProfileId,
-  colors:PlatformBrandColors|undefined,target:string,filenameBase:string):GeneratedArtwork[]{
+  colors:PlatformBrandColors|undefined,target:string,filenameBase:string,imageDataUri?:string,
+  variantHeadlines?:readonly [string,string,string],
+  variantColors?:readonly (PlatformBrandColors|undefined)[]):GeneratedArtwork[]{
   if(!sections.length)return [];
   const {width,height}=getOutputProfile(profile);
-  const p=palette(colors),portrait=height>=width;
+  const portrait=height>=width;
   const heads=sections.slice(0,3).map(section=>clipText(section.heading,45));
   const ids=["","-tiles","-editorial"] as const;
   const labels=["Story layout","Tile layout","Editorial layout"] as const;
   return ids.map((suffix,index)=>{
-    const media=portrait?upright(index,width,height,clipText(title,110),heads,p):landscape(index,width,height,clipText(title,110),heads,p);
+    const headline=clipText(variantHeadlines?.[index]??title,110);
+    const p=palette(variantColors?.[index]??colors);
+    const base=portrait?upright(index,width,height,headline,heads,p):landscape(index,width,height,headline,heads,p);
+    // The replacement photo is an actual Kumiki media layer. Data URLs make
+    // both SVG previews and PNG exports self-contained and offline; the browser
+    // upload path separately enforces type/size bounds.
+    const frame=portrait?{x:width*.10,y:height*(index===0?.65:index===1?.72:.72),
+      width:width*.80,height:height*.20,z:2}:index===0?
+      {x:width*.67,y:height*.16,width:width*.27,height:height*.58,z:4}:
+      index===1?{x:width*.69,y:height*.09,width:width*.23,height:height*.35,z:2}:
+        {x:width*.72,y:height*.13,width:width*.25,height:height*.68,z:2};
+    const imageLayer:Layer|undefined=imageDataUri?{
+      ...geometry("cover-photo","User-selected cover image","media",frame.x,frame.y,frame.width,frame.height,frame.z),
+      kind:"media",media:{assetId:"cover-image",fit:"cover",focalPoint:{x:.5,y:.5},
+        mask:{kind:"rounded",radius:Math.min(width,height)*.025},alt:"Selected thumbnail image"}
+    }:undefined;
+    const media=imageLayer?normalizeDocument({...base,
+      assets:{...base.assets,"cover-image":{id:"cover-image",uri:imageDataUri!,mediaType:imageDataUri!.slice(5,imageDataUri!.indexOf(";")),
+        alt:"User-selected cover image",licenseId:"user-supplied-needs-review"}},
+      layers:[...base.layers.map(layer=>index===1&&!portrait&&layer.id==="headline"?
+        {...layer,transform:{...layer.transform,width:width*.54}}:layer),imageLayer],
+    }):base;
     const output=documentToSvg(media);
     if(output.diagnostics.some(d=>d.severity==="error"))return null;
     return {id:`cover-${target}${suffix}`,filename:`${filenameBase}-${target}${suffix||"-cover"}.png`,label:labels[index],
-      description:"Kumiki thumbnail: editable headline, approved-script section headings, no unsourced photos or figures.",
+      description:imageDataUri?
+        "Kumiki thumbnail with a user-supplied image. Image permissions and commercial rights still require review.":
+        "Kumiki thumbnail with an editable headline and draft-script headings; no external media included.",
       media,svg:output.svg,width:output.size.width,height:output.size.height,
       preview:`data:image/svg+xml;charset=utf-8,${encodeURIComponent(output.svg)}`};
   }).filter((result):result is NonNullable<typeof result>=>result!==null);

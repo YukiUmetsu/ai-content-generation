@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   ChevronRight,
   Clock,
@@ -16,7 +15,6 @@ import {
 import { ApiErrorNotice } from "./api-error-notice";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { SplitPane } from "@/components/ui/split-pane";
 import { Surface } from "@/components/ui/surface-card";
 import { EmptyState } from "@/app/empty-state";
 import { formatDiscoveryProviderHealth } from "./discovery-provider-health";
@@ -75,34 +73,18 @@ function monitorEntries(jobs: Job[], discoveries: DiscoveryJob[]): MonitorEntry[
   return entries.sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key));
 }
 
-const LIST_WIDTH_STORAGE_KEY = "contentgen.jobs.list-width";
-const DEFAULT_LIST_WIDTH = 46;
-const DIVIDER_WIDTH_PX = 8;
-
-function listWidthBounds(containerWidth: number): { min: number; max: number } {
-  const width = containerWidth > DIVIDER_WIDTH_PX ? containerWidth - DIVIDER_WIDTH_PX : 992;
-  const min = Math.max(25, (280 / width) * 100);
-  const max = Math.max(min, Math.min(70, ((width - 360) / width) * 100));
-  return { min, max };
+const videoJobNames:Record<string,[string,string]>={
+  "video-production":["Create draft video","下書き動画を生成"],
+  "video-asset-download":["Prepare scene media","シーン素材を準備"],
+  "video-narration-scene":["Narrate one scene","シーンの音声を作成"],
+  "video-render-segment":["Render one scene","シーン映像を作成"],
+  "video-thumbnail-concept":["Create thumbnail concept","サムネイル案を作成"],
+};
+function jobName(kind:string,locale:Locale):string{
+  return videoJobNames[kind]?.[locale==="ja"?1:0]??humanize(kind);
 }
-
-function clampListWidth(value: number, containerWidth: number): number {
-  const { min, max } = listWidthBounds(containerWidth);
-  return Math.round(Math.min(max, Math.max(min, value)));
-}
-
-function initialListWidth(): number {
-  try {
-    const saved = window.localStorage.getItem(LIST_WIDTH_STORAGE_KEY);
-    if (saved !== null && Number.isFinite(Number(saved))) {
-      return Math.max(25, Math.min(70, Math.round(Number(saved))));
-    }
-  } catch { /* Storage is optional in restricted browser environments. */ }
-  return DEFAULT_LIST_WIDTH;
-}
-
-function monitorName(entry: MonitorEntry): string {
-  return entry.kind === "discovery" ? entry.session.name : humanize(entry.job.jobKind);
+function monitorName(entry: MonitorEntry,locale:Locale): string {
+  return entry.kind === "discovery" ? entry.session.name : jobName(entry.job.jobKind,locale);
 }
 
 function monitorStatus(entry: MonitorEntry, locale: Locale): string {
@@ -158,7 +140,7 @@ function latestDiscoveryJobs(items: DiscoveryJob[]): DiscoveryJob[] {
   return [...running, ...sorted.filter(item => !active(item)).slice(0, 10)];
 }
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 1000;
 const TERMINAL_STATES: JobState[] = ["SUCCEEDED", "FAILED", "CANCELLED"];
 const ACTIVE_STATES: JobState[] = ["PENDING", "READY", "RUNNING"];
 
@@ -228,9 +210,22 @@ function orderNodes(nodes: JobNode[], edges: JobEdge[]): JobNode[] {
   return [...ordered, ...remaining];
 }
 
-/** Map opaque node ids to their operator-facing keys, falling back to the id. */
+const productionStageLabels:Record<string,string>={
+  "scene-plan":"Prepare scene plan","visual-planning":"Prepare visual layouts",
+  "asset-search":"Find suitable imagery","asset-preparation":"Prepare scene assets",
+  "asset-download":"Download scene photo",
+  "thumbnail-concept":"Export one thumbnail concept",
+  narration:"Generate narration",timeline:"Synchronize scene timing",
+  "sound-mix":"Mix audio",captions:"Create captions",
+  "scene-render":"Render video scenes",thumbnails:"Create three thumbnails",
+  "narration-scene":"Narrate one scene","render-segment":"Render one scene segment",
+  "final-mux":"Assemble final video","technical-qa":"Check video quality",
+  "export-package":"Save video and publishing files",
+};
+const friendlyStage=(key:string)=>productionStageLabels[key]??key;
+/** Map opaque node ids to operator-facing stage names, falling back to the id. */
 function nodeLabel(nodes: JobNode[], nodeId: string): string {
-  return nodes.find((node) => node.id === nodeId)?.nodeKey ?? nodeId;
+  return friendlyStage(nodes.find((node) => node.id === nodeId)?.nodeKey ?? nodeId);
 }
 
 /** Compact list identity: the last 12 characters, with the full id in `title`. */
@@ -239,6 +234,13 @@ function compactId(id: string): string {
 }
 
 /** Localized explanation for a failed request, keeping the server code visible. */
+function attemptDetail(detail: string, locale: Locale): string {
+  if(detail === "Scene timing failed. Reopen the visual editor, check the affected scenes and retry.")
+    return locale === "ja" ? "この以前の試行では具体的な原因やシーンが記録されていません。再試行すると詳細を確認できます。" :
+      "This earlier attempt did not record the specific cause or scene. Retry to check for more details.";
+  return detail;
+}
+
 function failureMessage(error: ApiError, locale: Locale): string {
   switch (error.kind) {
     case "network":
@@ -322,7 +324,7 @@ function AttemptStateIcon({ state }: { state: JobAttempt["state"] }) {
     case "CANCELLED":
       return <Info aria-hidden className="size-4 text-muted-foreground" />;
     case "RUNNING":
-      return <Loader2 aria-hidden className="size-4 animate-spin text-status-info" />;
+      return <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none text-status-info" />;
     default: {
       const _exhaustive: never = state;
       return _exhaustive;
@@ -345,45 +347,25 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(null);
   const [filter, setFilter] = useState<MonitorFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
-  const [listWidth, setListWidth] = useState(initialListWidth);
-  const [containerWidth, setContainerWidth] = useState(1000);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [jobView, setJobView] = useState<JobView | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<ApiError | null>(null);
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [retryFindings, setRetryFindings] = useState<string[]>([]);
   const [cancelError, setCancelError] = useState<ApiError | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const listAbortRef = useRef<AbortController | null>(null);
   const discoveryInFlight = useRef(false);
-  const backButtonRef = useRef<HTMLButtonElement | null>(null);
-  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
-  const visitedMobileDetailRef = useRef(false);
   const workspaceRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    const workspace = workspaceRef.current;
-    if (!workspace) return;
-    const measure = () => {
-      const width = workspace.getBoundingClientRect().width;
-      if (width > 0) setContainerWidth(width);
-    };
-    measure();
-    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    observer?.observe(workspace);
-    window.addEventListener("resize", measure);
-    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, []);
-
-  function updateListWidth(next: number, width: number) {
-    const adjusted = clampListWidth(next, width);
-    setListWidth(adjusted);
-    try { window.localStorage.setItem(LIST_WIDTH_STORAGE_KEY, String(adjusted)); }
-    catch { /* Resizing still works without browser storage. */ }
-  }
+  useEffect(()=>{workspaceRef.current?.focus();},[]);
 
   const entries = useMemo(() => monitorEntries(jobs, discoveryJobs), [jobs, discoveryJobs]);
   const filteredEntries = useMemo(() => {
@@ -394,13 +376,15 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
       const content = entry.kind === "discovery"
         ? [entry.session.name, entry.projectName, entry.session.lastRun?.stage,
           humanize(entry.session.lastRun?.stage ?? ""), entry.session.lastRun?.id]
-        : [entry.job.jobKind, humanize(entry.job.jobKind), entry.job.id];
+        : [entry.job.jobKind, humanize(entry.job.jobKind),jobName(entry.job.jobKind,locale), entry.job.id];
       return content.some(value => value?.toLocaleLowerCase().includes(search));
     });
-  }, [entries, filter, searchQuery]);
-  const selectedEntry = filteredEntries.find(entry => entry.key === selectedEntryKey) ?? filteredEntries[0] ?? null;
-  const selectedJobId = selectedEntry?.kind === "pipeline" ? selectedEntry.job.id : null;
+  }, [entries, filter, searchQuery, locale]);
+  const selectedEntry = entries.find(entry => entry.key === selectedEntryKey) ?? null;
+  const selectedJobId = detailOpen && selectedEntry?.kind === "pipeline" ? selectedEntry.job.id : null;
   const selectedJobView = selectedJobId && jobView?.job.id === selectedJobId ? jobView : null;
+  const selectedJobIdRef = useRef(selectedJobId);
+  useEffect(() => { selectedJobIdRef.current = selectedJobId; }, [selectedJobId]);
 
   const loadDiscoveryJobs = useCallback(async (signal?: AbortSignal) => {
     if (discoveryInFlight.current) return;
@@ -522,15 +506,6 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   }, [loadList]);
 
   useEffect(() => {
-    if (mobileDetailOpen) {
-      visitedMobileDetailRef.current = true;
-      backButtonRef.current?.focus();
-    } else if (visitedMobileDetailRef.current) {
-      selectedRowRef.current?.focus();
-    }
-  }, [mobileDetailOpen]);
-
-  useEffect(() => {
     stopPolling();
     if (!selectedJobId) {
       clearDetailRequest();
@@ -542,7 +517,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
 
   useEffect(() => {
     stopPolling();
-    if (!selectedJobView || isTerminal(selectedJobView.job.state)) {
+    if (!selectedJobView) {
       return;
     }
     intervalRef.current = setInterval(() => {
@@ -555,14 +530,13 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
   }, [selectedJobView, loadDetail, stopPolling]);
 
   function handleSelectEntry(key: string) {
-    if (key === selectedEntry?.key) {
-      setMobileDetailOpen(true);
-      return;
-    }
     setSelectedEntryKey(key);
-    setMobileDetailOpen(true);
+    setDetailOpen(true);
     setDetailError(null);
     setCancelError(null);
+    setRetryMessage(null);
+    setRetryError(null);
+    setRetryFindings([]);
   }
 
   function handleRefreshList() {
@@ -600,6 +574,46 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
     }
   }
 
+  async function handleRetryProduction() {
+    if (!selectedJobView || retryLoading) return;
+    const jobId = selectedJobView.job.id;
+    setRetryLoading(true); setRetryError(null); setRetryMessage(null); setRetryFindings([]);
+    try {
+      const response = await fetch("/api/contentgen-video/jobs/retry", {
+        method: "POST", headers: {"Content-Type":"application/json", "X-Contentgen-Director":"local-only"},
+        body: JSON.stringify({jobId}), signal: AbortSignal.timeout(360_000),
+      });
+      const result: unknown = await response.json();
+      if (selectedJobIdRef.current !== jobId) { void loadList(); return; }
+      if (!response.ok || !result || typeof result !== "object" || !("started" in result) || result.started !== true ||
+        !("jobId" in result) || result.jobId !== jobId) {
+        const message = result && typeof result === "object" && "error" in result && typeof result.error === "string"
+          ? result.error : (locale === "ja" ? "再試行を開始できませんでした。ローカル制作サービスを確認してください。" : "Could not start the retry. Check the local production service.");
+        if (result && typeof result === "object" && "findings" in result && Array.isArray(result.findings)) {
+          setRetryFindings(result.findings.flatMap((finding: unknown) => finding && typeof finding === "object" &&
+            "message" in finding && typeof finding.message === "string" ? [finding.message] : []).slice(0,12));
+        }
+        if (result && typeof result === "object" && "changedInputs" in result && Array.isArray(result.changedInputs)) {
+          setRetryFindings(result.changedInputs.filter((item: unknown): item is string => typeof item === "string").slice(0, 8));
+        }
+        throw new Error(message);
+      }
+      if (selectedJobIdRef.current !== jobId) { void loadList(); return; }
+      setRetryMessage(locale === "ja" ? "再試行を開始しました。ジョブの状態を更新しています。" : "Retry started. Job status is updating.");
+      await Promise.allSettled([loadDetail(jobId, {silent:true}), loadList()]);
+    } catch (error) {
+      if (selectedJobIdRef.current !== jobId) return;
+      setRetryError(error instanceof Error && error.name === "TimeoutError"
+        ? (locale === "ja" ? "再試行の確認がタイムアウトしました。ジョブの状態を確認してください。" : "Retry confirmation timed out. Check the job status before trying again.")
+        : error instanceof TypeError ? (locale === "ja" ? "ローカル制作サービスに接続できません。起動して再試行してください。" : "Cannot reach the local production service. Start it and retry.")
+        : error instanceof Error ? error.message : (locale === "ja" ? "再試行を開始できませんでした。" : "Could not start the retry."));
+    } finally { setRetryLoading(false); }
+  }
+
+  const canRetry = selectedJobView?.job.jobKind === "video-production" &&
+    (selectedJobView.job.state === "FAILED" || (selectedJobView.job.state === "RUNNING" &&
+      !selectedJobView.nodes.some(node => node.state === "RUNNING") &&
+      selectedJobView.nodes.some(node => node.state === "READY" && node.errorCode !== null)));
   const canCancel = selectedJobView != null && ACTIVE_STATES.includes(selectedJobView.job.state);
   const emptyList = !listLoading && !discoveryLoading && !listError && !discoveryError &&
     entries.length === 0;
@@ -610,25 +624,11 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
     <section
       ref={workspaceRef}
       id="workspace"
+      tabIndex={-1}
       aria-label={translate(locale, "navJobs")}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      <SplitPane
-        className={`min-h-0 flex-1 !flex flex-col lg:!grid lg:grid-rows-[minmax(0,1fr)]
-          [&_[data-part=primary]]:flex-1 lg:[&_[data-part=primary]]:flex-none
-          [&_[data-part=secondary]]:flex-1 lg:[&_[data-part=secondary]]:flex-none
-          [&_[data-part=divider]]:hidden lg:[&_[data-part=divider]]:block
-          ${mobileDetailOpen
-            ? "[&_[data-part=primary]]:hidden lg:[&_[data-part=primary]]:block"
-            : "[&_[data-part=secondary]]:hidden lg:[&_[data-part=secondary]]:block"}`}
-        aria-label={locale === "ja" ? "ジョブ一覧と詳細の幅を変更" : "Resize job list and details"}
-        primarySize={clampListWidth(listWidth, containerWidth)}
-        minPrimarySize={listWidthBounds(containerWidth).min}
-        maxPrimarySize={listWidthBounds(containerWidth).max}
-        onPrimarySizeChange={next => updateListWidth(next, containerWidth)}
-        primary={<div
-          className={`flex h-full min-h-0 min-w-0 flex-col bg-surface ${mobileDetailOpen ? "hidden lg:flex" : "flex"}`}
-        >
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-surface">
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3.5">
           <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
             <ListChecks aria-hidden className="size-[18px] text-muted-foreground" />
@@ -650,7 +650,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
             <RefreshCw aria-hidden className="size-4" />
           </Button>
         </div>
-        <div className="grid gap-3 border-b border-border px-4 py-3">
+        <div className="grid gap-3 border-b border-border bg-canvas/50 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-6">
           <label className="relative block">
             <Search aria-hidden className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <span className="sr-only">{locale === "ja" ? "ジョブを検索" : "Search jobs"}</span>
@@ -663,7 +663,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
             />
           </label>
           <div role="group" aria-label={locale === "ja" ? "ジョブの状態で絞り込み" : "Filter job status"}
-            className="flex gap-1">
+            className="flex gap-1 rounded-control border border-border bg-surface p-1">
             {(["all", "active", "attention", "finished"] as const).map(value => {
               const label = locale === "ja"
                 ? { all: "すべて", active: "実行中", attention: "要確認", finished: "終了" }[value]
@@ -671,7 +671,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
               return <button key={value} type="button" aria-pressed={filter === value}
                 aria-label={value === "attention" && locale === "en" ? "Needs attention" : undefined}
                 onClick={() => setFilter(value)}
-                className={`min-h-9 min-w-0 flex-1 rounded-full px-2 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${filter === value
+                className={`min-h-9 min-w-0 flex-1 rounded-control px-3 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${filter === value
                   ? "bg-foreground text-canvas" : "text-muted-foreground hover:bg-surface-inset hover:text-foreground"}`}>
                 {label}
               </button>;
@@ -720,10 +720,10 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                 ? formatRunTime(entry.session.lastRun?.updatedAt ?? entry.session.updatedAt, locale)
                 : formatDateTime(entry.job.updatedAt, locale);
               return <li key={entry.key} className="min-w-0">
-                <button type="button" ref={selected ? selectedRowRef : undefined}
+                <button type="button"
                   aria-current={selected ? "true" : undefined}
                   onClick={() => handleSelectEntry(entry.key)}
-                  className={`group relative flex w-full min-w-0 items-start gap-3 px-4 py-3.5 text-start outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected
+                  className={`group relative flex w-full min-w-0 items-start gap-4 px-4 py-4 text-start outline-none transition-colors sm:px-6 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${selected
                     ? "bg-surface-inset/80" : "hover:bg-surface-subtle"}`}>
                   {selected && <span aria-hidden className="absolute inset-y-2 start-0 w-[3px] rounded-e-full bg-primary" />}
                   <span className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-control ${entry.bucket === "active"
@@ -733,7 +733,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                       : <ListChecks aria-hidden className="size-[18px]" />}
                   </span>
                   <span className="min-w-0 flex-1 space-y-1">
-                    <span className="block truncate text-sm font-semibold text-foreground" title={monitorName(entry)}>{monitorName(entry)}</span>
+                    <span className="block truncate text-[15px] font-semibold text-foreground" title={monitorName(entry,locale)}>{monitorName(entry,locale)}</span>
                     <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
                     <span className="flex min-w-0 items-center gap-2 pt-1">
                       <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${monitorBadgeClasses(entry)}`}>
@@ -749,23 +749,19 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-2">
                     <time title={absoluteTime} className="text-xs text-muted-foreground">{relativeTime(entry.updatedAt, locale)}</time>
-                    <ChevronRight aria-hidden className={`size-4 text-muted-foreground/50 transition-colors group-hover:text-foreground ${selected ? "text-foreground" : ""}`} />
+                    <span className="flex items-center gap-1 text-xs font-medium text-foreground">{locale === "ja" ? "詳細を見る" : "View details"}<ChevronRight aria-hidden className="size-4" /></span>
                   </span>
                 </button>
               </li>;
             })}
           </ul>
         </div>
-      </div>}
+      </div>
 
-        secondary={<div
-          className={`h-full min-h-0 min-w-0 flex-col overflow-y-auto bg-canvas px-4 pb-7 pt-4 sm:px-6 lg:px-8 ${mobileDetailOpen ? "flex" : "hidden lg:flex"}`}
-        >
-        <button ref={backButtonRef} type="button" onClick={() => setMobileDetailOpen(false)}
-          className="mb-4 inline-flex items-center gap-2 self-start rounded-control px-2 py-1.5 text-sm font-medium text-muted-foreground hover:bg-surface-subtle hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden">
-          <ArrowLeft aria-hidden className="size-4" />
-          {locale === "ja" ? "ジョブ一覧に戻る" : "Back to jobs"}
-        </button>
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}
+        title={locale === "ja" ? "ジョブの詳細" : "Job details"}
+        size="lg" className="!max-w-6xl" closeLabel={locale === "ja" ? "閉じる" : "Close"}>
+        <div className="min-w-0 space-y-5">
         {!selectedEntry && !listLoading && !discoveryLoading && (
           <EmptyState
             title={translate(locale, "jobsSelectTitle")}
@@ -800,7 +796,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                   {locale === "ja" ? "パイプラインジョブ" : "Pipeline job"}
                 </p>
-                <h2 className="font-serif text-3xl leading-tight text-foreground">{humanize(selectedJobView.job.jobKind)}</h2>
+                <h2 className="font-serif text-3xl leading-tight text-foreground">{jobName(selectedJobView.job.jobKind,locale)}</h2>
                 <p className="mt-1 break-all font-mono text-xs text-muted-foreground" title={selectedJobView.job.id}>
                   {compactId(selectedJobView.job.id)}
                 </p>
@@ -818,9 +814,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                   </span>
                 )}
                 <span className="text-start sm:text-end">
-                  {isTerminal(selectedJobView.job.state)
-                    ? translate(locale, "jobsStopped")
-                    : translate(locale, "jobsPolling")}
+                  {translate(locale, "jobsPolling")}
                 </span>
               </div>
             </div>
@@ -833,8 +827,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                     <p className="font-medium text-foreground">{translate(locale, "jobsFailureSummary")}</p>
                     <p className="break-words text-sm text-foreground">
                       <span className="text-muted-foreground">{translate(locale, "jobsFailureNode")}: </span>
-                      <span className="font-mono">{failure.node.nodeKey}</span>{" "}
-                      <span className="text-muted-foreground">({failure.node.nodeKind})</span>
+                      <span>{friendlyStage(failure.node.nodeKey)}</span>
                     </p>
                     {failure.errorCode && (
                       <p className="break-all text-sm text-danger">
@@ -843,7 +836,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                     )}
                     {failure.errorDetail ? (
                       <p className="min-w-0 break-words text-sm text-foreground">
-                        {failure.errorDetail}
+                        {attemptDetail(failure.errorDetail, locale)}
                       </p>
                     ) : (
                       <p className="text-sm text-muted-foreground">
@@ -862,41 +855,31 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
               </Surface>
             )}
 
-            <Surface variant="outline">
-              <div className="grid gap-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-sm font-medium ${stateBadgeClasses(selectedJobView.job.state)}`}
-                    title={selectedJobView.job.state}
-                  >
-                    {stateLabel(selectedJobView.job.state, locale)}
-                  </span>
-                  {canCancel && (
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={handleCancelClick}
-                      icon={<XCircle aria-hidden className="size-4" />}
-                    >
-                      {translate(locale, "jobsCancel")}
-                    </Button>
-                  )}
-                </div>
-                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-                  <dt className="text-muted-foreground">{translate(locale, "jobsJobId")}</dt>
-                  <dd className="min-w-0 break-all font-mono text-foreground select-all">{selectedJobView.job.id}</dd>
-                  <dt className="text-muted-foreground">{translate(locale, "jobsJobKind")}</dt>
-                  <dd className="text-foreground">{selectedJobView.job.jobKind}</dd>
-                  <dt className="text-muted-foreground">{translate(locale, "jobsCreated")}</dt>
-                  <dd className="text-foreground">{formatDateTime(selectedJobView.job.createdAt, locale)}</dd>
-                  <dt className="text-muted-foreground">{translate(locale, "jobsUpdatedAt")}</dt>
-                  <dd className="text-foreground">{formatDateTime(selectedJobView.job.updatedAt, locale)}</dd>
-                </dl>
+            {retryError && <div role="alert" className="rounded-control border border-danger/40 bg-danger/5 p-3 text-sm text-danger"><p>{retryError}</p>{retryFindings.length > 0 && <ul className="mt-2 list-disc space-y-1 ps-5">{retryFindings.map((finding,index)=><li key={index}>{finding}</li>)}</ul>}</div>}
+            {retryMessage && <p role="status" className="rounded-control border border-status-success/30 bg-status-success/5 p-3 text-sm text-foreground">{retryMessage}</p>}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border py-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className={`rounded-full border px-2.5 py-1 text-sm font-medium ${stateBadgeClasses(selectedJobView.job.state)}`} title={selectedJobView.job.state}>
+                  {stateLabel(selectedJobView.job.state, locale)}
+                </span>
+                <span className="text-sm text-muted-foreground">{translate(locale, "jobsCreated")}: {formatDateTime(selectedJobView.job.createdAt, locale)}</span>
               </div>
-            </Surface>
+              <div className="flex flex-wrap items-center gap-2">
+              {canRetry && <Button variant="outline" size="sm" onClick={()=>void handleRetryProduction()} isLoading={retryLoading}
+                loadingLabel={locale === "ja" ? "再試行を準備中" : "Preparing retry"} disabled={retryLoading}>
+                {locale === "ja" ? "制作を再試行" : "Retry production"}
+              </Button>}
+              {canCancel && <Button variant="destructive" size="sm" onClick={handleCancelClick} disabled={retryLoading} icon={<XCircle aria-hidden className="size-4" />}>
+                {translate(locale, "jobsCancel")}
+              </Button>}
+              </div>
+            </div>
+
+            <QueueStatus jobView={selectedJobView} locale={locale} />
+            <PipelineGraph nodes={orderedNodes} edges={selectedJobView.edges} locale={locale} />
 
             <Surface variant="outline">
-              <h3 className="mb-2 font-medium text-foreground">{translate(locale, "jobsProgress")}</h3>
+              <h3 className="mb-3 font-medium text-foreground">{translate(locale, "jobsProgress")}</h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
                 <CountBox label={translate(locale, "jobsProgressTotal")} value={selectedJobView.progress.total} />
                 <CountBox label={translate(locale, "jobsProgressPending")} value={selectedJobView.progress.pending} />
@@ -908,8 +891,17 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
               </div>
             </Surface>
 
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="grid gap-3">
+            <details className="group rounded-surface border border-border bg-surface px-4 py-3">
+              <summary className="cursor-pointer text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{locale === "ja" ? "ジョブ情報" : "Job information"}</summary>
+              <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">{translate(locale, "jobsJobId")}</dt><dd className="min-w-0 break-all font-mono select-all">{selectedJobView.job.id}</dd>
+                <dt className="text-muted-foreground">{translate(locale, "jobsJobKind")}</dt><dd>{selectedJobView.job.jobKind}</dd>
+                <dt className="text-muted-foreground">{translate(locale, "jobsCreated")}</dt><dd>{formatDateTime(selectedJobView.job.createdAt, locale)}</dd>
+                <dt className="text-muted-foreground">{translate(locale, "jobsUpdatedAt")}</dt><dd>{formatDateTime(selectedJobView.job.updatedAt, locale)}</dd>
+              </dl>
+            </details>
+
+            <div className="grid gap-3">
                 <h3 className="font-medium text-foreground">{translate(locale, "jobsNodes")}</h3>
                 {selectedJobView.nodes.length === 0 ? (
                   <Surface variant="outline" className="border-status-warning/40 bg-status-warning/5">
@@ -921,6 +913,7 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                 ) : (
                   <div className="grid gap-3">
                     {orderedNodes.map((node) => (
+                      <div key={node.id} id={`job-node-${node.id}`} role="region" aria-label={friendlyStage(node.nodeKey)} tabIndex={-1} className="rounded-surface focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                       <NodeCard
                         key={node.id}
                         node={node}
@@ -929,31 +922,15 @@ export function JobsWorkspace({ locale, projects = EMPTY_PROJECTS }: JobsWorkspa
                         edges={selectedJobView.edges}
                         attempts={selectedJobView.attempts.filter((a) => a.nodeId === node.id)}
                       />
+                      </div>
                     ))}
                   </div>
                 )}
               </div>
-
-              <div className="grid gap-3">
-                <h3 className="font-medium text-foreground">{translate(locale, "jobsAttempts")}</h3>
-                {selectedJobView.attempts.length === 0 ? (
-                  <p className="text-muted-foreground">{translate(locale, "jobsNoAttempts")}</p>
-                ) : (
-                  <div className="grid gap-2">
-                    {selectedJobView.attempts
-                      .slice()
-                      .sort((a, b) => safeTime(a.startedAt) - safeTime(b.startedAt))
-                      .map((attempt) => (
-                        <AttemptCard key={attempt.id} attempt={attempt} locale={locale} nodes={selectedJobView.nodes} />
-                      ))}
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         )}
-      </div>}
-      />
+        </div>
+      </Dialog>
 
       <Dialog
         open={cancelDialogOpen}
@@ -1128,11 +1105,84 @@ function CountBox({ label, value }: { label: string; value: number }) {
   );
 }
 
+/** Persisted node state is the queue view: READY has no worker claim;
+ * RUNNING has a claimed attempt. No queue position or start ETA is stored. */
+function QueueStatus({jobView, locale}: {jobView: JobView; locale: Locale}) {
+  const queued = jobView.nodes.filter(node => node.state === "READY");
+  const running = jobView.nodes.filter(node => node.state === "RUNNING");
+  const pending = jobView.nodes.filter(node => node.state === "PENDING");
+  return <section aria-label={locale === "ja" ? "待機と実行状況" : "Queue and worker status"} className="rounded-surface border border-border bg-surface p-4 sm:p-5">
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-base font-semibold">{locale === "ja" ? "待機と実行状況" : "Queue and worker status"}</h3><span className="text-xs font-medium tabular-nums text-muted-foreground">{locale === "ja" ? "実行中" : "Active steps"}: {queued.length + running.length}</span></div>
+    <p className="mt-1 text-sm text-muted-foreground">{locale === "ja" ? "保存された状態を表示しています。待ち順と開始予定時刻は記録されていません。" : "Based on saved job state. Queue position and start time are not recorded."}</p>
+    <div className="mt-4 grid gap-3 md:grid-cols-3">
+      {([ [locale === "ja" ? "実行待ち" : "Ready for a worker", queued], [locale === "ja" ? "実行中" : "Running", running], [locale === "ja" ? "依存待ち" : "Waiting for dependencies", pending] ] as const).map(([title, items]) =>
+        <div key={title} className="rounded-control border border-border bg-canvas p-4">
+          <h4 className="flex items-center justify-between gap-2 text-sm font-semibold">{title} <span className="rounded-full bg-surface-inset px-2 py-0.5 text-xs tabular-nums text-muted-foreground">{items.length}</span></h4>
+          {items.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">{locale === "ja" ? "なし" : "None"}</p> :
+            <ul className="mt-2 space-y-3">{items.map(node => <li key={node.id} className="text-sm">
+              <p className="font-medium break-words">{friendlyStage(node.nodeKey)}</p>
+              <p className="mt-1 text-muted-foreground">{node.state === "READY" && node.attemptCount > 0 && node.errorCode
+                ? (locale === "ja" ? "再試行はまだワーカーに取得されていません。開始時刻は不明です。長く変わらない場合はローカル制作サービスを確認し、「制作を再試行」を選択してください。" : "No worker has claimed this retry. Its start time is unknown. If it stays here, check the local production service and select Retry production.")
+                : node.state === "READY" ? (locale === "ja" ? "ワーカーの取得を待っています。" : "Waiting for a worker to claim this step.")
+                : node.state === "RUNNING" ? (locale === "ja" ? `試行 ${node.attemptCount} は実行中と記録されています。ワーカーの稼働は未確認です。` : `Attempt ${node.attemptCount} is recorded as running; worker liveness is not verified.`)
+                : (locale === "ja" ? "先行ステップの完了を待っています。" : "Waiting for prerequisite steps to finish.")}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{locale === "ja" ? "最終更新" : "Last updated"}: {formatDateTime(node.updatedAt, locale)}</p>
+            </li>)}</ul>}
+        </div>)}
+    </div>
+  </section>;
+}
+
+/** Layered dependency graph: each edge comes from the persisted DAG. */
+function PipelineGraph({nodes, edges, locale}: {nodes: JobNode[]; edges: JobEdge[]; locale: Locale}) {
+  const depths = new Map<string, number>();
+  const rows = new Map<number, number>();
+  const positions = new Map<string, {x:number;y:number}>();
+  const nodeWidth = 190, nodeHeight = 80, columnWidth = 240, rowHeight = 110;
+  for (const node of nodes) {
+    const parents = edges.filter(edge => edge.toNodeId === node.id && depths.has(edge.fromNodeId));
+    const depth = parents.length ? Math.max(...parents.map(edge => (depths.get(edge.fromNodeId) ?? 0) + 1)) : 0;
+    depths.set(node.id, depth);
+    const row = rows.get(depth) ?? 0;
+    rows.set(depth, row + 1);
+    positions.set(node.id, {x: 16 + depth * columnWidth, y: 16 + row * rowHeight});
+  }
+  const width = Math.max(220, 32 + (Math.max(0, ...depths.values()) * columnWidth) + nodeWidth);
+  const height = Math.max(112, 32 + Math.max(0, ...rows.values()) * rowHeight - (rowHeight - nodeHeight));
+  return <section aria-label={locale === "ja" ? "パイプライングラフ" : "Pipeline graph"} className="min-w-0 rounded-surface border border-border bg-surface p-4 sm:p-5">
+    <h3 className="text-base font-semibold">{locale === "ja" ? "パイプライングラフ" : "Pipeline graph"}</h3>
+    <p className="mt-1 text-sm text-muted-foreground">{locale === "ja" ? "矢印は依存関係を示します。スクロールして全体を確認し、ステップを選択すると詳細に移動します。" : "Arrows show dependencies. Scroll to see the whole graph, and select a step to inspect its details."}</p>
+    {nodes.length === 0 ? <p className="mt-3 text-sm text-muted-foreground">{translate(locale, "jobsNoNodes")}</p> :
+      <div className="mt-4 max-w-full overflow-auto rounded-control border border-border bg-surface-subtle" tabIndex={0}>
+        <div className="relative" style={{width, height}}>
+          <svg className="absolute inset-0" width={width} height={height} aria-hidden="true">
+            <defs><marker id="job-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>
+            {edges.map((edge,index) => {const from=positions.get(edge.fromNodeId),to=positions.get(edge.toNodeId); if(!from||!to)return null;
+              const x1=from.x+nodeWidth,y1=from.y+nodeHeight/2,x2=to.x,y2=to.y+nodeHeight/2,mid=(x1+x2)/2;
+              return <path key={`${edge.fromNodeId}-${edge.toNodeId}-${index}`} data-edge="" d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`} fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#job-graph-arrow)" className="text-muted-foreground" />;
+            })}
+          </svg>
+          {nodes.map(node => {const position=positions.get(node.id)!; return <button type="button" key={node.id}
+            onClick={()=>{const detail=document.getElementById(`job-node-${node.id}`);detail?.scrollIntoView?.({block:"center",behavior:"auto"});detail?.focus({preventScroll:true});}}
+            title={friendlyStage(node.nodeKey)}
+            className="absolute flex flex-col items-start justify-center gap-2 rounded-control border border-border bg-surface px-3 text-start shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:border-primary hover:bg-surface-elevated"
+            style={{left:position.x,top:position.y,width:nodeWidth,height:nodeHeight}}>
+            <span className="line-clamp-2 text-sm font-semibold">{friendlyStage(node.nodeKey)}</span>
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${stateBadgeClasses(node.state)}`}>{node.state === "RUNNING" && <Loader2 data-running-indicator="" aria-hidden className="size-3 animate-spin motion-reduce:animate-none" />}{nodeStateLabel(node,locale)}</span>
+          </button>;})}
+        </div>
+      </div>}
+  </section>;
+}
+
 function nodeStateLabel(node: JobNode, locale: Locale): string {
   if (node.state === "FAILED" && node.attemptCount > 0) {
     return node.attemptCount === 1
       ? translate(locale, "jobsFailedAfterOneAttempt")
       : translate(locale, "jobsFailedAfterAttempts", { count: node.attemptCount });
+  }
+  if (node.state === "READY" && node.attemptCount > 0 && node.errorCode) {
+    return locale === "ja" ? "再試行を待機中" : "Retry queued";
   }
   if (node.attemptCount > 1 && !isTerminal(node.state)) {
     const retrying = translate(locale, "jobsRetrying", {
@@ -1158,12 +1208,16 @@ function NodeCard({
   attempts: JobAttempt[];
 }) {
   const incoming = edges.filter((e) => e.toNodeId === node.id);
+  const firstTrySuccess = node.state === "SUCCEEDED" && node.attemptCount === 1 && attempts.length === 1 &&
+    attempts[0].attemptNumber === 1 && attempts[0].state === "SUCCEEDED";
+  const sceneId=node.input&&typeof node.input==="object"&&"sceneId" in node.input&&
+    typeof node.input.sceneId==="string"&&/^[\w.-]{1,80}$/u.test(node.input.sceneId)?node.input.sceneId:null;
 
   return (
     <Surface variant="solid">
       <div className="grid min-w-0 gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="break-words font-medium text-foreground">{node.nodeKey}</span>
+          <span className="break-words font-medium text-foreground">{friendlyStage(node.nodeKey)}</span>
           <span
             className={`rounded-full border px-2 py-0.5 text-sm font-medium ${stateBadgeClasses(node.state)}`}
             title={node.state}
@@ -1171,13 +1225,13 @@ function NodeCard({
             {nodeStateLabel(node, locale)}
           </span>
         </div>
-        <p className="break-words text-sm text-muted-foreground">
-          {node.nodeKind} ·{" "}
+        {sceneId&&<p className="break-words text-sm text-muted-foreground">Scene: {sceneId}</p>}
+        {!firstTrySuccess && <p className="break-words text-sm text-muted-foreground">
           {translate(locale, "jobsAttemptsUsed", {
             used: node.attemptCount,
             max: node.maxAttempts,
           })}
-        </p>
+        </p>}
         {node.errorCode && (
           <p className="break-all text-sm text-danger">
             {translate(locale, "jobsErrorCode")}: {node.errorCode}
@@ -1217,36 +1271,53 @@ function NodeCard({
           </div>
         )}
 
-        {attempts.length > 0 && (
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-muted-foreground">{translate(locale, "jobsAttempts")}</p>
-            <div className="mt-1 grid gap-1">
-              {attempts
-                .slice()
-                .sort((a, b) => a.attemptNumber - b.attemptNumber)
-                .map((attempt) => (
-                  <div
-                    key={attempt.id}
-                    className="flex min-w-0 flex-wrap items-center gap-2 rounded-sm px-2 py-1 text-sm text-muted-foreground"
-                  >
-                    <AttemptStateIcon state={attempt.state} />
-                    <span>
-                      {translate(locale, "jobsAttemptNumber", {
-                        number: attempt.attemptNumber,
-                        max: node.maxAttempts,
-                      })}
-                    </span>
-                    {attempt.errorCode && (
-                      <span className="break-all text-danger">{attempt.errorCode}</span>
-                    )}
-                  </div>
-                ))}
-            </div>
+        {node.output !== null && typeof node.output === "object" && "timingAdjustments" in node.output &&
+          Array.isArray(node.output.timingAdjustments) && node.output.timingAdjustments.length > 0 && (
+          <div className="rounded-control bg-status-info/10 p-3 text-sm text-foreground">
+            <p className="font-medium">{locale === "ja" ? "自動でシーンの長さを調整" : "Scene duration adjusted automatically"}</p>
+            <ul className="mt-1 list-disc ps-5">{node.output.timingAdjustments.map((value: unknown,index: number) => {
+              if(!value || typeof value !== "object" || !("id" in value) || typeof value.id !== "string" ||
+                !("addedPauseMs" in value) || typeof value.addedPauseMs !== "number") return null;
+              return <li key={index}>{locale === "ja" ? `シーン ${value.id}: 無音を ${value.addedPauseMs} ミリ秒追加` :
+                `Scene ${value.id}: added ${value.addedPauseMs} ms of silence after narration.`}</li>;
+            })}</ul>
           </div>
         )}
+        {firstTrySuccess ? <AttemptTimeRange attempt={attempts[0]} locale={locale} /> : <div className="min-w-0">
+          <p className="mb-2 text-sm font-semibold text-foreground">{translate(locale, "jobsAttempts")}</p>
+          {attempts.length === 0 ? <p className="text-sm text-muted-foreground">{translate(locale, "jobsNoAttempts")}</p> :
+            <div className="grid gap-2">{attempts.slice().sort((a,b)=>a.attemptNumber-b.attemptNumber)
+              .map(attempt=><AttemptCard key={attempt.id} attempt={attempt} locale={locale} nodes={nodes}/>)}</div>}
+        </div>}
       </div>
     </Surface>
   );
+}
+
+function AttemptTimeRange({attempt, locale}: {attempt: JobAttempt; locale: Locale}) {
+  const start = new Date(attempt.startedAt);
+  const end = attempt.finishedAt ? new Date(attempt.finishedAt) : null;
+  const validStart = Number.isFinite(start.getTime());
+  const validEnd = end !== null && Number.isFinite(end.getTime());
+  const sameDay = validStart && validEnd && start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() && start.getDate() === end.getDate() &&
+    start.getTimezoneOffset() === end.getTimezoneOffset();
+  const showSeconds = sameDay && start.getTime() !== end.getTime() &&
+    Math.floor(start.getTime() / 60000) === Math.floor(end.getTime() / 60000);
+  const language = locale === "ja" ? "ja-JP" : "en-US";
+  const full = new Intl.DateTimeFormat(language, {year:"numeric",month:"short",day:"numeric",
+    hour:"2-digit",minute:"2-digit",...(showSeconds ? {second:"2-digit"} : {})});
+  const clock = new Intl.DateTimeFormat(language, {hour:"2-digit",minute:"2-digit",
+    ...(showSeconds ? {second:"2-digit"} : {})});
+  const startText = validStart ? full.format(start) : attempt.startedAt;
+  const endText = end && validEnd ? (sameDay ? clock.format(end) : full.format(end)) : attempt.finishedAt;
+  const label = `${translate(locale, "jobsStarted")}: ${startText}${endText ? `; ${translate(locale, "jobsFinished")}: ${validEnd && end ? full.format(end) : endText}` : ""}`;
+  return <p role="group" aria-label={label} title={label} className="flex flex-wrap items-center gap-x-1.5 text-sm tabular-nums text-muted-foreground">
+    <Clock aria-hidden className="size-4 shrink-0" />
+    {!endText && <span>{translate(locale, "jobsStarted")}</span>}
+    <time dateTime={attempt.startedAt}>{startText}</time>
+    {endText && <><span aria-hidden>–</span><time dateTime={attempt.finishedAt ?? undefined}>{endText}</time></>}
+  </p>;
 }
 
 function AttemptCard({
@@ -1273,7 +1344,6 @@ function AttemptCard({
                   })
                 : translate(locale, "attemptNumber", { number: attempt.attemptNumber })}
             </span>
-            {node && <span className="text-sm text-muted-foreground">({node.nodeKey})</span>}
           </div>
           <span
             className={`rounded-full border px-2 py-0.5 text-sm font-medium ${attemptStateBadgeClasses(attempt.state)}`}
@@ -1282,26 +1352,12 @@ function AttemptCard({
             {stateLabel(attempt.state, locale)}
           </span>
         </div>
-        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm text-muted-foreground">
-          <span>{translate(locale, "jobsStarted")}</span>
-          <span className="text-foreground">{formatDateTime(attempt.startedAt, locale)}</span>
-          {attempt.finishedAt && (
-            <>
-              <span>{translate(locale, "jobsFinished")}</span>
-              <span className="text-foreground">{formatDateTime(attempt.finishedAt, locale)}</span>
-            </>
-          )}
-          {attempt.errorCode && (
-            <>
-              <span>{translate(locale, "jobsErrorCode")}</span>
-              <span className="break-all text-danger">{attempt.errorCode}</span>
-            </>
-          )}
-        </div>
+        <AttemptTimeRange attempt={attempt} locale={locale} />
+        {attempt.errorCode && <p className="break-all text-sm text-danger">{translate(locale, "jobsErrorCode")}: {attempt.errorCode}</p>}
         {attempt.errorDetail && (
           <div className="min-w-0 rounded-control bg-surface-subtle p-2 text-sm text-foreground [overflow-wrap:anywhere]">
             <span className="font-medium">{translate(locale, "jobsErrorDetail")}:</span>{" "}
-            {attempt.errorDetail}
+            {attemptDetail(attempt.errorDetail, locale)}
           </div>
         )}
       </div>

@@ -3,19 +3,28 @@ import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, Film, Headphones, Pla
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import { LiveRendererPreview, type LiveVisualPreviewData } from "./live-renderer-preview";
+import {readAudioSettings,type AudioSettings} from "./audio-settings";
+import {projectNarratorSettingsKey} from "./project-voice-favorites";
+import { listCharacterDrafts, type CharacterDraft } from "@/features/character-studio/character-drafts-api";
 import type { SceneMotion } from "../../scripts/video-production/scene-motion.mjs";
 
 type Dossier = {id:string;topic:{title:string;audience:string}};
-type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>}};
+type CastSpeaker={id:string;role:"narrator"|"character";provider:"local"|"fish";voiceId:string};
+type Bundle = {kind:string;researchId:string;plan:{shots:Array<{id:string;onScreenText:string}>;
+  sound?:Array<{shotId:string;speaker?:CastSpeaker;
+    speechTurns?:Array<{id:string;narration:string;pauseAfterMs:number;speaker?:CastSpeaker}>}>}};
 type Preview = {schemaVersion:number;kind:string;job:{beats:Array<{id:string;narration:string;visual:{headline:string;subhead:string;items:string[]}}>};
   shotMap:Array<{shotId:string;beatId:string;visualAction:string}>;
   warnings:string[];editorialStatus:string};
 type Report = {ready:boolean;findings:Array<{severity:string;code:string;message:string}>};
+type VisualCoverage={sceneCount:number;reviewStillCount:number;
+  mediaDeclarationCounts:{stockVideo:number;stockPhoto:number;kumikiOnly:number};
+  scenesWithoutStockVideo:string[];missingStockVideoShotIds?:string[]};
 type Status = {state:string;phase:string;message:string;report?:Report|null;
+  jobId?:string|null;
   progress?:{phase:string;completedFrames?:number;totalFrames?:number}|null;
-  mediaUrl?:string|null;regeneration?:{reusedSpeechBeatIds:string[];reusedVideoSegments:number;newlyEncodedVideoSegments:number|null}|null};
-type Settings = {provider:"local"|"fish";voiceId:string;providerRevision:string;modelId:string;endpoint:string;
-  apiKey:string;localVoiceAuthorized:boolean;voiceConsent:boolean;transmitText:boolean};
+  mediaUrl?:string|null;visualCoverage?:VisualCoverage|null;
+  regeneration?:{reusedSpeechBeatIds:string[];reusedVideoSegments:number;newlyEncodedVideoSegments:number|null}|null};
 type Stage="preview"|"narration"|"review"|"export";
 type SampleStatus={state:"idle"|"generating"|"done"|"failed"|"cancelled";message:string;audioUrl?:string|null};
 type SfxSummary={approved?:number;muted?:number;extraLayers?:number};
@@ -27,27 +36,87 @@ const steps:{id:Stage;title:string;subtitle:string}[]=[
 ];
 const field="mt-1.5 w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const inputLabel="flex flex-col text-xs font-semibold text-muted-foreground";
-const defaults:Settings={provider:"local",voiceId:"",providerRevision:"",modelId:"",
-  endpoint:"http://127.0.0.1:8765",apiKey:"",localVoiceAuthorized:false,voiceConsent:false,transmitText:false};
+const freeMediaKey="contentgen:production-free-media:v1";
+function savedFreeMediaPreference():boolean{
+  // Scene descriptions can reveal private research. Never contact public
+  // stock-media providers until the user explicitly enables the search.
+  try{return localStorage.getItem(freeMediaKey)==="enabled";}catch{return false;}
+}
 async function request(path:string,payload?:unknown){
   const isPost=payload!==undefined;
-  const response=await fetch("/api/contentgen-video/"+path,{
-    method:isPost?"POST":"GET",cache:"no-store",
-    headers:isPost?{"Content-Type":"application/json","X-Contentgen-Director":"local-only"}:undefined,
-    ...(isPost?{body:JSON.stringify(payload)}:{}),
-    signal:AbortSignal.timeout(path==="check"?360000:16000)
-  });
-  const data=await response.json() as Record<string,unknown>;
-  if(!response.ok)throw Error(String(data.error??"Local production service unavailable."));
+  let response:Response;
+  try{
+    response=await fetch("/api/contentgen-video/"+path,{
+      method:isPost?"POST":"GET",cache:"no-store",
+      headers:isPost?{"Content-Type":"application/json","X-Contentgen-Director":"local-only"}:undefined,
+      ...(isPost?{body:JSON.stringify(payload)}:{}),
+      signal:AbortSignal.timeout(path==="check"?360000:path==="start"?60000:16000)
+    });
+  }catch(error){
+    throw Error(error instanceof Error&&error.name==="TimeoutError"
+      ?"Local production did not respond in time. Check the Studio terminal and Jobs, then retry."
+      :"Cannot reach local video production. Start the Studio development server and retry.");
+  }
+  let data:Record<string,unknown>;
+  try{data=await response.json() as Record<string,unknown>;}
+  catch{throw Error(`Local video service returned an invalid response (HTTP ${response.status}). Check the Studio terminal.`);}
+  if(!response.ok)throw Error(typeof data.error==="string"?data.error.slice(0,280):
+    `Local production failed (HTTP ${response.status}). Check the Studio terminal.`);
   return data;
 }
-export function ProductionPanel({dossier,bundle,productionId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
-  initialStage="preview",autoOpenVisuals=false,recheckToken=0}:{dossier:Dossier;bundle:Bundle;productionId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;recheckToken?:number}){
+export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sourceRevision,selectedShotId,onSelectShot,onApplyMotion,autoOpenSample=false,
+  initialStage="preview",autoOpenVisuals=false,autoStartDraft=false,recheckToken=0,onOpenJobs,onFindVisuals}:{dossier:Dossier;bundle:Bundle;productionId?:string;voiceProjectId?:string;sourceRevision?:string;selectedShotId?:string;onSelectShot?:(shotId:string)=>void;onApplyMotion?:(shotId:string,motion:SceneMotion)=>Promise<Bundle>;autoOpenSample?:boolean;initialStage?:Stage;autoOpenVisuals?:boolean;autoStartDraft?:boolean;recheckToken?:number;onOpenJobs?:()=>void;onFindVisuals?:(shotId:string)=>void}){
   const [stage,setStage]=useState<Stage>(initialStage);
-  const [settings,setSettings]=useState<Settings>(defaults);
+  const [settings,setSettings]=useState<AudioSettings>(()=>readAudioSettings(voiceProjectId));
+  // Selecting a provider in Settings does not contact it. The sample/render
+  // button is the explicit user action that authorizes the configured voices
+  // and sends narration to Fish Audio when selected.
+  const requestSettings=()=>({...settings,voiceConsent:settings.provider==="fish",
+    transmitText:settings.provider==="fish",localVoiceAuthorized:settings.provider==="local"});
+  const sceneCast=(bundle.plan.sound??[]).flatMap(sound=>sound.speechTurns?
+    sound.speechTurns.flatMap((turn,index)=>turn.speaker?[{shotId:sound.shotId,
+      label:`${sound.shotId} · line ${index+1}`,speaker:turn.speaker}]:[]):
+    sound.speaker?[{shotId:sound.shotId,label:sound.shotId,speaker:sound.speaker}]:[]);
+  const mismatchedCast=sceneCast.filter(item=>item.speaker.provider!==settings.provider);
+  const rigSpeakers=[...new Set(sceneCast.filter(item=>item.speaker.role==="character")
+    .map(item=>item.speaker.id))].filter(id=>id==="pip"||id==="quill");
+  const sceneRigSpeakers=[...new Map(sceneCast.filter(item=>item.speaker.role==="character"&&
+    (item.speaker.id==="pip"||item.speaker.id==="quill"))
+    .map(item=>[`${item.shotId}:${item.speaker.id}`,{shotId:item.shotId,id:item.speaker.id}])).values()];
+  const rigSpeakerKey=rigSpeakers.join(":");
+  const [savedRigs,setSavedRigs]=useState<CharacterDraft[]>([]);
+  const [rigListError,setRigListError]=useState("");
+  const [rigSelection,setRigSelection]=useState<{owner?:string;ids:Record<string,string>;sceneIds:Record<string,string>}>(
+    {owner:voiceProjectId,ids:{},sceneIds:{}});
+  const characterDraftIds=rigSelection.owner===voiceProjectId?rigSelection.ids:{};
+  const characterSceneDraftIds=rigSelection.owner===voiceProjectId?rigSelection.sceneIds:{};
+  useEffect(()=>{
+    if(!voiceProjectId||!rigSpeakerKey){return;}
+    let active=true;
+    void listCharacterDrafts(voiceProjectId).then(drafts=>{
+      if(active){setSavedRigs(drafts);setRigListError("");}
+    }).catch(error=>{if(active)setRigListError(error instanceof Error?error.message:"Could not read saved character revisions.");});
+    return ()=>{active=false;};
+  },[voiceProjectId,rigSpeakerKey,stage,recheckToken]);
+  const selectedCharacterDraftIds=Object.fromEntries(Object.entries(characterDraftIds)
+    .filter(([id,draftId])=>Boolean(draftId)&&rigSpeakers.some(speaker=>speaker===id)));
+  const selectedCharacterDraftIdsByScene:Record<string,Record<string,string>>={};
+  for(const {shotId,id} of sceneRigSpeakers){
+    const selected=characterSceneDraftIds[`${shotId}:${id}`];
+    if(selected)(selectedCharacterDraftIdsByScene[shotId]??={})[id]=selected;
+  }
+  const [searchFreeMedia,setSearchFreeMedia]=useState(savedFreeMediaPreference);
   const [sampleStatus,setSampleStatus]=useState<SampleStatus>({state:"idle",message:""});
   const sampleRevision=useRef(0);
   const activeSampleRevision=useRef(0);
+  const lastAuditionShot=useRef(selectedShotId);
+  useEffect(()=>{
+    if(lastAuditionShot.current===selectedShotId)return;
+    lastAuditionShot.current=selectedShotId;sampleRevision.current++;
+    setSampleStatus(current=>current.state==="generating"?
+      {...current,message:"The previous scene's voice sample is finishing. Choose Preview again for this scene."}:
+      {state:"idle",message:"Selected scene changed. Preview its narration when ready."});
+  },[selectedShotId]);
   const [preview,setPreview]=useState<Preview|null>(null);
   const [actualPreview,setActualPreview]=useState<LiveVisualPreviewData|null>(null);
   const [previewFocus,setPreviewFocus]=useState<string|undefined>();
@@ -59,11 +128,58 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
   const [ready,setReady]=useState(false);
   const [working,setWorking]=useState(initialStage!=="preview"||autoOpenVisuals?"opening":"");
   const [notice,setNotice]=useState("");
+  const [rigNote,setRigNote]=useState("");
+  const updateRigNote=(value:unknown)=>{
+    if(!Array.isArray(value)){setRigNote("");return;}
+    const names=value.filter(item=>item&&typeof item==="object"&&
+      ["pip","quill"].includes((item as {speakerId?:string}).speakerId??"")&&
+      typeof (item as {revision?:unknown}).revision==="string").map(item=>{
+      const rig=item as {speakerId:string;revision:string};
+      return `${rig.speakerId==="pip"?"Pip":"Quill"} (${rig.revision.slice(0,64)})`;
+    });
+    setRigNote(names.length?`Using saved Character Studio artwork: ${names.join(", ")}.`:"");
+  };
   const autoBusy=useRef(false);
   const inputRevision=useRef(0);
+  useEffect(()=>{
+    const refresh=()=>{
+      const next=readAudioSettings(voiceProjectId);
+      if(JSON.stringify(settings)===JSON.stringify(next))return;
+      inputRevision.current++;
+      sampleRevision.current++;
+      setSampleStatus({state:"idle",message:"Audio settings changed. Generate a new voice sample if needed."});
+      setReady(false);
+      setSettings(next);
+    };
+    refresh();
+    const onStorage=(event:StorageEvent)=>{
+      if(event.key===null||event.key===(voiceProjectId?projectNarratorSettingsKey(voiceProjectId):
+        "contentgen:production-voice-profile:v1"))refresh();
+    };
+    window.addEventListener("storage",onStorage);
+    window.addEventListener("focus",refresh);
+    return ()=>{window.removeEventListener("storage",onStorage);window.removeEventListener("focus",refresh);};
+  },[voiceProjectId,settings]);
   const initialEntry=useRef(false);
+  const startedAutomaticDraft=useRef(false);
   const [state,setState]=useState<Status>({state:"idle",phase:"idle",message:""});
+  const [confirmUpdatedVersion,setConfirmUpdatedVersion]=useState(false);
+  const updatedVersionButton=useRef<HTMLButtonElement>(null);
+  useEffect(()=>{if(confirmUpdatedVersion)updatedVersionButton.current?.focus();},[confirmUpdatedVersion]);
   const [sfxSummary,setSfxSummary]=useState<SfxSummary|null>(null);
+  useEffect(()=>{
+    if(!productionId)return;
+    let active=true;
+    const source=sourceRevision===undefined?"":`?sourceRevision=${encodeURIComponent(sourceRevision)}`;
+    void request(`status/${encodeURIComponent(productionId)}${source}`).then(result=>{
+      if(!active||!result||!["rendering","done","failed","cancelled"].includes(String(result.state))||
+        typeof result.message!=="string")return;
+      // A delayed recovery request must never overwrite a render, readiness
+      // check or newer user action started after the panel mounted.
+      setState(current=>current.state==="idle"?result as Status:current);
+    }).catch(()=>{/* The normal renderer and Jobs checks remain available. */});
+    return ()=>{active=false;};
+  },[productionId,sourceRevision]);
   // Returning from scene/media/sound edits invalidates an old UI readiness approval,
   // without discarding voice settings, previews or an already running/completed render.
   const [handledRecheckToken,setHandledRecheckToken]=useState(recheckToken);
@@ -82,16 +198,13 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     }
   }
   useEffect(()=>{if(recheckToken!==0){sampleRevision.current++;inputRevision.current++;}},[recheckToken]);
-  const change=(patch:Partial<Settings>)=>{
+  const changeMediaSearch=(enabled:boolean)=>{
     inputRevision.current++;
-    sampleRevision.current++;
-    setSampleStatus(current=>current.state==="generating"?{
-      state:"generating",message:"An older sample is finishing. Cancel it or wait before auditioning the new voice."
-    }:{state:"idle",message:"Voice changed. Generate a fresh sample to hear it."});
-    setSettings(x=>({...x,...patch}));setReady(false);
-    setSfxSummary(null);
+    setSearchFreeMedia(enabled);setReady(false);
+    try{localStorage.setItem(freeMediaKey,enabled?"enabled":"disabled");}
+    catch{/* The choice still applies to this render when storage is unavailable. */}
     setState(current=>["rendering","done"].includes(current.state)?current:
-      {state:"idle",phase:"idle",message:"",report:null});
+      {state:"idle",phase:"idle",message:"Media search preference changed; check again before rendering."});
   };
   const payload={dossier,bundle};
   useEffect(()=>{
@@ -194,9 +307,12 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     setWorking("sample");setNotice("");
     activeSampleRevision.current=sampleRevision.current;
     try{
-      const result=await request("narration-sample",{...payload,settings});
+      const sceneShotId=selectedShotId&&bundle.plan.shots.some(shot=>shot.id===selectedShotId)?selectedShotId:undefined;
+      const result=await request("narration-sample",{...payload,settings:requestSettings(),castVoiceConsent:true,...(sceneShotId?{sceneShotId}:{})});
       if(result.started!==true)throw Error("The local narration service did not start.");
-      setSampleStatus({state:"generating",message:"Synthesizing a short first-scene voice sample…"});
+      setSampleStatus({state:"generating",message:sceneShotId?
+        "Synthesizing the selected scene's voice sample…":
+        "Synthesizing a short first-scene voice sample…"});
     }catch(error){
       setSampleStatus({state:"failed",message:error instanceof Error?error.message:"Could not start voice audition."});
     }finally{setWorking("");}
@@ -224,11 +340,17 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     return ()=>{mounted=false;window.clearInterval(timer);};
   },[sampleStatus.state]);
   async function check(){
-    setWorking("check");setNotice("");setReady(false);
+    const revision=inputRevision.current;
+    setWorking("check");setNotice("");setReady(false);setRigNote("");
     try{
-      const response=await request("check",{...payload,settings,...(productionId?{productionId,sourceRevision}:{})});
+      const response=await request("check",{...payload,settings:requestSettings(),castVoiceConsent:true,searchFreeMedia,
+        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds,
+          characterDraftIdsByScene:selectedCharacterDraftIdsByScene}:{}),
+        ...(productionId?{productionId,sourceRevision}:{})});
+      if(revision!==inputRevision.current){setNotice("Scene, voice or consent changed during readiness. Check again for the new version.");return;}
       const report=response.report as Report;
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
+      updateRigNote(response.characterRigs);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
         message:report.ready?"Ready to produce your test draft.":"Fix the listed requirements.",report});
       setReady(report.ready);
@@ -236,51 +358,70 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     }catch(error){setNotice(error instanceof Error?error.message:"Local readiness check failed.");}
     finally{setWorking("");}
   }
-  async function generateDraft(){
+  async function generateDraft(confirmedUpdate=false){
     if(autoBusy.current||state.state==="rendering")return;
     autoBusy.current=true;
     const revision=inputRevision.current;
-    setWorking("auto");setNotice("Checking narration and local render requirements…");
+    setStage("narration");setWorking("auto");setNotice("");setRigNote("");
+    setReady(false);
+    setState({state:"checking",phase:"preflight",message:"Preparing scenes and checking your narrator, FFmpeg and Chromium…"});
     try{
+      if(productionId){
+        const policy=await request(`version-policy/${encodeURIComponent(productionId)}`);
+        if(typeof policy.requiresConfirmation!=="boolean")throw Error("The Studio returned an invalid video version policy.");
+        if(policy.requiresConfirmation&&!confirmedUpdate){
+          setState({state:"confirming",phase:"preflight",message:"An updated version needs confirmation before generation."});
+          setConfirmUpdatedVersion(true);
+          return;
+        }
+      }
+      setConfirmUpdatedVersion(false);
       if(!preview){
         const result=await request("plan",payload) as unknown as Preview;
         if(!Array.isArray(result.job?.beats)||!result.job.beats.length)
-          throw Error("The approved script has no renderable narration scenes.");
+          throw Error("The script has no renderable narration scenes. Add text to your YouTube script and retry.");
         if(revision!==inputRevision.current)return;
         setPreview(result);
       }
-      const requestInput={...payload,settings,...(productionId?{productionId,sourceRevision}:{})};
+      setState({state:"checking",phase:"preflight",message:"Checking voice permissions, installed tools and scene assets…"});
+      const requestInput={...payload,settings:requestSettings(),castVoiceConsent:true,searchFreeMedia,
+        ...(voiceProjectId?{characterProjectId:voiceProjectId,characterDraftIds:selectedCharacterDraftIds,
+          characterDraftIdsByScene:selectedCharacterDraftIdsByScene}:{}),
+        ...(productionId?{productionId,sourceRevision}:{})};
       const response=await request("check",requestInput);
       if(revision!==inputRevision.current){setNotice("Voice or scene settings changed. Generate again using the updated version.");return;}
       const report=response.report as Report;
       if(!report||typeof report.ready!=="boolean"||!Array.isArray(report.findings))
         throw Error("The renderer returned an invalid readiness report.");
       setSfxSummary((response.sfxSummary as SfxSummary|undefined)??null);
+      updateRigNote(response.characterRigs);
       setReady(report.ready);
       setState({state:report.ready?"ready":"blocked",phase:"preflight",
         message:report.ready?"Starting your video…":"Resolve these requirements and retry.",report});
       if(!report.ready){setNotice("Your work is saved. Resolve the requirements below and retry.");return;}
-      const result=await request("start",{...requestInput,confirmRender:true});
+      const result=await request("start",{...requestInput,confirmRender:true,
+        ...(confirmedUpdate?{confirmUpdatedVersion:true}:{})});
       if(result.started!==true)throw Error("The local renderer did not confirm startup.");
       setStage("export");setReady(false);
-      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Keep the local Studio running.",report});
+      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Keep the local Studio running.",report,
+        jobId:typeof result.jobId==="string"?result.jobId:null});
       setNotice("Visuals, narration, sound and MP4 rendering are now running. This does not publish anything.");
     }catch(reason){
-      setNotice(reason instanceof Error?reason.message:"Could not generate the draft video.");
+      const message=reason instanceof Error?reason.message:"Could not generate the draft video.";
+      setReady(false);
+      setState({state:"blocked",phase:"preflight",message,report:null});
+      setNotice("Your script and scene edits are safe. Fix the issue below and select Generate draft video again.");
     }finally{autoBusy.current=false;setWorking("");}
   }
-  async function start(){
-    if(!ready)return;
-    setWorking("start");setNotice("");
-    try{
-      const r=await request("start",{...payload,settings,...(productionId?{productionId,sourceRevision}:{}),confirmRender:true});
-      if(!r.started)throw Error("Studio did not confirm render startup.");
-      setState({state:"rendering",phase:"starting",message:"Producing a real draft MP4. Leave Studio open."});
-      setReady(false);
-      setNotice("Render started. Only files in the new job-owned output folder will be written.");
-    }catch(error){setNotice(error instanceof Error?error.message:"Unable to start render.");}
-    finally{setWorking("");}
-  }
+  useEffect(()=>{
+    if(!autoStartDraft||startedAutomaticDraft.current)return;
+    startedAutomaticDraft.current=true;
+    setStage("narration");
+    void generateDraft();
+    // This is deliberately a one-shot navigation intent. Changes to voice or
+    // scene settings need an explicit user retry after their first preflight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoStartDraft]);
   async function cancel(){
     try{await request("cancel",{confirmed:true});setNotice("Cancellation requested. Finalizing owned scratch cleanup.");}
     catch(error){setNotice(error instanceof Error?error.message:"Could not cancel.");}
@@ -309,24 +450,65 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
     return ()=>{active=false;};
   },[autoOpenSample,sampleAutoLoaded,dossier,bundle]);
   useEffect(()=>{
-    if(state.state!=="rendering"&&state.state!=="checking")return;
+    // Preflight is owned by the pending /check request. Polling /status before
+    // that request acquires the worker would overwrite the visible progress.
+    if(state.state!=="rendering")return;
     let mounted=true;
+    let inFlight=false;
     const poll=async()=>{
+      if(inFlight)return;
+      inFlight=true;
       try{
-        const next=await request("status") as unknown as Status;
+        const scoped=productionId&&state.phase==="recovering"?
+          `status/${encodeURIComponent(productionId)}${sourceRevision===undefined?"":`?sourceRevision=${encodeURIComponent(sourceRevision)}`}`:"status";
+        const next=await request(scoped) as unknown as Status;
         if(mounted)setState(next);
       }catch(error){if(mounted)setNotice(error instanceof Error?error.message:"Progress connection interrupted.");}
+      finally{inFlight=false;}
     };
-    const timer=window.setInterval(()=>void poll(),1800);
+    void poll();
+    const timer=window.setInterval(()=>void poll(),1000);
     return ()=>{mounted=false;window.clearInterval(timer);};
-  },[state.state]);
+  },[state.state,state.phase,productionId,sourceRevision]);
   const progress=state.progress;
   const pct=progress?.totalFrames&&progress?.completedFrames!==undefined
     ?Math.min(100,Math.round(100*progress.completedFrames/progress.totalFrames)):null;
+  const firstMissingShot=state.visualCoverage?.sceneCount===bundle.plan.shots.length?
+    bundle.plan.shots.find(shot=>state.visualCoverage?.missingStockVideoShotIds?.includes(shot.id)):undefined;
+  const firstMissingShotIndex=firstMissingShot?bundle.plan.shots.indexOf(firstMissingShot):-1;
   return <div ref={previewAnchor} id="contentgen-interactive-preview" className="scroll-mt-4">
     <Surface header={<div className="space-y-1"><h2 className="flex items-center gap-2 text-lg font-semibold"><Film className="size-5"/>Preview & Export</h2>
       <p className="text-xs font-normal text-muted-foreground">From working scenes to a playable test video, one step at a time.</p></div>}>
     <div className="space-y-5 text-sm">
+      {state.state==="done"&&stage!=="export"&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
+        <p className="text-sm font-medium">Your saved draft video is available.</p>
+        <Button variant="outline" size="sm" onClick={()=>setStage("export")}>Review saved video</Button>
+      </div>}
+      {rigNote&&["ready","rendering","done"].includes(state.state)&&
+        <p role="status" className="text-xs text-muted-foreground">{rigNote}</p>}
+      {state.state==="checking"&&<div role="status" className="flex items-start gap-3 rounded-control border border-primary/30 bg-primary/5 p-4">
+        <RefreshCw aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin"/>
+        <div><p className="font-semibold">Preparing your draft video</p><p className="mt-1 text-xs text-muted-foreground">{state.message} This can take a few minutes on the first run.</p></div>
+      </div>}
+      {confirmUpdatedVersion&&<div role="group" aria-label="Confirm updated draft generation"
+        className="rounded-control border border-primary/35 bg-primary/5 p-4 space-y-3">
+        <div><p className="font-semibold">Generate an updated video?</p>
+          <p className="mt-1 text-sm text-muted-foreground">An updated version needs confirmation. Changed scenes may require new narration or provider usage. Verified speech and video segments will be reused when possible.</p></div>
+        <div className="flex flex-wrap gap-2">
+          <Button ref={updatedVersionButton} onClick={()=>void generateDraft(true)}>Generate updated version</Button>
+          <Button variant="outline" onClick={()=>{setConfirmUpdatedVersion(false);setState({state:"idle",phase:"idle",message:"Existing video was kept."});}}>Keep current video</Button>
+        </div>
+      </div>}
+      {state.state==="blocked"&&stage!=="export"&&<div role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-4">
+        <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4"/>Draft needs setup</p>
+        <p className="mt-2 text-sm">{state.message}</p>
+        {state.report?.findings.map((finding,index)=><p key={index} className="mt-1 text-xs text-muted-foreground">{finding.message}</p>)}
+        <p className="mt-2 text-xs text-muted-foreground">Choose a narrator below, or set Fish Audio credentials in Settings → Connections. Then retry the draft.</p>
+      </div>}
+      {["failed","cancelled"].includes(state.state)&&stage!=="export"&&state.jobId&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
+        <p className="text-sm font-medium">An earlier draft needs attention.</p>
+        <Button variant="outline" size="sm" onClick={()=>setStage("export")}>View draft status</Button>
+      </div>}
       <div role="tablist" aria-label="Preview and export steps" className="grid gap-2 sm:grid-cols-4">
         {steps.map((step,index)=><button key={step.id} type="button" role="tab" id={"production-step-"+step.id}
           aria-selected={stage===step.id} aria-controls="production-step-content" disabled={!!working}
@@ -365,64 +547,80 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
         <div className="flex justify-end"><Button disabled={!!working} onClick={()=>void navigate("narration")}>Continue to narration <ArrowRight className="ml-2 size-4"/></Button></div>
       </>}
       {stage==="narration"&&<>
-        <div className="space-y-1"><h3 className="flex items-center gap-2 text-base font-semibold"><Headphones className="size-4"/>Choose your narrator</h3>
-          <p className="text-muted-foreground">Select an authorized voice and listen to a short excerpt from your first scene. This is a voice test, not the finished soundtrack.</p></div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className={inputLabel}>Voice provider
-            <select className={field} aria-label="Production voice provider" value={settings.provider}
-              onChange={e=>change({provider:e.target.value as "local"|"fish",localVoiceAuthorized:false,voiceConsent:false,transmitText:false})}>
-              <option value="local">Local TTS</option><option value="fish">Fish Audio (free-model ID)</option>
-            </select>
-          </label>
-          <label className={inputLabel}>Authorized voice ID<input className={field} aria-label="Production voice ID"
-            value={settings.voiceId} onChange={e=>change({voiceId:e.target.value})}
-            placeholder="Voice identifier you have permission to use"/></label>
-          <label className={inputLabel}>Engine revision<input className={field} aria-label="Production engine revision"
-            value={settings.providerRevision} onChange={e=>change({providerRevision:e.target.value})}
-            placeholder="Installed or published engine version"/></label>
-          {settings.provider==="local"?<>
-            <label className={inputLabel}>Installed local model<input className={field} aria-label="Installed TTS model"
-              value={settings.modelId} onChange={e=>change({modelId:e.target.value})} placeholder="Your local TTS model"/></label>
-            <label className={inputLabel}>Local speech server<input className={field} aria-label="Local speech server URL"
-              value={settings.endpoint} onChange={e=>change({endpoint:e.target.value})}/></label>
-          </>:<label className={inputLabel}>Fish Audio API key<input type="password" autoComplete="off" className={field}
-            aria-label="Fish Audio key" value={settings.apiKey} onChange={e=>change({apiKey:e.target.value})}
-            placeholder="Sent to the local render process only"/></label>}
+        <div className="space-y-1"><h3 className="flex items-center gap-2 text-base font-semibold"><Headphones className="size-4"/>Listen to your narrator</h3>
+          <p className="text-muted-foreground">Preview an excerpt from your scene using the voice configured for this project.</p></div>
+        <div className="rounded-control border border-border bg-surface-subtle p-3 text-sm" aria-label="Selected narrator">
+          <p className="font-medium">{settings.provider==="fish"?"Fish Audio":"Local TTS"} · {settings.voiceId||"No voice selected"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Change your voice, engine or local model under Settings → Audio.</p>
         </div>
-        <div className="rounded-control border border-border bg-surface-subtle p-3">
-          {settings.provider==="local"?<label className="flex items-start gap-2 text-xs">
-            <input type="checkbox" className="mt-0.5" aria-label="I am authorized to synthesize this local voice"
-              checked={settings.localVoiceAuthorized} onChange={e=>change({localVoiceAuthorized:e.target.checked})}/>
-            I am authorized to synthesize this local voice.
-          </label>:<div className="space-y-2 text-xs">
-            <label className="flex items-start gap-2"><input type="checkbox" className="mt-0.5" checked={settings.voiceConsent}
-              onChange={e=>change({voiceConsent:e.target.checked})}/> I have permission to use this Fish voice.</label>
-            <label className="flex items-start gap-2"><input type="checkbox" className="mt-0.5" checked={settings.transmitText}
-              onChange={e=>change({transmitText:e.target.checked})}/> I approve sending this script excerpt to Fish Audio.</label>
-            <p className="text-muted-foreground">A free-model ID does not by itself establish commercial publishing rights. Check the provider's current terms.</p>
+        {sceneCast.length>0&&<div className="space-y-3 rounded-control border border-border p-4" aria-label="Scene cast voices">
+          <div><p className="font-semibold">Scene cast <span className="font-normal text-muted-foreground">· {sceneCast.length} assigned {sceneCast.length===1?"voice role":"voice roles"}</span></p>
+            <p className="mt-1 text-xs text-muted-foreground">Saved speakers are bound per dialogue line or scene. All lines in the same scene play over one continuous shot; unassigned lines use the narrator.</p></div>
+          <ul className="grid gap-2 sm:grid-cols-2">{sceneCast.map(({label,speaker},index)=><li key={`${label}:${index}`} className="min-w-0 rounded-control bg-surface-subtle px-3 py-2 text-xs">
+            <span className="block font-semibold text-foreground">{speaker.id==="pip"?"Pip":speaker.id==="quill"?"Quill":speaker.id} <span className="font-normal text-muted-foreground">· {label}</span></span>
+            <span className="mt-1 block break-all text-muted-foreground">{speaker.provider} · {speaker.voiceId}</span>
+          </li>)}</ul>
+          {voiceProjectId&&rigSpeakers.length>0&&<div className="grid gap-2 sm:grid-cols-2" aria-label="Saved character rig revisions">
+            {rigSpeakers.map(id=><label key={id} className={inputLabel}>
+              {id==="pip"?"Pip":"Quill"} rig revision
+              <select className={field} aria-label={`${id==="pip"?"Pip":"Quill"} rig revision`}
+                value={characterDraftIds[id]??""} disabled={!!working||state.state==="rendering"}
+                onChange={event=>{
+                  inputRevision.current++;
+                  setRigSelection({owner:voiceProjectId,ids:{...characterDraftIds,[id]:event.target.value},
+                    sceneIds:{...characterSceneDraftIds}});
+                  setReady(false);setRigNote("");
+                }}>
+                <option value="">Latest saved revision (automatic)</option>
+                {savedRigs.filter(draft=>draft.characterId===id).map(draft=><option key={draft.id} value={draft.id}>
+                  {draft.revision}
+                </option>)}
+              </select>
+            </label>)}
+            {sceneRigSpeakers.map(({shotId,id})=><label key={`${shotId}:${id}`} className={inputLabel}>
+              {shotId} · {id==="pip"?"Pip":"Quill"} scene revision
+              <select className={field} aria-label={`${shotId} ${id} scene rig revision`}
+                value={characterSceneDraftIds[`${shotId}:${id}`]??""} disabled={!!working||state.state==="rendering"}
+                onChange={event=>{
+                  inputRevision.current++;
+                  setRigSelection({owner:voiceProjectId,ids:{...characterDraftIds},sceneIds:{
+                    ...characterSceneDraftIds,[`${shotId}:${id}`]:event.target.value}});
+                  setReady(false);setRigNote("");
+                }}>
+                <option value="">Use character default</option>
+                {savedRigs.filter(draft=>draft.characterId===id).map(draft=><option key={draft.id} value={draft.id}>
+                  {draft.revision}
+                </option>)}
+              </select>
+            </label>)}
+            {rigListError&&<p role="alert" className="text-xs text-danger sm:col-span-2">{rigListError}</p>}
           </div>}
-        </div>
+          {mismatchedCast.length>0&&<p role="alert" className="flex items-start gap-2 text-xs text-danger"><AlertCircle className="size-4 shrink-0"/>
+            {mismatchedCast.length} scene {mismatchedCast.length===1?"voice uses":"voices use"} a different provider. Choose {settings.provider} voices for those scenes in the Scene editor before generating.</p>}
+        </div>}
         <div className="rounded-control border border-border p-4 space-y-3">
           <p className="font-semibold">Listen before you render</p>
-          <p className="text-xs text-muted-foreground">Generates up to 180 characters from the first scene. This is an explicit TTS request and may take time on a local model.</p>
+          <p className="text-xs text-muted-foreground">Generates up to 180 characters from {selectedShotId?"the selected scene":"the opening scene"}. This is an explicit TTS request and may take time on a local model.</p>
           <div className="flex flex-wrap gap-2">
             <Button disabled={!!working||sampleStatus.state==="generating"||state.state==="rendering"}
-              onClick={()=>void audition()}><Play className="mr-2 size-4"/>Generate voice sample</Button>
+              onClick={()=>void audition()}><Play className="mr-2 size-4"/>{selectedShotId?"Preview selected scene voice":"Generate voice sample"}</Button>
             {sampleStatus.state==="generating"&&<Button variant="outline" onClick={()=>void cancelSample()}><Square className="mr-2 size-4"/>Cancel sample</Button>}
           </div>
-          {sampleStatus.message&&<p role="status" className="text-xs text-muted-foreground">{sampleStatus.message}</p>}
+          {sampleStatus.message&&<p role={sampleStatus.state==="failed"?"alert":"status"} className="text-xs text-muted-foreground">{sampleStatus.message}</p>}
           {sampleStatus.state==="done"&&sampleStatus.audioUrl&&<audio key={sampleStatus.audioUrl} aria-label="Voice sample" controls preload="none" src={sampleStatus.audioUrl} className="w-full"/>}
         </div>
         <div className="rounded-control border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div><h4 className="font-semibold">Generate your complete draft</h4>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">After voice setup, ContentGen checks the local tools and automatically renders the scenes, narration, sound and MP4. Nothing is uploaded.</p></div>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">After voice setup, ContentGen checks local tools and renders the scenes, narration, sound and MP4. Only authorized voice requests and optional media searches contact outside services.</p></div>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
+              checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
+              onChange={event=>changeMediaSearch(event.target.checked)}/>
+            Find matching visual assets (optional). Searches Poly Haven and Openverse and automatically downloads up to three HD Wikimedia Commons photos only after their CC0 license is checked at the source. Other scenes use Kumiki visuals; Pexels website files can be imported in Director → Find the right visuals.
+          </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}
           </Button>
-          {state.state==="blocked"&&state.report&&<div role="alert" className="rounded-lg border border-status-warning/30 bg-surface p-3 text-xs">
-            <p className="font-semibold">Before the video can start</p>
-            {state.report.findings.map((finding,index)=><p key={index} className="mt-1">{finding.message}</p>)}
-          </div>}
         </div>
         <div className="flex items-center justify-between gap-2"><Button variant="outline" onClick={()=>void navigate("preview")}><ArrowLeft className="mr-2 size-4"/>Preview</Button>
           <Button onClick={()=>void navigate("review")}>Continue to final review <ArrowRight className="ml-2 size-4"/></Button></div>
@@ -435,6 +633,9 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
           <div className="rounded-control border border-border p-3"><p className="text-xs text-muted-foreground">Narrator</p><p className="mt-1 font-medium">{settings.voiceId||"Not chosen"}</p><p className="text-xs text-muted-foreground">{settings.provider==="local"?"Local TTS":"Fish Audio"}</p></div>
           <div className="rounded-control border border-border p-3"><p className="text-xs text-muted-foreground">Voice audition</p><p className="mt-1 font-medium">{sampleStatus.state==="done"?"Sample available":"Optional · not generated"}</p></div>
         </div>
+        {sceneCast.length>0&&<p className="rounded-control border border-border bg-surface-subtle p-3 text-xs text-muted-foreground" role="status">
+          {sceneCast.length} assigned speaker roles across the scenes. The scene editor controls individual voices; Settings → Audio controls the narrator.
+        </p>}
         {preview&&<details className="rounded-control border border-border p-3">
           <summary className="cursor-pointer font-medium">Review all scene narration ({preview.job.beats.length})</summary>
           <ol className="mt-3 space-y-2">{preview.job.beats.map((beat,i)=><li key={beat.id} className="rounded-control bg-surface-subtle p-3">
@@ -467,26 +668,55 @@ export function ProductionPanel({dossier,bundle,productionId,sourceRevision,sele
       {stage==="export"&&<>
         <div className="space-y-1"><h3 className="text-base font-semibold">Render and watch your video</h3>
           <p className="text-muted-foreground">The MP4 uses the verified export pipeline with the selected narrator and reviewed sounds. Rendering may take several minutes.</p></div>
-        {!ready&&state.state!=="rendering"&&<div className="rounded-control border border-border bg-surface-subtle p-3">
+        {!ready&&!(["rendering","failed","cancelled"].includes(state.state))&&<div className="rounded-control border border-border bg-surface-subtle p-3">
           <p className="font-medium">A fresh readiness check is required</p>
           <p className="mt-1 text-xs text-muted-foreground">Changed scene, sound or voice settings need a new check before another render.</p>
           <div className="mt-3"><Button size="sm" variant="outline" onClick={()=>void navigate("review")}>Go to final review</Button></div>
         </div>}
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!ready||!!working||state.state==="rendering"} onClick={()=>void start()}>
-            <Film className="mr-2 size-4"/>Render test MP4
-          </Button>
+          {["failed","cancelled"].includes(state.state)?
+            <Button disabled={!!working} onClick={()=>void generateDraft()}>
+              <RefreshCw className="mr-2 size-4"/>{working==="auto"?"Checking recovery…":"Retry draft video"}
+            </Button>:
+            <Button disabled={!ready||!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
+              <Film className="mr-2 size-4"/>Render test MP4
+            </Button>}
           {state.state==="rendering"&&<Button variant="outline" onClick={()=>void cancel()}><Square className="mr-2 size-4"/>Cancel render</Button>}
         </div>
         {(state.state==="rendering"||state.state==="failed"||state.state==="done"||state.state==="cancelled")&&<div className="rounded-control border border-border p-3" role="status">
           <p className="font-medium">{state.message}</p>
           <p className="mt-1 text-xs text-muted-foreground">{state.phase} {pct!==null?"· "+pct+"% frames complete":""}</p>
+          {state.jobId&&<div className="mt-2 flex flex-wrap items-center gap-3">
+            <span className="text-xs text-muted-foreground">Tracked in Jobs · {state.jobId.slice(0,18)}…</span>
+            {onOpenJobs&&<Button size="sm" variant="outline" onClick={onOpenJobs}>View in Jobs</Button>}
+          </div>}
           {pct!==null&&<progress aria-label="Render progress" className="mt-3 h-2 w-full" max={100} value={pct}/>}
         </div>}
         {state.state==="done"&&state.mediaUrl&&<div className="space-y-3 rounded-control border border-border p-3">
           <p className="font-semibold">Your test video is ready — watch it before publishing</p>
           <video key={state.mediaUrl} src={state.mediaUrl} controls playsInline className="aspect-video w-full rounded-control bg-black" aria-label="Rendered ContentGen draft video"/>
-          <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline" href={state.mediaUrl} download="contentgen-draft.mp4">Download MP4</a>
+          {state.visualCoverage&&<div className="space-y-1 rounded-control border border-border bg-surface-subtle p-3" role="status">
+            <p className="text-sm font-semibold">{state.visualCoverage.sceneCount} of {state.visualCoverage.sceneCount} scenes have captured review stills</p>
+            <p className="text-xs text-muted-foreground">{state.visualCoverage.mediaDeclarationCounts.stockVideo} stock video · {state.visualCoverage.mediaDeclarationCounts.stockPhoto} stock photo · {state.visualCoverage.mediaDeclarationCounts.kumikiOnly} Kumiki graphic</p>
+            <p className="text-xs text-muted-foreground">{state.visualCoverage.scenesWithoutStockVideo.length} scenes still lack stock footage in this export. Inspect actual playback and media rights before publishing.</p>
+            {firstMissingShot&&onFindVisuals&&<div className="pt-2">
+              <Button size="sm" variant="outline" onClick={()=>onFindVisuals(firstMissingShot.id)}>
+                Find footage for scene {firstMissingShotIndex+1}
+              </Button>
+            </div>}
+          </div>}
+          <div className="flex flex-wrap gap-2">
+            <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline" href={state.mediaUrl} download="contentgen-draft.mp4">Download MP4</a>
+            {/^\/api\/contentgen-video\/media\/[a-f0-9-]+\/video\.mp4$/u.test(state.mediaUrl)&&
+              <>
+                <a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline"
+                  href={state.mediaUrl.replace(/\/video\.mp4$/u,"/captions.srt")}
+                  download="contentgen-captions.srt">Download captions (SRT)</a>
+                {state.visualCoverage&&<a className="inline-flex items-center rounded-control border border-border px-3 py-2 font-medium underline"
+                  href={state.mediaUrl.replace(/\/video\.mp4$/u,"/qa-report.json")}
+                  target="_blank" rel="noopener noreferrer">Review technical QA report</a>}
+              </>}
+          </div>
           {state.regeneration&&<p className="text-xs text-muted-foreground">Reused {state.regeneration.reusedSpeechBeatIds?.length??0} prior speech beats and {state.regeneration.reusedVideoSegments??0} verified video segments.</p>}
         </div>}
         <p className="text-xs text-muted-foreground">Rendering never publishes a video or automatically certifies facts, licensing or voice rights. The exported draft may use general diagrams where custom animations aren't yet supported.</p>

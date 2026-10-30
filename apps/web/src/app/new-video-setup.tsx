@@ -36,10 +36,11 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
     // an obsolete request settles, even though its response will be ignored.
     setResearch(null);setQuotePreviews([]);setBundle(null);setError("");
   };
-  async function demo(){
+  async function demo(mode:"sample"|"conversation"="sample"){
     setBusy("demo");setError("");
     try{
-      const response=await fetch("/api/contentgen-video/demo",{cache:"no-store",signal:AbortSignal.timeout(10000)});
+      const response=await fetch(mode==="conversation"?"/api/contentgen-video/demo-conversation":"/api/contentgen-video/demo",
+        {cache:"no-store",signal:AbortSignal.timeout(10000)});
       const data=await response.json() as Record<string,unknown>;
       if(!response.ok)throw Error(String(data.error||"Demo unavailable."));
       const dossier=data.dossier as Partial<Dossier>|undefined;
@@ -98,6 +99,14 @@ export function NewVideoSetup({onGenerated}:{onGenerated:(dossier:unknown,bundle
             <Button disabled={!!busy} onClick={()=>void demo()} icon={<Play className="size-4"/>}>
               {busy==="demo"?"Opening the sample studio…":"Open interactive sample"}
             </Button>
+            <div className="mt-3 rounded-control border border-primary/25 bg-surface p-3">
+              <p className="text-sm font-semibold">Conversation + narration</p>
+              <p className="mt-1 text-xs text-muted-foreground">One-click starter: Pip asks, Quill responds and the narrator explains while the same scene continues playing. Edit every line and choose distinct saved voices before exporting.</p>
+              <Button className="mt-3" variant="outline" disabled={!!busy} onClick={()=>void demo("conversation")} icon={<Play className="size-4"/>}>
+                Open conversation video template
+              </Button>
+              <p className="mt-2 text-xs text-muted-foreground">Uses the project-default Fish voice as a temporary voice for both characters. Voice authorization and the full narrated render are still required.</p>
+            </div>
             <p className="text-xs text-muted-foreground">Synthetic test content only. Safe to explore, edit, and discard.</p>
           </div>
         </div>

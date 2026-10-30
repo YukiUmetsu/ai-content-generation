@@ -1,11 +1,13 @@
 /** Pure semantic diagram plan and frame state. Narration timing remains owned by ContentGen. */
 import { parseVideoProductionJob } from "./job.mjs";
 import { motionRevealState } from "./scene-motion.mjs";
+import { toFrame } from "./timeline.mjs";
 
 const fail = (reason) => { throw new Error(`General explainer visual plan invalid: ${reason}`); };
 const ease = (x) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
 
-export function compileGeneralVisuals(job, timeline) {
+/** Optional measured speech is required for mouth motion. Editor-only plans show the cast at rest. */
+export function compileGeneralVisuals(job, timeline, speech) {
   const parsed = parseVideoProductionJob(job);
   if (!parsed.ok || job.visualFamily !== "general-explainer-v1") fail(parsed.findings?.map((f) => f.code).join(", ") || "visual family mismatch");
   const portrait = ["youtube-shorts", "instagram-reels", "tiktok"].includes(job.destination.presetId);
@@ -17,6 +19,8 @@ export function compileGeneralVisuals(job, timeline) {
   const minimumSeconds = Math.max(job.mode === "youtube-long" ? 480 : 0, job.destination.minimumDurationSeconds ?? 0);
   if (timeline.totalSamples < minimumSeconds * 48000) fail(`video requires ${minimumSeconds} seconds of measured narration`);
   if (!Array.isArray(timeline.beats) || timeline.beats.length !== job.beats.length) fail("narrated beat count mismatch");
+  if (speech !== undefined && (!Array.isArray(speech) || speech.length !== job.beats.length))
+    fail("measured speech scene count mismatch");
   const claimsById = new Map(job.claims.map((claim) => [claim.id, claim]));
   const chapters = job.beats.map((beat, index) => {
     const range = timeline.beats[index];
@@ -25,7 +29,47 @@ export function compileGeneralVisuals(job, timeline) {
     const endFrame = index === job.beats.length - 1 ? timeline.totalFrames : timeline.beats[index + 1].startFrame;
     if (endFrame <= startFrame) fail(`beat ${beat.id} is too short to render`);
     const evidenceRefs = [...new Set(beat.claimRefs.flatMap((id) => claimsById.get(id)?.sourceRefs ?? []))];
+    let dialogue;
+    if (beat.speechTurns) {
+      const actual = speech?.[index];
+      if (speech && (actual?.id !== beat.id || !Array.isArray(actual.turns) ||
+        actual.turns.length !== beat.speechTurns.length || actual.samples !== range.endSample - range.startSample))
+        fail(`beat ${beat.id} has mismatched measured dialogue`);
+      let cursor = range.startSample;
+      const turns = beat.speechTurns.map((turn, turnIndex) => {
+        const measured = actual?.turns[turnIndex];
+        const speaker = turn.speaker ?? { id: "narrator", role: "narrator", voiceId: job.voice.voiceId };
+        if (speech && (measured?.id !== `${beat.id}.${turn.id}` ||
+          measured.text !== turn.narration || measured.speakerId !== speaker.id ||
+          measured.speakerRole !== speaker.role || measured.voiceId !== speaker.voiceId ||
+          measured.pauseAfterMs !== turn.pauseAfterMs ||
+          !Number.isSafeInteger(measured.samples) || measured.samples < 1))
+          fail(`beat ${beat.id} turn ${turn.id} differs from measured voice identity or timing`);
+        const timed = measured ? { startFrame: toFrame(cursor, timeline.fps),
+          endFrame: toFrame(cursor + measured.samples, timeline.fps) } : {};
+        if (measured) cursor += measured.samples + measured.pauseAfterMs * 48;
+        return { id: turn.id, speakerId: speaker.id, role: speaker.role,
+          ...(turn.animationAction?{animationAction:turn.animationAction}:{}),...timed };
+      });
+      if (actual && cursor !== range.endSample)
+        fail(`beat ${beat.id} measured turns do not fill the scene speech range`);
+      dialogue = { turns };
+    } else if (speech?.[index]?.turns) fail(`beat ${beat.id} gained unexpected measured dialogue`);
+    else if (beat.speaker?.role === "character") {
+      // Single-speaker character scenes must also draw the performer; otherwise
+      // saved Character Studio art would be pinned to a plan but never visible.
+      const actual = speech?.[index];
+      if (speech && (actual?.id !== beat.id || actual.text !== beat.narration ||
+        actual.speakerId !== beat.speaker.id || actual.speakerRole !== "character" ||
+        actual.voiceId !== beat.speaker.voiceId || !Number.isSafeInteger(actual.samples) ||
+        actual.samples < 1 || actual.samples > range.endSample - range.startSample))
+        fail(`beat ${beat.id} character speech differs from measured narration`);
+      dialogue = { turns: [{ id: beat.id, speakerId: beat.speaker.id, role: "character",
+        ...(actual ? { startFrame: toFrame(range.startSample, timeline.fps),
+          endFrame: toFrame(range.startSample + actual.samples, timeline.fps) } : {}) }] };
+    }
     return { id: beat.id, intent: beat.visualIntent, visual: structuredClone(beat.visual), startFrame, endFrame,
+      ...(dialogue ? { dialogue } : {}),
       claimRefs: [...beat.claimRefs], evidenceRefs, eventIds: [...beat.eventIds] };
   });
   const payoffEventId = job.topic.payoffEventId;

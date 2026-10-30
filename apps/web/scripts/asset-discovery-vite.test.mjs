@@ -52,3 +52,43 @@ test("local asset API binds and clears a verified scene asset only through same-
   assert.deepEqual(called.map(([action])=>action),["select","clear"]);
   assert.equal((await invoke("GET","/selected?projectId=../../etc",undefined,deps)).status,422);
 });
+
+test("Pexels API approval is disabled and website files require a same-origin binary upload",async()=>{
+  const approvals=[];
+  const deps={importJob:async(input,{importer})=>importer(input,{}),
+    approve:async()=>{throw Error("retired Pexels API must not be called");},
+    importDownloaded:async(input,bytes)=>{approvals.push({input,bytes});return {provider:"pexels",sha256:"a".repeat(64)};}};
+  assert.equal((await invoke("POST","/approve",{provider:"pexels",confirmRights:true,confirmDownload:true},deps)).status,422);
+  const page="https://www.pexels.com/photo/forest-12345/";
+  const url="/import-downloaded?"+new URLSearchParams({projectId:"project-1",shotId:"shot-house",
+    sourceUrl:page,assetType:"photo",creator:"Author",confirmRights:"yes"});
+  async function upload(headers={}){
+    const bytes=Buffer.from("Pexels example bytes");
+    const req=Readable.from([bytes]);
+    Object.assign(req,{method:"POST",url,headers:{host:"127.0.0.1:5173",origin:"http://127.0.0.1:5173",
+      "x-contentgen-director":"local-only","content-type":"application/octet-stream",...headers}});
+    let status,result;const res={writeHead(code){status=code;},end(data){result=JSON.parse(data);}};
+    await handleAssetDiscoveryRequest(req,res,deps);
+    return {status,result};
+  }
+  assert.equal((await upload({origin:"https://evil.example"})).status,403);
+  assert.equal((await upload({"content-type":"application/json"})).status,422);
+  assert.equal(approvals.length,0);
+  assert.equal((await upload()).status,200);
+  assert.equal(approvals[0].input.sourceUrl,page);
+  assert.equal(approvals[0].bytes.toString(),"Pexels example bytes");
+});
+
+test("single-photo Pexels page import requires an explicit same-origin action",async()=>{
+  const inputs=[];
+  const deps={importJob:async(input,{importer})=>importer(input,{}),
+    importFromPage:async input=>{inputs.push(input);return {assetId:"123",provider:"pexels"};}};
+  const data={projectId:"project-1",shotId:"scene-1",assetType:"photo",confirmRights:true,
+    sourceUrl:"https://www.pexels.com/photo/forest-123/"};
+  assert.equal((await invoke("POST","/import-from-page",data,deps,
+    {origin:"https://other.example"})).status,403);
+  assert.equal((await invoke("POST","/import-from-page",{...data,confirmRights:false},deps)).status,422);
+  assert.equal(inputs.length,0);
+  assert.deepEqual((await invoke("POST","/import-from-page",data,deps)).result,{assetId:"123",provider:"pexels"});
+  assert.deepEqual(inputs,[data]);
+});

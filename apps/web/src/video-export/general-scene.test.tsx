@@ -16,6 +16,69 @@ const plan: GeneralVisualPlan = {
 };
 
 describe("generic deterministic explainer scene", () => {
+  it("renders an approved scene photo with cinematic motion instead of the unrelated schematic", () => {
+    const photo = { assetType: "photo" as const, url: `/__video_media/${"a".repeat(64)}.jpg`,
+      sha256: "a".repeat(64), provider: "pexels" as const, assetId: "49",
+      sourceUrl: "https://www.pexels.com/photo/roof-49/", license: "Pexels License" as const,
+      licenseUrl: "https://www.pexels.com/license/", creator: "Photographer" };
+    const withMedia: GeneralVisualPlan = { ...plan, chapters: plan.chapters.map(chapter =>
+      chapter.id === "path" ? { ...chapter, visual: { ...chapter.visual, stockMedia: photo } } : chapter) };
+    const first = renderToStaticMarkup(<GeneralExportScene plan={withMedia} frame={65} />);
+    const last = renderToStaticMarkup(<GeneralExportScene plan={withMedia} frame={115} />);
+    expect(first).toContain('data-contentgen-stock-photo=""');
+    expect(first).toContain(photo.url);
+    expect(first).toContain("A PACKET MOVES");
+    expect(first).not.toContain('data-semantic-scene="');
+    expect(first).not.toContain('data-km-diagram-stage');
+    expect(first).not.toEqual(last);
+  });
+
+  it("uses an edited per-scene focal position in the actual photo and footage layer",()=>{
+    const base={url:`/__video_media/${"f".repeat(64)}.jpg`,sha256:"f".repeat(64),
+      provider:"pexels" as const,assetId:"49",sourceUrl:"https://www.pexels.com/photo/roof-49/",
+      license:"Pexels License" as const,licenseUrl:"https://www.pexels.com/license/",creator:"Artist",
+      focalPoint:{x:.2,y:.75}};
+    const photoPlan:GeneralVisualPlan={...plan,chapters:plan.chapters.map(chapter=>chapter.id==="path"?
+      {...chapter,visual:{...chapter.visual,stockMedia:{...base,assetType:"photo"}}}:chapter)};
+    const rendered=renderToStaticMarkup(<GeneralExportScene plan={photoPlan} frame={65}/>);
+    expect(rendered).toContain("object-position:20.0% 75.0%");
+    expect(rendered).toContain("transform-origin:20.0% 75.0%");
+    const videoPlan:GeneralVisualPlan={...plan,chapters:plan.chapters.map(chapter=>chapter.id==="path"?
+      {...chapter,visual:{...chapter.visual,stockMedia:{...base,assetType:"video",durationSeconds:10,
+        width:1280,height:720,url:`/__video_media/${"f".repeat(64)}.mp4`}}}:chapter)};
+    expect(renderToStaticMarkup(<GeneralExportScene plan={videoPlan} frame={65}/>))
+      .toContain("object-position:20.0% 75.0%");
+  });
+
+  it("fades the complete photo-and-typography composition during Kumiki scene transitions", () => {
+    const photo = { assetType: "photo" as const, url: `/__video_media/${"e".repeat(64)}.jpg`,
+      sha256: "e".repeat(64), provider: "pexels" as const, assetId: "49",
+      sourceUrl: "https://www.pexels.com/photo/roof-49/", license: "Pexels License" as const,
+      licenseUrl: "https://www.pexels.com/license/", creator: "Photographer" };
+    const withMedia: GeneralVisualPlan = { ...plan, chapters: plan.chapters.map(chapter =>
+      chapter.id === "path" ? { ...chapter, visual: { ...chapter.visual, stockMedia: photo,
+        motion: { revealDelayPercent: 0, revealPace: "balanced", camera: "locked", transition: "fade" } } } : chapter) };
+    const rendered = renderToStaticMarkup(<GeneralExportScene plan={withMedia} frame={60} />);
+    expect(rendered.indexOf('data-scene-entry-fade=""')).toBeGreaterThan(rendered.indexOf('data-contentgen-stock-frame=""'));
+  });
+
+  it("provides exact frame time to a muted video, looping only within the reviewed clip", () => {
+    const media = { assetType: "video" as const, url: `/__video_media/${"b".repeat(64)}.mp4`,
+      sha256: "b".repeat(64), provider: "pexels" as const, assetId: "83",
+      sourceUrl: "https://www.pexels.com/video/roof-83/", license: "Pexels License" as const,
+      licenseUrl: "https://www.pexels.com/license/", creator: "Filmer", durationSeconds: 1.5,
+      width: 1280, height: 720 };
+    const withMedia: GeneralVisualPlan = { ...plan, chapters: plan.chapters.map(chapter =>
+      chapter.id === "path" ? { ...chapter, visual: { ...chapter.visual, stockMedia: media } } : chapter) };
+    const first = renderToStaticMarkup(<GeneralExportScene plan={withMedia} frame={61} />);
+    const loop = renderToStaticMarkup(<GeneralExportScene plan={withMedia} frame={106} />);
+    expect(first).toContain('data-contentgen-stock-video=""');
+    expect(first).toContain('muted=""');
+    expect(first).toContain('data-media-time="0.033333"');
+    expect(loop).toContain('data-media-time="0.033333"');
+    expect(first).toContain(media.url);
+    expect(first).not.toContain('data-general-node="');
+  });
   it("renders meaningful visual labels and accessible 16:9 SVG", () => {
     const svg = renderToStaticMarkup(<GeneralExportScene plan={plan} frame={94} />);
     expect(svg).toContain('viewBox="0 0 1920 1080"');
@@ -121,6 +184,15 @@ describe("cinematic semantic visual treatments on the actual exported frame",()=
     expect(first).not.toContain("Repair");
     expect(later).toContain("Repair");
     expect(later).toContain('data-semantic-focus="true"');
+  });
+  it("keeps wrapped titles apart in tall contrast cards at the exported SVG font metrics",()=>{
+    const html=asIntent("general-comparison",["Local connection","Internet route"],110);
+    const first=html.match(/<g data-general-node="0">([\s\S]*?)<\/g>/)?.[1];
+    expect(first).toBeDefined();
+    const titleBaselines=[...first!.matchAll(/<text\b[^>]*\by="([\d.]+)"[^>]*>/g)]
+      .map(match=>Number(match[1]));
+    expect(titleBaselines).toHaveLength(2);
+    expect(titleBaselines[1]-titleBaselines[0]).toBeGreaterThanOrEqual(44);
   });
   it("reveals breakdown parts with no fabricated values or unequal quantitative bar geometry",()=>{
     const late=asIntent("general-breakdown",["Labor","Equipment","Permits","Materials"],119);

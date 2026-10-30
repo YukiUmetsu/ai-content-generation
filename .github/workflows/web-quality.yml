@@ -54,11 +54,36 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Production build
+        run: pnpm build
+
+      # This uses repo-owned starter Character Studio ZIPs and offline spoken
+      # dialogue with measured narration samples, not a synthetic timing tone.
+      # No Fish Audio key, paid TTS or external asset retrieval is involved.
+      - name: Install Chromium and FFmpeg for visual animation QA
+        run: |
+          pnpm exec playwright-core install --with-deps chromium
+          sudo apt-get install -y ffmpeg
+
+      - name: Verify saved Pip and Quill animation in real Chromium
+        run: |
+          CHROME="$(node --input-type=module -e "import { chromium } from 'playwright-core'; process.stdout.write(chromium.executablePath())")"
+          test -x "$CHROME"
+          CONTENTGEN_CHROMIUM_EXECUTABLE="$CHROME" CONTENTGEN_BROWSER_TEST_NO_SANDBOX=1 CONTENTGEN_QA_ARTIFACT_DIR=qa-artifacts pnpm test:video:browser
+
+      - name: Keep voiced rig MP4 and blink stills for visual review
+        uses: actions/upload-artifact@v4
+        with:
+          name: kumiki-rig-voiced-qa
+          path: apps/web/qa-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
       # These use synthetic providers/browser drivers, not FFmpeg or Chromium.
       # Real media encoding, muxing and audio probes are local release gates.
       - name: Test video planning and mock production without media tools
         run: |
-          node --test \
+          node --test --test-concurrency=1 \
             scripts/video-production/cli.test.mjs \
             scripts/video-production/cli-signal.test.mjs \
             scripts/video-production/fish.test.mjs \
@@ -66,6 +91,7 @@ jobs:
             scripts/video-production/job.test.mjs \
             scripts/video-production/topic-generator.test.mjs \
             scripts/video-production/general-visual-plan.test.mjs \
+            scripts/video-production/character-rig-render.test.mjs \
             scripts/video-production/visual-plan.test.mjs \
             scripts/video-production/timeline.test.mjs \
             scripts/video-production/produce.test.mjs \
@@ -81,6 +107,3 @@ jobs:
             scripts/video-production/research-model-settings.test.mjs \
             scripts/video-production/model-profiles.test.mjs \
             scripts/director-studio-vite.test.mjs
-
-      - name: Production build
-        run: pnpm build

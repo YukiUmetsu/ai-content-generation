@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::Response;
@@ -13,7 +13,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::credentials::{ConnectionStatus, CredentialError};
+use crate::credentials::{ConnectionStatus, CredentialError, ProviderId};
 use crate::error::ApiError;
 use crate::state::AppState;
 
@@ -217,7 +217,7 @@ pub fn router() -> Router<AppState> {
         .route("/providers", get(providers))
         .route("/session", get(session))
         .route(
-            "/providers/youtube/key",
+            "/providers/{provider}/key",
             axum::routing::put(save_key).delete(delete_key),
         )
         .layer(DefaultBodyLimit::max(1024))
@@ -226,7 +226,7 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Serialize)]
 struct ProviderStatuses {
-    providers: [ConnectionStatus; 1],
+    providers: [ConnectionStatus; 2],
 }
 
 async fn providers(
@@ -235,7 +235,10 @@ async fn providers(
 ) -> Result<Json<ProviderStatuses>, ApiError> {
     trusted_origin(&headers, "provider_status")?;
     Ok(Json(ProviderStatuses {
-        providers: [state.credentials().youtube_status()],
+        providers: [
+            state.credentials().status(ProviderId::Youtube),
+            state.credentials().status(ProviderId::Fish),
+        ],
     }))
 }
 
@@ -262,32 +265,36 @@ struct SaveKey {
 
 async fn save_key(
     State(state): State<AppState>,
+    Path(provider): Path<String>,
     headers: HeaderMap,
     Json(value): Json<SaveKey>,
 ) -> Result<Json<ConnectionStatus>, ApiError> {
-    require_mutation(&headers, &state, "save_youtube_key")?;
+    require_mutation(&headers, &state, "save_provider_key")?;
+    let provider = ProviderId::from_slug(&provider).ok_or_else(forbidden)?;
     let key = &value.key;
     if key.len() < 8 || key.len() > 512 || key.trim() != key || key.chars().any(char::is_control) {
         return Err(ApiError::InvalidDocument {
-            message: "Invalid YouTube API key format".into(),
+            message: "Invalid provider API key format".into(),
         });
     }
     state
         .credentials()
-        .put_youtube_key(key)
-        .map_err(|error| credential_error(error, "save_youtube_key"))?;
-    Ok(Json(state.credentials().youtube_status()))
+        .put_key(provider, key)
+        .map_err(|error| credential_error(error, "save_provider_key"))?;
+    Ok(Json(state.credentials().status(provider)))
 }
 
 async fn delete_key(
     State(state): State<AppState>,
+    Path(provider): Path<String>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
-    require_mutation(&headers, &state, "delete_youtube_key")?;
+    require_mutation(&headers, &state, "delete_provider_key")?;
+    let provider = ProviderId::from_slug(&provider).ok_or_else(forbidden)?;
     state
         .credentials()
-        .delete_youtube_key()
-        .map_err(|error| credential_error(error, "delete_youtube_key"))?;
+        .delete_key(provider)
+        .map_err(|error| credential_error(error, "delete_provider_key"))?;
     Ok(StatusCode::NO_CONTENT)
 }
 

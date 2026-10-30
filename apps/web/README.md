@@ -1142,3 +1142,28 @@ does not certify a claim, synthesize 3D models, or turn natural-language
 `visualAction` instructions into custom scene choreography. It makes the
 supported diagrams useful and editable while indicating when richer
 domain assets or human direction are needed.
+
+Draft production failures are recorded as job attempts. When the scheduler leaves a
+failed step ready within its attempt limit, the local production worker rechecks
+the saved authorized request and reclaims that step automatically. A terminal
+failure requires an explicit retry; cancellation also cancels a queued retry.
+The Jobs list opens a details dialog with a retry action for failed or unclaimed
+failed draft production steps. The action rechecks the saved authorized request
+and claims the same persisted job before starting the production worker. Missing
+or changed requests require review in the production editor. Retry errors list
+failed readiness checks. New snapshots retain pinned character selections and
+non-secret input fingerprints to identify changed input categories; older
+snapshots may only report that the original identity no longer matches. For legacy
+snapshots, retry also checks the original Studio settings field order and accepts
+it only when the complete saved identity matches. The dialog includes
+a dependency graph, per-step attempts,
+and READY/RUNNING/PENDING status. READY means no attempt currently owns the step;
+the scheduler does not expose a queue position or start estimate. Status views
+poll the local services every second; they are not push notifications.
+
+Scene durations follow measured narration. If a scene would occupy zero video
+frames, the producer adds the minimum whole milliseconds of silence after that
+scene (up to the existing pause limit), records the adjustment on the timeline
+step, and leaves narration and script unchanged. Other timing mismatches remain
+errors: recognized scene and cue failures are reported with their scene IDs.
+Historical generic errors cannot identify a scene that was never recorded.

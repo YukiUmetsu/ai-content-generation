@@ -3,12 +3,16 @@
  * implicitly reuses old approval, deletes media or silently regenerates.
  */
 import { createHash } from "node:crypto";
-import { compilePreproductionBundle } from "./preproduction.mjs";
+import { compilePreproductionBundle, isProductionSpeaker } from "./preproduction.mjs";
 import { isSceneMotion } from "./scene-motion.mjs";
 import { isVisualElements } from "./visual-elements.mjs";
 const sha=v=>createHash("sha256").update(JSON.stringify(v)).digest("hex");
+// Animation names change only the Kumiki visual track, never voice text,
+// timing, provider identity or permissions. Preserve expensive TTS caches.
+const speechOnly=turns=>Array.isArray(turns)?turns.map(turn=>({id:turn.id,narration:turn.narration,
+  pauseAfterMs:turn.pauseAfterMs,speaker:turn.speaker})):null;
 const text=(v,max=2000)=>typeof v==="string"&&v.trim()&&v.length<=max&&!/[\u0000-\u0008\u000e-\u001f]/u.test(v);
-const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements","family"];
+const allowed=["narration","onScreenText","visualChange","visualAction","sfxIntent","motion","visualElements","family","pauseAfterMs","speaker","speechTurns"];
 const families=new Set(["question","process","comparison","cost-breakdown","mechanism","evidence","summary"]);
 export function editPreproductionShot(dossier,original,edit){
   if(!original || original.kind!=="preproduction-bundle" || original.researchId!==dossier?.id ||
@@ -20,24 +24,48 @@ export function editPreproductionShot(dossier,original,edit){
     throw Error("Select one shot and explicit editable fields.");
   const changes=Object.entries(edit.changes);
   if(!changes.length||changes.length>allowed.length||
-      changes.some(([k,v])=>!allowed.includes(k)||(k==="family"? !families.has(v) : k==="visualElements"? !isVisualElements(v) : k==="motion"? !isSceneMotion(v) : k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
-    throw Error("Editable fields are narration, onScreenText, visualChange, visualAction, sfxIntent, motion, visualElements and a supported shot family.");
+      changes.some(([k,v])=>!allowed.includes(k)||(k==="pauseAfterMs"?
+        !Number.isSafeInteger(v)||v<0||v>3000 : k==="family"? !families.has(v) :
+        k==="visualElements"? !isVisualElements(v) : k==="motion"? !isSceneMotion(v) :
+        k==="speaker"? v!==null&&!isProductionSpeaker(v) :
+        k==="speechTurns"? v!==null&&(!Array.isArray(v)||v.length<2||v.length>16) :
+        k==="sfxIntent"&&v===null?false:!text(v,k==="narration"?2000:k==="onScreenText"?240:650))))
+    throw Error("Editable fields include narration, speaker voice, scene timing, visible text, layout, motion, visual elements and sound effects.");
   const plan=structuredClone(original.plan);
   const shot=plan.shots.find(x=>x.id===edit.shotId);
   const voice=plan.sound.find(x=>x.shotId===edit.shotId);
   const phase=(plan.teachingSequences??[]).flatMap(x=>x.phases).find(x=>x.shotId===edit.shotId);
   if(!shot||!voice||!phase)throw Error("Shot must exist in a narrated teaching sequence.");
+  if(voice.speechTurns!==undefined&&changes.some(([key])=>key==="narration"&&!changes.some(([other])=>other==="speechTurns")))
+    throw Error("Edit the individual dialogue turns so narration and each speaker stay synchronized.");
+  if(changes.some(([key,value])=>key==="speaker"&&value!==null)&&
+    (voice.speechTurns!==undefined&&!changes.some(([key,value])=>key==="speechTurns"&&value===null)||
+      changes.some(([key,value])=>key==="speechTurns"&&value!==null)))
+    throw Error("Choose speakers for individual dialogue turns, or clear the dialogue before assigning one scene speaker.");
   if(changes.some(([key])=>key==="family") && (plan.shots[0].id===shot.id||plan.shots.at(-1).id===shot.id||shot.sceneRecipe))
     throw Error("The opening, closing and bespoke recipe scenes have dedicated layouts; choose a middle general scene to change its family.");
   const revised=new Set(),audio=new Set(),visual=new Set(),sfx=new Set();
   for(const [key,value] of changes){
-    const target=key==="narration"||key==="sfxIntent"?voice:key==="visualAction"?phase:shot;
+    const target=key==="narration"||key==="sfxIntent"||key==="pauseAfterMs"||key==="speaker"||key==="speechTurns"?voice:key==="visualAction"?phase:shot;
     if(key==="visualAction"&&!phase)throw Error("Selected shot has no editable teaching phase.");
-    if(target[key]===value)continue;
-    target[key]=typeof value==="string"?value.trim():structuredClone(value);
+    if(JSON.stringify(target[key]??null)===JSON.stringify(value))continue;
+    const visualActionOnly=key==="speechTurns"&&value!==null&&
+      JSON.stringify(speechOnly(target.speechTurns))===JSON.stringify(speechOnly(value));
+    if(key==="speaker"&&value===null)delete target.speaker;
+    else if(key==="speechTurns"){
+      if(value===null)delete target.speechTurns;
+      else {
+        target.speechTurns=structuredClone(value);
+        target.narration=value.map(turn=>typeof turn?.narration==="string"?turn.narration.trim():"").join(" ");
+        delete target.speaker;
+        if(!visualActionOnly)revised.add("narration");
+      }
+    }
+    else target[key]=typeof value==="string"?value.trim():structuredClone(value);
     revised.add(key);
-    if(key==="narration")audio.add(shot.id);
+    if(key==="narration"||key==="speaker"||key==="speechTurns"&&!visualActionOnly)audio.add(shot.id);
     else if(key==="sfxIntent")sfx.add(shot.id);
+    else if(key==="pauseAfterMs")visual.add(shot.id);
     else visual.add(shot.id);
   }
   if(!revised.size)throw Error("Nothing changed; original artifact remains untouched.");
@@ -54,8 +82,8 @@ export function editPreproductionShot(dossier,original,edit){
     speechRegenerate:[...audio],
     sfxRemix:[...sfx],
     visualRerender:[...visual],
-    timelineRecalculate:audio.size>0,
-    downstreamRetiming:audio.size>0?later:[],
+    timelineRecalculate:audio.size>0||revised.has("pauseAfterMs"),
+    downstreamRetiming:audio.size>0||revised.has("pauseAfterMs")?later:[],
     muxRequired:true,
     reusableSpeech:plan.sound.map(x=>x.shotId).filter(id=>!audio.has(id)),
     externalActionsPerformed:[],

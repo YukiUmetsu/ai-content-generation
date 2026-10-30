@@ -44,6 +44,7 @@ describe("Studio shell", () => {
     expect(screen.getByRole("region", { name: "Guided production" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Setup" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Production stages" })).toBeInTheDocument();
+    expect(screen.queryByRole("link",{name:"Video Director"})).not.toBeInTheDocument();
   });
 
   it("opens a dedicated Character Studio directly from navigation", async () => {
@@ -143,6 +144,7 @@ describe("Studio shell", () => {
     render(<App />);
     await user.click(screen.getByRole("link", {name:"Research"}));
     await user.click(screen.getByRole("tab", {name:"YouTube Intelligence"}));
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     await user.click(await screen.findByRole("button", {name:"Use for video"}));
     const title = screen.getByRole("textbox", {name:"Working video title"});
     await user.clear(title);

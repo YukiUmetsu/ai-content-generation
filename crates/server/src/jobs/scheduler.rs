@@ -166,6 +166,31 @@ pub fn list(conn: &Connection, state: Option<JobState>) -> Result<Vec<Job>, Jobs
     Ok(jobs)
 }
 
+/// The immutable scene-plan input links a production to its persisted parent
+/// DAG. Query it in SQLite rather than fetching every job and its children.
+/// Child asset/narration/thumbnail attempts are intentionally excluded.
+pub fn latest_video_for_production(
+    conn: &Connection,
+    production_id: &str,
+) -> Result<Option<JobSnapshot>, JobsError> {
+    let id: Option<String> = conn
+        .query_row(
+            "SELECT jobs.id FROM jobs
+             WHERE jobs.job_kind = 'video-production'
+               AND EXISTS (
+                 SELECT 1 FROM job_nodes
+                 WHERE job_nodes.job_id = jobs.id
+                   AND job_nodes.node_key = 'scene-plan'
+                   AND json_extract(job_nodes.input_json, '$.productionId') = ?1
+               )
+             ORDER BY jobs.created_at DESC, jobs.rowid DESC LIMIT 1",
+            [production_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    id.map(|value| snapshot(conn, &value)).transpose()
+}
+
 pub fn ready_nodes(conn: &Connection, job_id: &str) -> Result<Vec<JobNode>, JobsError> {
     let mut statement = conn.prepare(
         "SELECT id, schema_version, job_id, node_key, node_kind, state, attempt_count,
@@ -244,6 +269,49 @@ pub fn begin_attempt(
     )?;
     transaction.commit()?;
     Ok(attempt)
+}
+
+/// Renew a running attempt's lease. The exact attempt ID is the worker's
+/// ownership token; a cancelled, superseded or completed worker cannot renew
+/// the lease even if it still knows the job and node IDs.
+pub fn heartbeat_attempt(
+    conn: &mut Connection,
+    job_id: &str,
+    node_id: &str,
+    attempt_id: &str,
+) -> Result<(), JobsError> {
+    let transaction = conn.transaction()?;
+    let attempt = load_attempt(&transaction, attempt_id)?
+        .ok_or_else(|| JobsError::NotFound(format!("job attempt '{attempt_id}' was not found")))?;
+    if attempt.node_id != node_id {
+        return Err(JobsError::NotFound(format!(
+            "job attempt '{attempt_id}' does not belong to node '{node_id}'"
+        )));
+    }
+    if attempt.state != AttemptState::Running {
+        return Err(JobsError::AttemptAlreadyFinished);
+    }
+    let node = load_node(&transaction, job_id, node_id)?
+        .ok_or_else(|| JobsError::NotFound(format!("job node '{node_id}' was not found")))?;
+    if node.state != JobState::Running {
+        return Err(JobsError::NodeNotReady);
+    }
+    let job = load_job(&transaction, job_id)?
+        .ok_or_else(|| JobsError::NotFound(format!("job '{job_id}' was not found")))?;
+    if is_terminal(job.state) {
+        return Err(JobsError::JobFinished);
+    }
+    let time = now(&transaction)?;
+    transaction.execute(
+        "UPDATE job_nodes SET updated_at = ?1 WHERE id = ?2 AND state = 'RUNNING'",
+        params![time, node_id],
+    )?;
+    transaction.execute(
+        "UPDATE jobs SET updated_at = ?1 WHERE id = ?2 AND state = 'RUNNING'",
+        params![time, job_id],
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 pub fn succeed_attempt(
@@ -410,6 +478,81 @@ pub fn fail_attempt(
     snapshot(conn, &node.job_id)
 }
 
+/// Explicitly re-arm an interrupted video production. Unlike automatic
+/// attempts, this requires the local renderer to invoke it and immediately
+/// claim the one newly READY step. All successful outputs and attempts remain.
+pub fn retry_failed_video_job(
+    conn: &mut Connection,
+    job_id: &str,
+) -> Result<JobSnapshot, JobsError> {
+    let transaction = conn.transaction()?;
+    let dag = load_dag(&transaction, job_id)?;
+    if !matches!(
+        dag.job.job_kind.as_str(),
+        "video-production"
+            | "video-asset-download"
+            | "video-narration-scene"
+            | "video-render-segment"
+            | "video-thumbnail-concept"
+    ) {
+        return Err(JobsError::Forbidden);
+    }
+    if !matches!(dag.job.state, JobState::Failed | JobState::Cancelled) {
+        return Err(JobsError::NodeNotReady);
+    }
+    let succeeded: HashSet<_> = dag
+        .nodes
+        .iter()
+        .filter(|node| node.state == JobState::Succeeded)
+        .map(|node| node.id.as_str())
+        .collect();
+    let now = now(&transaction)?;
+    let mut ready = 0;
+    for node in dag
+        .nodes
+        .iter()
+        .filter(|node| node.state != JobState::Succeeded)
+    {
+        let dependencies_met = dag
+            .edges
+            .iter()
+            .filter(|edge| edge.to_node_id == node.id)
+            .all(|edge| succeeded.contains(edge.from_node_id.as_str()));
+        let max_attempts = if dependencies_met && node.attempt_count >= node.max_attempts {
+            if node.max_attempts >= contentgen_core::MAX_ATTEMPTS_LIMIT {
+                return Err(JobsError::RetryLimitExceeded);
+            }
+            node.max_attempts + 1
+        } else {
+            node.max_attempts
+        };
+        if dependencies_met {
+            ready += 1;
+        }
+        transaction.execute(
+            "UPDATE job_nodes SET state = ?1, max_attempts = ?2, error_code = NULL,
+                    output_json = NULL, updated_at = ?3 WHERE id = ?4",
+            params![
+                if dependencies_met { "READY" } else { "PENDING" },
+                i64::from(max_attempts),
+                now,
+                node.id
+            ],
+        )?;
+    }
+    if ready != 1 {
+        return Err(JobsError::InvalidDocument(
+            "video production retry requires one ready step".to_owned(),
+        ));
+    }
+    transaction.execute(
+        "UPDATE jobs SET state = 'RUNNING', updated_at = ?1 WHERE id = ?2",
+        params![now, job_id],
+    )?;
+    transaction.commit()?;
+    snapshot(conn, job_id)
+}
+
 pub fn cancel_job(conn: &mut Connection, job_id: &str) -> Result<JobSnapshot, JobsError> {
     let transaction = conn.transaction()?;
     let job = load_job(&transaction, job_id)?
@@ -450,18 +593,48 @@ pub fn reconcile_orphans(
     conn: &mut Connection,
     job_id: Option<&str>,
 ) -> Result<Vec<ReconciledAttempt>, JobsError> {
+    reconcile_attempts(conn, job_id, false)
+}
+
+/// Recover only worker attempts whose heartbeat has not been renewed for two
+/// minutes. Unlike startup reconciliation, this is safe to call while other
+/// Node workers are alive, and never touches unrelated research jobs.
+pub fn reconcile_stale_video_attempts(
+    conn: &mut Connection,
+    job_id: &str,
+) -> Result<Vec<ReconciledAttempt>, JobsError> {
+    reconcile_attempts(conn, Some(job_id), true)
+}
+
+/// The background recovery sweep uses the same transactional eligibility
+/// checks as an explicit worker retry. It touches only expired video attempts;
+/// successful work and non-video Jobs are never rearmed by this sweep.
+pub fn reconcile_all_stale_video_attempts(
+    conn: &mut Connection,
+) -> Result<Vec<ReconciledAttempt>, JobsError> {
+    reconcile_attempts(conn, None, true)
+}
+
+fn reconcile_attempts(
+    conn: &mut Connection,
+    job_id: Option<&str>,
+    stale_only: bool,
+) -> Result<Vec<ReconciledAttempt>, JobsError> {
     let transaction = conn.transaction()?;
     let rows = {
         let mut statement = transaction.prepare(
             "SELECT a.id, a.node_id, n.job_id, n.attempt_count, n.max_attempts
              FROM job_attempts a
              JOIN job_nodes n ON n.id = a.node_id
+             JOIN jobs j ON j.id = n.job_id
              WHERE a.state = 'RUNNING'
                AND (?1 IS NULL OR n.job_id = ?1)
+               AND (?2 = 0 OR (j.job_kind LIKE 'video-%'
+                 AND n.updated_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-120 seconds')))
              ORDER BY a.id",
         )?;
         statement
-            .query_map(params![job_id], |row| {
+            .query_map(params![job_id, stale_only], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -474,16 +647,25 @@ pub fn reconcile_orphans(
     };
 
     let now = now(&transaction)?;
-    let detail = "attempt was still running when the process restarted; \
-                  reconciled as failed instead of being assumed complete";
+    let detail = if stale_only {
+        "Video generation was interrupted. Retry to resume using completed scenes."
+    } else {
+        "attempt was still running when the process restarted; \
+         reconciled as failed instead of being assumed complete"
+    };
+    let code = if stale_only {
+        "worker_lease_expired"
+    } else {
+        "orphaned_after_restart"
+    };
     let mut reconciled = Vec::with_capacity(rows.len());
     for (attempt_id, node_id, owner_job_id, attempt_count, max_attempts) in rows {
         let changed = transaction.execute(
             "UPDATE job_attempts
              SET state = 'FAILED', finished_at = ?1,
-                 error_code = 'orphaned_after_restart', error_detail = ?2
-             WHERE id = ?3 AND state = 'RUNNING'",
-            params![now, detail, attempt_id],
+                 error_code = ?2, error_detail = ?3
+             WHERE id = ?4 AND state = 'RUNNING'",
+            params![now, code, detail, attempt_id],
         )?;
         if changed == 0 {
             continue;
@@ -492,9 +674,9 @@ pub fn reconcile_orphans(
         if attempt_count < max_attempts {
             transaction.execute(
                 "UPDATE job_nodes
-                 SET state = 'READY', error_code = 'orphaned_after_restart', updated_at = ?1
+                 SET state = 'READY', error_code = ?3, updated_at = ?1
                  WHERE id = ?2",
-                params![now, node_id],
+                params![now, node_id, code],
             )?;
             transaction.execute(
                 "UPDATE jobs SET updated_at = ?1 WHERE id = ?2",
@@ -503,9 +685,9 @@ pub fn reconcile_orphans(
         } else {
             transaction.execute(
                 "UPDATE job_nodes
-                 SET state = 'FAILED', error_code = 'orphaned_after_restart', updated_at = ?1
+                 SET state = 'FAILED', error_code = ?3, updated_at = ?1
                  WHERE id = ?2",
-                params![now, node_id],
+                params![now, node_id, code],
             )?;
             cancel_outstanding_work(&transaction, &owner_job_id, &now)?;
             transaction.execute(

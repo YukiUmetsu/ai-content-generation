@@ -2,13 +2,16 @@
  * ContentGen owns provider provenance. These files are optional visual inputs;
  * none is automatically evidence for a claim or an approved Kumiki composition.
  */
-import {createHash} from "node:crypto";
-import {mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile} from "node:fs/promises";
+import {createHash,randomUUID} from "node:crypto";
+import {execFile} from "node:child_process";
+import {mkdir, mkdtemp, lstat, readFile, readdir, rename, rm, writeFile} from "node:fs/promises";
 import {basename, dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {promisify} from "node:util";
+import {setTimeout as pause} from "node:timers/promises";
 import {rankShotCandidates} from "./asset-matching.mjs";
 
-const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-assets",import.meta.url));
+export const DEFAULT_ROOT=fileURLToPath(new URL("../../../../data/studio-assets",import.meta.url));
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$/u;
 const MAX_FILE=80*1024*1024;
 const MAX_JSON=18*1024*1024;
@@ -16,6 +19,7 @@ const UA="ContentGen-SceneAssets/1.0 (https://github.com/YukiUmetsu/ai-content-g
 const ABSTRACT=/\b(chart|graph|table|diagram|timeline|formula|percentage|interest|tax|flowchart|equation|calculation|numbers?|statistics|comparison|slide|text|headline|list)\b/iu;
 const STOP=new Set(["the","a","an","of","for","from","to","and","with","on","in","by","how","why","cost","costs","shows","show","visual","asset","scene","actual","real","this","that"]);
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
+const exec=promisify(execFile);
 function ident(value,label){if(typeof value!=="string"||!ID.test(value))throw Error(`Invalid ${label} identifier.`);return value;}
 function visible(value,max=170){return String(value??"").replace(/<[^>]*>/gu," ")
   .replace(/[\u0000-\u001f\u007f]/gu," ").replace(/\s+/gu," ").trim().slice(0,max);}
@@ -62,7 +66,12 @@ async function readLimited(response,max){
   return Buffer.concat(pieces,size);
 }
 async function getJson(url,{fetchImpl=fetch,headers={},signal}={}){
-  const r=await fetchImpl(url,{headers,redirect:"error",signal:signal??AbortSignal.timeout(15000)});
+  // A caller's cancellation signal must not remove the provider timeout.
+  // Automatic production supplies a long-lived job signal; each individual
+  // provider request is still limited to 15 seconds.
+  const deadline=AbortSignal.timeout(15000);
+  const r=await fetchImpl(url,{headers,redirect:"error",signal:signal?
+    AbortSignal.any([signal,deadline]):deadline});
   try{return JSON.parse((await readLimited(r,MAX_JSON)).toString("utf8"));}
   catch(e){if(e instanceof SyntaxError)throw Error("Asset provider returned invalid JSON.");throw e;}
 }
@@ -145,6 +154,38 @@ async function pexelsVideoCandidates(query,opts){
     .map(pexelsVideoCandidate).filter(Boolean);
 }
 
+function openverseCandidate(item){
+  // Openverse catalogs third-party declarations; a CC0 search result is a
+  // lead, never a verified ownership/license grant or an automatic download.
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/iu.test(item?.id??"")||
+    item.license!=="cc0"||!(["jpg","jpeg","png"].includes(String(item.filetype??"").toLowerCase()))||
+    item.mature!==false||item.watermarked!==false||
+    !Number.isSafeInteger(item.width)||!Number.isSafeInteger(item.height)||
+    Math.max(item.width,item.height)<960||Math.min(item.width,item.height)<540)return null;
+  let source;
+  try{
+    const url=new URL(item.foreign_landing_url);
+    if(url.protocol!=="https:"||url.username||url.password||url.port||
+      ["localhost","127.0.0.1","::1"].includes(url.hostname)||url.hostname.endsWith(".local"))return null;
+    source=url.toString();
+  }catch{return null;}
+  const keywords=(Array.isArray(item.tags)?item.tags:[]).slice(0,12)
+    .map(tag=>visible(tag?.name,60)).filter(Boolean);
+  return {provider:"openverse",assetId:item.id.toLowerCase(),assetType:"photo",
+    title:visible(item.title,120)||"Openverse CC0 photo",previewUrl:
+      `https://api.openverse.org/v1/images/${item.id.toLowerCase()}/thumb/`,sourceUrl:source,
+    license:"CC0-1.0 (unverified index)",licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",
+    creator:visible(item.creator,100),originProvider:visible(item.provider,60),keywords,
+    width:item.width,height:item.height,relevance:0,rightsStatus:"needs-human-review"};
+}
+async function openverseCandidates(query,opts){
+  const params=new URLSearchParams({q:query,page_size:"4",license:"cc0",mature:"false"});
+  const data=await getJson(`https://api.openverse.org/v1/images/?${params}`,{
+    ...opts,headers:{"User-Agent":UA,"Accept":"application/json"}});
+  if(!data||!Array.isArray(data.results))throw Error("Openverse returned an invalid image catalog.");
+  return data.results.slice(0,4).map(openverseCandidate).filter(Boolean);
+}
+
 /** One user-triggered search across scenes, bounded and read-only. */
 export async function discoverShotAssets(input,opts={}){
   const needs=planSceneAssetNeeds(input?.bundle);
@@ -156,8 +197,9 @@ export async function discoverShotAssets(input,opts={}){
     Object.entries(durations).some(([shotId,seconds])=>!needs.some(x=>x.shotId===shotId)||
       typeof seconds!=="number"||!Number.isFinite(seconds)||seconds<=0||seconds>600))
     throw Error("Invalid per-scene narration duration override.");
-  const providers=input.providers??["polyhaven","pexels"];
-  if(!Array.isArray(providers)||providers.length>2||providers.some(x=>!["polyhaven","pexels"].includes(x)))
+  const providers=input.providers??["polyhaven","openverse"];
+  if(!Array.isArray(providers)||providers.length>3||
+    new Set(providers).size!==providers.length||providers.some(x=>!["polyhaven","pexels","openverse"].includes(x)))
     throw Error("Unknown asset search provider.");
   const warnings=[],byShot=new Map(needs.map(need=>[need.shotId,[]]));
   const active=needs.filter(x=>x.strategy==="search");
@@ -172,31 +214,27 @@ export async function discoverShotAssets(input,opts={}){
     }catch(error){warnings.push("Poly Haven: "+visible(error.message,150));}
   }
   if(active.length&&providers.includes("pexels")){
-    if(!opts.pexelsKey)warnings.push("Pexels is disabled until PEXELS_API_KEY is configured locally.");
-    else{
-      const cache=new Map();
-      const queries=[...new Set(active.map(x=>x.query))].slice(0,12);
-      for(let start=0;start<queries.length;start+=3){
-        await Promise.all(queries.slice(start,start+3).map(async query=>{
-          const lookup={...opts,destination};
-          const [photos,videos]=await Promise.allSettled([
-            pexelsCandidates(query,lookup),pexelsVideoCandidates(query,lookup)]);
-          if(photos.status==="rejected")warnings.push(`Pexels photos ${query}: ${visible(photos.reason?.message,120)}`);
-          if(videos.status==="rejected")warnings.push(`Pexels videos ${query}: ${visible(videos.reason?.message,120)}`);
-          cache.set(query,[...(photos.status==="fulfilled"?photos.value:[]),
-            ...(videos.status==="fulfilled"?videos.value:[])]);
-        }));
-      }
-      for(const need of active)byShot.get(need.shotId).push(...(cache.get(need.query)??[]));
-      if(new Set(active.map(x=>x.query)).size>12)
-        warnings.push("Pexels requests were capped at 12 distinct subjects; use Poly Haven for remaining scenes.");
+    // Old saved UI search choices must not revive API credential collection
+    // or background extraction against a retired provider.
+    warnings.push("Pexels API search has been retired. Import an original from its website in Director.");
+  }
+  if(active.length&&providers.includes("openverse")){
+    const cache=new Map(),queries=[...new Set(active.map(x=>x.query))].slice(0,8);
+    for(let start=0;start<queries.length;start+=2){
+      await Promise.all(queries.slice(start,start+2).map(async query=>{
+        try{cache.set(query,await openverseCandidates(query,opts));}
+        catch(error){warnings.push(`Openverse ${query}: ${visible(error?.message,120)}`);cache.set(query,[]);}
+      }));
     }
+    for(const need of active)byShot.get(need.shotId).push(...(cache.get(need.query)??[]));
+    if(new Set(active.map(x=>x.query)).size>8)
+      warnings.push("Openverse search was capped at eight distinct scene subjects.");
   }
   const sound=new Map((Array.isArray(input.bundle?.plan?.sound)?input.bundle.plan.sound:[])
     .filter(x=>x&&typeof x.shotId==="string").map(x=>[x.shotId,x]));
   const shots=new Map(input.bundle.plan.shots.map(shot=>[shot.id,shot]));
   return {schemaVersion:1,kind:"contentgen-scene-asset-suggestions",destination,
-    providerCredit:"Assets via Poly Haven / Pexels",
+    providerCredit:"Assets via Poly Haven / Pexels / Openverse",
     scenes:needs.map(need=>({...need,...rankShotCandidates({shot:shots.get(need.shotId),
       narration:sound.get(need.shotId),query:need.query,candidates:byShot.get(need.shotId),
       destination,durationSeconds:durations[need.shotId]})})),warnings};
@@ -238,14 +276,46 @@ async function downloadFile(file,{fetchImpl=fetch,signal,provider}={}){
     provider==="pexels"?(file.name==="video.mp4"?VIDEO_HOSTS:["images.pexels.com"]):[];
   const url=providerUrl(file.url,hosts);
   if(!Number.isSafeInteger(file.size)||file.size<0||file.size>MAX_FILE)throw Error("Provider asset exceeds download limit.");
-  const response=await fetchImpl(url,{redirect:"error",signal:signal??AbortSignal.timeout(60000),headers:{"User-Agent":UA}});
-  const bytes=await readLimited(response,MAX_FILE);
-  if(file.name==="video.mp4"&&(bytes.length<12||bytes.toString("ascii",4,8)!=="ftyp"))
-    throw Error("Provider did not return a compatible MP4 video file.");
-  if(file.size&&bytes.length!==file.size)throw Error("Incomplete or modified provider download.");
-  if(file.md5&&createHash("md5").update(bytes).digest("hex")!==file.md5)
-    throw Error("Downloaded asset failed provider integrity check.");
-  return bytes;
+  // Provider GETs are idempotent. Retry *only* transient transport/server
+  // failures, before any artifact is committed. Never retry malformed media,
+  // untrusted hosts, rights denials, 429 or oversized responses.
+  for(let attempt=0;attempt<3;attempt++){
+    if(signal?.aborted)throw signal.reason??Error("Asset download cancelled.");
+    const deadline=AbortSignal.timeout(60000);
+    const requestSignal=signal?AbortSignal.any([signal,deadline]):deadline;
+    try{
+      const response=await fetchImpl(url,{redirect:"error",signal:requestSignal,headers:{"User-Agent":UA}});
+      if(response.status===429)throw Error("Asset provider rate-limited downloads. Retry later.");
+      if([408,500,502,503,504].includes(response.status)){
+        await response.body?.cancel?.().catch(()=>{});
+        const error=Error(`Asset provider temporarily unavailable (HTTP ${response.status}).`);
+        error.retryable=true;throw error;
+      }
+      const contentType=(response.headers.get("content-type")??"").split(";")[0].trim().toLowerCase();
+      if(provider==="pexels"&&file.name==="photo.jpg"&&contentType!=="image/jpeg")
+        throw Error("Pexels photograph did not return JPEG media type.");
+      if(provider==="pexels"&&file.name==="video.mp4"&&contentType!=="video/mp4")
+        throw Error("Pexels footage did not return MP4 media type.");
+      const bytes=await readLimited(response,MAX_FILE);
+      if(provider==="pexels"&&file.name==="photo.jpg"&&
+        (bytes.length<12||bytes[0]!==0xff||bytes[1]!==0xd8||bytes[2]!==0xff||
+          bytes[bytes.length-2]!==0xff||bytes[bytes.length-1]!==0xd9))
+        throw Error("Pexels photograph is not valid JPEG media.");
+      if(file.name==="video.mp4"&&(bytes.length<12||bytes.toString("ascii",4,8)!=="ftyp"))
+        throw Error("Provider did not return a compatible MP4 video file.");
+      if(file.size&&bytes.length!==file.size){
+        const error=Error("Incomplete provider download.");error.retryable=true;throw error;
+      }
+      if(file.md5&&createHash("md5").update(bytes).digest("hex")!==file.md5)
+        throw Error("Downloaded asset failed provider integrity check.");
+      return bytes;
+    }catch(error){
+      if(signal?.aborted)throw signal.reason??error;
+      if(!(error.retryable||error instanceof TypeError||deadline.aborted))throw error;
+      if(attempt===2)throw Error("Asset download failed after three attempts. Check your connection and retry the import.",{cause:error});
+      await pause(250*2**attempt,undefined,{signal});
+    }
+  }
 }
 async function resolveAssetFiles(input,opts){
   if(input.provider==="polyhaven"){
@@ -261,6 +331,7 @@ async function resolveAssetFiles(input,opts){
     if(!opts.pexelsKey)throw Error("Set PEXELS_API_KEY locally before approving Pexels media.");
     const item=await getJson(`https://api.pexels.com/v1/photos/${encodeURIComponent(input.assetId)}`,
       {...opts,headers:{Authorization:opts.pexelsKey}});
+    if(String(item?.id)!==input.assetId)throw Error("Pexels returned a different photograph identifier.");
     const url=providerUrl(item.src?.large??item.src?.original,["images.pexels.com"]);
     return {files:[{name:"photo.jpg",url,size:0}],meta:{provider:"pexels",assetId:input.assetId,
       assetType:"photo",title:visible(item.alt,120)||`Pexels photo ${input.assetId}`,
@@ -282,6 +353,35 @@ async function resolveAssetFiles(input,opts){
     return {files:[{name:"video.mp4",url,size:0}],meta:candidate};
   }
   throw Error("Unsupported asset type or provider.");
+}
+
+/** Draft-only automated Pexels acquisition. The official per-ID API response,
+ * not a search result or caller-provided URL, determines the media bytes and
+ * their source/creator/license metadata. It does not approve publication. */
+export async function downloadPexelsDraftPhoto(assetId,opts={}){
+  ident(assetId,"Pexels asset");
+  if(!/^[1-9][0-9]{0,15}$/u.test(assetId))throw Error("Pexels photo ID is invalid.");
+  const {files,meta}=await resolveAssetFiles({provider:"pexels",assetId,assetType:"photo"},opts);
+  if(meta?.assetId!==assetId||meta?.assetType!=="photo"||
+    meta.license!=="Pexels License"||meta.licenseUrl!=="https://www.pexels.com/license/")
+    throw Error("Pexels did not verify the requested photograph and license.");
+  const bytes=await downloadFile(files[0],{...opts,provider:"pexels"});
+  return {bytes,meta};
+}
+
+/** Original, per-ID API-verified Pexels footage for an opted-in draft. The
+ * caller must separately probe the downloaded MP4 codec and dimensions; this
+ * endpoint never grants publication approval. */
+export async function downloadPexelsDraftVideo(assetId,opts={}){
+  ident(assetId,"Pexels asset");
+  if(!/^[1-9][0-9]{0,15}$/u.test(assetId))throw Error("Pexels video ID is invalid.");
+  const {files,meta}=await resolveAssetFiles({provider:"pexels",assetId,assetType:"video"},opts);
+  if(meta?.assetId!==assetId||meta?.assetType!=="video"||
+    meta.license!=="Pexels License"||meta.licenseUrl!=="https://www.pexels.com/license/"||
+    !Number.isSafeInteger(meta.durationSeconds)||meta.durationSeconds<1||meta.durationSeconds>90)
+    throw Error("Pexels did not verify the requested footage, duration or license.");
+  const bytes=await downloadFile(files[0],{...opts,provider:"pexels"});
+  return {bytes,meta};
 }
 
 /** User-approved import. No arbitrary user-supplied download URL is ever trusted. */
@@ -327,6 +427,167 @@ export async function approveAsset(input,opts={}){
   }finally{await rm(temp,{recursive:true,force:true});}
 }
 
+/** Explicitly uploaded Pexels website download. Never contacts the Pexels API,
+ * scrapes their website, or trusts caller-supplied filesystem paths. */
+export async function importDownloadedPexelsAsset(input,bytes,opts={}){
+  const projectId=ident(input?.projectId,"project"),shotId=ident(input?.shotId,"scene");
+  if(input?.confirmRights!==true)throw Error("Review the Pexels page and license before importing.");
+  if(!["photo","video"].includes(input.assetType))throw Error("Choose a JPEG photo or MP4 video.");
+  let source;
+  try{source=new URL(input.sourceUrl);}catch{throw Error("Paste the original Pexels photo or video page link.");}
+  if(source.protocol!=="https:"||!["www.pexels.com","pexels.com"].includes(source.hostname)||
+    source.username||source.password||source.port||source.search||source.hash)
+    throw Error("Only a direct Pexels source page is accepted.");
+  const match=/^\/(photo|video)\/(?:[a-z0-9-]*-)?([1-9][0-9]{0,15})\/?$/u.exec(source.pathname);
+  if(!match||match[1]!==input.assetType)throw Error("The Pexels page must match your selected photo or video.");
+  if(!Buffer.isBuffer(bytes)||bytes.length<128||bytes.length>MAX_FILE)
+    throw Error("The downloaded file must be between 128 bytes and 80 MB.");
+  if(input.assetType==="photo"&&!(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff))
+    throw Error("This is not a JPEG photo. Download the JPG from Pexels.");
+  if(input.assetType==="video"&&bytes.toString("ascii",4,8)!=="ftyp")
+    throw Error("This is not an MP4 file. Download an MP4 from Pexels.");
+  const root=resolve(opts.root??DEFAULT_ROOT),projectDir=join(root,projectId),sceneDir=join(projectDir,shotId);
+  // Validate each parent before writing beneath it: mkdir(recursive) would
+  // follow an existing per-project symlink before a later lstat could reject it.
+  await mkdir(root,{recursive:true,mode:0o700});
+  for(const path of [root,projectDir,sceneDir]){
+    if(path!==root){
+      try{await mkdir(path,{mode:0o700});}
+      catch(error){if(error.code!=="EEXIST")throw error;}
+    }
+    const info=await lstat(path);
+    if(!info.isDirectory()||info.isSymbolicLink())throw Error("Scene media folder must be a real local directory.");
+  }
+  const temp=await mkdtemp(join(sceneDir,".site-import-"));
+  const filename=input.assetType==="photo"?"photo.jpg":"video.mp4";
+  try{
+    const path=join(temp,filename);
+    await writeFile(path,bytes,{flag:"wx",mode:0o600});
+    let probe;
+    try{
+      const result=opts.probe?await opts.probe(path):await exec("ffprobe",[
+        "-v","error","-show_entries","stream=codec_name,width,height:format=duration","-of","json",path],
+      {timeout:15000,maxBuffer:128*1024,windowsHide:true});
+      probe=JSON.parse(result.stdout);
+    }catch{throw Error("FFprobe could not verify the downloaded media. Install FFmpeg or choose another file.");}
+    const stream=probe?.streams?.find(item=>item.codec_name===(input.assetType==="photo"?"mjpeg":"h264"));
+    const width=stream?.width,height=stream?.height;
+    if(!Number.isSafeInteger(width)||!Number.isSafeInteger(height)||
+      width<640||height<360||width>8192||height>8192)
+      throw Error("Downloaded media has an unsupported codec or resolution.");
+    const duration=input.assetType==="video"?Number(probe.format?.duration):null;
+    if(input.assetType==="video"&&(!Number.isFinite(duration)||duration<0.1||duration>90||
+      Math.min(width,height)<720))
+      throw Error("Choose an H.264 MP4 no longer than 90 seconds with at least HD resolution.");
+    const assetId=match[2],digest=sha(JSON.stringify({provider:"pexels",assetId,
+      fileHash:sha(bytes),sourceUrl:source.href})),finalDir=join(sceneDir,"asset_"+digest.slice(0,24));
+    const title=visible(source.pathname.split("/")[2].replace(/-[0-9]+$/u,"").replaceAll("-"," "),140)||`Pexels ${input.assetType}`;
+    const manifest={schemaVersion:1,kind:"contentgen-approved-asset",projectId,shotId,
+      provider:"pexels",assetId,assetType:input.assetType,title,sourceUrl:source.href,
+      license:"Pexels License",licenseUrl:"https://www.pexels.com/license/",
+      creator:visible(input.creator,100),width,height,
+      ...(duration===null?{}:{durationSeconds:duration}),
+      acquisition:opts.acquisition==="website-page-download"?"website-page-download":"user-downloaded-from-website",
+      rightsStatus:"user-reviewed",
+      approvedAt:(opts.now??(()=>new Date()))().toISOString(),
+      sha256:sha(bytes),sizeBytes:bytes.length,
+      files:[{name:filename,sha256:sha(bytes),sizeBytes:bytes.length}]};
+    await writeFile(join(temp,"manifest.json"),JSON.stringify(manifest,null,2)+"\n",{flag:"wx",mode:0o600});
+    try{await rename(temp,finalDir);}
+    catch(error){
+      if(error.code!=="EEXIST"&&error.code!=="ENOTEMPTY")throw error;
+      const info=await lstat(finalDir);
+      if(!info.isDirectory()||info.isSymbolicLink())throw Error("An invalid asset folder already exists.");
+      const manifestFile=join(finalDir,"manifest.json"),manifestInfo=await lstat(manifestFile);
+      if(!manifestInfo.isFile()||manifestInfo.isSymbolicLink()||manifestInfo.size>12_000)
+        throw Error("An invalid asset manifest already exists.");
+      const existing=JSON.parse(await readFile(manifestFile,"utf8"));
+      if(existing.sha256!==manifest.sha256||existing.sourceUrl!==manifest.sourceUrl)
+        throw Error("Existing asset conflicts with the uploaded file.");
+      const existingMedia=join(finalDir,filename);
+      let healthy=false;
+      try{
+        const mediaInfo=await lstat(existingMedia);
+        healthy=mediaInfo.isFile()&&!mediaInfo.isSymbolicLink()&&
+          mediaInfo.size===bytes.length&&sha(await readFile(existingMedia))===manifest.sha256;
+      }catch(error){if(error.code!=="ENOENT")throw error;}
+      if(!healthy){
+        // The new bytes have already passed FFprobe and digest verification.
+        // Preserve modified/missing originals in quarantine instead of
+        // replacing user data in place or silently accepting a bad cache.
+        const quarantine=join(sceneDir,".damaged-"+randomUUID());
+        await rename(finalDir,quarantine);
+        try{await rename(temp,finalDir);}
+        catch(error){
+          // A failed replacement must not strand the original directory when
+          // it can still be restored. Never delete the quarantined bytes.
+          try{await rename(quarantine,finalDir);}
+          catch{throw Error("The replacement failed; the original asset is preserved in a damaged-media quarantine.",{cause:error});}
+          throw error;
+        }
+      }
+    }
+    return {...manifest,localPath:join(finalDir,filename),manifestPath:join(finalDir,"manifest.json")};
+  }finally{await rm(temp,{recursive:true,force:true});}
+}
+
+/** Single explicit, user-selected website photo download. This is not a
+ * search crawler: one public source page, one image from Pexels' image CDN,
+ * no credentials or retries around a denial/challenge. */
+export async function importPexelsPhotoPage(input,opts={}){
+  if(input?.assetType!=="photo"||input?.confirmRights!==true)
+    throw Error("Choose a Pexels photo page and confirm its license review.");
+  let page;
+  try{page=new URL(input.sourceUrl);}catch{throw Error("Paste a Pexels photo page URL.");}
+  if(page.protocol!=="https:"||!["www.pexels.com","pexels.com"].includes(page.hostname)||
+    page.username||page.password||page.port||page.search||page.hash)
+    throw Error("Only a direct Pexels photo page is accepted.");
+  const match=/^\/photo\/(?:[a-z0-9-]*-)?([1-9][0-9]{0,15})\/?$/u.exec(page.pathname);
+  if(!match)throw Error("Paste the original Pexels photo page, not a search or download URL.");
+  const fetchImpl=opts.fetchImpl??fetch;
+  const signal=opts.signal?AbortSignal.any([opts.signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000);
+  const get=async(url,max,type)=>{
+    const response=await fetchImpl(url,{redirect:"error",signal,
+      headers:{"Accept":type==="html"?"text/html":"image/jpeg"}});
+    if(!response.ok)throw Error("Pexels did not allow this website download. Use a manually downloaded JPG instead.");
+    const contentType=response.headers.get("content-type")??"";
+    if(type==="html"&&!contentType.includes("text/html")||
+      type==="image"&&!contentType.includes("image/jpeg"))
+      throw Error("Pexels returned an unexpected page or file type. Download the JPG manually.");
+    const declared=Number(response.headers.get("content-length")??0);
+    if(declared>max)throw Error("Pexels file exceeds the safe download limit.");
+    const parts=[];let size=0;
+    for await(const chunk of response.body??[]){
+      size+=chunk.length;
+      if(size>max)throw Error("Pexels file exceeds the safe download limit.");
+      parts.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(parts,size);
+  };
+  let html;
+  try{html=(await get(page.href,1_000_000,"html")).toString("utf8");}
+  catch(error){if(error?.name==="TimeoutError")throw Error("Pexels website download timed out. Download the JPG manually.");throw error;}
+  // Only parse a bounded public og:image URL; HTML is never executed.
+  const tags=html.match(/<meta\b[^>]{0,1500}>/giu)??[];
+  let cdnUrl=null;
+  for(const tag of tags.slice(0,250)){
+    if(!/\b(?:property|name)\s*=\s*(["'])og:image\1/iu.test(tag))continue;
+    const content=/\bcontent\s*=\s*(["'])([^"']{1,1200})\1/iu.exec(tag)?.[2];
+    if(!content)continue;
+    try{
+      const parsed=new URL(content.replaceAll("&amp;","&"));
+      if(parsed.protocol==="https:"&&parsed.hostname==="images.pexels.com"&&
+        !parsed.username&&!parsed.password&&!parsed.port&&
+        parsed.pathname.startsWith(`/photos/${match[1]}/`)&&
+        /\.(?:jpe?g)$/iu.test(parsed.pathname))cdnUrl=parsed.href;
+    }catch{/* A third-party image host must never be fetched. */}
+    if(cdnUrl)break;
+  }
+  if(!cdnUrl)throw Error("Pexels photo download is not available from the public page. Download the JPG manually.");
+  const bytes=await get(cdnUrl,MAX_FILE,"image");
+  return importDownloadedPexelsAsset(input,bytes,{...opts,acquisition:"website-page-download"});
+}
+
 /** Scene-linked immutable local approvals are discoverable by the renderer adapter. */
 export async function listApprovedAssets({projectId},{root=DEFAULT_ROOT}={}){
   const base=join(resolve(root),ident(projectId,"project"));
@@ -363,6 +624,12 @@ export async function listApprovedAssets({projectId},{root=DEFAULT_ROOT}={}){
 }
 
 const SELECTION_FILE="scene-media-selection.json";
+export function isMediaFocalPoint(value){
+  return value!==null&&typeof value==="object"&&!Array.isArray(value)&&
+    Object.keys(value).length===2&&Object.keys(value).every(key=>["x","y"].includes(key))&&
+    [value.x,value.y].every(number=>typeof number==="number"&&Number.isFinite(number)&&
+      number>=0&&number<=1&&Math.abs(number*1000-Math.round(number*1000))<1e-9);
+}
 /** Pin an approved content hash, never a client URL or filesystem path. */
 export async function selectApprovedSceneAsset(input,opts={}){
   const projectId=ident(input?.projectId,"project"),shotId=ident(input?.shotId,"scene"),
@@ -372,17 +639,22 @@ export async function selectApprovedSceneAsset(input,opts={}){
   const approved=(await listApprovedAssets({projectId},opts)).find(x=>x.shotId===shotId&&
     x.provider===input.provider&&x.assetId===assetId&&x.sha256===input.sha256);
   if(!approved)throw Error("Cannot select an asset that is not currently approved and hash-verified for this scene.");
+  if(input.focalPoint!==undefined&&(!isMediaFocalPoint(input.focalPoint)||
+    !["photo","video"].includes(approved.assetType)))
+    throw Error("Media framing must be an exact 0–100% horizontal and vertical focal position for a photo or video.");
   const root=resolve(opts.root??DEFAULT_ROOT),sceneDir=join(root,projectId,shotId);
   const selection={schemaVersion:1,kind:"contentgen-scene-media-selection",
     projectId,shotId,provider:approved.provider,assetId,assetType:approved.assetType,
-    sha256:approved.sha256,selectedAt:(opts.now??(()=>new Date()))().toISOString()};
+    sha256:approved.sha256,selectedAt:(opts.now??(()=>new Date()))().toISOString(),
+    ...(input.focalPoint===undefined?{}:{focalPoint:input.focalPoint})};
   const temp=await mkdtemp(join(sceneDir,".selection-"));
   try{
     const stage=join(temp,SELECTION_FILE);
     await writeFile(stage,JSON.stringify(selection,null,2)+"\n",{flag:"wx",mode:0o600});
     await rename(stage,join(sceneDir,SELECTION_FILE));
   }finally{await rm(temp,{recursive:true,force:true});}
-  return {...approved,selectedAt:selection.selectedAt};
+  return {...approved,selectedAt:selection.selectedAt,
+    ...(selection.focalPoint?{focalPoint:selection.focalPoint}:{})};
 }
 
 /** Invalidated selections remain visible as review-required, never accepted as media. */
@@ -398,11 +670,14 @@ export async function listSelectedSceneAssets({projectId},{root=DEFAULT_ROOT}={}
     try{record=JSON.parse(await readFile(join(base,shot.name,SELECTION_FILE),"utf8"));}
     catch(e){if(e.code==="ENOENT")continue;invalidShots.push(shot.name);continue;}
     if(record?.kind!=="contentgen-scene-media-selection"||record.schemaVersion!==1||
-      record.projectId!==projectId||record.shotId!==shot.name){invalidShots.push(shot.name);continue;}
+      record.projectId!==projectId||record.shotId!==shot.name||
+      record.focalPoint!==undefined&&!isMediaFocalPoint(record.focalPoint)){
+      invalidShots.push(shot.name);continue;}
     const valid=approved.find(x=>x.shotId===shot.name&&x.provider===record.provider&&
       x.assetId===record.assetId&&x.assetType===record.assetType&&x.sha256===record.sha256);
     if(!valid){invalidShots.push(shot.name);continue;}
-    selections.push({...valid,selectedAt:record.selectedAt});
+    selections.push({...valid,selectedAt:record.selectedAt,
+      ...(record.focalPoint===undefined?{}:{focalPoint:record.focalPoint})});
   }
   return {schemaVersion:1,kind:"contentgen-scene-media-selections",selections,invalidShots};
 }

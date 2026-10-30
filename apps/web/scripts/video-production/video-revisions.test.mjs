@@ -68,6 +68,66 @@ test("surgical narration change invalidates one speech beat, retimes downstream,
   assert.equal(result.impacts.externalActionsPerformed.length,0);
   assert.deepEqual(b.plan.sound[0].narration,fixture("preproduction-plan-smoke.json").sound[0].narration);
 });
+test("a dialogue-turn edit regenerates one scene's speech, preserves unrelated visuals and requires review",()=>{
+  const d=source(),b=bundle(),shot=b.plan.shots[1].id;
+  const speechTurns=[
+    {id:"pip-question",narration:"Pip asks how this monthly cost changes over time.",
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:"a".repeat(32)},pauseAfterMs:100},
+    {id:"narrator-response",narration:"The chart continues while the narrator explains the assumptions.",pauseAfterMs:0},
+  ];
+  const changed=editPreproductionShot(d,b,{shotId:shot,changes:{speechTurns}});
+  assert.deepEqual(changed.bundle.plan.sound[1].speechTurns,speechTurns);
+  assert.equal(changed.bundle.plan.sound[1].narration,speechTurns.map(turn=>turn.narration).join(" "));
+  assert.deepEqual(changed.bundle.plan.shots,b.plan.shots);
+  assert.deepEqual(changed.impacts.speechRegenerate,[shot]);
+  assert.equal(changed.impacts.visualRerender.length,0);
+  assert.equal(changed.reviewRequired,true);
+  assert.equal(b.plan.sound[1].speechTurns,undefined,"the source storyboard is not mutated");
+  const reduced=editPreproductionShot(d,changed.bundle,{shotId:shot,changes:{speechTurns:null}});
+  assert.equal(reduced.bundle.plan.sound[1].speechTurns,undefined);
+  assert.equal(reduced.bundle.plan.sound[1].narration,changed.bundle.plan.sound[1].narration);
+  assert.deepEqual(reduced.impacts.speechRegenerate,[shot]);
+  assert.deepEqual(reduced.impacts.visualRerender,[]);
+});
+test("editing only a named character action rerenders the scene without a new voice request",()=>{
+  const d=source(),base=bundle(),shot=base.plan.shots[1].id;
+  const turns=[
+    {id:"pip",narration:"Pip explains the home costs clearly.",pauseAfterMs:100,
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:"a".repeat(32)}},
+    {id:"narrator",narration:"The narrator adds some context.",pauseAfterMs:0}
+  ];
+  const first=editPreproductionShot(d,base,{shotId:shot,changes:{speechTurns:turns}});
+  const updated=structuredClone(turns);updated[0].animationAction="walk";
+  const second=editPreproductionShot(d,first.bundle,{shotId:shot,changes:{speechTurns:updated}});
+  assert.deepEqual(second.bundle.plan.sound[1].speechTurns,updated);
+  assert.deepEqual(second.impacts.speechRegenerate,[]);
+  assert.deepEqual(second.impacts.visualRerender,[shot]);
+  assert.deepEqual(second.impacts.downstreamRetiming,[]);
+  assert.equal(second.impacts.timelineRecalculate,false);
+});
+test("scene-cast edit is saved in the versioned preproduction bundle and rendered with the pinned voice",()=>{
+  const d=source(),before=bundle(),id=before.plan.shots[1].id;
+  const speaker={id:"pip",role:"character",provider:"fish",voiceId:"b".repeat(32)};
+  const changed=editPreproductionShot(d,before,{shotId:id,changes:{speaker}});
+  assert.deepEqual(changed.bundle.plan.sound[1].speaker,speaker);
+  assert.equal(changed.impacts.speechRegenerate.includes(id),true);
+  assert.deepEqual(changed.impacts.downstreamRetiming,before.plan.shots.slice(1).map(s=>s.id));
+  assert.deepEqual(compilePreproductionRenderJob(d,changed.bundle).job.beats[1].speaker,
+    {id:"pip",role:"character",voiceId:speaker.voiceId});
+  assert.equal(before.plan.sound[1].speaker,undefined,"original plan is immutable");
+  const restored=editPreproductionShot(d,changed.bundle,{shotId:id,changes:{speaker:null}});
+  assert.equal(restored.bundle.plan.sound[1].speaker,undefined);
+  assert.equal(compilePreproductionRenderJob(d,restored.bundle).job.beats[1].speaker,undefined);
+  for(const invalid of [
+    {id:"pip",role:"character",provider:"fish",voiceId:"unsafe"},
+    {id:"../quill",role:"character",provider:"local",voiceId:"voice"},
+    {id:"narrator",role:"character",provider:"local",voiceId:"voice"},
+    {id:"pip",role:"character",provider:"local",voiceId:"voice",apiKey:"untrusted"},
+  ])assert.throws(()=>editPreproductionShot(d,before,{shotId:id,changes:{speaker:invalid}}),/Editable fields/);
+  const mismatch=structuredClone(changed.bundle.plan);
+  mismatch.sound[2].speaker={...speaker,voiceId:"a".repeat(32)};
+  assert.throws(()=>compilePreproductionBundle(d,mismatch),/speaker-identity-changed/);
+});
 test("visual-only edits avoid TTS calls and keep other scenes byte-for-byte",()=>{
   const d=source(),b=bundle(),id=b.plan.shots[1].id;
   const edited=editPreproductionShot(d,b,{shotId:id,changes:{
@@ -85,6 +145,22 @@ test("visual-only edits avoid TTS calls and keep other scenes byte-for-byte",()=
   assert.throws(()=>editPreproductionShot(d,b,{shotId:id,changes:{claimIds:["fabricated"]}}),/Editable fields/);
   const mutated=structuredClone(b);mutated.plan.sound[0].narration="tampered";
   assert.throws(()=>editPreproductionShot(d,mutated,{shotId:id,changes:{onScreenText:"Approved"}}),/untampered/);
+});
+test("pacing edits change rendered beat duration and retime later scenes without TTS",()=>{
+  const dossier=source(),before=bundle(),id=before.plan.shots[1].id;
+  const oldPause=before.plan.sound[1].pauseAfterMs;
+  const changed=oldPause===900?800:900;
+  const revised=editPreproductionShot(dossier,before,{shotId:id,changes:{pauseAfterMs:changed}});
+  const beforeJob=compilePreproductionRenderJob(dossier,before).job;
+  const afterJob=compilePreproductionRenderJob(dossier,revised.bundle).job;
+  assert.equal(beforeJob.beats[1].pauseAfterMs,oldPause);
+  assert.equal(afterJob.beats[1].pauseAfterMs,changed);
+  assert.deepEqual(revised.impacts.speechRegenerate,[]);
+  assert.equal(revised.impacts.timelineRecalculate,true);
+  assert.deepEqual(revised.impacts.downstreamRetiming,before.plan.shots.slice(1).map(shot=>shot.id));
+  assert.deepEqual(afterJob.beats[0],beforeJob.beats[0]);
+  assert.throws(()=>editPreproductionShot(dossier,before,{shotId:id,changes:{pauseAfterMs:3001}}),/Editable/);
+  assert.throws(()=>editPreproductionShot(dossier,before,{shotId:id,changes:{pauseAfterMs:-1}}),/Editable/);
 });
 test("changing a middle-shot scene layout changes actual renderer structure without regenerating speech",()=>{
   const d=source(),plan=fixture("preproduction-plan-smoke.json");

@@ -799,10 +799,7 @@ mod explore_tests {
             .unwrap();
         assert_eq!(saved, 0);
         assert!(reserve_explore_search(&db, now + DAILY_SECONDS + 1).unwrap());
-        assert_eq!(
-            used_search_calls(&db, now + DAILY_SECONDS + 1).unwrap(),
-            1
-        );
+        assert_eq!(used_search_calls(&db, now + DAILY_SECONDS + 1).unwrap(), 1);
     }
 
     #[test]

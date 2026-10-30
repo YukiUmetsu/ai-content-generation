@@ -19,7 +19,8 @@ async function context(t) {
   const injected = {
     synthesizeNarration: async (j) => {
       providerCalls += j.beats.length;
-      return j.beats.map((b) => ({ id: b.id, samples: 48000, pauseAfterMs: b.pauseAfterMs, eventIds: b.eventIds, text: b.narration, wavPath: "mocked", sha256: hash(b.narration), provider: "local", modelId: "installed-mock", providerRevision: "bridge-1" }));
+      return j.beats.map((b) => ({ id: b.id, samples: 48000, pauseAfterMs: b.pauseAfterMs, eventIds: b.eventIds, text: b.narration, wavPath: "mocked", sha256: hash(b.narration), provider: "local", modelId: "installed-mock", providerRevision: "bridge-1",
+        voiceId:b.speaker?.voiceId??j.voice.voiceId,speakerId:b.speaker?.id??"narrator",speakerRole:b.speaker?.role??"narrator" }));
     },
     renderMasterAudio: async (input, options) => {
       await mkdir(options.outputDir, { recursive: true });
@@ -51,6 +52,13 @@ async function context(t) {
     },
     mux: async (_video, _audio, output) => { await writeFile(output, "muxed-film"); },
     probeMp4: async (_path, { fps, totalFrames, totalSamples }) => ({ width: 1920, height: 1080, fps, frameCount: totalFrames, audioSampleRate: 48000, audioDurationSeconds: totalSamples / 48000, videoDurationSeconds: totalFrames * fps.den / fps.num }),
+    generateThumbnails: async (_job, { outputDir }) => Promise.all([1,2,3].map(async n => {
+      const file=`thumbnail-${n}.png`,source=`thumbnail-${n}.svg`;
+      const bytes=Buffer.from(`kumiki-png-${n}`),svg=Buffer.from(`<svg>${n}</svg>`);
+      await writeFile(join(outputDir,file),bytes);
+      await writeFile(join(outputDir,source),svg);
+      return {id:`thumbnail-${n}`,file,source,sha256:hash(bytes),sourceSha256:hash(svg),width:1280,height:720};
+    })),
     toolVersions: { ffmpeg: "mock-ffmpeg", ffprobe: "mock-ffprobe" },
   };
   const opts = { out: join(root, "production"), provider: "local", providerRevision: "bridge-1", localVoiceAuthorized: true, allowTestAssets: true, distRoot: join(root, "dist") };
@@ -59,6 +67,11 @@ async function context(t) {
 
 test("one command connects synthetic adapter outputs into atomically published reviewed-draft artifacts", async (t) => {
   const ctx = await context(t);
+  const thumbnailGenerator=ctx.injected.generateThumbnails;
+  ctx.injected.generateThumbnails=async(job,options)=>{
+    assert.equal(options.cacheDir,join(ctx.opts.out,".render","thumbnails"));
+    return thumbnailGenerator(job,options);
+  };
   const result = await produceVideo(ctx.job, ctx.opts, ctx.injected);
   assert.equal(ctx.status().providerCalls, 3);
   assert.equal(ctx.status().browserCalls, 1);
@@ -67,18 +80,187 @@ test("one command connects synthetic adapter outputs into atomically published r
   assert.equal(result.qa.commercialReady, false);
   assert.ok(result.qa.findings.some(({ code, severity }) => code === "caption-reading-speed" && severity === "warning"));
   assert.match(await readFile(join(result.releaseDir, "video.mp4"), "utf8"), /muxed-film/);
-  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "master.wav", "qa-report.json", "render-manifest.json", "stills", "video.mp4", "voice.wav"]);
+  assert.deepEqual((await readdir(result.releaseDir)).sort(), ["captions.srt", "cover-still.png", "master.wav", "qa-report.json", "render-manifest.json", "stills", "thumbnail-1.png", "thumbnail-1.svg", "thumbnail-2.png", "thumbnail-2.svg", "thumbnail-3.png", "thumbnail-3.svg", "video.mp4", "voice.wav"]);
   assert.equal(result.qa.reviewStills.length >= 2, true);
   for (const still of result.qa.reviewStills) {
     const bytes = await readFile(join(result.releaseDir, still.file));
     assert.equal(hash(bytes), still.sha256);
   }
   const manifest = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
+  assert.equal(manifest.artifacts.coverStill,hash(await readFile(join(result.releaseDir,"cover-still.png"))));
+  assert.equal(manifest.artifacts.coverStill,manifest.reviewStills[0].sha256);
+  assert.equal(manifest.artifacts.qaReport,hash(await readFile(join(result.releaseDir,"qa-report.json"))));
   assert.equal(manifest.buildHash, "b".repeat(64));
   assert.equal(manifest.artifacts.voice, hash(await readFile(join(result.releaseDir, "voice.wav"))));
   assert.equal(manifest.narration.length, ctx.job.beats.length);
   assert.equal(manifest.narration[0].providerRevision, "bridge-1");
   assert.equal(manifest.narration[0].sha256, hash(ctx.job.beats[0].narration));
+  assert.equal(manifest.soundDucking,null,"drafts without background beds must not claim voice-triggered ducking");
+  assert.equal(manifest.visualCoverage.sceneCount,ctx.job.beats.length);
+  assert.equal(result.qa.visualCoverage.sceneCount,ctx.job.beats.length);
+  assert.deepEqual(manifest.visualCoverage.mediaDeclarationCounts,{stockVideo:0,stockPhoto:0,kumikiOnly:ctx.job.beats.length});
+  for(const scene of manifest.visualCoverage.scenes){
+    assert.ok(scene.reviewStill.frame>=manifest.plan.chapters.find(chapter=>chapter.id===scene.id).startFrame);
+    assert.ok(scene.reviewStill.frame<manifest.plan.chapters.find(chapter=>chapter.id===scene.id).endFrame);
+    assert.equal(hash(await readFile(join(result.releaseDir,scene.reviewStill.file))),scene.reviewStill.sha256);
+  }
+});
+
+test("full export carries authorized character voices and speaker provenance into the immutable release",async t=>{
+  const ctx=await context(t);
+  const names=["pip","quill","narrator"];
+  ctx.job.beats.forEach((beat,index)=>{
+    const name=names[index];
+    beat.speaker={id:name,role:name==="narrator"?"narrator":"character",
+      voiceId:name==="narrator"?ctx.job.voice.voiceId:`${name}-voice`};
+  });
+  const original=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(job,options)=>{
+    assert.deepEqual(options.authorizedVoiceIds,["pip-voice","quill-voice"]);
+    assert.deepEqual(job.beats.map(b=>b.speaker.id),names);
+    return original(job,options);
+  };
+  const result=await produceVideo(ctx.job,{...ctx.opts,authorizedVoiceIds:["pip-voice","quill-voice"]},ctx.injected);
+  const manifest=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.deepEqual(manifest.narration.map(({speakerId,speakerRole,voiceId})=>({speakerId,speakerRole,voiceId})),[
+    {speakerId:"pip",speakerRole:"character",voiceId:"pip-voice"},
+    {speakerId:"quill",speakerRole:"character",voiceId:"quill-voice"},
+    {speakerId:"narrator",speakerRole:"narrator",voiceId:"licensed"},
+  ]);
+});
+
+test("the producer fits a short scene to measured speech and records the added silence",async t=>{
+  const ctx=await context(t);
+  const general=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...general,voice:ctx.job.voice};ctx.job.beats[0].pauseAfterMs=0;
+  const original=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{const speech=await original(...args);speech[0].samples=48;return speech;};
+  let adjustments;
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,onProgress:event=>{if(event.phase==="audio"){
+    adjustments=event.timingAdjustments;throw Error("fixture stopped after timing");}}},ctx.injected),/fixture stopped after timing/);
+  assert.deepEqual(adjustments,[{id:ctx.job.beats[0].id,addedPauseMs:16}]);
+});
+
+test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
+  const ctx = await context(t);
+  const general = JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
+  ctx.job = { ...general, voice: ctx.job.voice };
+  const beatId = ctx.job.beats[0].id;
+  const photoHash = "e".repeat(64);
+  const media = { assetType: "photo", sha256: photoHash, url: `/__video_media/${photoHash}.jpg`,
+    provider: "pexels", assetId: "49", sourceUrl: "https://www.pexels.com/photo/roof-49/",
+    license: "Pexels License", licenseUrl: "https://www.pexels.com/license/", creator: "Photographer" };
+  const asset = { url: media.url, path: join(ctx.root, "frozen.jpg"), sha256: photoHash, assetType: "photo" };
+  const events = [],progress=[];
+  ctx.injected.prepareApprovedSceneMedia = async input => {
+    events.push("asset-preflight");
+    assert.equal(input.projectId, "dossier-1");
+    assert.deepEqual(input.shotMap, [{ shotId: "scene-roof", beatId }]);
+    return { fingerprint: "c".repeat(64), bindings: { [beatId]: media }, assets: [asset] };
+  };
+  const speech = ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration = async (...args) => { events.push("narration"); return speech(...args); };
+  ctx.injected.startLocalStageServer = async ({ validatedPlan, approvedMedia }) => {
+    assert.equal(validatedPlan.kind, "general-explainer-visual-plan");
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.url, media.url);
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.sha256, photoHash);
+    assert.deepEqual(approvedMedia, [asset]);
+    return { url: "http://127.0.0.1:9876/video-export.html", buildHash: "b".repeat(64), close: async () => {} };
+  };
+  const result = await produceVideo(ctx.job, { ...ctx.opts, sceneAssetProjectId: "dossier-1",
+    sceneShotMap: [{ shotId: "scene-roof", beatId }], expectedSceneMediaFingerprint: "c".repeat(64),
+    onProgress:event=>progress.push(event) }, ctx.injected);
+  assert.deepEqual(events, ["asset-preflight", "narration"]);
+  assert.deepEqual(progress.find(event=>event.phase==="narration")?.artifactLedger,
+    {kind:"asset-preparation",fingerprint:"c".repeat(64),
+      selected:[{beatId,assetType:"photo",sha256:photoHash}]});
+  assert.ok(!JSON.stringify(progress).includes(asset.path));
+  const released = JSON.parse(await readFile(join(result.releaseDir, "render-manifest.json"), "utf8"));
+  assert.equal(released.plan.chapters[0].visual.stockMedia.sha256, photoHash);
+  assert.equal(released.sceneMedia[0].sha256, photoHash);
+  assert.equal(released.visualCoverage.mediaDeclarationCounts.stockPhoto,1);
+  assert.equal(released.visualCoverage.scenes.find(scene=>scene.id===beatId)?.sourceType,"stock-photo");
+  assert.equal(released.visualCoverage.scenes.find(scene=>scene.id===beatId)?.shotId,"scene-roof");
+  assert.ok(released.visualCoverage.scenesWithoutStockVideo.includes(beatId));
+});
+
+test("a missing user-selected scene photo fails before any provider TTS or render call", async t => {
+  const ctx = await context(t);
+  ctx.injected.prepareApprovedSceneMedia = async () => { throw Error("Selected asset changed; choose another image"); };
+  await assert.rejects(produceVideo(ctx.job, { ...ctx.opts, sceneAssetProjectId: "dossier-1",
+    sceneShotMap: [{ shotId: "scene-roof", beatId: ctx.job.beats[0].id }] }, ctx.injected), /Selected asset changed/);
+  assert.equal(ctx.status().providerCalls, 0);
+  assert.equal(ctx.status().browserCalls, 0);
+});
+
+test("opted-in, source-verified CC0 photo becomes actual scene media without a provider API key",async t=>{
+  const ctx=await context(t);
+  const general=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...general,voice:ctx.job.voice};
+  const beatId=ctx.job.beats[0].id,photoHash="f".repeat(64),events=[];
+  const media={assetType:"photo",url:`/__video_media/${photoHash}.jpg`,sha256:photoHash,
+    provider:"wikimedia-commons",assetId:"22222222-3333-4444-8888-999999999999",
+    sourceUrl:"https://commons.wikimedia.org/wiki/File:Roof.jpg",
+    license:"CC0-1.0",licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",
+    rightsStatus:"draft-provider-license",automaticallyPrepared:true};
+  ctx.injected.prepareApprovedSceneMedia=async()=>({bindings:{},assets:[],fingerprint:hash("empty")});
+  ctx.injected.prepareAutomaticCommonsMedia=async(input)=>{
+    events.push("photo-prepare");
+    assert.equal("pexelsKey" in input,false,"automated preparation must not ask for Pexels API credentials");
+    assert.equal(input.shotMap[0].beatId,beatId);
+    return {bindings:{[beatId]:media},assets:[{url:media.url,path:join(ctx.root,"photo.jpg"),
+      sha256:photoHash,assetType:"photo"}],fingerprint:hash("photo-plan"),prepared:1,warnings:[]};
+  };
+  const speech=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{events.push("narration");return speech(...args);};
+  ctx.injected.startLocalStageServer=async({validatedPlan,approvedMedia})=>{
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia.rightsStatus,"draft-provider-license");
+    assert.equal(approvedMedia.length,1);
+    return {url:"http://127.0.0.1:9876/video-export.html",buildHash:"b".repeat(64),close:async()=>{}};
+  };
+  const produced=await produceVideo(ctx.job,{...ctx.opts,sceneAssetProjectId:"dossier-1",
+    sceneShotMap:[{shotId:"scene-roof",beatId}],autoPrepareFreeMedia:true,
+    prepareAssetSuggestions:async()=>{
+      await writeFile(join(ctx.opts.out,"asset-suggestions.json"),JSON.stringify({
+        suggestions:{kind:"contentgen-scene-asset-suggestions",scenes:[]}}));
+      return {status:"completed"};
+    }},ctx.injected);
+  assert.deepEqual(events,["photo-prepare","narration"]);
+  const manifest=JSON.parse(await readFile(join(produced.releaseDir,"render-manifest.json"),"utf8"));
+  assert.equal(manifest.sceneMedia[0].rightsStatus,"draft-provider-license");
+  assert.equal(manifest.sceneMedia[0].sha256,photoHash);
+});
+
+test("retired Pexels credentials cannot activate API footage downloads in automatic draft media",async t=>{
+  const ctx=await context(t);
+  const general=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job={...general,voice:ctx.job.voice};
+  const beatId=ctx.job.beats[0].id,events=[];
+  ctx.injected.prepareApprovedSceneMedia=async()=>({bindings:{},assets:[],fingerprint:hash("empty")});
+  ctx.injected.prepareAutomaticDraftMedia=async()=>{throw Error("The Pexels API adapter must never run.");};
+  ctx.injected.prepareAutomaticCommonsMedia=async input=>{
+    assert.equal("pexelsKey" in input,false);
+    events.push("checked-no-key");
+    return {bindings:{},assets:[],fingerprint:hash("empty"),prepared:0,warnings:[]};
+  };
+  const speech=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{events.push("narration");return speech(...args);};
+  ctx.injected.startLocalStageServer=async({validatedPlan,approvedMedia})=>{
+    assert.equal(validatedPlan.chapters[0].visual.stockMedia,undefined,
+      "a retired API key must not silently populate an unapproved scene");
+    assert.equal(approvedMedia.length,0);
+    return {url:"http://127.0.0.1:9876/video-export.html",buildHash:"b".repeat(64),close:async()=>{}};
+  };
+  const produced=await produceVideo(ctx.job,{...ctx.opts,sceneAssetProjectId:"dossier-1",
+    sceneShotMap:[{shotId:"scene-roof",beatId}],autoPrepareFreeMedia:true,pexelsKey:"local-test-key",
+    prepareAssetSuggestions:async()=>{
+      await writeFile(join(ctx.opts.out,"asset-suggestions.json"),JSON.stringify({
+        suggestions:{kind:"contentgen-scene-asset-suggestions",scenes:[]}}));
+      return {status:"completed"};
+    },onProgress:async event=>{if(event.phase==="asset-prepared")events.push(event.message);}},ctx.injected);
+  assert.deepEqual(events,["checked-no-key","Using approved images and Kumiki visuals for the draft.","narration"]);
+  const manifest=JSON.parse(await readFile(join(produced.releaseDir,"render-manifest.json"),"utf8"));
+  assert.equal(manifest.sceneMedia.length,0);
 });
 
 test("release manifest records approved sound identity, event, and measured cue sample without local paths",async t=>{
@@ -96,6 +278,15 @@ test("release manifest records approved sound identity, event, and measured cue 
   assert.deepEqual(manifest.soundEffects,[{id:sample.id,eventId:sample.eventId,
     eventSample:124800,licenseStatus:"verified",assetSha256:"a".repeat(64)}]);
   assert.ok(!JSON.stringify(manifest).includes("/approved/local/asset.wav"));
+});
+
+test("release manifest records actual voice-sidechain sound settings",async t=>{
+  const ctx=await context(t),original=ctx.injected.renderMasterAudio;
+  const ducking={mode:"voice-sidechain",beds:1,threshold:0.018,ratio:8,attackMs:70,releaseMs:350};
+  ctx.injected.renderMasterAudio=async(...args)=>({...await original(...args),ducking});
+  const result=await produceVideo(ctx.job,ctx.opts,ctx.injected);
+  const manifest=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.deepEqual(manifest.soundDucking,ducking);
 });
 
 test("release manifest records effective offsets and ambience settings without revealing sound paths",async t=>{
@@ -157,11 +348,147 @@ test("production emits real stage transitions and forwards verified capture fram
     options.onProgress?.({ phase: "rendering", completedFrames: 90, totalFrames: 90 });
     return originalRender(options);
   };
-  await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
+  const result=await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
   const phases = events.map((event) => event.phase);
-  assert.deepEqual(phases, ["browser-preflight", "narration", "timeline", "audio", "rendering", "rendering", "mux", "qa", "review"]);
+  assert.deepEqual(phases, ["browser-preflight", "asset-search", "asset-preparation", "narration", "timeline", "audio", "captions", "rendering", "rendering", "thumbnails", "mux", "qa", "review"]);
   assert.deepEqual(events.find((event) => event.completedFrames === 90),
     { phase: "rendering", completedFrames: 90, totalFrames: 90 });
+  const narration=events.find(event=>event.phase==="timeline")?.artifactLedger;
+  assert.equal(narration?.kind,"narration");
+  assert.equal(narration?.beats.length,ctx.job.beats.length);
+  assert.match(narration?.beats[0].sha256,/^[a-f0-9]{64}$/);
+  const visual=events.find(event=>event.phase==="thumbnails")?.artifactLedger;
+  assert.equal(visual?.kind,"scene-render");
+  assert.match(visual?.planHash,/^[a-f0-9]{64}$/);
+  const release=JSON.parse(await readFile(join(result.releaseDir,"render-manifest.json"),"utf8"));
+  assert.deepEqual(visual?.segments,release.segmentHashes);
+  const captions=events.find(event=>event.phase==="rendering")?.artifactLedger;
+  assert.equal(captions?.kind,"captions");
+  assert.equal(captions?.sha256,hash("1\n00:00:00,000 --> 00:00:01,000\nSample"));
+  const thumbnails=events.find(event=>event.phase==="mux")?.artifactLedger;
+  assert.equal(thumbnails?.kind,"thumbnails");
+  assert.equal(thumbnails?.concepts.length,3);
+  const mux=events.find(event=>event.phase==="qa")?.artifactLedger;
+  assert.equal(mux?.kind,"final-mux");
+  assert.equal(mux?.artifacts.video,hash("muxed-film"));
+  assert.equal(mux?.artifacts.captions,hash("1\n00:00:00,000 --> 00:00:01,000\nSample"));
+  const technical=events.find(event=>event.phase==="review")?.artifactLedger;
+  assert.equal(technical?.kind,"technical-qa");
+  assert.equal(technical?.technicalPass,true);
+  assert.match(technical?.manifestHash,/^[a-f0-9]{64}$/);
+  assert.equal(result.artifactHashes?.coverStill,hash("captured-frame-0"));
+  assert.ok(!JSON.stringify(events).includes(ctx.opts.out),"durable job data must never disclose local paths");
+});
+
+test("the renderer waits for a durable narration claim before calling the voice provider",async t=>{
+  const ctx=await context(t);
+  let openGate,arrived;
+  const gate=new Promise(resolve=>{openGate=resolve;});
+  const claimed=new Promise(resolve=>{arrived=resolve;});
+  const work=produceVideo(ctx.job,{...ctx.opts,onProgress:event=>{
+    if(event.phase==="narration"){arrived();return gate;}
+  }},ctx.injected);
+  await claimed;
+  assert.equal(ctx.status().providerCalls,0,"no voice request may run ahead of the claimed Jobs stage");
+  openGate();
+  await work;
+  assert.ok(ctx.status().providerCalls>0);
+});
+
+test("a rejected Jobs claim prevents any paid or external production work",async t=>{
+  const ctx=await context(t);
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,
+    onProgress:event=>event.phase==="browser-preflight"?Promise.reject(Error("Jobs claim unavailable")):undefined},
+    ctx.injected),/Jobs claim unavailable/);
+  assert.equal(ctx.status().providerCalls,0);
+  assert.equal(ctx.status().browserCalls,0);
+});
+
+test("media suggestions are prepared before narration and expose a bounded Jobs summary",async t=>{
+  const ctx=await context(t),events=[];
+  const originalNarration=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(...args)=>{events.push("voice");return originalNarration(...args);};
+  await produceVideo(ctx.job,{...ctx.opts,
+    prepareAssetSuggestions:async()=>{events.push("search");return{status:"partial",candidates:3,warnings:["Pexels unavailable"]};},
+    onProgress:event=>{if(event.phase==="asset-preparation")events.push(event.assetSearchSummary);}},ctx.injected);
+  assert.equal(events[0],"search");
+  assert.deepEqual(events[1],{status:"partial",candidates:3,warnings:["Pexels unavailable"]});
+  assert.equal(events[2],"voice");
+});
+
+test("retrying an interrupted draft uses only its existing verified speech-cache directory",async t=>{
+  const ctx=await context(t),prior=join(ctx.root,"draft-prior"),cache=join(prior,".cache");
+  await mkdir(cache,{recursive:true});
+  let actualCache;
+  const normal=ctx.injected.synthesizeNarration;
+  ctx.injected.synthesizeNarration=async(job,options)=>{
+    actualCache=options.reuseCacheRoot;
+    assert.equal(options.skipInvalidPriorCache,true);
+    return normal(job,options);
+  };
+  await produceVideo(ctx.job,{...ctx.opts,reuseSpeechCacheFrom:prior},ctx.injected);
+  assert.equal(actualCache,cache);
+  const next=await context(t);
+  let missingCache;
+  const nextSpeech=next.injected.synthesizeNarration;
+  next.injected.synthesizeNarration=async(job,options)=>{
+    missingCache=options.reuseCacheRoot;return nextSpeech(job,options);
+  };
+  await produceVideo(next.job,{...next.opts,reuseSpeechCacheFrom:join(next.root,"missing-prior")},next.injected);
+  assert.equal(missingCache,null,"a missing interrupted cache must safely regenerate narration");
+});
+
+test("a failed draft persists its exact Kumiki plan so retry can reuse verified scene segments",async t=>{
+  const first=await context(t);
+  first.injected.renderVideoSegments=async options=>{
+    await mkdir(join(options.outDir,"segments"),{recursive:true});
+    throw Error("capture stopped midway");
+  };
+  await assert.rejects(produceVideo(first.job,first.opts,first.injected),/capture stopped midway/);
+  const sourcePath=join(first.opts.out,".render","render-source-plan.json");
+  const saved=JSON.parse(await readFile(sourcePath,"utf8"));
+  assert.equal(saved.schemaVersion,1);
+  assert.equal(saved.buildHash,"b".repeat(64));
+  assert.equal(saved.planHash,hash(JSON.stringify(saved.plan)));
+  assert.equal(saved.plan.chapters.length,first.job.beats.length);
+  assert.equal((await readdir(first.opts.out)).includes("release"),false);
+  const second=await context(t);
+  const original=second.injected.renderVideoSegments;
+  second.injected.renderVideoSegments=async options=>{
+    assert.deepEqual(options.reuseFrom?.sourcePlan,saved.plan);
+    assert.equal(options.reuseFrom?.buildHash,"b".repeat(64));
+    assert.equal(options.reuseFrom?.segmentsDir,join(first.opts.out,".render","segments"));
+    return original(options);
+  };
+  await produceVideo(second.job,{...second.opts,reuseRenderSegmentsFrom:first.opts.out},second.injected);
+});
+
+test("tampered interrupted scene plan is ignored without trusting its segment cache",async t=>{
+  const first=await context(t);
+  first.injected.renderVideoSegments=async options=>{
+    await mkdir(join(options.outDir,"segments"),{recursive:true});
+    throw Error("browser interrupted");
+  };
+  await assert.rejects(produceVideo(first.job,first.opts,first.injected),/browser interrupted/);
+  const path=join(first.opts.out,".render","render-source-plan.json");
+  const saved=JSON.parse(await readFile(path,"utf8"));
+  await writeFile(path,JSON.stringify({...saved,planHash:"0".repeat(64)}));
+  const second=await context(t);
+  const original=second.injected.renderVideoSegments;
+  second.injected.renderVideoSegments=async options=>{
+    assert.equal(options.reuseFrom,undefined,"a changed plan cannot be used for scene reuse");
+    return original(options);
+  };
+  await produceVideo(second.job,{...second.opts,reuseRenderSegmentsFrom:first.opts.out},second.injected);
+});
+
+test("cancelling media search prevents voice calls and leaves no completed release",async t=>{
+  const ctx=await context(t),abort=new AbortController();
+  await assert.rejects(produceVideo(ctx.job,{...ctx.opts,signal:abort.signal,
+    prepareAssetSuggestions:async()=>{abort.abort(Error("Stopped by editor"));return{status:"cancelled"};}},ctx.injected),
+    /cancelled during scene media discovery/i);
+  assert.equal(ctx.status().providerCalls,0);
+  assert.equal((await readdir(ctx.opts.out)).includes("release"),false);
 });
 
 test("stage/render failure closes the local server and never publishes an incomplete release", async (t) => {
@@ -185,6 +512,36 @@ test("final release cannot silently overwrite prior output", async (t) => {
   await produceVideo(ctx.job, ctx.opts, ctx.injected);
   await assert.rejects(produceVideo(ctx.job, ctx.opts, ctx.injected), /exists|release/i);
   assert.equal(ctx.status().browserCalls, 1);
+});
+
+test("Fish production ignores a leftover local speech endpoint", async (t) => {
+  const ctx = await context(t);
+  const { compilePreproductionBundle } = await import("./preproduction.mjs");
+  const { compilePreproductionRenderJob } = await import("./preproduction-render-bridge.mjs");
+  const read = (name) => JSON.parse(readFileSync(new URL("../../../../examples/" + name, import.meta.url), "utf8"));
+  const dossier = read("preproduction-research-smoke.json");
+  const job = compilePreproductionRenderJob(dossier, compilePreproductionBundle(dossier, read("preproduction-plan-smoke.json"))).job;
+  job.voice = { ...job.voice, voiceId: "licensed-reference" };
+  let seenEndpoint = "unset";
+  ctx.injected.synthesizeNarration = async (rendered) => {
+    seenEndpoint = rendered.voice.endpoint;
+    return rendered.beats.map((beat) => ({
+      id: beat.id, samples: 48000, pauseAfterMs: beat.pauseAfterMs, eventIds: beat.eventIds,
+      text: beat.narration, wavPath: "mocked", sha256: hash(beat.narration), provider: "fish",
+      modelId: "s2.1-pro-free", providerRevision: "fish-api-v1",
+      voiceId: rendered.voice.voiceId, speakerId: "narrator", speakerRole: "narrator",
+    }));
+  };
+  ctx.injected.startLocalStageServer = async () => ({
+    url: "http://127.0.0.1:9/", buildHash: "b".repeat(64), close: async () => {},
+  });
+  await assert.rejects(produceVideo(job, {
+    ...ctx.opts, provider: "fish", providerRevision: "fish-api-v1",
+    allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true,
+    apiKey: "dummy", localEndpoint: "http://127.0.0.1:8765",
+    onProgress: (event) => { if (event.phase === "audio") throw Error("reached-audio"); },
+  }, ctx.injected), /reached-audio/);
+  assert.equal(seenEndpoint, undefined);
 });
 
 test("blocks paid Fish models before any provider call when per-job spending is not metered", async (t) => {
@@ -269,4 +626,54 @@ test("corrupt previous plan hash refuses release before any TTS",async t=>{
   const oldCalls=ctx.status().providerCalls;
   await assert.rejects(produceVideo(ctx.job,{...ctx.opts,out:join(ctx.root,"new"),reuseFrom:ctx.opts.out},ctx.injected),/tampered|invalid/i);
   assert.equal(ctx.status().providerCalls,oldCalls);
+});
+
+test("custom character rigs cannot silently enter an unrelated visual family or incur TTS",async t=>{
+  const ctx=await context(t);
+  ctx.job.beats[0].speaker={id:"pip",role:"character",voiceId:"licensed"};
+  ctx.opts.characterRigPacks={rigs:{pip:{definition:{characterId:"pip"}}},assets:[],identity:[]};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/custom character rigs require the general-scene/);
+  assert.equal(ctx.status().providerCalls,0);
+});
+
+test("scene-specific custom rig rejects an unavailable dialogue action before TTS or Chromium",async t=>{
+  const ctx=await context(t);
+  ctx.job=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job.voice={...ctx.job.voice,provider:"local",modelId:"installed-mock",voiceId:"licensed",
+    endpoint:"http://127.0.0.1:8765",licenseStatus:"test-only"};
+  const beat=ctx.job.beats[1];
+  beat.speechTurns=[
+    {id:"pip-line",narration:"Pip introduces the route.",pauseAfterMs:120,
+      speaker:{id:"pip",role:"character",voiceId:"pip-voice"},animationAction:"walk"},
+    {id:"narration",narration:"Then we follow its path.",pauseAfterMs:0}
+  ];
+  beat.narration=beat.speechTurns.map(turn=>turn.narration).join(" ");
+  const pip={definition:{characterId:"pip",actions:{"pip-explain":{}}}};
+  ctx.opts.characterRigPacks={rigs:{pip},rigsByScene:{steps:{pip:{definition:{characterId:"pip",actions:{ask_question:{}}}}}},
+    assets:[],identity:[]};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/walk.*selected.*rig|action.*walk.*revision/i);
+  assert.equal(ctx.status().providerCalls,0);
+  assert.equal(ctx.status().sceneCalls,0);
+  // A valid scoped action takes precedence over the global revision and
+  // reaches environment preflight without generating audio.
+  ctx.opts.characterRigPacks.rigsByScene.steps.pip.definition.actions.walk={};
+  ctx.injected.preflightExport=async()=>{throw Error("browser-preflight-reached");};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/browser-preflight-reached/);
+  assert.equal(ctx.status().providerCalls,0);
+});
+
+test("stale or unrelated scene rig overrides fail before any browser or speech work",async t=>{
+  const ctx=await context(t);
+  ctx.job=JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json",import.meta.url),"utf8"));
+  ctx.job.voice={...ctx.job.voice,provider:"local",modelId:"installed-mock",voiceId:"licensed",
+    endpoint:"http://127.0.0.1:8765",licenseStatus:"test-only"};
+  ctx.job.beats[1].speaker={id:"pip",role:"character",voiceId:"pip-voice"};
+  ctx.opts.characterRigPacks={rigs:{},rigsByScene:{old_scene:{pip:{definition:{characterId:"pip",actions:{}}}}},
+    assets:[],identity:[]};
+  ctx.injected.preflightExport=async()=>{throw Error("browser-preflight-should-not-run");};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/scene.*revision|unknown.*scene|scene.*match/i);
+  assert.equal(ctx.status().providerCalls,0);
+  ctx.opts.characterRigPacks.rigsByScene={steps:{quill:{definition:{characterId:"quill",actions:{}}}}};
+  await assert.rejects(produceVideo(ctx.job,ctx.opts,ctx.injected),/scene.*speaker|scene.*character|speaking character/i);
+  assert.equal(ctx.status().providerCalls,0);
 });

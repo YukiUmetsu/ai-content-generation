@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {mkdtemp,readFile,writeFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {planSfxNeeds,discoverSfx,recommendApprovedSfx,approveSfx,listApprovedSfx,
+import {planSfxNeeds,discoverSfx,discoverMusic,recommendApprovedSfx,approveSfx,listApprovedSfx,
   setSceneSfxChoice,resolveSceneSfxChoices,exportSfxForTimeline} from "./sfx-discovery.mjs";
 
 const bundle={plan:{shots:[
@@ -57,6 +57,27 @@ test("Openverse CC0 Freesound preview paths are supported without accepting arbi
   const result=await discoverSfx({bundle,allowExternalSearch:true},{fetchImpl});
   assert.equal(result.scenes[0].candidates.length,1);
   assert.equal(result.scenes[0].candidates[0].previewUrl,valid.url);
+});
+
+test("CC0 music search is opt-in, category-scoped, bounded and never downloads media",async()=>{
+  const music={...sound("1e4e06ce-cab2-4871-a8c2-123456789abc","Gentle ambient piano"),
+    category:"music",duration:65000,tags:[{name:"ambient"},{name:"piano"}]};
+  const calls=[];
+  const fetchImpl=async(url,options)=>{calls.push({url:String(url),options});return json({results:[music,
+    {...music,id:"2e4e06ce-cab2-4871-a8c2-123456789abc",category:"sound_effect"},
+    {...music,id:"3e4e06ce-cab2-4871-a8c2-123456789abc",license:"by-nc"},
+    {...music,id:"4e4e06ce-cab2-4871-a8c2-123456789abc",duration:155000}]});};
+  await assert.rejects(discoverMusic({query:"ambient piano",allowExternalSearch:false},{fetchImpl}),/approval/i);
+  await assert.rejects(discoverMusic({query:"  ",allowExternalSearch:true},{fetchImpl}),/meaningful/i);
+  assert.equal(calls.length,0);
+  const found=await discoverMusic({query:"ambient piano",allowExternalSearch:true},{fetchImpl});
+  assert.equal(found.candidates.length,1);
+  assert.equal(found.candidates[0].assetType,"music");
+  assert.equal(found.candidates[0].durationSeconds,65);
+  assert.equal(calls.length,1);
+  assert.match(calls[0].url,/category=music/);
+  assert.match(calls[0].url,/license=cc0/);
+  assert.equal(calls[0].options.redirect,"error");
 });
 
 test("approved library automatically suggests matching sounds, never weak or unapproved files",()=>{
@@ -127,6 +148,89 @@ test("first download requires review, re-resolves a CC0 source and stores verifi
   assert.equal((await listApprovedSfx({root:opts.root})).length,0);
   await assert.rejects(approveSfx(approval,opts),/conflict|damaged|invalid|tamper/i,
     "a repeated approval cannot claim a tampered existing import succeeded");
+});
+
+test("reviewed music import cannot be relabeled as a sound effect or silently used for cues",async t=>{
+  const opts=await imported(t);
+  const clip={...sound(soundId,"Calm instrumental"),category:"music",duration:55000};
+  const fetchImpl=async url=>String(url).includes("/v1/audio/")?json(clip):new Response("OggS-music-bytes");
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl}),/license|CC0/i);
+  const saved=await approveSfx({...approval,assetType:"music"},{...opts,fetchImpl});
+  assert.equal(saved.assetType,"music");
+  const bank=await listApprovedSfx({root:opts.root});
+  assert.equal(bank[0].assetType,"music");
+  assert.equal(recommendApprovedSfx(bundle,bank).every(x=>x.assetId===null),true);
+  await assert.rejects(setSceneSfxChoice({projectId:"house-project",shotId:"shot-roof",mode:"pin",
+    assetId:soundId,sha256:saved.sha256},{root:opts.root}),/approved|verified/i);
+});
+
+test("approved audio import retries temporary HTTP 503 and incomplete declared transfer before committing",async t=>{
+  const opts=await imported(t);
+  let mediaCalls=0;
+  const raw=Buffer.from("OggS-audio-source-bytes");
+  const fetchImpl=async url=>{
+    if(String(url).includes("/v1/audio/"))return json(sound(soundId,"Wind gust"));
+    mediaCalls++;
+    if(mediaCalls===1)return new Response("Service unavailable",{status:503});
+    if(mediaCalls===2)return new Response(raw,{headers:{"content-length":String(raw.length+8)}});
+    return new Response(raw);
+  };
+  const importedAsset=await approveSfx(approval,{...opts,fetchImpl});
+  assert.equal(mediaCalls,3);
+  assert.equal(importedAsset.originalSha256,
+    (await listApprovedSfx({root:opts.root}))[0].originalSha256);
+  assert.equal((await listApprovedSfx({root:opts.root})).length,1);
+});
+
+test("audio import never retries 429, invalid headers or a rights-rejected source",async t=>{
+  const opts=await imported(t);
+  let calls=0;
+  const fetchImpl=async url=>{
+    if(String(url).includes("/v1/audio/"))return json(sound(soundId,"Wind gust"));
+    calls++;return new Response("Rate limited",{status:429});
+  };
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl}),/rate limit/i);
+  assert.equal(calls,1);
+  const badHeader=async url=>String(url).includes("/v1/audio/")?json(sound(soundId,"Wind gust")):
+    (calls++,new Response(Buffer.from("OggS-source-bytes"),{headers:{"content-length":"invalid"}}));
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl:badHeader}),/invalid file length/i);
+  assert.equal(calls,2);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
+test("three audio-provider failures leave no approved library item",async t=>{
+  const opts=await imported(t);
+  let calls=0;
+  const fetchImpl=async url=>String(url).includes("/v1/audio/")?json(sound(soundId,"Wind gust")):
+    (calls++,new Response("Temporary failure",{status:503}));
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl}),/three attempts/i);
+  assert.equal(calls,3);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
+test("an aborted audio import makes no further calls and does not write an approved item",async t=>{
+  const opts=await imported(t),controller=new AbortController();
+  let calls=0;
+  const fetchImpl=async url=>{
+    if(String(url).includes("/v1/audio/"))return json(sound(soundId,"Wind gust"));
+    calls++;controller.abort();throw new TypeError("transport interrupted");
+  };
+  await assert.rejects(approveSfx(approval,{...opts,fetchImpl,signal:controller.signal}),/cancelled/i);
+  assert.equal(calls,1);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
+});
+
+test("cancelling during audio conversion leaves no approved file and forwards the abort signal",async t=>{
+  const opts=await imported(t),controller=new AbortController();
+  let forwarded;
+  const transcode=async(_input,output,{signal}={})=>{
+    forwarded=signal;
+    await writeFile(output,wav());
+    controller.abort();
+  };
+  await assert.rejects(approveSfx(approval,{...opts,transcode,signal:controller.signal}),/cancelled/i);
+  assert.equal(forwarded,controller.signal);
+  assert.deepEqual(await listApprovedSfx({root:opts.root}),[]);
 });
 
 test("real FFmpeg conversion accepts standard ancillary WAV chunks without losing PCM verification",async t=>{

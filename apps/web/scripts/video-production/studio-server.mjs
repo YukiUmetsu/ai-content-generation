@@ -351,7 +351,8 @@ export async function startVideoStudio({ port = Number(process.env.CONTENTGEN_ST
         update({ status: "completed", phase: "review", message: "Draft exported. Watch and listen before any publishing decision.",
           artifacts: await listArtifacts(releaseDir, token),
           qa: { technicalPass: qa.technicalPass, commercialReady: false, releaseStatus: qa.releaseStatus,
-            durationSeconds: qa.durationSeconds, frameCount: qa.frameCount, findings: qa.findings || [] } });
+            durationSeconds: qa.durationSeconds, frameCount: qa.frameCount, findings: qa.findings || [],
+            visualCoverage:qa.visualCoverage??null } });
       } catch (error) {
         const cancelled = controller.signal.aborted;
         const sanitized = String(error?.message || "The production worker failed").replaceAll(activeKey || "\u0000", "[redacted]");

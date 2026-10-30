@@ -17,6 +17,9 @@ import { SemanticDiagram } from "./semantic-scene-diagrams";
 import { HomeCostStoryScene } from "./home-cost-story-scene";
 import { TeachingStateScene } from "./teaching-state-scene";
 import { SemanticMechanicScene } from "./semantic-mechanic-scene";
+import { ConversationCharacters } from "./conversation-characters";
+import { characterRigsForChapter } from "./scene-character-rigs";
+import type { ExportRigPlan } from "./scene-character-rigs";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -29,11 +32,15 @@ function Node({ x, y, width, height, label, note, index, highlight = false }: { 
   // Legacy cards without notes keep their original typography and placement.
   const card = note ? layoutTeachingCard({ label, note, width, height }) : null;
   const title = card?.title ?? fitSvgText(label, { maxWidthPx: width - 55, preferredSize: 29, minSize: 17, maxLines: 2 });
+  // Browser-measured Geist glyph boxes can be taller than the original fixed
+  // 36px leading. In taller contrast cards, give wrapped labels enough room
+  // so the export's exact SVG overlap guard does not reject their two lines.
+  const legacyLeading=height>=145?Math.max(36,Math.ceil(title.fontSize*1.55)):36;
   return <g data-general-node={index}>
     <rect x={x} y={y} width={width} height={height} rx="23" fill={highlight ? "#294C52" : "#203743"} stroke={palette[index % palette.length]} strokeWidth={highlight ? 4 : 2} />
     <rect x={x + 20} y={y + 22} width="7" height={height - 44} rx="3" fill={palette[index % palette.length]} />
     {title.lines.map((line, i) => <text key={`${i}-${line}`} x={x + width / 2 + 5}
-      y={card ? y + card.title.baselines[i] : y + height / 2 - (title.lines.length - 1) * 18 + i * 36 + 11}
+      y={card ? y + card.title.baselines[i] : y + height / 2 - (title.lines.length - 1) * legacyLeading / 2 + i * legacyLeading + 11}
       fontSize={title.fontSize} fontWeight="650" textAnchor="middle" fill={ink}>{line}</text>)}
     {card?.detail.lines.map((line, i) => <text data-teaching-detail="" key={i} x={x + width / 2 + 5}
       y={y + card.detail.baselines[i]} fontSize={card.detail.fontSize} textAnchor="middle" fill={muted}>{line}</text>)}
@@ -135,6 +142,9 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
   const chapterFrames=chapter.endFrame-chapter.startFrame;
+  const stockMedia = state.visual.stockMedia;
+  const mediaTime = stockMedia?.assetType === "video"
+    ? (state.localFrame * plan.manifest.fps.den / plan.manifest.fps.num) % stockMedia.durationSeconds : 0;
   const authoredReveal=state.visual.motion?motionRevealState({frame:state.localFrame,frames:chapterFrames,
     itemCount:state.visual.items.length,intent:state.intent,motion:state.visual.motion}):null;
   const semanticMotion = sampleSemanticMotion({intent:state.intent,
@@ -161,7 +171,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     throw new Error(`Chart ${chapter.id} provenance copy needs shortening to fit its visual source area without clipping`);
   }
   if(state.visual.sceneRecipe==="home-cost-story-v1"){
-    return <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>;
+    return <div style={{position:"relative",width:1920,height:1080}}>
+      <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>
+      {chapter.dialogue&&<ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} compact/>}
+    </div>;
   }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
   <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
@@ -183,31 +196,48 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {heading.lines.map((line, i) => <text data-general-copy="heading" key={`${i}-${line}`} x="120" y={348 + i * 92} fill={ink} fontSize={heading.fontSize} fontWeight="750" letterSpacing="-1.7">{line}</text>)}
       {sub.lines.map((line, i) => <text data-general-copy="subheading" key={`${i}-${line}`} x="125" y={Math.max(662, 428 + heading.lines.length * 92) + i * 49} fill={muted} fontSize={sub.fontSize}>{line}</text>)}
     </g>}
-    {!chartStory && state.visual.direction?.visualMechanic &&
+    {!stockMedia && !chartStory && state.visual.direction?.visualMechanic &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ? <SemanticMechanicScene mechanic={state.visual.direction.visualMechanic}
           phase={state.visual.direction.phase as "problem"|"mechanism"|"payoff"} motion={semanticMotion}
           localFrame={state.localFrame} durationFrames={chapterFrames} fps={plan.manifest.fps}/>
-      : !chartStory && state.visual.direction?.transformation &&
+      : !stockMedia && !chartStory && state.visual.direction?.transformation &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ?<TeachingStateScene state={diagramState} motion={semanticMotion}/>
-      :!chartStory && (state.intent==="general-flow"
+      :!stockMedia && !chartStory && (state.intent==="general-flow"
       ? <g transform={state.visual.motion?.camera
           ?`translate(${semanticMotion.cameraX} ${semanticMotion.cameraY}) translate(1420 565) scale(${semanticMotion.cameraScale}) translate(-1420 -565)`
           :undefined}><Diagram state={diagramState} fps={plan.manifest.fps}
           chapterFrames={chapter.endFrame - chapter.startFrame}/></g>
       : <SemanticDiagram state={diagramState} motion={semanticMotion} renderNode={Node}/>)}
-    {chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
+    {!stockMedia && chartStory && disclosure && source && <g data-chart-provenance-basis={chartStory.provenanceBasis} data-chart-source-refs={chart?.provenance.basis === "measured" ? chart.provenance.evidenceRefs.join(",") : ""}>
       {disclosure.lines.map((line, index) => <text data-general-chart-copy="disclosure" key={`d-${index}`} x="1040" y={848 + index * 29}
         fontSize={disclosure.fontSize} fill={accent}>{line}</text>)}
       {source.lines.map((line, index) => <text data-general-chart-copy="source" key={`s-${index}`} x="1040" y={856 + disclosure.lines.length * 29 + index * 27}
         fontSize={source.fontSize} fill={muted}>{line}</text>)}
     </g>}
-    {transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
+    {!stockMedia&&transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
       fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
-  {chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
+  {stockMedia && <div data-contentgen-stock-frame="" role="img" aria-label={`Illustrative ${stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
+    style={{position:"absolute",left:1040,top:230,width:760,height:650,overflow:"hidden",borderRadius:28,
+      background:"#142431",border:"2px solid #526b73",boxShadow:"0 28px 95px #07131c80"}}>
+    {stockMedia.assetType === "photo"
+      ? <img data-contentgen-stock-photo="" src={stockMedia.url} alt="" decoding="async"
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`,
+          transform:`scale(${(1.03+0.065*state.progress).toFixed(5)}) translate3d(${(12-24*state.progress).toFixed(3)}px,${(6-12*state.progress).toFixed(3)}px,0)`,
+          transformOrigin:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`}}/>
+      : <video data-contentgen-stock-video="" data-media-time={mediaTime.toFixed(6)}
+        src={stockMedia.url} preload="auto" muted playsInline aria-hidden="true"
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`}} />}
+  </div>}
+  {!stockMedia && chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />
   </div>}
+  {chapter.dialogue && <ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} compact={Boolean(stockMedia || chartStory)} />}
+  {stockMedia&&transitionOpacity>0&&<div data-scene-entry-fade="" aria-hidden="true"
+    style={{position:"absolute",inset:0,background:"#101D2D",opacity:transitionOpacity,pointerEvents:"none"}}/>}
   </div>;
 }

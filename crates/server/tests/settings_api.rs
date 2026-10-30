@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
@@ -11,17 +12,17 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 #[derive(Default)]
-struct KeychainFixture(Mutex<Option<String>>);
+struct KeychainFixture(Mutex<HashMap<ProviderId, String>>);
 impl CredentialStore for KeychainFixture {
-    fn read(&self, _: ProviderId) -> Result<Option<String>, CredentialError> {
-        Ok(self.0.lock().unwrap().clone())
+    fn read(&self, provider: ProviderId) -> Result<Option<String>, CredentialError> {
+        Ok(self.0.lock().unwrap().get(&provider).cloned())
     }
-    fn put(&self, _: ProviderId, key: &str) -> Result<(), CredentialError> {
-        *self.0.lock().unwrap() = Some(key.into());
+    fn put(&self, provider: ProviderId, key: &str) -> Result<(), CredentialError> {
+        self.0.lock().unwrap().insert(provider, key.into());
         Ok(())
     }
-    fn delete(&self, _: ProviderId) -> Result<(), CredentialError> {
-        *self.0.lock().unwrap() = None;
+    fn delete(&self, provider: ProviderId) -> Result<(), CredentialError> {
+        self.0.lock().unwrap().remove(&provider);
         Ok(())
     }
 }
@@ -89,6 +90,79 @@ async fn session(router: &axum::Router) -> String {
     assert_eq!(code, StatusCode::OK, "{result:?}");
     assert!(no_store);
     result["token"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn fish_credentials_are_write_only_and_replay_protected() {
+    let (router, store) = setup();
+    let fish_key = "fish-secret-do-not-return";
+    for (provider, key) in [("fish", fish_key)] {
+        let token = session(&router).await;
+        let (code, saved, no_store) = request(
+            &router,
+            Method::PUT,
+            &format!("/api/settings/providers/{provider}/key"),
+            Some(json!({"key":key})),
+            Some("http://127.0.0.1:5173"),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{saved:?}");
+        assert!(no_store);
+        assert_eq!(saved["id"], provider);
+        assert_eq!(saved["source"], "keychain");
+        assert!(!saved.to_string().contains(key));
+        let (replayed, _, _) = request(
+            &router,
+            Method::DELETE,
+            &format!("/api/settings/providers/{provider}/key"),
+            None,
+            Some("http://127.0.0.1:5173"),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(replayed, StatusCode::FORBIDDEN);
+    }
+    let (_, statuses, _) = request(
+        &router,
+        Method::GET,
+        "/api/settings/providers",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(statuses["providers"].as_array().unwrap().len(), 2);
+    assert_eq!(statuses["providers"][0]["source"], "missing");
+    assert_eq!(statuses["providers"][1]["source"], "keychain");
+    assert!(!statuses.to_string().contains(fish_key));
+    assert_eq!(
+        store.0.lock().unwrap().get(&ProviderId::Fish).unwrap(),
+        fish_key
+    );
+    let token = session(&router).await;
+    let (deleted, _, _) = request(
+        &router,
+        Method::DELETE,
+        "/api/settings/providers/fish/key",
+        None,
+        Some("http://127.0.0.1:5173"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(deleted, StatusCode::NO_CONTENT);
+    assert!(!store.0.lock().unwrap().contains_key(&ProviderId::Fish));
+    let token = session(&router).await;
+    let (denied, _, _) = request(
+        &router,
+        Method::PUT,
+        "/api/settings/providers/pexels/key",
+        Some(json!({"key":"not-supported"})),
+        Some("http://127.0.0.1:5173"),
+        Some(&token),
+    )
+    .await;
+    assert_eq!(denied, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -182,7 +256,7 @@ async fn hostile_origin_missing_token_and_replay_are_rejected_before_keychain_ac
         );
         assert!(no_store);
     }
-    assert!(store.0.lock().unwrap().is_none());
+    assert!(!store.0.lock().unwrap().contains_key(&ProviderId::Youtube));
     let (code, _, _) = request(
         &router,
         Method::PUT,
@@ -226,7 +300,7 @@ async fn rejects_malformed_or_oversized_keys_without_echoing_secrets() {
         assert!(code.is_client_error());
         assert!(!body.to_string().contains("safe-secret"));
     }
-    assert!(store.0.lock().unwrap().is_none());
+    assert!(!store.0.lock().unwrap().contains_key(&ProviderId::Youtube));
     let (code, _, _) = request(
         &router,
         Method::PUT,
@@ -236,7 +310,7 @@ async fn rejects_malformed_or_oversized_keys_without_echoing_secrets() {
         Some(&session(&router).await),
     )
     .await;
-    assert_eq!(code, StatusCode::NOT_FOUND);
+    assert_eq!(code, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

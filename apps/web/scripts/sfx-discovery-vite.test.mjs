@@ -16,14 +16,21 @@ async function request(method,url,data,deps={},headers={}){
 }
 
 test("sound API blocks cross-site access and denies unapproved network or download",async()=>{
-  let searches=0,downloads=0;
+  let searches=0,musicSearches=0,downloads=0;
   const deps={search:async()=>{searches++;return {scenes:[]};},
+    searchMusic:async()=>{musicSearches++;return {candidates:[]};},
     approve:async()=>{downloads++;return {approved:true};}};
   assert.equal((await request("POST","/suggest",{allowExternalSearch:false},deps)).status,422);
   assert.equal((await request("POST","/suggest",{allowExternalSearch:true},deps,{origin:"http://evil.test"})).status,403);
   assert.equal(searches,0);
   assert.equal((await request("POST","/suggest",{allowExternalSearch:true},deps)).status,200);
   assert.equal(searches,1);
+  assert.equal((await request("POST","/suggest-music",{query:"piano",allowExternalSearch:false},deps)).status,422);
+  assert.equal((await request("POST","/suggest-music",{query:"piano",allowExternalSearch:true},deps,
+    {origin:"http://evil.test"})).status,403);
+  assert.equal(musicSearches,0);
+  assert.equal((await request("POST","/suggest-music",{query:"piano",allowExternalSearch:true},deps)).status,200);
+  assert.equal(musicSearches,1);
   assert.equal((await request("POST","/approve",{confirmRights:false,confirmDownload:true},deps)).status,422);
   assert.equal(downloads,0);
   assert.equal((await request("POST","/approve",{confirmRights:true,confirmDownload:true},deps)).status,200);
@@ -45,13 +52,14 @@ test("supplementary sound-design edits require same-origin action and never acce
   let reads=0,writes=0;
   const deps={soundDesignRead:async ({projectId})=>{reads++;return {projectId,
     layers:[{layerId:"layer1",localPath:"/private/approved/impact.wav",assetId:"approved",title:"Impact"}],
-    ambience:{assetId:"amb",localPath:"/private/approved/rain.wav",title:"Rain"}};},
+    ambience:{assetId:"amb",localPath:"/private/approved/rain.wav",title:"Rain"},ambienceMode:"auto"};},
     soundDesignWrite:async ({projectId,action})=>{writes++;return {projectId,action};}};
   const payload={projectId:"p1",action:"upsert",shotId:"intro",assetId:"approved",sha256:"b".repeat(64)};
   const read=await request("POST","/sound-design",{projectId:"p1",action:"resolve",bundle:{}},deps);
   assert.equal(read.status,200);
   assert.equal(read.answer.layers[0].title,"Impact");
   assert.equal(read.answer.ambience.title,"Rain");
+  assert.equal(read.answer.ambienceMode,"auto","the UI must label automatic rather than pinned music");
   assert.equal(JSON.stringify(read.answer).includes("/private/approved"),false,
     "editor API returns approved cue metadata, never local audio filesystem paths");
   assert.equal(reads,1);
@@ -59,7 +67,8 @@ test("supplementary sound-design edits require same-origin action and never acce
   assert.equal((await request("POST","/sound-design",{...payload,localPath:"/etc/passwd"},deps)).status,422);
   assert.equal((await request("POST","/sound-design",{...payload,projectId:"../escape"},deps)).status,422);
   assert.equal((await request("POST","/sound-design",payload,deps)).answer.action,"upsert");
-  assert.equal(writes,1,"invalid writes never reach persistence");
+  assert.equal((await request("POST","/sound-design",{projectId:"p1",action:"auto-ambience"},deps)).answer.action,"auto-ambience");
+  assert.equal(writes,2,"invalid writes never reach persistence");
 });
 
 test("sound previews are served only from hash-verified approved bank items",async()=>{

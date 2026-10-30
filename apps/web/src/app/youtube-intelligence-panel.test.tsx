@@ -101,6 +101,7 @@ describe("YouTube Intelligence", () => {
     const requests = fakeApi(true, false);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     const collect = await screen.findByRole("button",{name:/collect now/i});
     expect(collect).toBeEnabled();
     await user.click(collect);
@@ -113,6 +114,7 @@ describe("YouTube Intelligence", () => {
     const requests=fakeApi(true);
     const user=userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     const filter = await screen.findByRole("combobox",{name:"Video performance filter"});
     expect(filter).toHaveValue("established");
     expect(await screen.findByText(/120,000/)).toBeInTheDocument();
@@ -130,6 +132,7 @@ describe("YouTube Intelligence", () => {
     fakeApi(true);
     const user = userEvent.setup();
     render(<YoutubeIntelligencePanel locale="en" onUseVideo={vi.fn(() => true)}/>);
+    await user.click(screen.getByRole("tab", {name:"Monitor"}));
     const audience = await screen.findByRole("textbox", {name:"Who is this for?"});
     await user.type(audience, " considering upgrades");
     const key = `contentgen:editorial-brief:v1:${GENERATED_WATCHLIST_ID}`;

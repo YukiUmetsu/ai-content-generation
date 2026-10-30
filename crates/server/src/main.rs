@@ -25,6 +25,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut connection = db::open(&db_path)?;
     let report = db::migrate(&mut connection)?;
+    // Media rendering is currently an in-process local worker. After a crash
+    // it cannot reclaim an orphaned attempt; reconcile before any new workers
+    // launch so the Jobs page never reports phantom running work.
+    let orphaned = contentgen_server::jobs::scheduler::reconcile_orphans(&mut connection, None)?;
     drop(connection);
     println!(
         "contentgen-server: database schema {} -> {} at {}",
@@ -32,12 +36,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         report.to_version,
         db_path.display()
     );
+    if !orphaned.is_empty() {
+        eprintln!(
+            "contentgen-server: reconciled {} interrupted job attempts",
+            orphaned.len()
+        );
+    }
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     println!("contentgen-server: listening on http://{bind}");
     let state = AppState::new(db_path);
     let collector = contentgen_server::research::market_worker::spawn(state.clone());
+    let recovery = contentgen_server::jobs::recovery_worker::spawn(state.clone());
     let result = axum::serve(listener, build_router(state)).await;
+    recovery.abort();
     collector.abort();
     result?;
     Ok(())

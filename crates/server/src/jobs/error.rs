@@ -12,6 +12,8 @@ use serde::Serialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JobsError {
+    #[error("local production worker authorization required")]
+    Forbidden,
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
 
@@ -64,6 +66,7 @@ pub enum JobsError {
 impl JobsError {
     fn status_and_code(&self) -> (StatusCode, &'static str) {
         match self {
+            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
             Self::InvalidDocument(_) | Self::Domain(_) | Self::Json(_) => {
                 (StatusCode::BAD_REQUEST, "invalid_document")

@@ -80,6 +80,25 @@ test("visual-only edit captures just changed chapter and reuses verified origina
   assert.deepEqual(await readFile(join(oldDir,"segments","segment-00000.mp4.json")),oldMeta);
   assert.deepEqual(await readFile(join(newDir,"segments","segment-00000.mp4")),oldSegment);
 });
+test("moving one pinned photo's focal point rerenders only that chapter",async t=>{
+  const root=await mkdtemp(join(tmpdir(),"contentgen-focus-regeneration-"));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const original=plan();
+  original.chapters[0].visual.stockMedia={assetType:"photo",url:"/__video_media/"+"a".repeat(64)+".jpg",
+    sha256:"a".repeat(64),focalPoint:{x:.5,y:.5}};
+  const from=join(root,"old");
+  await renderVideoSegments(config(from,original),mocks().api);
+  const revised=structuredClone(original);
+  revised.chapters[0].visual.stockMedia.focalPoint={x:.1,y:.9};
+  assert.equal(reusableChapter(original,revised,0,"b".repeat(64)),false);
+  assert.equal(reusableChapter(original,revised,1,"b".repeat(64)),true);
+  const current=mocks();
+  const outcome=await renderVideoSegments({...config(join(root,"new"),revised),reuseFrom:{
+    sourcePlan:original,buildHash:"b".repeat(64),segmentsDir:join(from,"segments")}},current.api);
+  assert.equal(current.touched.length,90);
+  assert.equal(current.touched[0],0);
+  assert.equal(outcome.reusedSegmentCount,1);
+});
 test("retimed and globally altered scene must render all frames, not reuse unsafe visuals",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-no-unsafe-reuse-"));
   t.after(()=>rm(root,{recursive:true,force:true}));
@@ -98,7 +117,7 @@ test("retimed and globally altered scene must render all frames, not reuse unsaf
   assert.equal(reusableChapter(old,durationChange,0,"b".repeat(64)),false);
   assert.equal(reusableChapter(old,old,0,"c".repeat(64)),true); // same SHA-format; caller separately checks matching built scene
 });
-test("tampered prior scene video is rejected before copy",async t=>{
+test("tampered prior scene video is redrawn without copying corrupted bytes",async t=>{
   const root=await mkdtemp(join(tmpdir(),"contentgen-tamper-scene-"));
   t.after(()=>rm(root,{recursive:true,force:true}));
   const old=plan(),from=join(root,"old");
@@ -106,7 +125,9 @@ test("tampered prior scene video is rejected before copy",async t=>{
   await writeFile(join(from,"segments","segment-00000.mp4"),"unexpected bytes");
   const revised=structuredClone(old);revised.chapters[1].visual.headline="Edit only later chapter";
   const next=mocks();
-  await assert.rejects(renderVideoSegments({...config(join(root,"new"),revised),
-    reuseFrom:{sourcePlan:old,buildHash:"b".repeat(64),segmentsDir:join(from,"segments")}},next.api),/hash mismatch/);
-  assert.equal(next.touched.length,0);
+  const result=await renderVideoSegments({...config(join(root,"new"),revised),
+    reuseFrom:{sourcePlan:old,buildHash:"b".repeat(64),segmentsDir:join(from,"segments")}},next.api);
+  assert.equal(result.reusedSegmentCount,0);
+  assert.equal(next.touched.length,180);
+  assert.notEqual((await readFile(join(root,"new","segments","segment-00000.mp4"),"utf8")),"unexpected bytes");
 });

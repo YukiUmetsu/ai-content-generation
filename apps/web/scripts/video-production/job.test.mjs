@@ -79,6 +79,30 @@ test("does not allow a duplicate beat or event identifier", () => {
   assert.equal(errorCodes(parseVideoProductionJob(events)).includes("duplicate-id"), true);
 });
 
+test("per-beat narrator/character assignments are validated and speaker identities stay stable", () => {
+  const cast = modified((j) => {
+    j.beats[0].speaker = { id: "pip", role: "character", voiceId: "pip-voice" };
+    j.beats[1].speaker = { id: "quill", role: "character", voiceId: "quill-voice" };
+    j.beats[2].speaker = { id: "pip", role: "character", voiceId: "pip-voice" };
+    return j;
+  });
+  assert.equal(parseVideoProductionJob(cast).ok, true, JSON.stringify(parseVideoProductionJob(cast).findings));
+  const mismatch = structuredClone(cast);
+  mismatch.beats[2].speaker.voiceId = "quill-voice";
+  assert.ok(errorCodes(parseVideoProductionJob(mismatch)).includes("speaker-identity-changed"));
+  for (const invalidSpeaker of [
+    { id: "bad space", role: "character", voiceId: "pip-voice" },
+    { id: 1, role: "character", voiceId: "pip-voice" },
+    { id: "pip", role: "alien", voiceId: "pip-voice" },
+    { id: "pip", role: "character", voiceId: "\nsecret" },
+    { id: "pip", role: "character", voiceId: "pip-voice", extra: "untrusted" },
+  ]) {
+    const malformed = structuredClone(cast);
+    malformed.beats[0].speaker = invalidSpeaker;
+    assert.equal(parseVideoProductionJob(malformed).ok, false, JSON.stringify(invalidSpeaker));
+  }
+});
+
 test("rejects missing payoff and orphan cue references", () => {
   const noPayoff = modified((value) => { value.events = []; return value; });
   assert.equal(errorCodes(parseVideoProductionJob(noPayoff)).includes("missing-payoff"), true);

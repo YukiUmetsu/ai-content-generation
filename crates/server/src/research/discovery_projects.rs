@@ -182,9 +182,12 @@ pub fn delete_project(db: &mut Connection, project_id: &str) -> Result<(), Disco
     }
     let has_sessions: i64 = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM content_discovery_sessions WHERE project_id=?1)",
-        [project_id], |row| row.get(0),
+        [project_id],
+        |row| row.get(0),
     )?;
-    if has_sessions != 0 { return Err(DiscoveryError::HasSavedResearch); }
+    if has_sessions != 0 {
+        return Err(DiscoveryError::HasSavedResearch);
+    }
     let tx = db.transaction()?;
     tx.execute(
         "DELETE FROM kg_node_search WHERE project_id=?1",

@@ -17,6 +17,8 @@ import { usePreferences } from "./use-preferences";
 import { ResearchModelSettings } from "./research-model-settings";
 import { PromptStudio } from "./prompt-studio";
 import { ProviderConnections } from "./provider-connections";
+import { AudioSettingsPanel } from "./audio-settings-panel";
+import { clearProjectVoiceData } from "./project-voice-favorites";
 import { ProjectDiscoveryPanel } from "./project-discovery-panel";
 import { ProjectBrandAppearancePanel } from "./project-brand-appearance-panel";
 import type {DiscoveryCandidate,GraphSource} from "@/lib/api/discovery";
@@ -125,10 +127,13 @@ function ProjectWorkspace({locale,catalog,save,onCreate,onResearchIdea,onDeleteP
                 {selected?localMessage(locale,"Selected","選択中"):localMessage(locale,"Select","選択")}
               </Button>
               <Button variant="subtle" size="icon" aria-label={"Delete "+project.name} disabled={catalog.projects.length<=1}
-                onClick={()=>{if(window.confirm("Delete project "+project.name+" and its content, assets, products, and local research history?")){
+                onClick={()=>{if(window.confirm("Delete project "+project.name+" and its content, assets, products, saved voices, and local research history?")){
                   void (async()=>{
                     if(onDeleteProject&&!(await onDeleteProject(project.id)))return;
-                    save(withoutProject(catalog,project.id));
+                    if(save(withoutProject(catalog,project.id))){
+                      // A failed catalog save must never discard project voices.
+                      try{clearProjectVoiceData(project.id);}catch{/* Browser storage may be unavailable. */}
+                    }
                   })();
                 }}}>
                 <Trash2 aria-hidden className="size-4"/>
@@ -312,9 +317,10 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
       <Tabs.List className="w-fit max-w-full" aria-label={localMessage(locale,"Settings sections","設定項目")}>
         <Tabs.Tab value={0} className="h-10">{localMessage(locale,"AI models","AI モデル")}</Tabs.Tab>
         <Tabs.Tab value={1} className="h-10">{localMessage(locale,"Connections","API 接続")}</Tabs.Tab>
-        <Tabs.Tab value={2} className="h-10">{localMessage(locale,"Appearance","表示")}</Tabs.Tab>
-        <Tabs.Tab value={3} className="h-10">{localMessage(locale,"Prompts","プロンプト")}</Tabs.Tab>
-        <Tabs.Tab value={4} className="h-10">{localMessage(locale,"Data & privacy","データとプライバシー")}</Tabs.Tab>
+        <Tabs.Tab value={2} className="h-10">{localMessage(locale,"Audio","音声")}</Tabs.Tab>
+        <Tabs.Tab value={3} className="h-10">{localMessage(locale,"Appearance","表示")}</Tabs.Tab>
+        <Tabs.Tab value={4} className="h-10">{localMessage(locale,"Prompts","プロンプト")}</Tabs.Tab>
+        <Tabs.Tab value={5} className="h-10">{localMessage(locale,"Data & privacy","データとプライバシー")}</Tabs.Tab>
       </Tabs.List>
 
       <Tabs.Panel value={0} keepMounted className="mt-0 min-w-0 space-y-3">
@@ -332,6 +338,12 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
       </Tabs.Panel>
 
       <Tabs.Panel value={2} className="mt-0 min-w-0 space-y-3">
+        <AudioSettingsPanel key={catalog.activeProjectId} projectId={catalog.activeProjectId}
+          projectName={catalog.projects.find(project=>project.id===catalog.activeProjectId)?.name??"Project"}
+          locale={locale}/>
+      </Tabs.Panel>
+
+      <Tabs.Panel value={3} className="mt-0 min-w-0 space-y-3">
         <p className="text-sm text-muted-foreground">{localMessage(locale,
           "Customize how ContentGen looks and reads on this device.",
           "この端末での ContentGen の表示と言語を設定します。")}</p>
@@ -344,14 +356,14 @@ function SettingsWorkspace({catalog,save,locale}:Pick<Props,"catalog"|"save"|"lo
         </Surface>
       </Tabs.Panel>
 
-      <Tabs.Panel value={3} className="mt-0 min-w-0 space-y-3">
+      <Tabs.Panel value={4} className="mt-0 min-w-0 space-y-3">
         <p className="text-sm text-muted-foreground">{localMessage(locale,
           "Advanced: edit generation-stage instructions when the defaults do not fit your workflow.",
           "詳細設定: 既定の設定が合わない場合、生成ステージごとの指示を編集します。")}</p>
         <Surface><PromptStudio locale={locale}/></Surface>
       </Tabs.Panel>
 
-      <Tabs.Panel value={4} className="mt-0 min-w-0 space-y-3">
+      <Tabs.Panel value={5} className="mt-0 min-w-0 space-y-3">
         <p className="text-sm text-muted-foreground">{localMessage(locale,
           "Export your local project catalog before changing devices or resetting it.",
           "端末の変更やリセットの前にローカルカタログをエクスポートできます。")}</p>

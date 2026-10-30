@@ -1,5 +1,5 @@
-/** Convert a human-approved ordered script into an editable, explicitly
- * unverified Director draft. No model inference, rights clearance or rendering. */
+/** Convert completed YouTube narration into an editable, explicitly unverified
+ * Director draft. Approval and factual review belong to publication, not preview. */
 import { createHash } from "node:crypto";
 import { compilePreproductionBundle } from "./preproduction.mjs";
 
@@ -46,18 +46,19 @@ function splitShortNarration(value,count){
 }
 export function compileApprovedScriptDirector({productionId,script,evidence,sources,storyboard}){
   if(!/^production-[a-f0-9]{24}$/u.test(productionId??"")||
-    script?.status!=="approved"||script?.input?.productionId!==productionId||
+    !["draft","approved"].includes(script?.status)||script?.input?.productionId!==productionId||
     script?.input?.platform!=="youtube"||
     !Array.isArray(script?.sections)||script.sections.length<1||script.sections.length>MAX_SCRIPT_SECTIONS||
     script.sections.some(section=>!isScriptSectionId(section?.id)||(section.role!==undefined&&!SCRIPT_ROLES.includes(section.role)))||new Set(script.sections.map(section=>section.id)).size!==script.sections.length)
-    throw Error("Choose an approved YouTube script belonging to this production before opening Director.");
+    throw Error("Complete the YouTube script for this production before generating a draft.");
   const input=script.input;
   if(!safeText(input.title,200)||!safeText(input.viewerQuestion,240)||
     !safeText(input.audience,180)||!["en","ja"].includes(input.locale))
     throw Error("The approved script's title, question, language or audience is invalid.");
   if(storyboard!==undefined){
     if(!safeText(script.updatedAt,60)||!Array.isArray(storyboard?.assumptions)||
-      !storyboard.assumptions.includes(`Approved script revision: ${script.updatedAt}.`)||
+      ![ `Script revision: ${script.updatedAt}.`, `Approved script revision: ${script.updatedAt}.` ]
+        .some(note=>storyboard.assumptions.includes(note))||
       !Array.isArray(storyboard.beats)||storyboard.beats.length!==script.sections.length)
       throw Error("The storyboard no longer matches the approved script revision. Update its outline first.");
     for(let index=0;index<script.sections.length;index++){
@@ -69,8 +70,8 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
         throw Error("The edited storyboard conflicts with its approved narration or citations. Reconcile it before Director import.");
     }
   }
-  if(!Array.isArray(evidence)||!evidence.length||!Array.isArray(sources)||!sources.length)
-    throw Error("Captured evidence and source records are needed to build an editable Director draft.");
+  if(!Array.isArray(evidence)||!Array.isArray(sources))
+    throw Error("Invalid research metadata. Retry with the saved script.");
   if(evidence.length>40||sources.length>40)throw Error("Too many captured passages for one Director draft.");
   const bySource=new Map(sources.map(source=>[source.id,source]));
   const selectedClaims=new Map();const selectedSources=new Map();
@@ -83,7 +84,7 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
       !Array.isArray(section.sourceRefs)||
       section.claimRefs.length>40||section.sourceRefs.length>40)
       throw Error("Each approved script section needs narration and linked captured claims before Director import.");
-    if(!section.claimRefs.length&&!section.sourceRefs.length){
+    if(!section.claimRefs.length&&!section.sourceRefs.length||!evidence.length||!sources.length){
       const claimId=`cl_manual_${sectionClaims.length+1}`;
       selectedClaims.set(claimId,{id:claimId,text:`Uncited manual narration requires factual review: ${flat(section.text).slice(0,1000)}`,status:"unverified",sourceRefs:[]});
       sectionClaims.push([claimId]);hasManualClaims=true;continue;
@@ -128,7 +129,7 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
   }
   // The dossier still needs real captured research context. An uncited manual
   // paragraph gets no invented source link, even when this context is available.
-  if(!selectedSources.size){
+  if(!selectedSources.size&&evidence.length&&sources.length){
     const passage=evidence.find(item=>typeof item?.quote==="string"&&item.quote.length>=10&&bySource.has(item.sourceId));
     const source=passage&&bySource.get(passage.sourceId);
     if(!source||!safeText(source.title,240)||!Number.isSafeInteger(source.observedAt)||source.observedAt<946684800||source.observedAt>4102444800)

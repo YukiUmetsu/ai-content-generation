@@ -12,7 +12,7 @@ import type { MediaDocument } from "@/components/media/document";
 import { createCoverArtwork } from "./cover-art";
 import type { InfographicLayout, InfographicSource, OutputProfileId, ProcessStep, TemplateId } from "@/components/infographic/types";
 import { normalizeTarget, platformSlug, sourceSignature,
-  type PlatformAsset, type PlatformOptimizationInput, type PlatformScriptSection, type PlatformTarget } from "./model";
+  type PlatformAsset, type PlatformBrandColors, type PlatformOptimizationInput, type PlatformScriptSection, type PlatformTarget } from "./model";
 
 export interface GeneratedArtwork {
   id: string;
@@ -32,7 +32,7 @@ const artProfile: Record<PlatformTarget, OutputProfileId> = {
   instagram: "social-portrait", facebook: "social-square", blog: "youtube-landscape",
 };
 // Avoid repeating several costly layouts when Production re-renders its
-// platform input. Bounded, in-memory only; approval is checked before lookup.
+// platform input. Bounded, in-memory only; draft availability is checked before lookup.
 const artworkCache = new Map<string, GeneratedArtwork[]>();
 
 function sectionsFor(input: PlatformOptimizationInput, platform: PlatformTarget): readonly PlatformScriptSection[] {
@@ -42,7 +42,23 @@ function sectionsFor(input: PlatformOptimizationInput, platform: PlatformTarget)
 }
 
 export function canExportPlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget): boolean {
-  return Boolean(input.approvedPlatforms?.some((platform) => normalizeTarget(platform) === target));
+  // This gate concerns private, local draft assets. Publication readiness is
+  // evaluated independently by reviewPlatformPackage; a draft need not be
+  // approved before its owner can preview or download it.
+  return sectionsFor(input,target).some(section=>section.text.trim().length>0);
+}
+
+export interface CoverArtOptions {imageDataUri?:string;headlines?:readonly [string,string,string];
+  variantColors?:readonly (PlatformBrandColors|undefined)[]}
+function validateCoverImage(uri:string|undefined):void{
+  if(uri!==undefined && (uri.length>1_450_000 || !/^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/]+={0,2}$/iu.test(uri)))
+    throw Error("Thumbnail image must be an embedded PNG, JPEG or WebP under 1 MB.");
+}
+function imageIdentity(uri:string|undefined):string{
+  if(!uri)return "none";
+  let hash=2166136261;
+  for(let i=0;i<uri.length;i++)hash=Math.imul(hash^uri.charCodeAt(i),16777619)>>>0;
+  return `${uri.length}:${hash.toString(16)}`;
 }
 
 function excerpt(text: string, limit: number): string {
@@ -50,6 +66,41 @@ function excerpt(text: string, limit: number): string {
   if (single.length <= limit) return single;
   const fragment = single.slice(0, limit - 1);
   return `${fragment.slice(0, fragment.lastIndexOf(" ") > limit / 2 ? fragment.lastIndexOf(" ") : fragment.length).trimEnd()}…`;
+}
+
+/** Three different script-grounded promises; no fabricated figures or facts. */
+export function suggestCoverHeadlines(title:string,sections:readonly PlatformScriptSection[]):[string,string,string]{
+  const normalized=(value:string)=>excerpt(value.replace(/\s+/gu," "),58);
+  const primary=normalized(title)||"An important question";
+  const headings=sections.map(section=>normalized(section.heading)).filter(Boolean);
+  const used=new Set([primary.toLocaleLowerCase()]);
+  const pick=(alternatives:string[])=>{
+    for(const proposal of alternatives){
+      const candidate=normalized(proposal);
+      if(candidate&&!used.has(candidate.toLocaleLowerCase())){used.add(candidate.toLocaleLowerCase());return candidate;}
+    }
+    return normalized(`Explore: ${primary}`);
+  };
+  const second=pick([...headings,`Inside: ${primary}`]);
+  const third=pick([...headings.slice(1),`Beyond ${second}`,`Behind ${primary}`]);
+  return [primary,second,third];
+}
+export function suggestCoverHeadlinesFor(input:PlatformOptimizationInput,platform:PlatformTarget):[string,string,string]{
+  return suggestCoverHeadlines(input.title,sectionsFor(input,platform));
+}
+
+/** Deterministic alternative copy from actual script sections only. One concept
+ * can advance without modifying the other two or introducing invented facts. */
+export function regenerateCoverHeadline(input:PlatformOptimizationInput,platform:PlatformTarget,
+  iteration:number,otherHeadlines:readonly string[]):string{
+  const sections=sectionsFor(input,platform);
+  const pool=[...sections.map(section=>section.heading),...sections.map(section=>section.text),
+    input.title,`Inside: ${input.title}`,`A closer look: ${input.title}`]
+    .map(value=>excerpt(value,52).trim()).filter(Boolean);
+  const distinct=[...new Map(pool.map(value=>[value.toLocaleLowerCase(),value])).values()]
+    .filter(value=>!otherHeadlines.some(other=>other.toLocaleLowerCase()===value.toLocaleLowerCase()));
+  if(!distinct.length)return excerpt(input.title,52);
+  return distinct[(iteration-1)%distinct.length];
 }
 
 function sourceFor(title: string, sections: readonly PlatformScriptSection[], id: string, language: string,
@@ -95,9 +146,14 @@ function makeArtwork(label: string, filename: string, id: string, title: string,
 }
 
 /** Three distinct, downloadable non-blog covers; blog gets an article hero and up to three substantive diagrams. */
-export function generatePlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget, title: string): GeneratedArtwork[] {
+export function generatePlatformArtwork(input: PlatformOptimizationInput, target: PlatformTarget, title: string,
+  options:CoverArtOptions={}): GeneratedArtwork[] {
+  validateCoverImage(options.imageDataUri);
+  if(options.headlines&&(options.headlines.length!==3||options.headlines.some(headline=>
+    typeof headline!=="string"||!headline.trim()||headline.length>110)))
+    throw Error("Three nonempty thumbnail headlines under 110 characters are required.");
   if (!canExportPlatformArtwork(input, target)) return [];
-  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}`;
+  const key = `${input.productionId}:${target}:${sourceSignature(input, target)}:${title}:${imageIdentity(options.imageDataUri)}:${JSON.stringify(options.headlines??null)}:${JSON.stringify(options.variantColors??null)}`;
   const cached = artworkCache.get(key);
   if (cached) return cached;
   const sections = sectionsFor(input, target).filter((section) => section.text.trim());
@@ -106,7 +162,9 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
   // generated image follows the editable destination title.
   const safeName = platformSlug(input.title).slice(0, 58);
   if (target !== "blog") {
-    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName);
+    const headlines=options.headlines??suggestCoverHeadlines(title,sections);
+    const result = createCoverArtwork(title,sections,artProfile[target],input.brandColors,target,safeName,
+      options.imageDataUri,headlines,options.variantColors);
     artworkCache.set(key, result);
     if (artworkCache.size > 16) artworkCache.delete(artworkCache.keys().next().value!);
     return result;
@@ -130,7 +188,7 @@ export function generatePlatformArtwork(input: PlatformOptimizationInput, target
 /** Blog-ready Markdown with image references and article prose; downloaded PNGs go beside it. */
 export function generateBlogMarkdown(input: PlatformOptimizationInput, title: string, artworks: readonly GeneratedArtwork[],
   summary = ""): string {
-  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Approve the current blog script before exporting an article.");
+  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Write a blog section before exporting an article draft.");
   const sections = sectionsFor(input, "blog").filter((section) => section.text.trim());
   const paragraphs = [`# ${title.trim()}`, summary.trim(), artworks[0] ? `![Article overview](${artworks[0].filename})` : ""];
   const diagrams = artworks.slice(1);
@@ -161,7 +219,7 @@ export function blogSources(input: PlatformOptimizationInput): {url: string; rev
 /** Offline, self-contained illustrated HTML. Escape everything originating in a script. */
 export function generateBlogHtml(input: PlatformOptimizationInput, title: string, summary: string,
   description: string, artworks: readonly GeneratedArtwork[]): string {
-  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Approve the current blog script before exporting an article.");
+  if (!canExportPlatformArtwork(input, "blog")) throw new Error("Write a blog section before exporting an article draft.");
   const escape = (value: string) => value.replace(/&/gu, "&amp;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;").replace(/"/gu, "&quot;");
   const blocks = (value: string) => value.trim().split(/\n\s*\n/gu).filter(Boolean).map((block) => {
     const heading = block.match(/^#{2,4}\s+([^\n]+)$/u);

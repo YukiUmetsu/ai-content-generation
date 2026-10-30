@@ -45,3 +45,29 @@ test("orphan event, duplicate event, empty/overlap speech, invalid fps and negat
   assert.throws(() => buildSampleTimeline(beats, { fps, events: [events[0]] }), /orphan|unregistered/i);
   assert.throws(() => writeSrt(buildSampleTimeline(beats, { fps, events }), { intro: "yes" }), /missing.*text/i);
 });
+
+test("short visual scenes gain only the silence needed to occupy a frame", async () => {
+  const {fitSceneDurations} = await import('./timeline.mjs');
+  const source = [{id:'opening',samples:48,pauseAfterMs:0,eventIds:[]},
+    {id:'ending',samples:48000,pauseAfterMs:0,eventIds:[]}];
+  const fitted=fitSceneDurations(source,{fps});
+  const timeline=buildSampleTimeline(fitted.beats,{fps,events:[]});
+  assert.equal(source[0].pauseAfterMs,0);
+  assert.equal(fitted.beats[0].samples,48);
+  assert.equal(fitted.adjustments[0].id,'opening');
+  assert.ok(fitted.adjustments[0].addedPauseMs>0);
+  assert.ok(timeline.beats[0].pauseEndFrame>timeline.beats[0].startFrame);
+  assert.equal(timeline.beats[1].endSample-timeline.beats[1].startSample,48000);
+  assert.equal(timeline.beats[0].pauseEndSample-timeline.beats[0].endSample,fitted.adjustments[0].addedPauseMs*48);
+});
+
+test("ordinary measured narration is not retimed", async () => {
+  const {fitSceneDurations} = await import('./timeline.mjs');
+  assert.deepEqual(fitSceneDurations(beats,{fps}),{beats,adjustments:[]});
+});
+
+test("scene fitting refuses invalid measured audio and a silence request over the bound", async () => {
+  const {fitSceneDurations} = await import('./timeline.mjs');
+  assert.throws(()=>fitSceneDurations([{id:'bad',samples:0,pauseAfterMs:0}],{fps}),/bad/);
+  assert.throws(()=>fitSceneDurations([{id:'tiny',samples:1,pauseAfterMs:60000}],{fps:{num:1,den:1000}}),/tiny.*silence limit/i);
+});

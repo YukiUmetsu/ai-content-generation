@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PromptStudio } from "./prompt-studio";
 import { VideoDirectorWorkspace } from "./video-director-workspace";
+import { addVoiceFavorite,defaultProjectVoices,saveProjectVoices } from "./project-voice-favorites";
 import * as projectStorage from "@/features/storyboard-planner/model/project-storage";
 
 vi.mock("./live-renderer-scene",()=>({default:({frame}:{frame:number})=>
@@ -18,7 +19,14 @@ function localMediaCatalogResponse(url:unknown):Response|null {
   return result?new Response(JSON.stringify(result),{status:200}):null;
 }
 
-afterEach(()=>{vi.restoreAllMocks();});
+afterEach(()=>{
+  vi.restoreAllMocks();
+  // Isolate durable Director drafts between tests without clearing unrelated app preferences.
+  for(let i=localStorage.length-1;i>=0;i--){
+    const key=localStorage.key(i);
+    if(key?.startsWith("contentgen:director-session:"))localStorage.removeItem(key);
+  }
+});
 describe("AI Prompt Studio",()=>{
   it("edits and saves a custom hook prompt while leaving all other stage overrides intact",async()=>{
     const actions:Array<{path:string;data:unknown}>=[];
@@ -52,8 +60,8 @@ describe("Video Director selected-shot workbench",()=>{
   const plan={story:{question:"Why?"},shots:[
     {id:"hook",purpose:"hook",visualChange:"Show a house.",onScreenText:"Why?"},
     {id:"middle",purpose:"explain",visualChange:"Show costs.",onScreenText:"What costs?"}],
-    sound:[{shotId:"hook",narration:"How much does this really cost?",sfxIntent:null},
-      {shotId:"middle",narration:"There are multiple costs.",sfxIntent:"soft click"}],
+    sound:[{shotId:"hook",narration:"How much does this really cost?",sfxIntent:null,pauseAfterMs:160},
+      {shotId:"middle",narration:"There are multiple costs.",sfxIntent:"soft click",pauseAfterMs:160}],
     teachingSequences:[{phases:[
       {kind:"problem",shotId:"hook",visualAction:"Reveal the house"},
       {kind:"mechanism",shotId:"middle",visualAction:"Reveal the costs"}]}]};
@@ -70,6 +78,308 @@ describe("Video Director selected-shot workbench",()=>{
     curiosityQuestion:"What happens when costs build?",narration:"Watch these costs appear one at a time.",
     firstVisual:"Stack the cost layers",onScreenText:"Price, then costs",
     payoffConnection:"Show total",sfxIntent:"tick"}];
+  it("authors three sequential dialogue beats over one existing scene and sends one surgical edit",async()=>{
+    const edits:Array<{shotId:string;changes:Record<string,unknown>}> = [];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(String(url).endsWith("/edit")){
+        const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;shotId:string;changes:Record<string,unknown>};
+        edits.push({shotId:body.shotId,changes:body.changes});
+        const updated=structuredClone(body.bundle);
+        const sound=updated.plan.sound.find(entry=>entry.shotId===body.shotId)! as Record<string,unknown>;
+        sound.speechTurns=body.changes.speechTurns;
+        sound.narration=(body.changes.speechTurns as Array<{narration:string}>).map(turn=>turn.narration).join(" ");
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:updated,
+          impacts:{changedFields:["speechTurns"],speechRegenerate:[body.shotId],visualRerender:[],
+            sfxRemix:[],downstreamRetiming:[],timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+      }
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No preview in this test"}),{status:503});
+      throw Error("Unexpected request "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"conversation.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    await user.click(screen.getByRole("button",{name:"Conversation + narration"}));
+    expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
+    await user.clear(screen.getByRole("textbox",{name:"Dialogue line 2"}));
+    await user.type(screen.getByRole("textbox",{name:"Dialogue line 2"}),"Let me describe the second step.");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toHaveLength(1));
+    expect(edits[0].shotId).toBe("middle");
+    expect(Object.keys(edits[0].changes)).toEqual(["speechTurns"]);
+    expect((edits[0].changes.speechTurns as Array<{narration:string}>)[1].narration).toBe("Let me describe the second step.");
+    expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
+  });
+  it("persists a chosen walking action on one character dialogue beat",async()=>{
+    const edited=structuredClone(bundle);
+    const voice="a".repeat(32);
+    const turns=[
+      {id:"pip",narration:"Pip walks into the scene.",pauseAfterMs:80,
+        speaker:{id:"pip",role:"character",provider:"fish",voiceId:voice}},
+      {id:"narrate",narration:"The narrator describes the movement.",pauseAfterMs:0}
+    ];
+    Object.assign(edited.plan.sound[1],{speechTurns:turns,narration:turns.map(turn=>turn.narration).join(" ")});
+    const edits:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(String(url).endsWith("/edit")){
+        const body=JSON.parse(String(opts?.body)) as {changes:Record<string,unknown>};
+        edits.push(body.changes);
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:edited,
+          impacts:{changedFields:["speechTurns"],speechRegenerate:[],visualRerender:[],
+            sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}));
+      }
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"Fixture"}),{status:503});
+      throw Error("Unexpected request "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle:edited})],"actions.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    await user.type(screen.getByRole("textbox",{name:"Character action line 1"}),"walk");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toHaveLength(1));
+    expect((edits[0].speechTurns as Array<{animationAction?:string}>)[0].animationAction).toBe("walk");
+  });
+  it("writes scene cast to SQLite-backed project storage and reloads the same speaker without a browser draft",async()=>{
+    const productionId="production-"+"7".repeat(24),sourceHash="b".repeat(64);
+    const original={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sourceHash};
+    const handoffKey="contentgen:director-approved-script:v1:"+productionId;
+    sessionStorage.setItem(handoffKey,JSON.stringify({productionId,scriptRevision:"first",
+      sourcePrefix:"approved-script:first:",dossier,bundle:original}));
+    let stored:unknown=null,revision=0,edits=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,init)=>{
+      const path=String(url),body=init?.body?JSON.parse(String(init.body)) as Record<string,unknown>:{};
+      if(path.includes("/api/scene-cast/")){
+        if(init?.method==="PUT"){
+          const request=body as {revision:number;cast:unknown};
+          if(request.revision!==revision)return new Response(JSON.stringify({error:{message:"stale"}}),{status:409});
+          stored=request.cast;revision++;
+        }
+        return new Response(JSON.stringify({revision,cast:stored}),{status:200});
+      }
+      if(path.endsWith("/edit")){
+        edits++;
+        const data=body as {bundle:typeof original;shotId:string;changes:{speaker?:unknown}};
+        const revised=structuredClone(data.bundle) as typeof original & {plan:{sound:Array<Record<string,unknown>>}};
+        const sound=revised.plan.sound.find(x=>x.shotId===data.shotId)! as Record<string,unknown>;
+        if(data.changes.speaker)sound.speaker=data.changes.speaker;
+        else delete sound.speaker;
+        revised.planSha256="c".repeat(64);
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:revised,impacts:{changedFields:["speaker"],
+          speechRegenerate:[data.shotId],visualRerender:[],sfxRemix:[],downstreamRetiming:[],
+          timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+      }
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({error:"Unconfigured test renderer"}),{status:503});
+      throw Error("Unexpected request "+path);
+    });
+    const user=userEvent.setup();
+    const first=render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    await screen.findByRole("combobox",{name:"Scene speaker"});
+    await waitFor(()=>expect(screen.queryByText(/Checking saved scene voices/)).not.toBeInTheDocument());
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene speaker"}),"pip");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(revision).toBe(1));
+    expect(stored).toMatchObject({projectId:productionId,sourcePlanSha256:sourceHash,
+      assignments:[{shotId:"hook",speaker:{id:"pip",role:"character",voiceId:"6ab4c6b0f37f4243a99046478647be94"}}]});
+    first.unmount();
+    const sessionId="approved-script:first:"+sourceHash;
+    const savedKey="contentgen:director-session:v1:"+productionId+":"+sessionId;
+    localStorage.removeItem(savedKey);sessionStorage.removeItem(savedKey);
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    await waitFor(()=>expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("pip"));
+    expect(edits).toBeGreaterThanOrEqual(2);
+    sessionStorage.removeItem(handoffKey);
+  });
+  it("never overwrites divergent browser and server scene casts without an explicit choice",async()=>{
+    const productionId="production-"+"8".repeat(24),sha="b".repeat(64);
+    const original={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sha};
+    const sourceId="approved-script:first:"+sha;
+    const sessionKey="contentgen:director-approved-script:v1:"+productionId;
+    const localKey="contentgen:director-session:v1:"+productionId+":"+sourceId;
+    const savedBrowser=structuredClone(original);
+    (savedBrowser.plan.sound[0] as Record<string,unknown>).speaker={id:"quill",role:"character",provider:"fish",voiceId:"b".repeat(32)};
+    savedBrowser.planSha256="c".repeat(64);
+    sessionStorage.setItem(sessionKey,JSON.stringify({productionId,scriptRevision:"first",sourcePrefix:"approved-script:first:",dossier,bundle:original}));
+    localStorage.setItem(localKey,JSON.stringify({version:2,savedAt:Date.now(),artifactId:sourceId,
+      dossier,sourceBundle:original,bundle:savedBrowser}));
+    const server={schemaVersion:1,projectId:productionId,sourcePlanSha256:sha,assignments:[{shotId:"hook",
+      speaker:{id:"pip",role:"character",provider:"fish",voiceId:"a".repeat(32)}}]};
+    let writes=0;
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const path=String(url);
+      if(path.includes("/api/scene-cast/")){
+        if(opts?.method==="PUT")writes++;
+        return new Response(JSON.stringify({revision:2,cast:server}),{status:200});
+      }
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({error:"Renderer disabled"}),{status:503});
+      throw Error("Unexpected server call "+path);
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    expect(await screen.findByRole("button",{name:"Use saved scene cast"})).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("quill");
+    expect(writes).toBe(0);
+    expect(screen.getByRole("button",{name:"Keep this browser cast"})).toBeEnabled();
+    sessionStorage.removeItem(sessionKey);localStorage.removeItem(localKey);
+  });
+  it("blocks an automatic first draft when the saved scene cast server is unreachable",async()=>{
+    const productionId="production-"+"9".repeat(24),sourceHash="b".repeat(64);
+    const handoffKey="contentgen:director-approved-script:v1:"+productionId;
+    sessionStorage.setItem(handoffKey,JSON.stringify({productionId,scriptRevision:"first",
+      sourcePrefix:"approved-script:first:",dossier,
+      bundle:{...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:sourceHash}}));
+    const requests:string[]=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+      const path=String(url);requests.push(path);
+      if(path.includes("/api/scene-cast/"))throw Error("offline");
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({error:"Renderer disabled"}),{status:503});
+      throw Error("Unexpected network request "+path);
+    });
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="draft"/>);
+    expect(await screen.findByRole("button",{name:"Retry voice sync"})).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Could not reach saved scene voices/i);
+    expect(screen.getByText(/Retry saved scene voice sync above before rendering/i)).toBeInTheDocument();
+    expect(requests.some(path=>path.endsWith("/api/contentgen-video/start"))).toBe(false);
+    sessionStorage.removeItem(handoffKey);
+  });
+  it("assigns a saved character voice to a scene, persists the edit and restores it after switching scenes",async()=>{
+    const castId="director-cast-project";
+    const castVoice="b".repeat(32);
+    saveProjectVoices(addVoiceFavorite(defaultProjectVoices(castId),{
+      provider:"fish",voiceId:castVoice,name:"Conversational Pip",gender:"male",situation:"dialogue",language:"en"
+    }));
+    const edits:Array<{shotId:string;changes:Record<string,unknown>}> = [];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(String(url).endsWith("/edit")){
+        const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;shotId:string;changes:Record<string,unknown>};
+        edits.push({shotId:body.shotId,changes:body.changes});
+        const revised=structuredClone(body.bundle);
+        const sound=revised.plan.sound.find(entry=>entry.shotId===body.shotId)! as Record<string,unknown>;
+        if(body.changes.speaker)sound.speaker=body.changes.speaker;
+        else delete sound.speaker;
+        return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:revised,
+          impacts:{changedFields:["speaker"],speechRegenerate:[body.shotId],visualRerender:[],sfxRemix:[],
+            downstreamRetiming:[body.shotId],timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+      }
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      throw Error("Unexpected call: "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en" projectId={castId}/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"cast.json",{type:"application/json"})]}});
+    await screen.findByText("Video project loaded");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene speaker"}),"pip");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Character voice for scene"}),`fish:${castVoice}`);
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toHaveLength(1));
+    expect(edits[0]).toEqual({shotId:"hook",changes:{speaker:{id:"pip",role:"character",provider:"fish",voiceId:castVoice}}});
+    await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("");
+    await user.click(screen.getByRole("button",{name:/Scene 1: Why\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene speaker"})).toHaveValue("pip");
+    expect(screen.getByRole("combobox",{name:"Character voice for scene"})).toHaveValue(`fish:${castVoice}`);
+    localStorage.removeItem("contentgen:project-voice-favorites:v1:"+castId);
+  });
+  it("uses an embedded region and notifies Production before a scene edit can be lost",async()=>{
+    const productionId="production-"+"f".repeat(24);
+    sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
+      productionId,scriptRevision:"2026-10-28T00:00:00Z",sourcePrefix:"approved-script:",
+      dossier,bundle:{...bundle,researchSha256:"a".repeat(64),planSha256:"b".repeat(64)}}));
+    const changed=vi.fn();
+    const view=render(<VideoDirectorWorkspace locale="en" projectId={productionId} embedded onUnsavedChange={changed}/>);
+    const field=await screen.findByRole("textbox",{name:"Edit on-screen text"});
+    expect(screen.getByRole("region",{name:"Video editing"})).toBeInTheDocument();
+    expect(screen.queryByRole("heading",{name:"Video Director"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button",{name:"Start another project"})).not.toBeInTheDocument();
+    fireEvent.change(field,{target:{value:"Why does the price change?"}});
+    await waitFor(()=>expect(changed).toHaveBeenCalledWith(true));
+    view.unmount();
+    expect(changed).toHaveBeenLastCalledWith(false);
+    sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
+  });
+  it("renders only the selected saved scene as a playable silent MP4",async()=>{
+    const requests:Array<{url:string;body:Record<string,unknown>}> = [];
+    const previewId="123e4567-e89b-42d3-a456-426614174000";
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const path=String(url),body=opts?.body?JSON.parse(String(opts.body)) as Record<string,unknown>:{};
+      requests.push({url:path,body});
+      const catalog=localMediaCatalogResponse(url);
+      if(catalog)return catalog;
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({
+        kind:"live-renderer-preview/v1",schemaVersion:1,renderPlanSha256:"a".repeat(64),
+        plan:{kind:"general-explainer-visual-plan",schemaVersion:1,
+          manifest:{schemaVersion:1,id:"test",width:1920,height:1080,durationFrames:90,
+            fps:{num:30,den:1},preset:"youtube"},
+          chapters:[{id:"beat-1",startFrame:0,endFrame:45,visual:{items:["A","B"]}},
+            {id:"beat-2",startFrame:45,endFrame:90,visual:{items:["C","D"]}}],events:{}},
+        shotMap:[{shotId:"hook",beatId:"beat-1",startFrame:0,endFrame:45},
+          {shotId:"middle",beatId:"beat-2",startFrame:45,endFrame:90}],
+        timing:{basis:"estimated-text-only",spokenWpm:145,measuredNarration:false,note:""},visualLimits:[]
+      }),{status:200});
+      if(path.endsWith("/scene-clip/start"))return new Response(JSON.stringify({started:true,id:previewId}),{status:202});
+      if(path.endsWith("/scene-clip/status"))return new Response(JSON.stringify({state:"done",shotId:"middle",
+        message:"This scene's silent MP4 is ready.",
+        videoUrl:`/api/contentgen-video/scene-clip/media/${previewId}/video.mp4`}),{status:200});
+      throw Error("Unexpected network request "+path);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"selected-scene.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    const renderButton=await screen.findByRole("button",{name:"Render this scene MP4"});
+    await user.click(renderButton);
+    await waitFor(()=>expect(requests.some(item=>item.url.endsWith("/scene-clip/start")&&
+      item.body.shotId==="middle")).toBe(true));
+    const video=await screen.findByLabelText("Selected scene MP4 preview");
+    expect(video).toHaveAttribute("src",`/api/contentgen-video/scene-clip/media/${previewId}/video.mp4`);
+    expect(screen.getByText(/complete draft adds narration, sound/i)).toBeInTheDocument();
+  });
+  it("opens the full narrated draft directly from a saved scene edit",async()=>{
+    const calls:string[]=[],starts:Array<Record<string,unknown>>=[];
+    const editedBundle={...bundle,plan:{...bundle.plan,shots:bundle.plan.shots.map((shot,index)=>
+      index===0?{...shot,onScreenText:"Why? today"}:shot)}};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      const path=String(url);calls.push(path);
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      if(path.endsWith("/edit"))return new Response(JSON.stringify({kind:"preproduction-edit/v1",
+        bundle:editedBundle,impacts:{changedFields:["onScreenText"],speechRegenerate:[],visualRerender:["hook"],
+          sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+      if(path.endsWith("/plan"))return new Response(JSON.stringify({job:{beats:[{id:"beat-1",narration:"Hello"}]}}),{status:200});
+      if(path.endsWith("/check"))return new Response(JSON.stringify({report:{ready:true,findings:[]}}),{status:200});
+      if(path.endsWith("/start")){
+        starts.push(JSON.parse(String(opts?.body)) as Record<string,unknown>);
+        return new Response(JSON.stringify({started:true,jobId:"job-edited-film"}),{status:202});
+      }
+      if(path.endsWith("/status"))return new Response(JSON.stringify({state:"done",phase:"review",
+        message:"Narrated draft finished",jobId:"job-edited-film",
+        mediaUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4",
+        visualCoverage:{sceneCount:2,reviewStillCount:3,mediaDeclarationCounts:{stockVideo:1,stockPhoto:0,kumikiOnly:1},
+          scenesWithoutStockVideo:["beat-2"],missingStockVideoShotIds:["middle"]}}),{status:200});
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({kind:"live-renderer-preview/v1",
+        sourcePlanSha256:"a".repeat(64),plan:{chapters:[]},shotMap:[]}),{status:200});
+      throw Error("Unexpected request "+path+" "+String(opts?.method));
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scene-project.json",{type:"application/json"})]}});
+    await screen.findByRole("button",{name:"Generate updated draft"});
+    const text=screen.getByRole("textbox",{name:"Edit on-screen text"});
+    await user.type(text," today");
+    await user.click(screen.getByRole("button",{name:"Save & generate draft"}));
+    expect(screen.getByRole("heading",{name:"Preview & produce your draft"})).toBeInTheDocument();
+    await waitFor(()=>expect(calls.some(path=>path.endsWith("/plan"))).toBe(true));
+    expect(await screen.findByRole("link",{name:"Download MP4"})).toHaveAttribute("href",
+      "/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4");
+    expect(starts).toHaveLength(1);
+    expect((starts[0]?.bundle as typeof editedBundle).plan.shots[0].onScreenText).toBe("Why? today");
+    expect(calls.findIndex(path=>path.endsWith("/edit"))).toBeLessThan(calls.findIndex(path=>path.endsWith("/start")));
+    await user.click(await screen.findByRole("button",{name:"Find footage for scene 2"}));
+    expect(screen.getByRole("heading",{name:"Find the right visuals"})).toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:"Visual asset scene"})).toHaveValue("middle");
+    expect(calls.some(path=>path.endsWith("/suggest"))).toBe(false);
+  });
   it("opens an approved script's visual shortcut at the rendered scene editor",async()=>{
     const productionId="production-"+"b".repeat(24);
     sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
@@ -86,9 +396,46 @@ describe("Video Director selected-shot workbench",()=>{
       throw Error("Unexpected request");
     });
     render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
-    expect(await screen.findByRole("heading",{name:"Preview & produce your draft"})).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/04 Preview & Export/})).toHaveAttribute("aria-current","step");
+    expect(await screen.findByRole("heading",{name:"Scene editor"})).toBeInTheDocument();
+    expect(screen.getByRole("button",{name:/01 Storyboard/})).toHaveAttribute("aria-current","step");
     expect(screen.queryByRole("heading",{name:"Find the right visuals"})).not.toBeInTheDocument();
+    sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
+  });
+  it("binds a saved production's updated MP4 to the edited plan revision, not its earlier source",async()=>{
+    const productionId="production-"+"c".repeat(24);
+    const original={...bundle,researchSha256:"a".repeat(64),planSha256:"b".repeat(64)};
+    const edited={...original,planSha256:"c".repeat(64),plan:{...plan,
+      shots:plan.shots.map((shot,index)=>index===0?{...shot,onScreenText:"Why now?"}:shot)}};
+    sessionStorage.setItem("contentgen:director-approved-script:v1:"+productionId,JSON.stringify({
+      productionId,scriptRevision:"2026-10-28T00:00:00Z",sourcePrefix:"approved-script:",
+      dossier,bundle:original}));
+    const starts:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(input,init)=>{
+      const path=String(input),catalog=localMediaCatalogResponse(input);
+      if(catalog)return catalog;
+      if(path.includes("/api/scene-cast/"))return new Response(JSON.stringify({revision:0,cast:null}),{status:200});
+      if(path.endsWith("/edit"))return new Response(JSON.stringify({kind:"preproduction-edit/v1",bundle:edited,
+        impacts:{changedFields:["onScreenText"],speechRegenerate:[],visualRerender:["hook"],
+          sfxRemix:[],downstreamRetiming:[],timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+      if(path.endsWith("/live-preview"))return new Response(JSON.stringify({kind:"live-renderer-preview/v1",
+        sourcePlanSha256:"a".repeat(64),plan:{chapters:[]},shotMap:[]}),{status:200});
+      if(path.includes(`/status/${productionId}`))return new Response(JSON.stringify({state:"idle",phase:"idle",message:""}),{status:200});
+      if(path.endsWith(`/version-policy/${productionId}`))return new Response(JSON.stringify({requiresConfirmation:false,completedVersions:0}),{status:200});
+      if(path.endsWith("/plan"))return new Response(JSON.stringify({job:{beats:[{id:"beat-1",narration:"Hello"}]}}),{status:200});
+      if(path.endsWith("/check"))return new Response(JSON.stringify({report:{ready:true,findings:[]}}),{status:200});
+      if(path.endsWith("/start")){starts.push(JSON.parse(String(init?.body)) as Record<string,unknown>);
+        return new Response(JSON.stringify({started:true,jobId:"job-edited-plan"}),{status:202});}
+      if(path.endsWith("/status"))return new Response(JSON.stringify({state:"done",phase:"review",
+        message:"Narrated MP4 ready",mediaUrl:"/api/contentgen-video/media/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/video.mp4"}),{status:200});
+      throw Error("Unexpected request "+path);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en" projectId={productionId}/>);
+    const text=await screen.findByRole("textbox",{name:"Edit on-screen text"});
+    await user.type(text," now");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await user.click(await screen.findByRole("button",{name:"Generate updated draft"}));
+    await waitFor(()=>expect(starts).toHaveLength(1));
+    expect(starts[0]?.sourceRevision).toBe(edited.planSha256);
     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
   });
   it("rejects a saved project without any editable shots instead of crashing the scene editor",async()=>{
@@ -138,12 +485,158 @@ describe("Video Director selected-shot workbench",()=>{
     expect((edit?.changes as Record<string,string>)?.narration).toBe(variants[1].narration);
     expect((edit?.changes as Record<string,string>)?.visualAction).toBe(variants[2].firstVisual);
     expect(await screen.findByText(/New narration: hook/)).toBeInTheDocument();
-    expect(screen.getByText(/does not yet synthesize partial WAVs/)).toBeInTheDocument();
+    expect(screen.getByText(/Unchanged narration is kept/)).toBeInTheDocument();
     api.mockRestore();
+  });
+  it("offers a scene timeline and reversible saved edits without modifying untouched scenes",async()=>{
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;changes:{narration:string}};
+      const revised=structuredClone(body.bundle);
+      revised.plan.sound[0].narration=body.changes.narration;
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:["narration"],
+        speechRegenerate:["hook"],visualRerender:[],sfxRemix:[],downstreamRetiming:["hook","middle"],timelineRecalculate:true}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scenes.json",{type:"application/json"})]}});
+    expect(await screen.findByRole("group",{name:"Scene timeline"})).toBeInTheDocument();
+    const voice=screen.getByRole("textbox",{name:"Edit narration"});
+    fireEvent.change(voice,{target:{value:"What does this house really cost over time?"}});
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(voice).toHaveValue("What does this house really cost over time?"));
+    await user.click(screen.getByRole("button",{name:"Undo saved edit"}));
+    expect(voice).toHaveValue("How much does this really cost?");
+    await user.click(screen.getByRole("button",{name:"Redo"}));
+    expect(voice).toHaveValue("What does this house really cost over time?");
+    await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
+    expect(voice).toHaveValue("There are multiple costs.");
+  });
+  it("edits scene pacing without requesting voice regeneration",async()=>{
+    const edits:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;changes:Record<string,unknown>};
+      edits.push(body.changes);
+      const revised=structuredClone(body.bundle);
+      revised.plan.sound[1].pauseAfterMs=Number(body.changes.pauseAfterMs);
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:["pauseAfterMs"],
+        speechRegenerate:[],visualRerender:["middle"],sfxRemix:[],downstreamRetiming:["middle"],
+        timelineRecalculate:true,externalActionsPerformed:[]}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scene-timing.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    fireEvent.change(screen.getByRole("spinbutton",{name:"Scene pause duration"}),{target:{value:"950"}});
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toEqual([{pauseAfterMs:950}]));
+    expect(screen.getByText(/New narration: none/)).toBeInTheDocument();
+  });
+  it("saves camera, reveal timing and transition on only the selected scene",async()=>{
+    const edits:Array<{shotId:string;changes:Record<string,unknown>}>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async(url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof bundle;shotId:string;changes:Record<string,unknown>};
+      edits.push({shotId:body.shotId,changes:body.changes});
+      const revised=structuredClone(body.bundle);
+      Object.assign(revised.plan.shots.find(s=>s.id===body.shotId)!,{motion:body.changes.motion});
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:["motion"],
+        speechRegenerate:[],visualRerender:[body.shotId],sfxRemix:[],downstreamRetiming:[],
+        timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    fireEvent.change(screen.getByLabelText("Saved ContentGen project"),{target:{files:[
+      new File([JSON.stringify({dossier,bundle})],"scene-motion.json",{type:"application/json"})]}});
+    await user.click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene camera movement"}),"cinematic");
+    fireEvent.change(screen.getByRole("slider",{name:"Scene reveal delay"}),{target:{value:"15"}});
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene reveal pace"}),"deliberate");
+    await user.selectOptions(screen.getByRole("combobox",{name:"Scene transition"}),"fade");
+    await user.click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(edits).toEqual([{shotId:"middle",changes:{motion:{
+      revealDelayPercent:15,revealPace:"deliberate",camera:"cinematic",transition:"fade"
+    }}}]));
+    expect(screen.getByText(/New narration: none/)).toBeInTheDocument();
+    expect(screen.getByText(/Rerender visuals: middle/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:/Scene 1: Why\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene camera movement"})).toHaveValue("subtle");
+    await user.click(screen.getByRole("button",{name:/Scene 2: What costs\?/}));
+    expect(screen.getByRole("combobox",{name:"Scene camera movement"})).toHaveValue("cinematic");
+  });
+  it("carries a compatible scene edit into a regenerated script without reverting new narration",async()=>{
+    const productionId="production-"+"9".repeat(24);
+    const sessionKey="contentgen:director-approved-script:v1:"+productionId;
+    const source={...structuredClone(bundle),researchSha256:"a".repeat(64),planSha256:"b".repeat(64)};
+    const handoff=(scriptRevision:string,plan:typeof source)=>JSON.stringify({
+      productionId,scriptRevision,sourcePrefix:"approved-script:"+scriptRevision+":",dossier,bundle:plan
+    });
+    sessionStorage.setItem(sessionKey,handoff("first",source));
+    const edits:Array<Record<string,unknown>>=[];
+    vi.spyOn(globalThis,"fetch").mockImplementation(async (url,opts)=>{
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"No renderer fixture"}),{status:503});
+      if(!String(url).endsWith("/edit"))throw Error("Unexpected request: "+url);
+      const body=JSON.parse(String(opts?.body)) as {bundle:typeof source;shotId:string;changes:Record<string,unknown>};
+      edits.push(body.changes);
+      const revised=structuredClone(body.bundle);
+      Object.assign(revised.plan.shots.find(s=>s.id===body.shotId)!,body.changes);
+      revised.planSha256="e".repeat(64);
+      return new Response(JSON.stringify({bundle:revised,impacts:{changedFields:Object.keys(body.changes),
+        speechRegenerate:[],visualRerender:[body.shotId],sfxRemix:[],downstreamRetiming:[],
+        timelineRecalculate:false,externalActionsPerformed:[]}}),{status:200});
+    });
+    const first=render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
+    await userEvent.setup().click(await screen.findByRole("button",{name:/Scene 2: What costs\?/}));
+    fireEvent.change(screen.getByRole("textbox",{name:"Edit on-screen text"}),{target:{value:"Edited cost graphic"}});
+    await userEvent.setup().click(screen.getByRole("button",{name:"Apply selected-shot edit"}));
+    await waitFor(()=>expect(screen.getByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Edited cost graphic"));
+    const savedKey="contentgen:director-session:v1:"+productionId+":approved-script:first:"+source.planSha256;
+    await waitFor(()=>expect((JSON.parse(localStorage.getItem(savedKey)??"null") as
+      {bundle?:{plan:{shots:Array<{onScreenText:string}>}}}|null)?.bundle?.plan.shots[1].onScreenText)
+      .toBe("Edited cost graphic"));
+    first.unmount();
+    const regenerated=structuredClone(source);
+    regenerated.planSha256="c".repeat(64);
+    regenerated.plan.sound[1].narration="New and more accurate voiceover";
+    sessionStorage.setItem(sessionKey,handoff("second",regenerated));
+    render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
+    expect(await screen.findByText(/Carried 1 compatible scene edit/)).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button",{name:/Scene 2: Edited cost graphic/}));
+    expect(screen.getByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Edited cost graphic");
+    expect(screen.getByRole("textbox",{name:"Edit narration"})).toHaveValue("New and more accurate voiceover");
+    expect(edits).toEqual([{onScreenText:"Edited cost graphic"},{onScreenText:"Edited cost graphic"}]);
+    sessionStorage.removeItem(sessionKey);
   });
 });
 
 describe("first-run complete Studio demo",()=>{
+  it("opens the conversation template directly on its editable middle scene without an extra preview hop",async()=>{
+    const d={kind:"research-dossier",id:"conv",topic:{title:"Dialogue demo",audience:"Everyone"}};
+    const turns=[{id:"pip-question",narration:"What do you see?",pauseAfterMs:180},
+      {id:"quill-reply",narration:"A moving diagram.",pauseAfterMs:180},
+      {id:"narrator-explains",narration:"This illustrates one simple flow.",pauseAfterMs:0}];
+    const b={kind:"preproduction-bundle",researchId:"conv",plan:{shots:[
+      {id:"hook",purpose:"hook",visualChange:"Show question",onScreenText:"Why?"},
+      {id:"middle",purpose:"explain",visualChange:"Show diagram",onScreenText:"Conversation"},
+      {id:"end",purpose:"payoff",visualChange:"End",onScreenText:"Answer"}],
+      sound:[{shotId:"hook",narration:"Opening",sfxIntent:null,pauseAfterMs:0},
+        {shotId:"middle",narration:turns.map(turn=>turn.narration).join(" "),speechTurns:turns,sfxIntent:null,pauseAfterMs:0},
+        {shotId:"end",narration:"Ending",sfxIntent:null,pauseAfterMs:0}],
+      teachingSequences:[{phases:[{shotId:"hook",kind:"problem",visualAction:"Question"},
+        {shotId:"middle",kind:"mechanism",visualAction:"Talk"},
+        {shotId:"end",kind:"payoff",visualAction:"Answer"}]}],story:{question:"Why?"}}};
+    vi.spyOn(globalThis,"fetch").mockImplementation(async url=>{
+      if(String(url).endsWith("/demo-conversation"))return new Response(JSON.stringify({dossier:d,bundle:b}),{status:200});
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"Renderer not installed"}),{status:503});
+      const catalog=localMediaCatalogResponse(url);if(catalog)return catalog;
+      throw Error("Unexpected service request: "+url);
+    });
+    const user=userEvent.setup();render(<VideoDirectorWorkspace locale="en"/>);
+    await user.click(screen.getByRole("button",{name:"Open conversation video template"}));
+    expect(await screen.findByRole("combobox",{name:"Selected video shot"})).toHaveValue("middle");
+    expect(screen.getAllByRole("textbox",{name:/Dialogue line/})).toHaveLength(3);
+    expect(screen.getByRole("heading",{name:"Scene editor"})).toBeInTheDocument();
+  });
   it("opens sample animations automatically, exposes a timeline, and does not ask for a JSON file or voice",async()=>{
     const sampleDossier={kind:"research-dossier",id:"demo-id",topic:{title:"Home cost demo",audience:"Homeowners"}};
     const sampleBundle={kind:"preproduction-bundle",researchId:"demo-id",plan:{
@@ -197,8 +690,9 @@ describe("first-run complete Studio demo",()=>{
     expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
     await user.click(screen.getByRole("button",{name:/04 Preview & Export/i}));
     expect(screen.getByRole("group",{name:"Video scene timeline"})).toBeInTheDocument();
-    // Navigating steps must not restart the visual preview.
-    expect(calls).toEqual(["/api/contentgen-video/demo","/api/contentgen-video/live-preview"]);
+    // The storyboard opens its own selected scene preview, without TTS or a render job.
+    await waitFor(()=>expect(calls).toEqual(["/api/contentgen-video/demo",
+      "/api/contentgen-video/live-preview","/api/contentgen-video/live-preview"]));
   });
 });
 
@@ -338,6 +832,7 @@ describe("saved research to Video Director handoff",()=>{
       const sidecar=localMediaCatalogResponse(url);if(sidecar)return sidecar;
       calls.push(String(url));
       expect(init?.method).toBe("POST");
+      if(String(url).endsWith("/live-preview"))return new Response(JSON.stringify({error:"Preview unavailable in this fixture"}),{status:503});
       expect(JSON.parse(String(init?.body))).toEqual({artifactId});
       return new Response(JSON.stringify({artifactId,dossier,bundle}),{status:200});
     });
@@ -345,7 +840,8 @@ describe("saved research to Video Director handoff",()=>{
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
     expect(screen.getByText("Heat pump installation")).toBeInTheDocument();
     expect(screen.getByText(/1 scenes/)).toBeInTheDocument();
-    expect(calls).toEqual(["/api/contentgen-director/compile-saved-research"]);
+    await waitFor(()=>expect(calls).toEqual(["/api/contentgen-director/compile-saved-research",
+      "/api/contentgen-video/live-preview"]));
   });
   it("opens the requested guided production stage after loading saved research",async()=>{
     vi.spyOn(globalThis,"fetch").mockImplementation(async(url)=>{
@@ -354,8 +850,8 @@ describe("saved research to Video Director handoff",()=>{
     });
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId} focusStage="visuals"/>);
     expect(await screen.findByText("Video project loaded")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
-    expect(screen.getByRole("button",{name:/01 Storyboard/i})).not.toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).not.toHaveAttribute("aria-current","step");
   });
   it("resumes saved shot edits only for the matching snapshot",async()=>{
     const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
@@ -370,6 +866,18 @@ describe("saved research to Video Director handoff",()=>{
     render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
     expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Approved local draft edit");
     sessionStorage.removeItem(sessionKey);
+  });
+  it("restores source-matched saved edits after tab-scoped storage is cleared",async()=>{
+    const key="contentgen:director-session:v1:project-demo:"+artifactId;
+    const revised=structuredClone(bundle);
+    revised.plan.shots[0].onScreenText="Persisted scene headline";
+    const savedBundle={...revised,researchSha256:"b".repeat(64),planSha256:"c".repeat(64)};
+    localStorage.setItem(key,JSON.stringify({version:1,artifactId,dossier,bundle:savedBundle}));
+    sessionStorage.removeItem(key);
+    vi.spyOn(globalThis,"fetch").mockResolvedValue(new Response(JSON.stringify({artifactId,dossier,
+      bundle:{...bundle,researchSha256:"b".repeat(64),planSha256:"a".repeat(64)}}),{status:200}));
+    render(<VideoDirectorWorkspace locale="en" projectId="project-demo" researchArtifactId={artifactId}/>);
+    expect(await screen.findByRole("textbox",{name:"Edit on-screen text"})).toHaveValue("Persisted scene headline");
   });
   it("does not restore draft edits from a different research fingerprint",async()=>{
     const sessionKey="contentgen:director-session:v1:project-demo:"+artifactId;
@@ -459,7 +967,7 @@ describe("approved script to Director handoff",()=>{
     });
     render(<VideoDirectorWorkspace locale="en" projectId={productionId} focusStage="visuals"/>);
     expect(await screen.findByText("Actual renewal factors")).toBeInTheDocument();
-    expect(screen.getByRole("button",{name:/04 Preview & Export/i})).toHaveAttribute("aria-current","step");
+    expect(screen.getByRole("button",{name:/01 Storyboard/i})).toHaveAttribute("aria-current","step");
     expect(calls).not.toContain("/api/contentgen-director/compile-saved-research");
     sessionStorage.removeItem("contentgen:director-approved-script:v1:"+productionId);
   });

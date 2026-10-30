@@ -1,0 +1,438 @@
+/** Freeze project-owned Character Studio ZIP revisions into a verified, same-origin render cast.
+ * Archives are inert: never extracted to disk, executed, or trusted as voice permissions.
+ */
+import { createHash } from "node:crypto";
+import { inflateRawSync, inflateSync } from "node:zlib";
+
+const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+const MAX_ZIP = 16 * 1024 * 1024;
+const MAX_ENTRY = 12 * 1024 * 1024;
+const MAX_EXPANDED = 64 * 1024 * 1024;
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+const safeId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(value) &&
+  !["__proto__", "prototype", "constructor"].includes(value);
+const safePath = value => typeof value === "string" && value.length <= 240 &&
+  /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !value.split("/").some(part => part === "." || part === ".." || !part);
+const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const fail = message => { throw Error("Character rig export blocked: " + message); };
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/** Fail before speech synthesis if a verified ZIP contains a structurally broken
+ * raster. A URL and a ZIP checksum alone do not prove that Chromium can draw it.
+ * PNG scanlines are inflated and checked; WebP's RIFF/VP8 dimensions and bounds
+ * are checked here, with full browser decode checked by the export capture gate.
+ */
+export function assertCharacterRasterIntegrity(bytes, asset) {
+  const invalid = reason => fail(`Character ${asset?.mediaType === "image/webp" ? "WebP" : "PNG"} image ${reason}.`);
+  if (!Buffer.isBuffer(bytes) || !Number.isSafeInteger(asset?.width) || !Number.isSafeInteger(asset?.height) ||
+    asset.width < 1 || asset.height < 1 || asset.width > 8192 || asset.height > 8192) invalid("dimensions are invalid");
+  if (asset.mediaType === "image/png") {
+    if (bytes.length < 57 || !bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) invalid("signature is missing");
+    let offset = 8, header = false, end = false, idatStarted = false;
+    const chunks = [];
+    let bits = 0, channels = 0, rows = 0;
+    while (offset + 12 <= bytes.length && !end) {
+      const length = bytes.readUInt32BE(offset);
+      if (length > 16 * 1024 * 1024 || offset + 12 + length > bytes.length) invalid("chunk bounds are broken");
+      const name = bytes.toString("ascii", offset + 4, offset + 8);
+      if (!/^[A-Za-z]{4}$/.test(name)) invalid("chunk name is invalid");
+      const data = bytes.subarray(offset + 8, offset + 8 + length);
+      if (crc32(bytes.subarray(offset + 4, offset + 8 + length)) !== bytes.readUInt32BE(offset + 8 + length))
+        invalid("chunk checksum differs");
+      if (!header && (name !== "IHDR" || length !== 13)) invalid("has no leading IHDR");
+      if (name === "IHDR") {
+        if (header || length !== 13 || bytes.readUInt32BE(offset + 8) !== asset.width ||
+          bytes.readUInt32BE(offset + 12) !== asset.height) invalid("dimensions differ from the manifest");
+        const bitDepth = data[8], color = data[9];
+        const configurations = new Map([[0,[1,2,4,8,16]],[2,[8,16]],[3,[1,2,4,8]],[4,[8,16]],[6,[8,16]]]);
+        if (!configurations.get(color)?.includes(bitDepth) || data[10] !== 0 || data[11] !== 0 || data[12] !== 0)
+          invalid("uses an unsupported pixel format or interlacing");
+        bits = bitDepth; channels = ({0:1,2:3,3:1,4:2,6:4})[color]; rows = asset.height;
+        header = true;
+      } else if (name === "IDAT") {
+        idatStarted = true;
+        chunks.push(data);
+      } else if (name === "IEND") {
+        if (length !== 0 || !idatStarted) invalid("is missing image pixels");
+        end = true;
+      } else if (name[0] === name[0].toUpperCase() && !["PLTE"].includes(name)) {
+        invalid(`contains unsupported critical chunk ${name}`);
+      }
+      offset += 12 + length;
+    }
+    if (!header || !end || offset !== bytes.length) invalid("is truncated or has trailing data");
+    const stride = Math.ceil(asset.width * channels * bits / 8);
+    const expected = (stride + 1) * rows;
+    if (expected > 64 * 1024 * 1024) invalid("decoded pixels exceed the 64 MiB limit");
+    let pixels;
+    try { pixels = inflateSync(Buffer.concat(chunks), { maxOutputLength: expected + 1 }); }
+    catch { invalid("compressed pixel stream is unreadable"); }
+    if (pixels.length !== expected) invalid("decoded scanline dimensions differ");
+    for (let y = 0; y < rows; y++) if (pixels[y * (stride + 1)] > 4) invalid("has an invalid row filter");
+    return;
+  }
+  if (asset.mediaType !== "image/webp" || bytes.length < 20 || bytes.toString("ascii",0,4) !== "RIFF" ||
+    bytes.toString("ascii",8,12) !== "WEBP" || bytes.readUInt32LE(4) + 8 !== bytes.length) invalid("RIFF container is invalid");
+  let offset = 12, dimensions, hasPixels = false;
+  while (offset + 8 <= bytes.length) {
+    const type = bytes.toString("ascii", offset, offset + 4);
+    const size = bytes.readUInt32LE(offset + 4), start = offset + 8;
+    if (!/^[A-Za-z0-9 ]{4}$/.test(type) || size > bytes.length - start || start + size + (size & 1) > bytes.length)
+      invalid("WebP chunk bounds are broken");
+    if (type === "VP8X") {
+      if (size !== 10 || dimensions) invalid("WebP extended header is invalid");
+      dimensions = [1 + bytes.readUIntLE(start + 4,3), 1 + bytes.readUIntLE(start + 7,3)];
+    } else if (type === "VP8L") {
+      if (size < 5 || bytes[start] !== 0x2f) invalid("WebP lossless header is invalid");
+      const packed = bytes.readUInt32LE(start + 1);
+      dimensions ??= [1 + (packed & 0x3fff), 1 + ((packed >>> 14) & 0x3fff)];
+      hasPixels = true;
+    } else if (type === "VP8 ") {
+      if (size < 10 || bytes[start + 3] !== 0x9d || bytes[start + 4] !== 0x01 || bytes[start + 5] !== 0x2a)
+        invalid("WebP lossy header is invalid");
+      dimensions ??= [bytes.readUInt16LE(start + 6) & 0x3fff, bytes.readUInt16LE(start + 8) & 0x3fff];
+      hasPixels = true;
+    }
+    offset = start + size + (size & 1);
+  }
+  if (offset !== bytes.length || !hasPixels || dimensions?.[0] !== asset.width || dimensions?.[1] !== asset.height)
+    invalid("dimensions or pixel chunks differ from the manifest");
+}
+
+/** Validate local/central ZIP metadata before inflating a bounded entry. No ZIP64 or links. */
+export function readCharacterZip(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 22 || bytes.length > MAX_ZIP) fail("ZIP exceeds the 16 MiB limit or is incomplete.");
+  let end = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+    if (bytes.readUInt32LE(i) === 0x06054b50 && i + 22 + bytes.readUInt16LE(i + 20) === bytes.length) { end = i; break; }
+  }
+  if (end < 0 || bytes.readUInt16LE(end + 4) !== 0 || bytes.readUInt16LE(end + 6) !== 0 ||
+    bytes.readUInt16LE(end + 8) !== bytes.readUInt16LE(end + 10)) fail("ZIP central directory is invalid.");
+  const count = bytes.readUInt16LE(end + 10), length = bytes.readUInt32LE(end + 12), offset = bytes.readUInt32LE(end + 16);
+  if (count < 2 || count > 128 || offset === 0xffffffff || length === 0xffffffff || offset + length !== end)
+    fail("ZIP directory is oversized or malformed.");
+  const entries = new Map(), ranges = [];
+  let position = offset, expanded = 0;
+  for (let i = 0; i < count; i++) {
+    if (position + 46 > end || bytes.readUInt32LE(position) !== 0x02014b50) fail("Broken ZIP central record.");
+    const flags = bytes.readUInt16LE(position + 8), method = bytes.readUInt16LE(position + 10);
+    const crc = bytes.readUInt32LE(position + 16), compressed = bytes.readUInt32LE(position + 20);
+    const uncompressed = bytes.readUInt32LE(position + 24), nameLength = bytes.readUInt16LE(position + 28);
+    const extra = bytes.readUInt16LE(position + 30), comment = bytes.readUInt16LE(position + 32);
+    const disk = bytes.readUInt16LE(position + 34), local = bytes.readUInt32LE(position + 42);
+    if ((flags & (1 | 0x40)) || ![0, 8].includes(method) || disk || compressed === 0xffffffff ||
+      uncompressed === 0xffffffff || local === 0xffffffff || uncompressed > MAX_ENTRY ||
+      position + 46 + nameLength + extra + comment > end || local + 30 > offset)
+      fail("Unsupported or oversized ZIP entry.");
+    let name;
+    try { name = UTF8.decode(bytes.subarray(position + 46, position + 46 + nameLength)); }
+    catch { fail("ZIP entry names must be UTF-8."); }
+    if (!safePath(name) || entries.has(name.toLowerCase())) fail("Duplicate or unsafe ZIP layer path.");
+    if (bytes.readUInt32LE(local) !== 0x04034b50 ||
+      bytes.readUInt16LE(local + 6) !== flags || bytes.readUInt16LE(local + 8) !== method)
+      fail("ZIP local header differs from the central record.");
+    const localNameLength = bytes.readUInt16LE(local + 26), localExtra = bytes.readUInt16LE(local + 28);
+    const dataStart = local + 30 + localNameLength + localExtra;
+    if (dataStart + compressed > offset || local + 30 + localNameLength > offset ||
+      !bytes.subarray(local + 30, local + 30 + localNameLength).equals(Buffer.from(name, "utf8")) ||
+      ranges.some(([a, b]) => dataStart < b && dataStart + compressed > a))
+      fail("ZIP layer has overlapping or mismatched bytes.");
+    ranges.push([dataStart, dataStart + compressed]);
+    const raw = bytes.subarray(dataStart, dataStart + compressed);
+    let data;
+    try { data = method === 0 ? raw : inflateRawSync(raw, { maxOutputLength: Math.min(MAX_ENTRY, uncompressed) + 1 }); }
+    catch { fail("ZIP layer could not be safely decompressed."); }
+    if (data.length !== uncompressed || crc32(data) !== crc) fail("ZIP layer checksum or expanded length differs.");
+    expanded += data.length;
+    if (expanded > MAX_EXPANDED) fail("ZIP exceeds the 64 MiB expanded limit.");
+    entries.set(name.toLowerCase(), { name, data });
+    position += 46 + nameLength + extra + comment;
+  }
+  if (position !== end || !entries.has("character.json")) fail("ZIP is missing a valid root character.json.");
+  const manifest = entries.get("character.json").data;
+  if (manifest.length > 1024 * 1024) fail("Character manifest exceeds 1 MiB.");
+  let definition;
+  try { definition = JSON.parse(UTF8.decode(manifest)); }
+  catch { fail("Character manifest is not valid UTF-8 JSON."); }
+  return { definition, entries };
+}
+
+function verifyPack(archive, draft, id) {
+  const { definition, entries } = readCharacterZip(archive);
+  if (!object(definition) || definition.schemaVersion !== 1 || definition.characterId !== id ||
+    definition.revision !== draft.revision || !["sprite-2d", "puppet-2.5d"].includes(definition.mode) ||
+    !object(definition.design) || !Number.isFinite(definition.design.width) ||
+    !Number.isFinite(definition.design.height) || !Array.isArray(definition.channels) ||
+    !object(definition.assets) || !Array.isArray(definition.parts) ||
+    !definition.parts.length || definition.parts.length > 128 || !object(definition.poses) ||
+    !object(definition.actions) || !object(definition.expressions) ||
+    !object(definition.expressions.sets) || !object(definition.palette))
+    fail(`Saved ${id} revision has an incomplete or mismatched animation definition.`);
+  const assets = [], assetUrls = {}, used = new Set();
+  for (const [key, asset] of Object.entries(definition.assets)) {
+    if (!safeId(key) || !object(asset) || asset.kind !== "image" ||
+      !safePath(asset.uri) || !asset.uri.startsWith("layers/") ||
+      !["image/png", "image/webp"].includes(asset.mediaType) ||
+      !Number.isSafeInteger(asset.width) || asset.width < 1 || asset.width > 8192 ||
+      !Number.isSafeInteger(asset.height) || asset.height < 1 || asset.height > 8192 ||
+      !object(asset.provenance) || typeof asset.provenance.source !== "string" ||
+      !asset.provenance.source.trim() || typeof asset.provenance.license !== "string" ||
+      !asset.provenance.license.trim() || used.has(asset.uri.toLowerCase()))
+      fail(`Saved ${id} has an invalid image layer.`);
+    const extension = asset.mediaType === "image/png" ? ".png" : ".webp";
+    if (!asset.uri.endsWith(extension)) fail("Character image extension and media type disagree.");
+    const file = entries.get(asset.uri.toLowerCase());
+    if (!file || file.name !== asset.uri) fail("Character ZIP is missing an exact referenced layer.");
+    const bytes = file.data;
+    assertCharacterRasterIntegrity(bytes, asset);
+    const digest = sha256(bytes);
+    if (asset.sha256 && asset.sha256.toLowerCase() !== digest) fail("Character image checksum differs from its manifest.");
+    const url = `/__character_assets/${digest}${extension}`;
+    assetUrls[asset.uri] = url;
+    assets.push({ url, sha256: digest, mediaType: asset.mediaType, bytes });
+    used.add(asset.uri.toLowerCase());
+  }
+  if (!used.size || used.size > 128 || Object.keys(assetUrls).length !== used.size)
+    fail("Character has no usable image layers.");
+  for (const [name] of entries) {
+    if (name === "character.json" || used.has(name)) continue;
+    if (name.startsWith("docs/") && /\.(md|txt)$/.test(name)) continue;
+    fail("Character ZIP contains unreferenced or unsupported content.");
+  }
+  const parts = new Map();
+  for (const part of definition.parts) {
+    if (!object(part) || !safeId(part.id) || parts.has(part.id) || !safeId(part.asset) ||
+      !Object.hasOwn(definition.assets, part.asset) || !definition.channels.includes(part.channel) ||
+      !object(part.pivot) || !Number.isFinite(part.pivot.x) || !Number.isFinite(part.pivot.y))
+      fail("Character has invalid articulated parts.");
+    if (!Number.isFinite(part.z) || part.z < -1000 || part.z > 1000 ||
+      (part.variants && (!object(part.variants) || Object.values(part.variants).some(value =>
+        !safeId(value) || !Object.hasOwn(definition.assets, value)))))
+      fail("Character has an invalid layer order or missing pose image.");
+    parts.set(part.id, part);
+  }
+  for (const part of parts.values()) {
+    const seen = new Set([part.id]);
+    let parent = part.parent;
+    while (parent !== undefined) {
+      if (!safeId(parent) || !parts.has(parent) || seen.has(parent))
+        fail("Character part hierarchy contains a cycle or missing parent.");
+      seen.add(parent);
+      parent = parts.get(parent).parent;
+    }
+  }
+  // Validate the animation graph now, while the immutable ZIP is being
+  // resolved. Browser-side Kumiki validation remains the final guard, but an
+  // invalid saved action/blink must not consume TTS time or render frames.
+  const validPose = (pose, label, channel) => {
+    if (!object(pose)) fail(`${label} has an invalid pose.`);
+    for (const [partId, delta] of Object.entries(pose)) {
+      const part = parts.get(partId);
+      if (!part || (channel && part.channel !== channel) || !object(delta) ||
+        Object.entries(delta).some(([key, value]) => !["x","y","rotation","scaleX","scaleY"].includes(key) ||
+          !Number.isFinite(value))) fail(`${label} references an invalid part, channel or motion value (${partId}).`);
+    }
+  };
+  const validVariants = (variants, label, channel) => {
+    if (!object(variants)) fail(`${label} has invalid image variants.`);
+    for (const [partId, variant] of Object.entries(variants)) {
+      const part = parts.get(partId);
+      if (!part || (channel && part.channel !== channel) ||
+        !safeId(variant) || !Object.hasOwn(part.variants ?? {}, variant))
+        fail(`${label} references an unavailable ${partId} image variant.`);
+    }
+  };
+  if (!safeId(definition.basePose) || !Object.hasOwn(definition.poses, definition.basePose))
+    fail(`Saved ${id} has no valid rest pose.`);
+  for (const [name, pose] of Object.entries(definition.poses)) validPose(pose, `Pose ${name}`);
+  if (!safeId(definition.expressions.default) ||
+    !Object.hasOwn(definition.expressions.sets, definition.expressions.default))
+    fail(`Saved ${id} has no default expression.`);
+  for (const [name, expression] of Object.entries(definition.expressions.sets)) {
+    if (!safeId(name) || !object(expression)) fail("Character expression is invalid.");
+    if (expression.pose !== undefined) validPose(expression.pose, `Expression ${name}`);
+    if (expression.variants !== undefined) validVariants(expression.variants, `Expression ${name}`);
+  }
+  for (const [name, action] of Object.entries(definition.actions)) {
+    if (!safeId(name) || !object(action) || !definition.channels.includes(action.channel) ||
+      !["override","additive"].includes(action.blend) ||
+      !["finish","blend-out","cut"].includes(action.takeover) ||
+      !Number.isFinite(action.priority) || !Array.isArray(action.phases) ||
+      !action.phases.length || action.phases.length > 256)
+      fail(`Saved ${id} has an invalid ${name} action definition.`);
+    for (const phase of action.phases) {
+      if (!object(phase) || !["prepare","act","hold","recover"].includes(phase.name) ||
+        !Number.isSafeInteger(phase.frames) || phase.frames < 1)
+        fail(`Action ${name} has an invalid animation phase.`);
+      validPose(phase.pose ?? {}, `Action ${name}`, action.blend === "override" ? action.channel : undefined);
+      if (phase.variants !== undefined)
+        validVariants(phase.variants, `Action ${name}`, action.blend === "override" ? action.channel : undefined);
+    }
+  }
+  if (definition.blink !== undefined) {
+    const blink = definition.blink;
+    if (!object(blink) || !Array.isArray(blink.parts) || !blink.parts.length ||
+      !safeId(blink.variant) || !object(blink.intervalFrames) ||
+      !Number.isSafeInteger(blink.intervalFrames.min) || blink.intervalFrames.min < 1 ||
+      !Number.isSafeInteger(blink.intervalFrames.max) || blink.intervalFrames.max < blink.intervalFrames.min ||
+      !Number.isSafeInteger(blink.durationFrames) || blink.durationFrames < 1)
+      fail(`Saved ${id} has an invalid blink schedule.`);
+    for (const partId of blink.parts) validVariants({ [partId]: blink.variant }, "Blink");
+  }
+  if (definition.idle !== undefined) {
+    if (!object(definition.idle) || !object(definition.idle.parts)) fail("Character idle motion is invalid.");
+    for (const [partId, track] of Object.entries(definition.idle.parts))
+      if (!parts.has(partId) || !object(track) || !["y","rotation","scaleY"].includes(track.property) ||
+        !Number.isFinite(track.amplitude) || !Number.isSafeInteger(track.periodFrames) || track.periodFrames < 1)
+        fail(`Idle animation references an invalid part or track (${partId}).`);
+  }
+  const speech = definition.speech;
+  if (!object(speech) || !safeId(speech.mouthPart) || !parts.has(speech.mouthPart) ||
+    !Array.isArray(speech.approximateCycle) || speech.approximateCycle.length < 2 ||
+    new Set(speech.approximateCycle).size < 2 ||
+    speech.approximateCycle.some(value => typeof value !== "string"))
+    fail(`Saved ${id} must include an articulated speech mouth and at least two mouth shapes for video export.`);
+  const mouth = parts.get(speech.mouthPart);
+  if (!object(mouth.variants) || speech.approximateCycle.some(value =>
+    value !== speech.rest && !Object.hasOwn(mouth.variants, value)))
+    fail("Character speech mouth references an unavailable image variant.");
+  if (!safeId(speech.rest) || !object(speech.visemes) ||
+    Object.values(speech.visemes).some(variant=>variant!==speech.rest &&
+      !Object.hasOwn(mouth.variants,variant)) ||
+    !Number.isSafeInteger(speech.approximateStepFrames) || speech.approximateStepFrames < 1 ||
+    !Number.isSafeInteger(speech.transitionFrames) || speech.transitionFrames < 0)
+    fail("Character speech timing or viseme artwork is invalid.");
+  if (speech.activeVariants !== undefined) validVariants(speech.activeVariants,"Speech companion");
+  return { draftId: draft.id, archiveSha256: draft.archiveSha256, definition, assetUrls, assets };
+}
+
+/** List every referenced layer, including offscreen expressions/visemes. This
+ * drives the real Chromium decode check before FFmpeg captures any frames. */
+export function characterRasterPreflightList(rigs = {}, rigsByScene = {}) {
+  if (!rigs || typeof rigs !== "object" || Array.isArray(rigs)) fail("Invalid saved-rig raster manifest.");
+  const layers = new Map();
+  if (!object(rigsByScene)) fail("Invalid saved-rig scene manifest.");
+  for (const [beatId, scene] of Object.entries(rigsByScene))
+    if (!safeId(beatId) || !object(scene)) fail("Invalid saved-rig scene identity.");
+  for (const [id, rig] of [...Object.entries(rigs),
+    ...Object.values(rigsByScene).flatMap(scene => Object.entries(scene))]) {
+    if (!["pip", "quill"].includes(id) || !object(rig?.definition?.assets) || !object(rig.assetUrls))
+      fail("Invalid saved-rig raster manifest.");
+    for (const asset of Object.values(rig.definition.assets)) {
+      const ext = asset?.mediaType === "image/png" ? "png" : asset?.mediaType === "image/webp" ? "webp" : null;
+      const url = rig.assetUrls[asset?.uri];
+      if (!ext || asset.kind !== "image" || !safePath(asset.uri) ||
+        !/^\/__character_assets\/[a-f0-9]{64}\.(?:png|webp)$/.test(url ?? "") ||
+        !url.endsWith(`.${ext}`) || !Number.isSafeInteger(asset.width) ||
+        !Number.isSafeInteger(asset.height) || asset.width < 1 || asset.height < 1 ||
+        asset.width > 8192 || asset.height > 8192)
+        fail(`Saved ${id} raster URL or image dimensions are missing or invalid.`);
+      const former = layers.get(url);
+      if (former && (former.width !== asset.width || former.height !== asset.height))
+        fail("A saved raster URL has conflicting image dimensions.");
+      layers.set(url, { url, width: asset.width, height: asset.height });
+    }
+  }
+  if (layers.size > 256) fail("Saved cast exceeds the bounded raster decode budget.");
+  if ([...layers.values()].reduce((total,layer)=>total+layer.width*layer.height*4,0) > 384*1024*1024)
+    fail("Saved cast decoded image pixels exceed the 384 MiB browser budget.");
+  return [...layers.values()];
+}
+
+async function boundedResponse(response, max) {
+  if (!response.ok) fail(`Character Studio backend returned HTTP ${response.status}.`);
+  if (Number(response.headers.get("content-length") ?? 0) > max) fail("Character Studio response exceeds its size limit.");
+  const chunks = []; let size = 0;
+  if (!response.body) fail("Character Studio returned an empty response.");
+  for await (const chunk of response.body) {
+    size += chunk.byteLength;
+    if (size > max) { await response.body.cancel().catch(() => {}); fail("Character Studio response exceeds its size limit."); }
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+/** Resolve only the two currently staged characters. Newest saved revision wins;
+ * an absent character uses original bundled art, never an unrelated project's rig.
+ */
+export async function loadProjectCharacterRigs({ projectId, speakers, selectedDraftIds = {}, selectedDraftIdsByScene = {}, origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetchImpl = fetch }) {
+  const ids = [...new Set(speakers ?? [])].filter(id => id === "pip" || id === "quill");
+  if (!object(selectedDraftIds) || Object.entries(selectedDraftIds).some(([id, draftId]) =>
+    !ids.includes(id) || !/^character-draft-[a-f0-9]{32}$/.test(draftId)))
+    fail("Selected character revision must name an active cast speaker and a saved draft ID.");
+  if (!object(selectedDraftIdsByScene) || Object.entries(selectedDraftIdsByScene).some(([beatId, picks]) =>
+    !safeId(beatId) || !object(picks) || !Object.keys(picks).length ||
+    Object.entries(picks).some(([id, draftId]) => !ids.includes(id) ||
+      typeof draftId !== "string" || !/^character-draft-[a-f0-9]{32}$/.test(draftId))))
+    fail("Selected scene character revision must name a valid beat, active speaker and saved draft ID.");
+  if (!ids.length) return { rigs: {}, assets: [], identity: [] };
+  if (!safeId(projectId) || projectId.length > 120) fail("Select a valid Character Studio project before rendering its custom cast.");
+  let base;
+  try { base = new URL(origin); }
+  catch { fail("Character Studio backend URL is invalid."); }
+  if (base.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(base.hostname) ||
+    base.username || base.password || base.pathname !== "/" || base.search || base.hash)
+    fail("Character Studio backend must be a local loopback service.");
+  const request = async (path, max) => {
+    const url = new URL(path, base);
+    const response = await fetchImpl(url, { headers: { Accept: path.includes("/archive") ? "application/zip" : "application/json" },
+      signal: AbortSignal.timeout(12000), cache: "no-store", redirect: "error" });
+    return boundedResponse(response, max);
+  };
+  let catalog;
+  try { catalog = JSON.parse((await request(`/api/character-drafts?projectId=${encodeURIComponent(projectId)}`, 180000)).toString("utf8")); }
+  catch (error) { fail(`Cannot load saved character revisions: ${error.message}`); }
+  if (!Array.isArray(catalog?.drafts) || catalog.drafts.length > 250) fail("Character Studio returned an invalid revision catalog.");
+  if (new Set(catalog.drafts.map(draft=>draft?.id)).size !== catalog.drafts.length)
+    fail("Character Studio returned duplicate immutable revision identities.");
+  const rigs = {}, rigsByScene = {}, assets = [], identity = [], archiveCache = new Map(), assetCache = new Map();
+  async function resolveOne(id, selectedId) {
+    const draft = catalog.drafts.find(item => item?.characterId === id &&
+      (selectedId === undefined || item?.id === selectedId));
+    if (selectedId !== undefined && !draft)
+      fail(`Selected ${id} Character Studio revision is missing from this project; refusing a built-in or newer-art fallback.`);
+    if (!draft) return null;
+    if (!/^character-draft-[a-f0-9]{32}$/.test(draft.id) || draft.projectId !== projectId ||
+      typeof draft.revision !== "string" || !draft.revision || draft.revision.length > 64 ||
+      !/^[a-f0-9]{64}$/.test(draft.archiveSha256) || !Number.isSafeInteger(draft.sizeBytes) ||
+      draft.sizeBytes < 22 || draft.sizeBytes > MAX_ZIP)
+      fail(`Character Studio returned an invalid ${id} revision.`);
+    if (!archiveCache.has(draft.id)) {
+      const archive = await request(`/api/character-drafts/${draft.id}/archive?projectId=${encodeURIComponent(projectId)}`, MAX_ZIP);
+      if (archive.length !== draft.sizeBytes || sha256(archive) !== draft.archiveSha256)
+        fail(`Saved ${id} ZIP differs from its immutable Character Studio revision.`);
+      archiveCache.set(draft.id, verifyPack(archive, draft, id));
+    }
+    const verified = archiveCache.get(draft.id);
+    for (const asset of verified.assets) assetCache.set(asset.url, asset);
+    return { draftId: verified.draftId, archiveSha256: verified.archiveSha256,
+      definition: verified.definition, assetUrls: verified.assetUrls };
+  }
+  for (const id of ids) {
+    const rig = await resolveOne(id, selectedDraftIds[id]);
+    if (rig) {
+      rigs[id] = rig;
+      identity.push({ speakerId: id, draftId: rig.draftId, revision: rig.definition.revision, archiveSha256: rig.archiveSha256 });
+    }
+  }
+  for (const [beatId, picks] of Object.entries(selectedDraftIdsByScene)) {
+    rigsByScene[beatId] = {};
+    for (const [id, selectedId] of Object.entries(picks)) {
+      const rig = await resolveOne(id, selectedId);
+      rigsByScene[beatId][id] = rig;
+      identity.push({ beatId, speakerId:id, draftId:rig.draftId,
+        revision:rig.definition.revision, archiveSha256:rig.archiveSha256 });
+    }
+  }
+  assets.push(...assetCache.values());
+  characterRasterPreflightList(rigs, rigsByScene);
+  return Object.keys(rigsByScene).length ? { rigs, rigsByScene, assets, identity } : { rigs, assets, identity };
+}

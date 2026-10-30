@@ -90,13 +90,97 @@ it("saves and disables one independent reviewed ambience bed",async()=>{
   const user=userEvent.setup();
   render(<SfxDiscoveryPanel projectId="test" selectedShotId="shot1"
     bundle={{plan:{shots:[{id:"shot1",family:"comparison"}],sound:[]}}}/>);
-  await user.click(screen.getByText(/Background ambience/i));
-  await user.selectOptions(await screen.findByRole("combobox",{name:"Ambience asset"}),
+  await user.click(screen.getByText(/Background music \/ ambience/i));
+  await user.selectOptions(await screen.findByRole("combobox",{name:"Music or ambience asset"}),
     "11111111-2222-3333-4444-555555555555");
   await user.click(screen.getByRole("button",{name:"Save ambience"}));
   await waitFor(()=>expect(sent[0]).toMatchObject({action:"ambience",gainDb:-33}));
-  await user.click(screen.getByRole("button",{name:"Disable ambience"}));
+  await user.click(screen.getByRole("button",{name:"Disable music"}));
   await waitFor(()=>expect(sent[1]).toMatchObject({action:"ambience",assetId:null}));
+});
+
+it("searches CC0 music by mood and imports only after explicit rights review",async()=>{
+  const requests:Array<{path:string;body:Record<string,unknown>}> = [];
+  const music={assetType:"music",assetId:"11111111-2222-3333-4444-555555555555",provider:"openverse",
+    title:"Gentle piano",creator:"Composer",durationSeconds:65,license:"cc0",source:"wikimedia",
+    sourceUrl:"https://commons.wikimedia.org/wiki/File:piano.ogg",previewUrl:"https://upload.wikimedia.org/piano.ogg",
+    licenseUrl:"https://creativecommons.org/publicdomain/zero/1.0/",rightsStatus:"needs-human-review",tags:[],matchCount:2};
+  vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
+    const path=String(url).split("/").at(-1)??"";
+    const body=options?.body?JSON.parse(String(options.body)) as Record<string,unknown>:{};
+    requests.push({path,body});
+    const payload=path==="library"?{assets:[]}:path==="choices"?{scenes:[]}:
+      path==="sound-design"?{layers:[],ambience:null}:path==="suggest-music"?{candidates:[music]}:{};
+    return {ok:true,json:async()=>payload};
+  }));
+  const user=userEvent.setup();
+  render(<SfxDiscoveryPanel projectId="test" selectedShotId="shot1"
+    bundle={{plan:{shots:[{id:"shot1"}],sound:[]}}}/>);
+  await user.click(screen.getByRole("tab",{name:/library/i}));
+  await user.clear(screen.getByRole("searchbox",{name:"Music search"}));
+  await user.type(screen.getByRole("searchbox",{name:"Music search"}),"soft piano ambient");
+  await user.click(screen.getByRole("button",{name:/find background music/i}));
+  await screen.findByText("Gentle piano");
+  expect(requests.find(x=>x.path==="suggest-music")?.body).toMatchObject({
+    query:"soft piano ambient",allowExternalSearch:true});
+  await user.click(screen.getByRole("button",{name:"Review and import"}));
+  expect(requests.some(x=>x.path==="approve")).toBe(false);
+  await user.click(screen.getByRole("checkbox",{name:/I checked the original sound/i}));
+  await user.click(screen.getByRole("button",{name:"Approve and save"}));
+  await waitFor(()=>expect(requests.find(x=>x.path==="approve")?.body).toMatchObject({
+    assetId:music.assetId,assetType:"music",confirmRights:true,confirmDownload:true}));
+});
+
+it("uses a reviewed music clip only as a quiet full-video background bed",async()=>{
+  const sent:Array<Record<string,unknown>>=[];
+  const music={assetId:"11111111-2222-3333-4444-555555555555",sha256:"a".repeat(64),
+    title:"Calm guitar",assetType:"music",creator:"Creator",durationSeconds:60,
+    rightsStatus:"user-reviewed",license:"cc0"};
+  vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
+    const path=String(url).split("/").at(-1)??"";
+    const body=options?.body?JSON.parse(String(options.body)) as Record<string,unknown>:{};
+    if(path==="sound-design"&&body.action==="ambience")sent.push(body);
+    return {ok:true,json:async()=>path==="library"?{assets:[music]}:path==="choices"?{scenes:[]}:
+      path==="sound-design"?{layers:[],ambience:null}: {}};
+  }));
+  const user=userEvent.setup();
+  render(<SfxDiscoveryPanel projectId="test" selectedShotId="shot1"
+    bundle={{plan:{shots:[{id:"shot1"}],sound:[]}}}/>);
+  await user.click(screen.getByRole("tab",{name:/library/i}));
+  expect(await screen.findByText("Calm guitar")).toBeInTheDocument();
+  expect(screen.queryByRole("button",{name:"Add to shot"})).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"Use as background"}));
+  await waitFor(()=>expect(sent[0]).toMatchObject({action:"ambience",assetId:music.assetId,
+    sha256:music.sha256,gainDb:-33}));
+});
+
+it("identifies automatic music and lets editors mute or restore it without pinning the track",async()=>{
+  const sent:Array<Record<string,unknown>>=[];
+  let mode:"auto"|"off"="auto";
+  const music={assetId:"11111111-2222-3333-4444-555555555555",sha256:"a".repeat(64),
+    title:"Gentle ambient",assetType:"music",creator:"Composer",rightsStatus:"user-reviewed",license:"cc0"};
+  vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
+    const path=String(url).split("/").at(-1)??"";
+    const body=options?.body?JSON.parse(String(options.body)) as Record<string,unknown>:{};
+    if(path==="sound-design"&&body.action!=="resolve"){
+      sent.push(body);mode=body.action==="auto-ambience"?"auto":"off";
+    }
+    const payload=path==="library"?{assets:[music]}:path==="choices"?{scenes:[]}:
+      path==="sound-design"?{layers:[],ambience:mode==="auto"?{...music,gainDb:-34,fadeInMs:1200,fadeOutMs:1500}:null,
+        ambienceMode:mode}:{};
+    return {ok:true,json:async()=>payload};
+  }));
+  const user=userEvent.setup();
+  render(<SfxDiscoveryPanel projectId="test" selectedShotId="shot1"
+    bundle={{plan:{shots:[{id:"shot1"}],sound:[]}}}/>);
+  await user.click(screen.getByText(/Background music \/ ambience/i));
+  expect(await screen.findByText(/Automatically selected:/i)).toHaveTextContent("Gentle ambient");
+  await user.click(screen.getByRole("button",{name:"Disable music"}));
+  await waitFor(()=>expect(sent[0]).toMatchObject({action:"ambience",projectId:"test",assetId:null}));
+  expect(await screen.findByText(/Music is off/i)).toBeInTheDocument();
+  await user.click(screen.getByRole("button",{name:"Use automatic music"}));
+  await waitFor(()=>expect(sent[1]).toMatchObject({action:"auto-ambience",projectId:"test"}));
+  expect(await screen.findByText(/Automatically selected:/i)).toHaveTextContent("Gentle ambient");
 });
 
 it("makes the selected shot and Arrange/Library workflow independently navigable",async()=>{
