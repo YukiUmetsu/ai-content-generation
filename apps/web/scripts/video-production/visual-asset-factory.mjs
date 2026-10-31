@@ -37,7 +37,7 @@ export function validateVisualBriefV1(brief) {
   assert(Array.isArray(brief.onScreenText) && brief.onScreenText.length <= 5 &&
     brief.onScreenText.every((line) => typeof line === "string" && line.trim() === line && line.length > 0 &&
       line.length <= 72 && line.split(/\s+/u).length <= 9), "visible text must be short, exact and authored");
-  assert(Array.isArray(brief.cueEventIds) && brief.cueEventIds.length >= 1 && brief.cueEventIds.length <= 12 &&
+  assert(Array.isArray(brief.cueEventIds) && brief.cueEventIds.length <= 12 &&
     brief.cueEventIds.every((id) => typeof id === "string" && idPattern.test(id)), "invalid timed cue references");
   return brief;
 }

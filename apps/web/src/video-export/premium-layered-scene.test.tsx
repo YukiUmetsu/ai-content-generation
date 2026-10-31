@@ -24,6 +24,9 @@ describe("premium scene integration with approved Kumiki ST1", () => {
     expect(final).toContain('data-premium-phase="resolve"');
     expect(final).toContain('data-km-environment-camera');
     expect(final).toContain('data-premium-resolution="true"');
+    expect(final).toContain('data-premium-invoice=""');
+    expect(final).toContain('data-premium-receipt=""');
+    expect(final).toContain('data-premium-comparison=""');
     expect(final).toContain("Difference $20");
     expect(sample(150)).toBe(middle);
     expect((final.match(/src="\/__visual_assets\//g) ?? []).length).toBe(3);

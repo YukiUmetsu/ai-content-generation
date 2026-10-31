@@ -57,6 +57,8 @@ test("approved layered pack is content-addressed and rechecked before browser us
 });
 
 test("factory rejects wrong brief/pack identity, unreviewed images and unsupported layer composition", async () => {
+  assert.deepEqual(validateVisualBriefV1({ ...brief, cueEventIds: [] }).cueEventIds, [],
+    "beats without authored events still get deterministic time-relative Kumiki cues");
   assert.throws(() => validateVisualBriefV1({ ...brief, onScreenText: ["A deliberately longer subtitle that goes well beyond the nine permitted visible words"] }), /visible text/);
   assert.throws(() => validateVisualBriefV1({ ...brief, assetRoles: ["background", "background"] }), /layer roles/);
   const root = await mkdtemp(join(tmpdir(), "contentgen-visual-reject-"));

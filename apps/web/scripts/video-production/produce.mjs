@@ -279,6 +279,7 @@ export async function produceVideo(candidate, options, deps = {}) {
         if (!beat || visualScenes.has(prepared.beatId) || input.brief.aspect !== "16:9" ||
           input.brief.claimRefs.some((ref) => !beat.claimRefs.includes(ref)) ||
           input.brief.cueEventIds.some((id) => !beat.eventIds.includes(id)) ||
+          prepared.layers.length !== 3 ||
           ["background", "subject", "foreground"].some((role) => !prepared.layers.some((item) => item.role === role)) ||
           input.brief.onScreenText.length !== 3 ||
           input.brief.onScreenText.some((line) => line.length > 38))
