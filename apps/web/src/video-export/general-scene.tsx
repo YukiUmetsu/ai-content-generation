@@ -146,6 +146,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
   const chapterFrames=chapter.endFrame-chapter.startFrame;
   const spoken = chapter.narration || state.visual.items.join(", ");
+  /* eslint-disable react-hooks/preserve-manual-memoization -- Export plans are SHA-pinned and immutable across frame seeks; retain the existing per-chapter caches. */
   const interactions = useMemo(() => chapterInteractions({
     ...chapter, narration: spoken,
   }, plan.manifest.fps), [chapter, spoken, plan.manifest.fps]);
@@ -175,6 +176,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     durationFrames: chapter.endFrame - chapter.startFrame, fps: plan.manifest.fps,
     locale: plan.locale ?? "en-US", evidence: plan.evidence,
   }) : undefined, [chart, chapter, state.visual.headline, plan.manifest.fps, plan.locale, plan.evidence]);
+  /* eslint-enable react-hooks/preserve-manual-memoization */
   const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
   const scriptPhrase = isPayoffHidden || payoffLocked ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, diagramState.visibleItems);
   const scriptLine = scriptPhrase ? fitSvgText(scriptPhrase, { maxWidthPx: 800, preferredSize: 28, minSize: 18, maxLines: 2 }) : undefined;
