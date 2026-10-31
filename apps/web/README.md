@@ -1,44 +1,41 @@
-# ContentGen Studio — shared frontend foundation
+# ContentGen Studio — runbook and integration notes
 
 React 19 + TypeScript + Vite 8 + Tailwind CSS v4 + a pinned, source-vendored
 [Kumiki-UI](https://github.com/YukiUmetsu/kumiki-ui) registry.
 
-This app is the **shared application shell and creative-workbench foundation**.
-Its headless video-production scripts are separate from the interactive workbench. The
-five feature slots are independently owned: **Brand & appearance** and **Motion
-& media lab** are working examples; thumbnail, storyboard and platform delivery
-remain integration slots. The shell, split pane, preview canvas, inspector,
-appearance/density axes and error boundary are provided.
+This app now includes the **Production** workspace, inline Video Director, Research,
+Jobs & QA, Character Studio, audio settings, editable creative tools, and a
+separate headless video worker. Older sections in this file record integration
+milestones and may describe narrower prototype capabilities. For authoritative
+implemented-vs-planned status see [Current status](../../docs/CURRENT-STATUS.md)
+and [one-click production](../../docs/22-one-click-video-production.md).
 
-## Start here: try the interactive Video Director
+## Start here: Production and the Video Director
 
 From the repository root, run:
 
 ```bash
-git pull
-cd apps/web
-pnpm install
-pnpm dev
+cargo run -p contentgen-server
+# Another terminal, from repository root:
+pnpm --dir apps/web dev
 ```
 
-Open the localhost URL Vite prints (normally **http://127.0.0.1:5173**), select
-**Video Director** from the main sidebar, then click **Open interactive sample**.
-A three-scene synthetic project is included in the server: **no sample JSON
-file to download or upload**, and **no Docker, AI model, TTS, or FFmpeg** needed
-to see the actual animation player and per-scene motion controls. One click
-opens the sample's real visual preview and timeline automatically. You can
-scrub, play, edit motion, save the sample as your own project, or start another
-project at any time.
+Open the Vite URL (normally **http://127.0.0.1:5173**), then
+**Production → Create Video → Generate draft video** on a project with a
+YouTube script. The Video Director appears **inside Production**, not as a
+separate main-sidebar destination. Its scene/voice/preview controls and Jobs
+status are connected to that production. Actual MP4 rendering requires a
+configured voice, Chromium and FFmpeg; opening the editor does not.
 
-**Important: `pnpm video:studio` starts an older, separate video test interface
-on port 8790.** It is **not** the main React Video Director and does not
-contain the built-in demo/onboarding described here.
+For an independent synthetic test project without saved production data,
+`pnpm --dir apps/web video:studio` starts the **separate Video Test Studio** on
+port 8790. Its commands, samples and consent flow are a development harness,
+not the primary one-click Production screen.
 
-If you do not see **Open interactive sample**, verify you are using the Vite
-URL and have pulled the latest main branch; stop and restart `pnpm dev` if
-it was already running. In main Studio the built-in demo route
-`/api/contentgen-video/demo` returns the example JSON, but you never need
-to fetch or edit that route yourself.
+If a saved production cannot open Director, verify that the Rust API server,
+the YouTube script, and the local proxy are available. See
+[Production workflow](../../docs/production-workflow.md) for inline errors,
+retry and recovery; do not start a second Director session to bypass them.
 
 ## Headless video production (draft MP4 pipeline)
 
@@ -108,13 +105,13 @@ pnpm video:produce -- \
 # stills/frame-NNNNNN.png, render-manifest.json and qa-report.json.
 ```
 
-For long-form production start from `../../examples/video-production-house-math-long.json`: its 26 script beats target at least **480 measured seconds**, not a rough word-count duration. Both the scene compiler and QA gate enforce the larger of the eight-minute baseline and the job's `destination.minimumDurationSeconds` using actual synthesized audio. Short-form jobs and portrait rendering remain future work, with **no forced 30–60-second length** for shorts. The first renderer accepts YouTube landscape only.
+For long-form House Math test production start from `../../examples/video-production-house-math-long.json`: its 26 beats target **480 measured seconds**, not a word-count estimate. This restricted fixture remains landscape. **General-explainer manual short-form jobs already support native 1080×1920 compositions** for Shorts/Reels/TikTok; see [Native 9:16 short videos](#native-916-short-videos). Do not confuse the House Math fixture's limitations with the full general renderer.
 
 `--dry-run` is side-effect-free: it checks consent, credentials' **presence**, local FFmpeg/FFprobe, the built export scene, an executable Chromium path and installed browser driver, voice/rights metadata and budget policy without calling providers, launching a browser, starting a server, or producing media. A real production run goes further: it **launches Chromium and verifies the built scene before any narration requests**. For Fish, the video orchestrator currently accepts **only the `s2.1-pro-free` model ID**, and makes no guarantee that the provider offers unlimited free use or commercial licensing. Paid models are blocked because per-job usage metering is not yet implemented; paid-use approval flags alone cannot override that. Never commit `FISH_AUDIO_API_KEY` or an unlicensed voice reference.
 
 For user-installed **local TTS**, change the job voice to `provider: "local"`, an authorized voice and a local model/engine revision; supply `endpoint: "http://127.0.0.1:8765"`. Run with `--provider local --provider-revision <actual-engine-version> --local-voice-authorized` and omit Fish-only network flags. Use `--local-endpoint http://127.0.0.1:8765` only if you need to override the job endpoint. No model is downloaded, installed, or activated by this CLI.
 
-Each release is atomically exposed only after a finished MP4 has been probed for FPS, dimensions, frame count, duration drift, loudness and required story payoff. The release also contains up to four **raster-checked, SHA-verified review stills** (opening, middle, shortly after payoff, end); they are saved separately from bounded render batches and checked again when resuming. The render manifest records the hashed compiled scene, per-beat narration hashes and provider revisions, and SHA-256 hashes of the delivered media. A changed JS/CSS/font build invalidates render-segment reuse; scene typography has a deterministic fit pass and a real-browser text-bounds check. These stills help triage but are **not** a substitute for watching the film. Ctrl-C/SIGTERM requests graceful cancellation and staging cleanup; failed captures preserve per-beat caches and hashed render segments for safe resumption, without overwriting any prior `release/`. Every successful run still reports `commercialReady: false` and requires normal-speed audio/video inspection plus explicit commercial-asset/voice licensing review before any publication.
+Each release is atomically exposed only after the finished MP4 is probed for FPS, dimensions, frame count, duration drift, loudness and required payoff. The release includes **one SHA-checked Chromium review still per narrated scene**, plus opening/closing/payoff coverage within the **64-still/256-MiB aggregate limit**. The render manifest records the hashed plan/build, per-beat narration hashes, provider revisions, and delivered-media hashes. Changed JS/CSS/font builds invalidate visual segment reuse. These stills do **not** replace watching the film. Ctrl-C/SIGTERM requests cancellation; failed captures preserve verified speech and segment caches without overwriting a previous release. Successful draft output is **not commercial approval**; normal-speed playback and rights checks are still required.
 
 ### Narration adapters (opt-in, currently offline-tested only)
 
@@ -126,7 +123,7 @@ Each release is atomically exposed only after a finished MP4 has been probed for
 
 The independently testable worker modules (`scripts/video-production/{speech,timeline,audio}.mjs`) now generate narration per beat, normalize it through FFmpeg to mono 48 kHz/16-bit PCM, probe the *actual* sample count with FFprobe, and cache by script, provider/engine revision, voice settings, and rights scope. Corrupt cache entries are regenerated; revoked voice authorization still blocks cache use. `buildSampleTimeline` uses half-open sample ranges and rounds to picture frames only at the boundary. Beat-level SRT captions exclude deliberate pauses and never masquerade as word alignment.
 
-`renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt` to an explicitly chosen directory. The built-in self-authored payoff chime is **test-only** and cannot be treated as licensed commercial sound. A verified local third-party SFX must have an explicit asset path and rights record. Optional background music is not yet implemented; a supplied music request fails explicitly. The speech, mastering, segmented encoding and final MP4 mux each have FFmpeg-backed tests; the orchestration integration test uses an injected provider and browser, so **real visual playback remains unverified**.
+`renderMasterAudio` concatenates measured narration with silence, mixes named event-timed effects and **reviewed ambience/music beds**, masters and measures loudness/true peak, and writes `voice.wav`, `master.wav`, and `captions.srt`. Music is represented by an approved `kind: "ambience"` track in the existing SFX/mix path; the separate top-level `music` input to `renderMasterAudio` still fails explicitly. The built-in payoff chime is **test-only**; third-party music/SFX need approved rights and verified asset paths. FFmpeg-backed tests cover speech, mastering, segmented encoding and mux; an injected browser/provider test is **not** proof of a real authorized user video.
 
 ### Native 9:16 short videos
 
@@ -237,11 +234,13 @@ Live instead of Planned; Motion & media remains a demonstration lab.
 
 ## Studio main navigation
 
-The React Studio now has live destinations for all nine sidebar items.
-Research stays on the existing evidence/packaging API; Create retains the
-Kumiki tools; Jobs & QA keeps using the Rust jobs API.
+The React Studio's [`navigation.tsx`](src/app/navigation.tsx) currently lists
+**11 sidebar destinations**, including **Production** and **Character Studio**.
+Video Director is embedded within Production; it is not a twelfth destination.
+Research, Jobs & QA and Settings use real Rust/SQLite and/or local provider
+routes, while some legacy catalog surfaces remain browser-local.
 
-The other six pages operate on an explicitly local browser metadata catalog:
+Some project/product/content summaries still use the local browser metadata catalog:
 
 - Projects: create, select, rename and delete project records. The active
   project ID is passed to Create. Deleting a project removes only catalog entries,
@@ -249,16 +248,16 @@ The other six pages operate on an explicitly local browser metadata catalog:
 - Content: track planned videos, Shorts, articles and thumbnails with editorial
   stages and notes. Marking Published is an author-entered status, not a verified
   platform publish event.
-- Assets: track local reference names, sources/paths and rights status.
-  No media bytes are uploaded or licenses granted.
+- Assets: includes the separate rights-reviewed media import/download flows
+  and Character Studio ZIP storage. Catalog metadata alone grants no rights.
 - Products: manage course/download/membership/service plans, not live
   Stripe products or a storefront.
 - Insights: only actual counts of those author-entered records, never
   fabricated views, revenue or virality predictions.
-- Settings: appearance, density, language, Research model, a server-backed
-  macOS Keychain connection for YouTube Data API credentials, and a JSON
-  catalog backup/import and confirmed reset. Saved keys are write-only and
-  never appear in the browser catalog or its exports.
+- Settings: appearance, density, language, task-specific AI models, local
+  provider/key settings, **Audio settings** (including Fish engine revision),
+  a macOS Keychain YouTube-key connection, and local catalog backup/reset.
+  Credentials are excluded from browser backups.
 
 The catalog is stored under the localStorage key
 contentgen:studio-catalog:v1, with a 512 KB limit, strict schema validation,
@@ -267,10 +266,11 @@ voice IDs, rendered videos or raw media. Failed storage writes are surfaced.
 Browser localStorage is not a durable backup: use Settings to download JSON
 if the records matter.
 
-This catalog is not connected to the standalone Video Test Studio (port 8790),
-production APIs, cloud sync or publishing providers. Tool-authored drafts are
-not automatically serialized into catalog records. Backend persistence and
-media ingestion require explicit API contracts and authorization work.
+The browser catalog is **not** the source of truth for Rust Jobs, saved media,
+Character Studio ZIPs, local research, or production voice/cast registries.
+It is not cloud sync or a publication ledger. Standalone Video Test Studio
+(port 8790) remains separate. See [current status](../../docs/CURRENT-STATUS.md)
+for the boundary of each persistence system.
 
 ## Run and verify
 
@@ -295,18 +295,15 @@ must show honest error states, not fabricated data.
 
 ## Creative packaging panel
 
-The packaging panel calls `GET /api/creative/packaging`, the route the backend
-registers in `crates/server/src/creative/mod.rs`. That handler is a stub today
-and answers HTTP 501 `not_implemented`; without a fixture the panel must show
-that error honestly and must not render a sample set.
+The packaging panel calls `GET /api/creative/packaging`, implemented in
+`crates/server/src/creative/mod.rs`. It reads the **latest saved**
+`packaging_hypothesis_sets.document_json` from SQLite or responds **HTTP 204**
+when no set exists; it does not fabricate demo data on an empty installation.
 
-For local QA, `pnpm fixtures:creative` starts a dependency-free Node server on
-`127.0.0.1:8789` (override with `FIXTURE_PORT`) that serves
-`fixtures/packaging-set.json` for the same route. Vite proxies `/api/creative`
-there by default; set `CONTENTGEN_CREATIVE_ORIGIN` to point elsewhere. The
-fixture is illustrative and synthetic, derived from the documented house-cost
-scenario, and is never a published or measured performance claim. Stop the
-fixture server to see the real 501 response again.
+For isolated UI QA, `pnpm fixtures:creative` starts a synthetic fixture server
+on `127.0.0.1:8789`; explicitly set `CONTENTGEN_CREATIVE_ORIGIN` to use it.
+**The normal Vite proxy targets the Rust server on 8787**, not the fixture.
+Stop the fixture and clear the override to test the real saved-data/204 behavior.
 
 ## Motion & media integration showcase
 
@@ -362,7 +359,7 @@ targets.
 | Item | Value |
 |---|---|
 | Repository | `https://github.com/YukiUmetsu/kumiki-ui` |
-| Pinned commit | `275209e228bc981dd176838e20f6a0d51761b3a9` |
+| Pinned commit (audited 2026-10-31; **check config for latest**) | `e1f0d04e826c551a6e6c50c42ab4416cb51cf133` |
 | Config | `kumiki.config.json` |
 | Hash lock | `vendor/kumiki.lock.json` |
 | Script | `scripts/vendor-kumiki.mjs` |
@@ -380,26 +377,35 @@ Selected items and their dependency closure:
   `visual-transformation`, `diagram-stage`, and `process-journey`. The closure includes `motion-track`,
   `motion-preset`, `scene-storyboard`, `motion-react`, and the required
   timeline/path/mask/morph/animated-text modules.
-- **Video delivery:** `video-export-stage` and `video-platform-presets`.
+- **Video delivery:** `video-export-stage` and transitive video/platform dependencies.
 - **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
   `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
-The configuration selects 19 top-level items; the pinned registry resolves
-34 items and vendors 85 unique files including the two stylesheets. All
-required npm dependencies already exist in `package.json`; this expansion
-adds no new runtime dependencies.
+The exact top-level selection and dependency closure are controlled by
+[`kumiki.config.json`](kumiki.config.json) and the verified lock. **Do not
+reuse an old item/file count or a pasted commit ID as the source of truth.**
 
-### Upstream adoption candidates (checked 2026-10-22)
+### Approved upstream Kumiki components (integration snapshot 2026-10-31)
 
-Kumiki main had advanced **22 commits** beyond this pin at the audit (140 registry items vs 110 at the pin). Generic `general-flow` beats with two to five stages now use the **existing pinned** `DiagramStage` + `ProcessJourney` components: fixed non-overlapping layouts, connected graph routes, one frame-addressable traveling subject, explicit stage handoffs, deterministic seeking, SVG text labels, and a still fallback for very short beats. Breakdown beats display equal-size **qualitative categories** rather than invented proportional bars; numeric charts require a separate source-backed data contract. Intro/comparison/payoff views remain unchanged. Browser preflight rejects reported diagram node overlap; real-time 16:9 export and visual inspection are still required before production sign-off.
+The owner **approves existing Kumiki-UI components**. Current ContentGen already
+uses its pinned `DiagramStage`/`ProcessJourney`, `ChartStory`, presenter and
+`VideoExportStage` facilities. Upstream `main` at the source audit was
+`898bb601eb13ad056168a209677920c7af7dbe5f`, newer than the pinned vendor.
+ST1 scene recipes, FS1, environment parallax and cinematic camera director
+are **approved upstream but not installed in this ContentGen pin**. Install
+the needed items early for video-quality work via the normal vendoring flow.
 
-Further **separately validated** registry upgrades should target:
+Select items by the actual video requirement, for example:
 
-1. `explainer-principles` for CPU-only narrative/visibility preflight, plus `chart-story` for data-based topics with real sourced quantities. Never generate evidence or measurements from chart animation.
+1. ST1 `before-after`/`guided-inspection`/`worked-example` for meaningful semantic motion; `chart-story` is **already vendored** for sourced quantities. Never infer evidence from a visual.
 2. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
-3. `short-safe-frame` + `short-hook-director` + `cut-director` with the **separate portrait milestone**, where 9:16 output is composed independently rather than cropped from 16:9.
+3. FS1/environment parallax/CC1 for persistent subjects, multiple depth planes and semantic camera paths; choose portrait-specific layout adapters for 9:16 instead of cropping.
 
-`evidence-stage` is useful later for authorized source visuals. Its dependency tree is broader, and recent Short/Video items still document pending human inspection. **Do not silently move the Kumiki commit pin or call uninstalled registry APIs.** Adopt an item through `kumiki:update`, hash verification, consumer typecheck/build and actual video playback checks in a dedicated change.
+`evidence-stage` is optional for authorized source visuals. **Do not silently
+move the commit pin or call uninstalled registry APIs.** Kumiki design approval
+does not replace ContentGen-specific dependency/hash verification, build,
+frame-seek and encoded MP4 integration checks. See
+[visual quality plan](../../docs/23-visual-quality-foundation.md).
 
 ### Evidence snapshots for quantitative scenes
 
@@ -417,13 +423,14 @@ Further **separately validated** registry upgrades should target:
 
 The hash above is **only a format example**, not genuine retrieved evidence. A real source record must use the SHA-256 of the *actual preserved content snapshot*, a precise passage locator, and its retrieval time. The validator checks shape, reference integrity and immutable-source metadata; it does **not** fetch a source, recalculate its hash or decide whether a quoted claim is true. The general visual compiler retains the claim-to-snapshot reference chain for future `chart-story` rendering and review. Model-generated jobs remain unverified and must not invent these records.
 
-### Validated quantitative chart metadata (renderer not yet enabled)
+### Validated quantitative chart metadata (renderer now available)
 
 An existing `general-explainer-v1` beat may additionally carry an optional
 `beats[].visual.chart` object. This is **validated source/assumption metadata**
-for a future Kumiki `ChartStory` adapter—not a request to render proportional
-bars with the current qualitative scene. Existing jobs without `chart` (and all
-House Math jobs) remain unchanged. A chart beat still needs the existing
+used by the implemented general-video `ChartStory` adapter in
+`src/video-export/quantitative-chart-story.ts` / `general-scene.tsx`.
+Existing jobs without `chart` (and all House Math jobs) remain unchanged.
+A chart beat still needs the existing
 `headline`, `subhead`, `emphasis`, and 2–5 `items` used by today's scene.
 
 ```json
@@ -467,8 +474,8 @@ recalculate or independently inspect the original source table, determine
 whether the verified claim supports *each* plotted value, audit arithmetic
 or infer the unit from the source. Those remain mandatory human/source
 review before any measured chart is published. The generic topic generator
-does not synthesize quantitative series, the current renderer ignores chart
-metadata, and ChartStory scenario/reveal timing remains a future adapter.
+does not synthesize trustworthy quantitative series. The renderer consumes
+validated charts when present; this is not a claim that the values are correct.
 
 Kumiki has one root `registry.json`, not per-item JSON files expected by the
 shadcn GitHub registry flow. `scripts/vendor-kumiki.mjs` is the reproducible
@@ -623,24 +630,25 @@ Rules:
    English and Japanese copy at 375 px.
 6. Render creative output inside a preview/artboard scope, not as editor chrome.
 
-The five ids and their boundaries are documented in
-`src/features/registry.ts`; the placeholder bodies in each folder show the
-expected shell integration.
+Feature IDs and boundaries are documented in `src/features/registry.ts`;
+several formerly empty slots now contain real editors and tests. Inspect
+the current slot implementation rather than assuming it is a placeholder.
 
 ## Current scope and known gaps
 
-- Brand Appearance provides a local palette/preset/typography editor with
-  JSON import/export and three scoped previews. The other four slots remain
-  placeholders.
-- No router or backend persistence; section and active tool are in-memory,
-  preferences are local storage.
-- The pre-existing Research, Jobs/QA and packaging screens are outside this
-  foundation task and call the local API client. They must remain honest when
-  their services are absent.
-- BrandKit token compilation, export/render workers and platform profiles are
-  later milestones; the preview is a neutral artboard placeholder.
-- The production bundle currently exceeds Vite's 500 kB warning threshold
-  (single chunk). Code-split feature slots when real editors land.
+- Production includes an **inline** Video Director, Rust-backed Jobs and
+  recovery metadata, generated draft releases, scene edits, three automatic
+  thumbnail concepts, saved voice/cast records and Character Studio rig paths.
+- The 16:9 general renderer, 9:16 authored general template, and separate
+  House Math fixture have **different** supported payloads. Not every template
+  works in every output format.
+- Still missing: a complete real user-edit → authorized narrated MP4 browser
+  acceptance run; reliable original scene-specific imagery/layers (ComfyUI
+  adapter not installed); full arbitrary-character rig binding; and a live
+  server/Node process-kill/restart drill. A test-only clip is not a release.
+- For the latest limits, implementation evidence and priorities, read
+  [current status](../../docs/CURRENT-STATUS.md) and
+  [one-click production](../../docs/22-one-click-video-production.md).
 
 ## Research-first cinematic preproduction (opt-in)
 
@@ -685,9 +693,11 @@ either ready-for-animatic-review or draft-needs-review plus actionable findings.
 Research review is an editor's attestation, not automated verification that a passage supports a claim.
 Unverified or disputed used claims and test-only visual assets block readiness.
 
-**Not yet implemented:** Studio-integrated source acquisition, persistent Studio editing, timed animatics,
-shot compilation to Kumiki, or attaching the plan to the production job. Legacy topic/manual jobs
-and House Math remain unchanged until the new path is integrated with migration tests.
+**Status update:** Production and Research now integrate saved source capture,
+storyboard/director editing, compiled Kumiki general scenes and Jobs-backed
+draft export. The standalone `video:plan` CLI remains a separate diagnostic/
+preproduction interface; do not assume every field from its schema is saved
+into the current Production DAG. See [Production workflow](../../docs/production-workflow.md).
 Preproduction readiness is not approval to spend money, invoke Fish Audio, render commercially or publish.
 
 
@@ -830,7 +840,10 @@ optional instructions and remain validated in code. A TTS engine is not an LLM;
 Fish Audio or other TTS does not receive a system prompt simply because the
 audio-direction prompt exists.
 
-**Video Director** is a dedicated left navigation workspace. It can:
+**Historical standalone Video Director workflow:** The following preproduction-
+bundle editor capabilities remain useful for understanding early test fixtures,
+but the **current user-facing Video Director is embedded in Production**.
+The original standalone editor can:
 1. Import a matching `research-dossier.json` and `preproduction-bundle.json`
    to select an existing shot without changing the original files.
 2. Edit only that shot's script, visual description/action, on-screen copy
@@ -855,12 +868,10 @@ hypotheses, not measured hook winners or asserted audience-retention scores.
 Only authored fields may change; evidence references, IDs and rights are
 pinned to the verified dossier. A revised shot loses editorial approval.
 
-**Important limitation:** this iteration **does not yet splice actual WAV or
-MP4 segments**, nor does it regenerate frames. ContentGen's existing speech
-cache already hashes each narration beat, so unchanged speech segments can be
-reused by a subsequent approved TTS run. The regeneration plan identifies the
-affected media and downstream synchronization work instead of claiming to
-perform it. Final media rendering and human visual/audio review remain separate.
+**Scope of the legacy selective-regeneration JSON:** exporting an old
+`selective-regeneration-plan/v1` is not itself a render. The **current**
+Production worker does reuse hash-verified speech and H.264 segments for
+compatible changed scenes; see [one-click production](../../docs/22-one-click-video-production.md).
 
 Use `pnpm --dir apps/web run test:video:headless` for the prompt, evidence and
 revision contract tests; `pnpm --dir apps/web test` covers Studio interactions.
@@ -902,17 +913,22 @@ Legacy cached video chunks may not be chapter-aligned and are rendered normally;
 their individually verified speech caches can still be reused. Build changes
 also disable video segment reuse. A corrupt previous cache fails closed.
 
-**Boundary:** This currently rebuilds `video-production-job/v1` jobs. The Video
-Director UI edits `preproduction-edit/v1` bundles, which aren't yet automatically
-converted into renderer jobs. That connection is a subsequent milestone.
-This is not an arbitrary external MP4 editor: it generates new releases from
-existing validated ContentGen production jobs, preserving unchanged media safely.
+**Boundary:** The CLI reuses `video-production-job/v1` cache identities;
+the older `preproduction-edit/v1` bundle is a separate file contract.
+Current Production has a saved-storyboard → compiled Director plan bridge;
+do not rely on the older note that this integration is unimplemented.
+Neither path is an arbitrary external MP4 editor.
 
 
 ### Video Director: edit, preview, and render in Studio
 
-From `apps/web`, launch `pnpm dev`, then open **Video Director** in the main Studio.
-Click **Try sample project** to inspect the editor and renderable storyboard without
+**Current entry point:** **Production → Create Video → Generate draft video**;
+there is no separate Video Director sidebar tab. The instructions below
+describe the **older standalone exploratory flow**, not steps required in the
+current one-click Production experience. A synthetic Video Test Studio can be
+started with `pnpm video:studio` for isolated checks.
+
+The earlier **Try sample project** action demonstrated the editor without
 SearXNG, external network, or a local research model. The sample is synthetic;
 real media rendering still needs an authorized TTS provider and local Chrome/FFmpeg.
 Start by typing a topic, a viewer question and your target audience. Choose
@@ -962,9 +978,10 @@ remain test-only, requiring human rights/factual review. Video controls and
 media routes bind to localhost and have same-origin action requirements.
 Reusing prior outputs works within the current Studio server session; after
 restarting, earlier files persist but must be supplied to the CLI to reuse.
-The UI currently renders YouTube **landscape 1920×1080** using the established
-general scenes; Shorts/TikTok and free-form custom 3D animation still require
-separate scene compilation and output QA.
+The current saved Production draft path targets YouTube **landscape 1920×1080**.
+Separately, the manually authored general-explainer test flow supports native
+9:16 Shorts/Reels/TikTok. Arbitrary 3D imports and every-template portrait
+parity are **not** implemented in ContentGen.
 
 Run `pnpm --dir apps/web run test:video:headless` and
 `pnpm --dir apps/web test` to validate the editing/render bridge and UI.
