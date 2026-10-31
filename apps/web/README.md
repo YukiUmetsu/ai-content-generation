@@ -359,7 +359,7 @@ targets.
 | Item | Value |
 |---|---|
 | Repository | `https://github.com/YukiUmetsu/kumiki-ui` |
-| Pinned commit (audited 2026-10-31; **check config for latest**) | `e1f0d04e826c551a6e6c50c42ab4416cb51cf133` |
+| Pinned commit (audited 2026-10-31; **check config for latest**) | `898bb601eb13ad056168a209677920c7af7dbe5f` |
 | Config | `kumiki.config.json` |
 | Hash lock | `vendor/kumiki.lock.json` |
 | Script | `scripts/vendor-kumiki.mjs` |
@@ -377,7 +377,7 @@ Selected items and their dependency closure:
   `visual-transformation`, `diagram-stage`, and `process-journey`. The closure includes `motion-track`,
   `motion-preset`, `scene-storyboard`, `motion-react`, and the required
   timeline/path/mask/morph/animated-text modules.
-- **Video delivery:** `video-export-stage` and transitive video/platform dependencies.
+- **Video delivery:** `video-export-stage`, ST1 `scene-template-foundation`, `before-after`, `guided-inspection`, `worked-example`, and their transitive video/platform/FS1/environment parallax dependencies. `three` and `@types/three` are pinned for that closure.
 - **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
   `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
@@ -387,25 +387,32 @@ reuse an old item/file count or a pasted commit ID as the source of truth.**
 
 ### Approved upstream Kumiki components (integration snapshot 2026-10-31)
 
-The owner **approves existing Kumiki-UI components**. Current ContentGen already
-uses its pinned `DiagramStage`/`ProcessJourney`, `ChartStory`, presenter and
-`VideoExportStage` facilities. Upstream `main` at the source audit was
-`898bb601eb13ad056168a209677920c7af7dbe5f`, newer than the pinned vendor.
-ST1 scene recipes, FS1, environment parallax and cinematic camera director
-are **approved upstream but not installed in this ContentGen pin**. Install
-the needed items early for video-quality work via the normal vendoring flow.
+The owner **approves existing Kumiki-UI components**. ContentGen now pins the
+inspected upstream revision `898bb601eb13ad056168a209677920c7af7dbe5f`
+with `DiagramStage`, `ProcessJourney`, `ChartStory`, presenter,
+`VideoExportStage`, ST1, FS1/environment-parallax, and three selected recipe wrappers.
+`cinematic-camera-director` remains optional and is not independently vendored.
+The first ContentGen premium 2.5D slot uses ST1's `environment-reveal` and
+reviewed, SHA-only PNG layers; **no approved real-world premium MP4 yet exists**.
 
 Select items by the actual video requirement, for example:
 
-1. ST1 `before-after`/`guided-inspection`/`worked-example` for meaningful semantic motion; `chart-story` is **already vendored** for sourced quantities. Never infer evidence from a visual.
+1. ST1 `before-after`/`guided-inspection`/`worked-example` **now installed** for meaningful semantic motion; `chart-story` is already vendored for sourced quantities. Never infer evidence from a visual.
 2. `audio-visual-cue` + `caption-performer` after the TTS pipeline has **real alignment data**; beat-level SRT does not represent word timestamps. Do not guess word timing.
-3. FS1/environment parallax/CC1 for persistent subjects, multiple depth planes and semantic camera paths; choose portrait-specific layout adapters for 9:16 instead of cropping.
+3. FS1/environment parallax **available through ST1 closure** for persistent subjects and depth planes. Adopt CC1 separately only when needed; choose portrait-specific layout adapters for 9:16 instead of cropping.
 
 `evidence-stage` is optional for authorized source visuals. **Do not silently
 move the commit pin or call uninstalled registry APIs.** Kumiki design approval
 does not replace ContentGen-specific dependency/hash verification, build,
 frame-seek and encoded MP4 integration checks. See
 [visual quality plan](../../docs/23-visual-quality-foundation.md).
+
+For the opt-in local ComfyUI candidate → manual review → `VisualAssetPackV1`
+→ content-addressed Kumiki scene path, use the [step-by-step setup and CLI
+commands](workflows/comfyui/README.md). `video:produce` supports
+`--visual-scenes-file /path/to/visual-scenes.json` for reviewed 1920×1080
+general-explainer beats. ComfyUI is not auto-installed, and the Studio Jobs UI
+does not yet provide pack selection.
 
 ### Evidence snapshots for quantitative scenes
 

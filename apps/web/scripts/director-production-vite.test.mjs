@@ -778,7 +778,7 @@ test("a missing selected scene asset is a visible, Jobs-tracked preparation erro
   assert.equal(server.status().state,"failed");
   assert.equal(server.status().jobId,"job-selected-media");
   assert.equal(failed?.[0],"asset_preparation_failed");
-  assert.match(server.status().message,/selected scene media.*Find the right visuals/i);
+  assert.match(server.status().message,/selected scene media.*(?:Find the right visuals|choose another image)/i);
   assert.doesNotMatch(JSON.stringify({failed,status:server.status()}),/private\/unsafe-path/);
   assert.equal(completed,0);
 });

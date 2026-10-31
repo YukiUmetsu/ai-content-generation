@@ -55,7 +55,7 @@ export async function fingerprintBuiltStage(distRoot) {
  * @param {{distRoot:string,validatedPlan:object,host?:'127.0.0.1'}} options
  * @returns {Promise<{url:string,close:()=>Promise<void>}>}
  */
-export async function startLocalStageServer({ distRoot, validatedPlan, approvedMedia = [], characterAssets = [], host = "127.0.0.1" }) {
+export async function startLocalStageServer({ distRoot, validatedPlan, approvedMedia = [], characterAssets = [], visualAssets = [], host = "127.0.0.1" }) {
   if (host !== "127.0.0.1") throw new Error("Export stage must bind a loopback-only host.");
   if (typeof distRoot !== "string" || !distRoot.trim() || !validatedPlan || typeof validatedPlan !== "object") {
     throw new Error("A built page directory and validated plan are required.");
@@ -91,6 +91,22 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
     if (previous && !previous.bytes.equals(item.bytes)) throw Error("Character image hash collision.");
     characterImages.set(item.url, { bytes: item.bytes, mediaType: item.mediaType });
   }
+  // A separate SHA-only allowlist for reviewed VisualAssetPackV1 planes.
+  // Never serve raw ComfyUI paths, arbitrary local files, or remote URLs.
+  if (!Array.isArray(visualAssets) || visualAssets.length > 36)
+    throw Error("Visual Asset Factory image count exceeds the capture budget.");
+  const visualImages = new Map();
+  let visualBytes = 0;
+  for (const layer of visualAssets) {
+    if (!Buffer.isBuffer(layer?.bytes) || layer.mediaType !== "image/png" ||
+      !/^[a-f0-9]{64}$/u.test(layer.sha256 ?? "") ||
+      layer.url !== `/__visual_assets/${layer.sha256}.png` ||
+      createHash("sha256").update(layer.bytes).digest("hex") !== layer.sha256)
+      throw Error("Invalid or modified visual layer.");
+    visualBytes += layer.bytes.length;
+    if (visualBytes > 96 * 1024 * 1024) throw Error("Visual Asset Factory capture exceeds 96 MiB.");
+    visualImages.set(layer.url, layer.bytes);
+  }
   const buildHash = await fingerprintBuiltStage(root);
   const entry = await stat(join(root, "video-export.html"));
   if (!entry.isFile()) throw new Error("Built video-export.html is required before starting capture.");
@@ -107,6 +123,11 @@ export async function startLocalStageServer({ distRoot, validatedPlan, approvedM
     catch { send(400, "Malformed path"); return; }
     if (pathname === "/__video_job") { send(200, json, mime[".json"]); return; }
     if (pathname === "/__video_build") { send(200, JSON.stringify({ sha256: buildHash }), mime[".json"]); return; }
+    if (pathname.startsWith("/__visual_assets/")) {
+      const bytes = visualImages.get(pathname);
+      if (!bytes) { send(404); return; }
+      send(200, bytes, "image/png"); return;
+    }
     if (pathname.startsWith("/__character_assets/")) {
       const layer = characterImages.get(pathname);
       if (!layer) { send(404); return; }

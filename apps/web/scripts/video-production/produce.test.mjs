@@ -141,6 +141,36 @@ test("the producer fits a short scene to measured speech and records the added s
   assert.deepEqual(adjustments,[{id:ctx.job.beats[0].id,addedPauseMs:16}]);
 });
 
+test("reviewed PNG layers select the Kumiki 2.5D scene by beat ID and reach the private capture host", async (t) => {
+  const ctx = await context(t);
+  const general = JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
+  ctx.job = { ...general, voice: ctx.job.voice };
+  const beat = ctx.job.beats.at(-1);
+  const digest = "f".repeat(64);
+  const roles = ["background", "subject", "foreground"];
+  const layers = roles.map((role) => ({ id: `layer-${role}`, role,
+    url: `/__visual_assets/${digest}.png`, width: 1024, height: 1024 }));
+  const brief = { beatId: beat.id, claimRefs: beat.claimRefs, cueEventIds: beat.eventIds, aspect: "16:9",
+    subject: "A message reaches its destination", initialState: "Sender", action: "Deliver",
+    finalState: "Received", onScreenText: ["Sent", "Routed", "Delivered"] };
+  const browserAssets = [{ url: `/__visual_assets/${digest}.png`, sha256: digest,
+    mediaType: "image/png", bytes: Buffer.from("synthetic-injected-stage-pixels") }];
+  ctx.injected.prepareVisualAssetPack = async () => ({ beatId: beat.id, layers, browserAssets });
+  let seen = false;
+  ctx.injected.startLocalStageServer = async ({ validatedPlan, visualAssets }) => {
+    seen = true;
+    assert.equal(validatedPlan.kind, "general-explainer-visual-plan");
+    assert.equal(validatedPlan.chapters.at(-1).visual.premiumScene.beatId, beat.id);
+    assert.deepEqual(validatedPlan.chapters.at(-1).visual.premiumScene.layers, layers);
+    assert.deepEqual(visualAssets, browserAssets);
+    return { url: "http://127.0.0.1:9876/video-export.html", buildHash: "b".repeat(64), close: async () => {} };
+  };
+  const result = await produceVideo(ctx.job, { ...ctx.opts,
+    visualScenes: [{ brief, pack: {}, assetsRoot: "explicit-test-root" }] }, ctx.injected);
+  assert.ok(seen);
+  assert.equal(result.qa.technicalPass, true);
+});
+
 test("selected scene photo reaches the actual general Kumiki plan and stage before narration", async t => {
   const ctx = await context(t);
   const general = JSON.parse(readFileSync(new URL("../../../../examples/video-production-general-smoke.json", import.meta.url), "utf8"));
@@ -350,7 +380,7 @@ test("production emits real stage transitions and forwards verified capture fram
   };
   const result=await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
   const phases = events.map((event) => event.phase);
-  assert.deepEqual(phases, ["browser-preflight", "asset-search", "asset-preparation", "narration", "timeline", "audio", "captions", "rendering", "rendering", "thumbnails", "mux", "qa", "review"]);
+  assert.deepEqual(phases, ["browser-preflight", "asset-search", "asset-preparation", "narration", "timeline", "scene-layouts", "audio", "captions", "rendering", "rendering", "thumbnails", "mux", "qa", "review"]);
   assert.deepEqual(events.find((event) => event.completedFrames === 90),
     { phase: "rendering", completedFrames: 90, totalFrames: 90 });
   const narration=events.find(event=>event.phase==="timeline")?.artifactLedger;

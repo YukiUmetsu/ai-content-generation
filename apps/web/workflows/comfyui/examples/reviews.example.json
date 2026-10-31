@@ -1,0 +1,5 @@
+[
+  { "id": "desk-background", "role": "background", "rights": "unreviewed", "reviewStatus": "pending", "anchor": { "x": 0.5, "y": 0.5 }, "depth": 0 },
+  { "id": "invoice-prop", "role": "subject", "rights": "unreviewed", "reviewStatus": "pending", "anchor": { "x": 0.5, "y": 0.5 }, "depth": 0.5 },
+  { "id": "desk-foreground", "role": "foreground", "rights": "unreviewed", "reviewStatus": "pending", "anchor": { "x": 0.5, "y": 0.5 }, "depth": 1 }
+]

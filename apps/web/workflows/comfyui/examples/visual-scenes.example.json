@@ -1,0 +1,7 @@
+[
+  {
+    "brief": "./reviewed-desk/visual-brief.json",
+    "pack": "./reviewed-desk/visual-asset-pack.json",
+    "assetsRoot": "./reviewed-desk"
+  }
+]

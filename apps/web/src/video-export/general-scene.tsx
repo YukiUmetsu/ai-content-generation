@@ -21,6 +21,8 @@ import { SemanticMechanicScene } from "./semantic-mechanic-scene";
 import { ConversationCharacters } from "./conversation-characters";
 import { characterRigsForChapter } from "./scene-character-rigs";
 import type { ExportRigPlan } from "./scene-character-rigs";
+import { PremiumLayeredScene } from "./premium-layered-scene";
+import type { PremiumVisualScene } from "./premium-layered-scene";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -188,6 +190,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>
       {chapter.dialogue&&<ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} compact/>}
     </div>;
+  }
+  if (state.visual.premiumScene) {
+    return <PremiumLayeredScene scene={state.visual.premiumScene as PremiumVisualScene}
+      frame={state.localFrame} frames={chapterFrames} fps={plan.manifest.fps}/>;
   }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
   <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} data-payoff-hold={isPayoffHidden ? "true" : undefined} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>

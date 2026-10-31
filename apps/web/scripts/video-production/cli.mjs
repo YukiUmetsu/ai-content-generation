@@ -8,6 +8,22 @@ import { parseVideoProductionJob } from "./job.mjs";
 import { produceVideo } from "./produce.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
 import { fingerprintBuiltStage } from "./stage-server.mjs";
+import { prepareVisualAssetPackV1 } from "./visual-asset-factory.mjs";
+
+function readVisualScenesFile(file) {
+  const manifestPath = resolve(file);
+  const configs = JSON.parse(readFileSync(manifestPath, "utf8"));
+  if (!Array.isArray(configs) || configs.length < 1 || configs.length > 6)
+    throw Error("--visual-scenes-file must contain 1–6 visual scene mappings");
+  return configs.map((config) => {
+    if (!config || typeof config.brief !== "string" || typeof config.pack !== "string" ||
+      typeof config.assetsRoot !== "string") throw Error("Each visual scene needs brief, pack and assetsRoot paths");
+    const dir = dirname(manifestPath);
+    return { brief: JSON.parse(readFileSync(resolve(dir, config.brief), "utf8")),
+      pack: JSON.parse(readFileSync(resolve(dir, config.pack), "utf8")),
+      assetsRoot: resolve(dir, config.assetsRoot) };
+  });
+}
 
 const readFlagValue = (argv, index) => {
   if (index + 1 >= argv.length || argv[index + 1].startsWith("--")) throw new Error(`${argv[index]} requires a value.`);
@@ -19,7 +35,7 @@ export function parseCliArgs(argv) {
   const options = {
     job: "", provider: "", out: "", dryRun: false, allowNetwork: false, budgetUsd: 0, localEndpoint: "",
     voiceReferenceConsent: false, textTransmissionApproved: false, localVoiceAuthorized: false, reuseFrom: "",
-    paidUsageApproved: false, allowTestAssets: false, providerRevision: "", browserExecutable: "", distRoot: "",
+    paidUsageApproved: false, allowTestAssets: false, providerRevision: "", browserExecutable: "", distRoot: "", visualScenesFile: "",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -31,9 +47,9 @@ export function parseCliArgs(argv) {
     if (flag === "--local-voice-authorized") { options.localVoiceAuthorized = true; continue; }
     if (flag === "--paid-usage-approved") { options.paidUsageApproved = true; continue; }
     if (flag === "--allow-test-assets") { options.allowTestAssets = true; continue; }
-    if (["--job", "--provider", "--out", "--budget-usd", "--local-endpoint", "--provider-revision", "--browser-executable", "--dist-root", "--reuse-from"].includes(flag)) {
+    if (["--job", "--provider", "--out", "--budget-usd", "--local-endpoint", "--provider-revision", "--browser-executable", "--dist-root", "--reuse-from", "--visual-scenes-file"].includes(flag)) {
       const value = readFlagValue(argv, index);
-      const prop = ({ "--job": "job", "--provider": "provider", "--out": "out", "--budget-usd": "budgetUsd", "--local-endpoint": "localEndpoint", "--provider-revision": "providerRevision", "--browser-executable": "browserExecutable", "--dist-root": "distRoot", "--reuse-from": "reuseFrom" })[flag];
+      const prop = ({ "--job": "job", "--provider": "provider", "--out": "out", "--budget-usd": "budgetUsd", "--local-endpoint": "localEndpoint", "--provider-revision": "providerRevision", "--browser-executable": "browserExecutable", "--dist-root": "distRoot", "--reuse-from": "reuseFrom", "--visual-scenes-file": "visualScenesFile" })[flag];
       options[prop] = flag === "--budget-usd" ? Number(value) : value;
       index += 1;
       continue;
@@ -113,6 +129,14 @@ export async function inspectProduction(candidate, options) {
   if (!options.providerRevision) add("provider-revision-missing", "Pin --provider-revision to the actual TTS provider/engine revision before caching.");
   if (parsed.job.approval === "test-only") add("fixture-only", "This illustrative job cannot be marketed as commercial-ready.", "warning");
   if (parsed.job.destination.presetId !== "youtube") add("render-profile-unavailable", "The first renderer supports YouTube landscape only.");
+  if (options.visualScenesFile) {
+    try {
+      for (const scene of readVisualScenesFile(options.visualScenesFile))
+        await prepareVisualAssetPackV1(scene);
+    } catch (error) {
+      add("premium-visual-invalid", `Reviewed premium visual pack is not render-ready: ${error.message}`);
+    }
+  }
 
   const tools = {};
   try {
@@ -160,6 +184,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     const env = dependencies.env ?? process.env;
     const result = await (dependencies.produceVideo ?? produceVideo)(candidate, {
       ...options,
+      ...(options.visualScenesFile ? { visualScenes: readVisualScenesFile(options.visualScenesFile) } : {}),
       provider: options.provider || candidate.voice.provider,
       apiKey: env.FISH_AUDIO_API_KEY,
       browserExecutable: options.browserExecutable || env.CONTENTGEN_CHROMIUM_EXECUTABLE,
