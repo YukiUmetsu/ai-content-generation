@@ -1,15 +1,15 @@
 # Video Director — Guided Production Workspace
 
-Video Director is organized as a four-step workflow. Each step edits the **same saved research-backed video project**, and users can revisit steps without creating a new storyboard or triggering a render.
+Video Director is organized as a four-step **manual editing** workflow inside **Production → Create Video**, not a separate main-sidebar page. Each step edits the **same saved research-backed video project**. **Generate draft video** is the automatic entry point and does not require manually working through these editing stages or clicking repeated readiness/plan approvals; the controls below remain available for targeted edits and diagnosis.
 
 1. **Storyboard:** Choose a scene, improve narration, visible teaching elements and motion intent. Save scene edits explicitly. Optional local AI alternatives can be combined only after the current scene is saved. A revision summary shows what needs regeneration.
 2. **Visual assets:** Find and review useful footage and images for the selected scene. Use the existing asset approval workflow; discovering assets does not mean they are legally usable or automatically included in export.
 3. **Sound:** In Sound Studio, review CC0 source rights, select approved effects, add supplementary cues and a quiet ambience bed, and audition a browser-local sketch. No local narration file supplied to audition is uploaded or reused by export.
 4. **Preview & Export:** Follow four guided substeps:
    - **Preview:** Inspect the real Kumiki-backed scene, scrub motion, and optionally open an offline rough cut. A live visual preview never synthesizes speech.
-   - **Narration:** Select a licensed voice and the engine version. Explicitly press **Generate voice sample** to hear a short excerpt of the first scene before committing to an MP4. A sample is an independent asynchronous job; cancel or retry if needed. For Fish Audio, voice-use permission and approval to transmit the short text are required. The free model's commercial rights are **not** assumed.
-   - **Final review:** Check your scene narration, source warnings, voice choice and media rights. Press **Check readiness**; the local tools and approved sounds must be ready before proceeding.
-   - **Export:** Press **Render test MP4**, watch the local progress and optionally cancel. On completion, review the inline player and download the draft; nothing is automatically published.
+   - **Narration:** Select a configured licensed voice and engine version (provider defaults in **Settings → Audio**). **Generate voice sample** is an optional independent asynchronous audition job; cancel or retry if needed. The application still enforces backend voice/transmission authorization when required, but **Production does not present redundant Fish consent checkboxes**. A model's commercial rights are **not** inferred from its name or price.
+   - **Final review:** Inspect scene narration, source warnings, voice choice and media rights. A manual **Check readiness** can diagnose local tools and assets; automatic draft production performs its own preflight without a separate approval click.
+   - **Export:** The manual export control renders an MP4 and supports progress, cancellation, playback and download. The primary **Generate draft video** action starts the same production route after setup; nothing is automatically published.
 
 The interactive sample opens directly to **Preview & Export**, where its real scene timeline is available without voice credentials. A saved project opens to **Storyboard**.
 
