@@ -252,11 +252,13 @@ export async function prepareAutomaticDraftMedia({suggestions,shotMap,existing,o
         catch(error){jobClaimFailed=true;throw error;}
       }
       const url=`/__video_media/${digest}.${candidate.assetType==="photo"?"jpg":"mp4"}`;
+      const photoTitle=String(candidate.title??"").replace(/[\u0000-\u001f\u007f]/gu," ").replace(/\s+/gu," ").trim().slice(0,120);
       const binding={assetType:candidate.assetType,url,sha256:digest,provider:"pexels",
         assetId:candidate.assetId,sourceUrl:source.sourceUrl,license:source.license,
         licenseUrl:source.licenseUrl,creator:source.creator??"",width:details.width,
         height:details.height,...(candidate.assetType==="video"?{durationSeconds:details.durationSeconds}:{}),
-        rightsStatus:"draft-provider-license",automaticallyPrepared:true};
+        rightsStatus:"draft-provider-license",automaticallyPrepared:true,
+        ...(photoTitle?{title:photoTitle}:{})};
       return {beatId,binding,asset:{url,path:destination,sha256:digest,assetType:candidate.assetType},warnings};
     }catch(error){
       if(attempt)await sceneJobs.failScene(attempt,error);

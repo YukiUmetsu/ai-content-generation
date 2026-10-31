@@ -16,6 +16,7 @@ import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
+import { planExplainerLayouts } from "./script-layout-plan.mjs";
 import { assertReviewStillBudget, assertSceneReviewCapacity, selectSceneReviewFrames, summarizeSceneReviewCoverage } from "./scene-review-coverage.mjs";
 import { startLocalStageServer } from "./stage-server.mjs";
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
@@ -347,6 +348,8 @@ export async function produceVideo(candidate, options, deps = {}) {
         },
       })) };
     }
+    await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
+    plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
     const frames = plan.manifest.durationFrames;
     const reviewFrames = selectSceneReviewFrames(plan);
     const sourcePlan = JSON.stringify(plan);

@@ -24,13 +24,16 @@ function shotDuration(narration,explicit){
   return {seconds:clamp(Math.round(latin/2.5+japanese/5.5+pause),3,120),source:"estimated"};
 }
 
+const DEVICE_WORD=new Set(["computer","laptop","screen","monitor","desktop","icon","logo","smartphone","tablet"]);
+
 /** Rank providers' untrusted descriptive metadata; never auto-approve or auto-bind. */
-export function rankShotCandidates({shot,narration,query="",candidates=[],destination="landscape",durationSeconds}={}){
+export function rankShotCandidates({shot,narration,query="",pictureWords,candidates=[],destination="landscape",durationSeconds}={}){
   if(!["landscape","portrait"].includes(destination))throw Error("Unknown asset matching destination.");
   const desired=destination==="portrait"?9/16:16/9;
   const labels=(Array.isArray(shot?.visualElements)?shot.visualElements:[])
     .slice(0,5).map(x=>x?.label).filter(x=>typeof x==="string");
-  const subjects=tokens(labels.join(" ")||query||shot?.visualChange);
+  const depicted=Array.isArray(pictureWords)?pictureWords.filter(word=>typeof word==="string").slice(0,4):[];
+  const subjects=tokens(depicted.join(" ")||labels.join(" ")||query||shot?.visualChange);
   const remaining=tokens(clean(narration?.narration)+" "+clean(shot?.visualChange))
     .filter(x=>!subjects.includes(x));
   const timing=shotDuration(narration,durationSeconds);
@@ -40,11 +43,18 @@ export function rankShotCandidates({shot,narration,query="",candidates=[],destin
     const names=new Set(tokens(clean(asset?.title)+" "+sourceWords(asset?.sourceUrl)+" "+keywordText));
     const matched=subjects.filter(x=>names.has(x));
     const contextual=remaining.filter(x=>names.has(x));
-    const semantic=Math.min(matched.length,2)*40+Math.min(contextual.length,3)*6;
+    const showsDevice=[...names].some(word=>DEVICE_WORD.has(word));
+    const softwarePicture=depicted.length>0;
+    let semantic=Math.min(matched.length,2)*40+Math.min(contextual.length,3)*6;
     const reasons=[];
-    if(matched.length)reasons.push("Matches visible subject: "+matched.slice(0,3).join(", "));
+    if(softwarePicture&&matched.length&&showsDevice){
+      semantic+=15;
+      reasons.push(names.has("icon")||names.has("logo")?
+        "Title names this software and an app icon":"Title names this software on a computer or screen");
+    }else if(matched.length)reasons.push("Matches visible subject: "+matched.slice(0,3).join(", "));
     else if(contextual.length)reasons.push("Narration-related metadata; visible subject needs review");
     else reasons.push("No clear subject match in provider metadata; inspect the preview");
+    const softwareNeedsReview=softwarePicture&&(!matched.length||!showsDevice);
 
     let framing=0;
     if(["photo","video"].includes(asset.assetType)){
@@ -53,6 +63,7 @@ export function rankShotCandidates({shot,narration,query="",candidates=[],destin
       }else{
         const deviation=Math.abs(Math.log((asset.width/asset.height)/desired));
         framing=deviation<=0.1?0:deviation<=0.32?-8:deviation<=0.7?-18:-30;
+        if(softwarePicture&&(names.has("icon")||names.has("logo"))&&framing<-8)framing=-8;
         reasons.push(framing===0?`Fits ${destination==="portrait"?"9:16":"16:9"} framing`:
           framing===-30?"Heavy crop needed for this output aspect":"Some cropping may be needed");
       }
@@ -70,6 +81,7 @@ export function rankShotCandidates({shot,narration,query="",candidates=[],destin
     }
     const score=clamp(semantic+framing+duration+(asset.assetType==="video"?3:0),0,100);
     const grade=!matched.length?(contextual.length?"review":"weak"):
+      softwareNeedsReview?"review":
       score>=30&&framing>-30&&duration>-26?"strong":"review";
     return {...asset,match:{score,grade,breakdown:{semantic,framing,duration},reasons}};
   }).sort((a,b)=>b.match.score-a.match.score||

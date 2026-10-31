@@ -17,7 +17,9 @@ const MAX_FILE=80*1024*1024;
 const MAX_JSON=18*1024*1024;
 const UA="ContentGen-SceneAssets/1.0 (https://github.com/YukiUmetsu/ai-content-generation)";
 const ABSTRACT=/\b(chart|graph|table|diagram|timeline|formula|percentage|interest|tax|flowchart|equation|calculation|numbers?|statistics|comparison|slide|text|headline|list)\b/iu;
-const STOP=new Set(["the","a","an","of","for","from","to","and","with","on","in","by","how","why","cost","costs","shows","show","visual","asset","scene","actual","real","this","that"]);
+const STOP=new Set(["the","a","an","of","for","from","to","and","with","on","in","by","how","why","cost","costs","shows","show","visual","asset","scene","actual","real","this","that","into","onto","using","running","their","every","still"]);
+const SOFTWARE_TOOL=/(?:^|[^\p{L}\p{N}])([\p{L}\p{N}][\p{L}\p{N}'’-]{2,}(?:\s+[\p{L}\p{N}][\p{L}\p{N}'’-]{2,}){0,2})\s+(software|applications?|apps?|programs?|platforms?)\b/iu;
+const DEVICE_WORD=new Set(["computer","laptop","screen","monitor","desktop","icon","logo","smartphone","tablet"]);
 const sha=bytes=>createHash("sha256").update(bytes).digest("hex");
 const exec=promisify(execFile);
 function ident(value,label){if(typeof value!=="string"||!ID.test(value))throw Error(`Invalid ${label} identifier.`);return value;}
@@ -32,14 +34,43 @@ function boundedShots(bundle){
   return shots;
 }
 
+function toolWord(value){
+  if(/^app/iu.test(value))return "app";
+  if(/^program/iu.test(value))return "program";
+  if(/^platform/iu.test(value))return "platform";
+  return "software";
+}
+
+/** A sentence that names software should look for that software on a computer, or its icon. */
+export function softwarePicture(narration){
+  const text=visible(narration,500);
+  const named=/会計ソフト|会計アプリ|簿記ソフト/u.test(text)?
+    {words:["accounting","software"]}:null;
+  const match=named?null:SOFTWARE_TOOL.exec(text);
+  const subject=(match?.[1]??"").split(/\s+/u)
+    .filter(word=>word.length>=3&&!STOP.has(word.toLowerCase())).slice(-2)
+    .map(word=>word.toLowerCase());
+  const words=named?.words??(subject.length?[...subject,toolWord(match[2])]:[]);
+  if(words.length<2)return null;
+  return {query:`${words.join(" ")} laptop screen`,pictureWords:words,
+    reason:"Look for a computer running this software, or its app icon."};
+}
+
 /** No LLM and no network. Pure semantic extraction with a meaningful no-stock decision. */
 export function planSceneAssetNeeds(bundle){
+  const spoken=new Map((Array.isArray(bundle?.plan?.sound)?bundle.plan.sound:[])
+    .filter(item=>item&&typeof item.shotId==="string")
+    .map(item=>[item.shotId,visible(item.narration,500)]));
   return boundedShots(bundle).map(shot=>{
+    const picture=softwarePicture(spoken.get(shot.id));
+    if(picture)return {shotId:shot.id,query:picture.query,pictureWords:picture.pictureWords,
+      strategy:"search",reason:picture.reason};
     const subjects=Array.isArray(shot.visualElements)?shot.visualElements
       .map(x=>visible(x?.label,80)).filter(Boolean).slice(0,5):[];
-    const label=subjects.find(x=>!ABSTRACT.test(x))??subjects[0]??visible(shot.purpose,100);
+    const tangible=subjects.filter(x=>!ABSTRACT.test(x));
+    const label=tangible[0]??subjects[0]??visible(shot.purpose,100);
     const intent=visible(shot.visualChange,200);
-    const queryTerms=terms(label);
+    const queryTerms=terms(tangible.length?tangible.slice(0,3).join(" "):label);
     const strategy=(!queryTerms.length||ABSTRACT.test(label)||(!subjects.length&&ABSTRACT.test(intent)))?"kumiki":"search";
     return {shotId:shot.id,query:strategy==="search"?queryTerms.slice(0,3).join(" "):"",
       strategy,reason:strategy==="kumiki"?"Use Kumiki diagrams/graphics for abstract explanations; stock imagery would be decorative.":
@@ -74,13 +105,6 @@ async function getJson(url,{fetchImpl=fetch,headers={},signal}={}){
     AbortSignal.any([signal,deadline]):deadline});
   try{return JSON.parse((await readLimited(r,MAX_JSON)).toString("utf8"));}
   catch(e){if(e instanceof SyntaxError)throw Error("Asset provider returned invalid JSON.");throw e;}
-}
-function scoreMetadata(x,query){
-  const words=terms(query);
-  const title=visible(x.name,150).toLowerCase();
-  const tags=Array.isArray(x.tags)?x.tags.map(t=>visible(t,60).toLowerCase()).join(" "):"";
-  const category=visible(x.category,120).toLowerCase();
-  return words.reduce((score,term)=>score+(title.includes(term)?5:0)+(tags.includes(term)?3:0)+(category.includes(term)?1:0),0);
 }
 function polyCandidate(id,item,score){
   const assetType=({0:"hdri",1:"texture",2:"model"})[item.type];
@@ -197,21 +221,14 @@ export async function discoverShotAssets(input,opts={}){
     Object.entries(durations).some(([shotId,seconds])=>!needs.some(x=>x.shotId===shotId)||
       typeof seconds!=="number"||!Number.isFinite(seconds)||seconds<=0||seconds>600))
     throw Error("Invalid per-scene narration duration override.");
-  const providers=input.providers??["polyhaven","openverse"];
+  const providers=input.providers??["openverse"];
   if(!Array.isArray(providers)||providers.length>3||
     new Set(providers).size!==providers.length||providers.some(x=>!["polyhaven","pexels","openverse"].includes(x)))
     throw Error("Unknown asset search provider.");
   const warnings=[],byShot=new Map(needs.map(need=>[need.shotId,[]]));
   const active=needs.filter(x=>x.strategy==="search");
   if(active.length&&providers.includes("polyhaven")){
-    try{
-      const all=Object.entries(await polyCatalog(opts));
-      for(const need of active){
-        const ranked=all.map(([id,item])=>({id,item,score:scoreMetadata(item,need.query)}))
-          .filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,4);
-        byShot.get(need.shotId).push(...ranked.map(x=>polyCandidate(x.id,x.item,x.score)).filter(Boolean));
-      }
-    }catch(error){warnings.push("Poly Haven: "+visible(error.message,150));}
+    warnings.push("Poly Haven search has been retired. Scenes use Openverse photos or Kumiki graphics.");
   }
   if(active.length&&providers.includes("pexels")){
     // Old saved UI search choices must not revive API credential collection
@@ -234,9 +251,10 @@ export async function discoverShotAssets(input,opts={}){
     .filter(x=>x&&typeof x.shotId==="string").map(x=>[x.shotId,x]));
   const shots=new Map(input.bundle.plan.shots.map(shot=>[shot.id,shot]));
   return {schemaVersion:1,kind:"contentgen-scene-asset-suggestions",destination,
-    providerCredit:"Assets via Poly Haven / Pexels / Openverse",
+    providerCredit:"Assets via Openverse / Pexels",
     scenes:needs.map(need=>({...need,...rankShotCandidates({shot:shots.get(need.shotId),
-      narration:sound.get(need.shotId),query:need.query,candidates:byShot.get(need.shotId),
+      narration:sound.get(need.shotId),query:need.query,pictureWords:need.pictureWords,
+      candidates:byShot.get(need.shotId),
       destination,durationSeconds:durations[need.shotId]})})),warnings};
 }
 

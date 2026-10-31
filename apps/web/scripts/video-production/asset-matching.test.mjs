@@ -64,6 +64,24 @@ test("trusted provider subject tags can rescue a generic 3D model title",()=>{
   assert.equal(ranked.candidates[0].match.grade,"strong");
 });
 
+test("a software scene keeps a computer or icon and rejects a title that never shows one",()=>{
+  const photo=(assetId,title,width=1920,height=1080)=>({provider:"openverse",assetId,assetType:"photo",
+    title,width,height,sourceUrl:"https://commons.wikimedia.org/wiki/File:Example.jpg"});
+  const ranked=rankShotCandidates({shot,narration,pictureWords:["accounting","software"],destination:"landscape",
+    candidates:[
+      photo("book","Accounting textbook"),
+      photo("screen","Laptop screen running accounting software"),
+      photo("icon","Accounting software icon",512,512),
+      photo("forest","Forest river"),
+    ]});
+  assert.deepEqual(ranked.candidates.map(item=>item.assetId),["screen","icon","book","forest"]);
+  assert.equal(ranked.candidates[0].match.grade,"strong");
+  assert.equal(ranked.recommendedAssetKey,"openverse:photo:screen");
+  assert.equal(ranked.candidates.find(item=>item.assetId==="icon").match.grade,"strong");
+  assert.equal(ranked.candidates.find(item=>item.assetId==="book").match.grade,"review");
+  assert.match(ranked.candidates[0].match.reasons[0],/computer or screen/i);
+});
+
 test("combined provider catalogs remain bounded for safe restart persistence",()=>{
   const candidates=Array.from({length:16},(_,i)=>({
     ...media(i+10,i===15?"Roof tiles after storm":"Unrelated stock scene",1280,720),

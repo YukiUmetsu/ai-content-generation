@@ -46,6 +46,7 @@ test("automatic draft images honor manually pinned scenes and avoid duplicate ph
   assert.equal(result.prepared,1);
   assert.equal(result.bindings["beat-a"],pinned.bindings["beat-a"],"manual selection remains untouched");
   assert.equal(result.bindings["beat-b"].assetId,"42");
+  assert.equal(result.bindings["beat-b"].title,"Residential roof with sunlight");
   assert.equal(result.bindings["beat-b"].rightsStatus,"draft-provider-license");
   assert.equal(result.bindings["beat-c"],undefined,"one photo cannot repeat as distinct scenes");
   assert.equal(result.assets.length,1);

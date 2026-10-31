@@ -116,9 +116,11 @@ export async function prepareApprovedSceneMedia({ projectId, shotMap, outputDir,
       } finally { await rm(temporary, { force: true }); }
     }
     const url = `/__video_media/${filename}`;
+    const photoTitle = String(asset.title ?? "").replace(/[\u0000-\u001f\u007f]/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 120);
     bindings[map.get(asset.shotId)] = { assetType: asset.assetType, url, sha256: asset.sha256,
       provider: asset.provider, assetId: asset.assetId, sourceUrl: asset.sourceUrl,
       license: asset.license, licenseUrl: asset.licenseUrl, creator: asset.creator ?? "",
+      ...(photoTitle ? { title: photoTitle } : {}),
       ...(asset.focalPoint===undefined?{}:{focalPoint:asset.focalPoint}),...details };
     assets.push({ url, path: destination, sha256: asset.sha256, assetType: asset.assetType });
   }

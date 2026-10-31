@@ -476,6 +476,8 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
   const firstMissingShot=state.visualCoverage?.sceneCount===bundle.plan.shots.length?
     bundle.plan.shots.find(shot=>state.visualCoverage?.missingStockVideoShotIds?.includes(shot.id)):undefined;
   const firstMissingShotIndex=firstMissingShot?bundle.plan.shots.indexOf(firstMissingShot):-1;
+  const blockedSetupText=[state.message,...(state.report?.findings??[]).map(finding=>`${finding.code} ${finding.message}`)].join("\n");
+  const narratorSetup=/narrator|fish audio|voice|credential/iu.test(blockedSetupText);
   return <div ref={previewAnchor} id="contentgen-interactive-preview" className="scroll-mt-4">
     <Surface header={<div className="space-y-1"><h2 className="flex items-center gap-2 text-lg font-semibold"><Film className="size-5"/>Preview & Export</h2>
       <p className="text-xs font-normal text-muted-foreground">From working scenes to a playable test video, one step at a time.</p></div>}>
@@ -500,10 +502,12 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
         </div>
       </div>}
       {state.state==="blocked"&&stage!=="export"&&<div role="alert" className="rounded-control border border-status-warning/40 bg-surface-subtle p-4">
-        <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4"/>Draft needs setup</p>
+        <p className="flex items-center gap-2 font-semibold"><AlertCircle className="size-4"/>{narratorSetup?"Draft needs setup":"Draft did not start"}</p>
         <p className="mt-2 text-sm">{state.message}</p>
         {state.report?.findings.map((finding,index)=><p key={index} className="mt-1 text-xs text-muted-foreground">{finding.message}</p>)}
-        <p className="mt-2 text-xs text-muted-foreground">Choose a narrator below, or set Fish Audio credentials in Settings → Connections. Then retry the draft.</p>
+        <p className="mt-2 text-xs text-muted-foreground">{narratorSetup
+          ?"Choose a narrator below, or set Fish Audio credentials in Settings → Connections. Then retry the draft."
+          :"Select Generate draft video again after the issue above is resolved."}</p>
       </div>}
       {["failed","cancelled"].includes(state.state)&&stage!=="export"&&state.jobId&&<div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-border bg-surface-subtle px-4 py-3">
         <p className="text-sm font-medium">An earlier draft needs attention.</p>
@@ -616,7 +620,7 @@ export function ProductionPanel({dossier,bundle,productionId,voiceProjectId,sour
             <input type="checkbox" className="mt-0.5" aria-label="Search free scene media during rendering"
               checked={searchFreeMedia} disabled={!!working||state.state==="rendering"}
               onChange={event=>changeMediaSearch(event.target.checked)}/>
-            Find matching visual assets (optional). Searches Poly Haven and Openverse and automatically downloads up to three HD Wikimedia Commons photos only after their CC0 license is checked at the source. Other scenes use Kumiki visuals; Pexels website files can be imported in Director → Find the right visuals.
+            Find matching visual assets (optional). Searches Openverse and automatically downloads up to eight HD Wikimedia Commons photos only after their CC0 license is checked at the source. Other scenes use Kumiki visuals; Pexels website files can be imported in Director → Find the right visuals.
           </label>
           <Button disabled={!!working||state.state==="rendering"} onClick={()=>void generateDraft()}>
             <Film className="mr-2 size-4"/>{working==="auto"?"Checking and generating…":"Generate draft video"}

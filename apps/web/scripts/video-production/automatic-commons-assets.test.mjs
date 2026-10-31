@@ -58,6 +58,7 @@ test("original Commons CC0 license, JPEG hash and FFprobe determine automatic el
   assert.equal(result.bindings["beat-a"].provider,"wikimedia-commons");
   assert.equal(result.bindings["beat-a"].license,"CC0-1.0");
   assert.equal(result.bindings["beat-a"].creator,"Creative photographer");
+  assert.equal(result.bindings["beat-a"].title,"Riverside forest under sunlight");
   assert.equal(result.bindings["beat-b"],undefined);
   assert.equal(result.assets[0].sha256,hash("sha256",f.bytes));
   assert.deepEqual(jobs.map(item=>item[0]),["begin","complete"]);

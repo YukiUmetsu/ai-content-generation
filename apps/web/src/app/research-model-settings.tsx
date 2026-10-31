@@ -19,7 +19,7 @@ const taskLabels: Record<Task,{en:string;ja:string;hintEn:string;hintJa:string}>
   research: {en:"Research model",ja:"リサーチ",hintEn:"Source analysis and evidence extraction",hintJa:"資料の分析と根拠の抽出"},
   story: {en:"Story planning model",ja:"構成・ストーリー",hintEn:"Research to visual storyboard",hintJa:"調査から映像構成への変換"},
   hooks: {en:"Hooks & variants model",ja:"フック・バリエーション",hintEn:"Opening hooks and editorial alternatives",hintJa:"冒頭フックと編集案"},
-  script: {en:"Script drafting model",ja:"台本生成",hintEn:"Topic-to-script CLI generation",hintJa:"トピックから台本への生成（CLI）"},
+  script: {en:"Script drafting model",ja:"台本生成",hintEn:"Script drafting, and each spoken section's objects, action, line, and photo check",hintJa:"台本の生成と、各セクションの対象・動作・画面上の一文・写真の採否"},
 };
 const field = "min-w-0 w-full rounded-control border border-input bg-surface px-3 py-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const label = "block text-sm font-medium text-foreground";
@@ -110,7 +110,7 @@ export function ResearchModelSettings({locale}:{locale:Locale}){
     try{
       const response=await request("/profiles/save","POST",config);
       setConfig(response.profiles as ModelProfiles);
-      setNotice({kind:"success",message:copy("Saved. New Research, Story, Hooks, and Script runs use these assignments.","保存しました。次回のリサーチ・構成・フック・台本生成から適用されます。")});
+      setNotice({kind:"success",message:copy("Saved. New Research, Story, Hooks, and Script runs use these assignments. A new draft uses the script model for each spoken section.","保存しました。次回のリサーチ・構成・フック・台本生成から適用されます。新しい下書きの各セクションも台本モデルを使います。")});
     }catch(error){setNotice({kind:"error",message:error instanceof Error?error.message:"Unable to save AI settings."});}
     finally{setSaving(false);}
   }
@@ -197,7 +197,7 @@ export function ResearchModelSettings({locale}:{locale:Locale}){
             </label>)}
           </div>
           <p className="rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-            {copy("These four routes are connected today. Other stages in Prompt Studio do not yet use assigned models.","現在この 4 つのタスクに対応しています。Prompt Studio の他の工程はまだモデル割り当てに対応していません。")}
+            {copy("Research, story, hooks, and script use these profiles. A new draft's objects, action, on-screen line, and photo check use the script assignment, or the default profile when that assignment is left on Use default.","リサーチ、構成、フック、台本がこのプロファイルを使います。新しい下書きの対象、動作、画面上の一文、写真の採否は台本の割り当てを使い、未設定ならデフォルトを使います。")}
           </p>
         </section>
       </div>

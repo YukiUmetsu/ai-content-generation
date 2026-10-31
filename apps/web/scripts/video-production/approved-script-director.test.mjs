@@ -38,6 +38,16 @@ test("approved script preserves each section's narration through a valid rendera
   const rendered=compilePreproductionRenderJob(result.dossier,result.bundle);
   assert.equal(rendered.job.beats.length,5);
   assert.equal(rendered.editorialStatus,"unverified-test-draft");
+  for (const shot of result.bundle.plan.shots) {
+    const spoken = result.bundle.plan.sound.find(item => item.shotId === shot.id).narration;
+    assert.equal(shot.motion.camera, "cinematic");
+    assert.equal(shot.motion.revealPace, "deliberate");
+    assert.ok(shot.visualElements.length >= 2);
+    for (const element of shot.visualElements)
+      assert.ok(spoken.toLocaleLowerCase().includes(element.label.toLocaleLowerCase()), element.label);
+  }
+  assert.equal(rendered.job.beats.some(beat => beat.visual.items.includes("Topic Focus")), false);
+  assert.deepEqual(rendered.job.beats[0].visual.items, result.bundle.plan.shots[0].visualElements.map(element => element.label));
 });
 
 test("complete unapproved YouTube draft renders without captured research or an approved storyboard",()=>{

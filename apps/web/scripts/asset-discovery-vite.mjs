@@ -51,7 +51,7 @@ export async function handleAssetDiscoveryRequest(req,res,deps={}){
       const data=await body(req);
       if(data?.allowExternalSearch!==true)throw Error("Explicit external search permission required.");
       send(res,200,await (deps.search??discoverShotAssets)({...data,
-        providers:["polyhaven","openverse"]},opts));
+        providers:["openverse"]},opts));
     }else if(req.method==="POST"&&url.pathname==="/approve"){
       const data=await body(req);
       if(data?.provider==="pexels")throw Error("Download the file on Pexels, then use Import downloaded file instead.");

@@ -12,7 +12,7 @@ export interface QuantitativeChart {
 export type ReviewedStockMedia = {
   assetType: "photo" | "video";
   url: string; sha256: string; provider: "pexels"; assetId: string;
-  sourceUrl: string; license: "Pexels License"; licenseUrl: string; creator: string;
+  sourceUrl: string; license: "Pexels License"; licenseUrl: string; creator: string; title?: string;
   focalPoint?: {x:number;y:number};
 } & ({ assetType: "photo" } | { assetType: "video"; durationSeconds: number; width: number; height: number });
 
@@ -33,7 +33,7 @@ export interface GeneralVisualPlan {
   title: string;
   locale?: "en-US" | "ja-JP";
   manifest: { schemaVersion: 1; id: string; durationFrames: number; width: number; height: number; fps: { num: number; den: number }; preset: "youtube" | "youtube-shorts" | "instagram-reels" | "tiktok" };
-  chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; visual: { headline: string; subhead: string; emphasis: string; items: string[]; itemNotes?: string[]; chart?: QuantitativeChart; stockMedia?: ReviewedStockMedia; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe"; motion?: SceneMotion; sceneRecipe?: "home-cost-story-v1"; direction?: { phase: "problem" | "analogy" | "mechanism" | "payoff" | "none"; subjectIds: string[]; visualAction: string; learningChange: string; transformation?: {subjectId:string;before:string;action:string;after:string}; visualMechanic?:VisualMechanicV1 } }; dialogue?: { turns: DialogueVisualTurn[] }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
+  chapters: Array<{ id: string; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; narration?: string; interactions?: { source: "model" | "rules"; slots: Array<{ index: number; style: "question-lens" | "journey" | "contrast" | "decomposition" | "synthesis" | "example" | "cause" | "warning"; intent: "general-intro" | "general-flow" | "general-comparison" | "general-breakdown" | "general-payoff"; phrase: string; line?: string; action?: "show" | "move" | "connect" | "compare" | "ring"; objects?: string[]; startFrame: number; endFrame: number }> }; visual: { headline: string; subhead: string; emphasis: string; items: string[]; itemNotes?: string[]; chart?: QuantitativeChart; stockMedia?: ReviewedStockMedia; hookStrategy?: "action-first" | "unexpected-reveal" | "transformation"; typographyStyle?: "snap" | "overshoot" | "wipe"; motion?: SceneMotion; sceneRecipe?: "home-cost-story-v1"; direction?: { phase: "problem" | "analogy" | "mechanism" | "payoff" | "none"; subjectIds: string[]; visualAction: string; learningChange: string; transformation?: {subjectId:string;before:string;action:string;after:string}; visualMechanic?:VisualMechanicV1 } }; dialogue?: { turns: DialogueVisualTurn[] }; startFrame: number; endFrame: number; claimRefs: string[]; evidenceRefs: string[]; eventIds: string[] }>;
   claims: Array<{ id: string; status: "verified" | "unverified" | "illustrative" | "disputed"; text: string; sourceRefs?: string[] }>;
   evidence: Array<{ id: string; title: string; sourceUri: string; retrievedAt: string; passageLocator: string; snapshotSha256: string }>;
   events: Record<string, number>;

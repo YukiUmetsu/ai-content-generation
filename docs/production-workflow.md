@@ -1,17 +1,16 @@
 # Guided Production workspace
 
-Production is the project-scoped entry point for making content. The pinned Kumiki Stepper exposes eight stages, including stale and failed status:
+Production is the project-scoped entry point for making content. The pinned Kumiki Stepper exposes seven stages, including stale and failed status:
 
 1. **Setup** — choose the project/brand and destinations.
 2. **Discover** — start or reopen a durable discovery session.
 3. **Select Idea** — compare preserved observations and prepare a production brief.
 4. **Script** — collect missing factual sources, generate sections with the configured local script model, review/edit/regenerate and approve each destination's draft.
-5. **Plan Scenes** — turn the approved script into editable scene cards, check the flow and move forward with one clear action. Previous edits are backed up when the script changes.
-6. **Create Video** — **Set up voice & generate draft** opens narration controls; **Generate draft video** plans scenes, checks tools and starts the MP4 with one explicit action. Optional shortcuts open scene editing and watch/export.
-7. **Publish Kit** — edit title/caption metadata independently of the thumbnail headline; choose among three brand-colored Kumiki cover layouts and download the selected PNG. Articles retain their own illustration exports.
-8. **Export** — play a saved current MP4 in-page and download actual local render files and metadata manifests. Earlier releases remain labeled separately.
+5. **Create Video** — **Generate draft video** builds the scene plan from the YouTube script, checks tools and starts the MP4 with one explicit action. Optional shortcuts open scene editing, an adjustable scene plan, and watch/export. There is no separate scene-review step.
+6. **Publish Kit** — edit title/caption metadata independently of the thumbnail headline; choose among three brand-colored Kumiki cover layouts and download the selected PNG. Articles retain their own illustration exports.
+7. **Export** — play a saved current MP4 in-page and download actual local render files and metadata manifests. Earlier releases remain labeled separately.
 
-**Automatic draft is local and user-triggered.** An approved current YouTube script creates a storyboard outline if none exists; an outdated hand-edited outline must first be synchronized explicitly. In Director, select an authorized local voice (model, voice ID, engine revision and speech service) or explicitly consent to Fish Audio voice/text use. **Generate draft video** remains clickable without configuration, showing missing requirements rather than silently disabling itself. Once ready, a click runs plan → readiness check → render. MP4 progress, cancellation, playback and download are in the export panel; nothing publishes automatically. Fish credentials are not stored in browser storage.
+**Automatic draft is local and user-triggered.** An approved current YouTube script creates a storyboard outline if none exists and opens Create Video. **Generate draft video** refreshes that outline, backing up the previous document before any overwrite. In Director, select an authorized local voice (model, voice ID, engine revision and speech service) or explicitly consent to Fish Audio voice/text use. **Generate draft video** remains clickable without configuration, showing missing requirements rather than silently disabling itself. Once ready, a click runs plan → readiness check → render. MP4 progress, cancellation, playback and download are in the export panel; nothing publishes automatically. Fish credentials are not stored in browser storage.
 
 The JS render adapter is still single-flight and in-memory, not a crash-resumable Rust Jobs workflow. Closing the local Studio during a render can interrupt it. The **Character Studio** sidebar entry houses ZIP import, saved drafts and rig calibration; saved rigs are not yet approved for video publishing.
 
@@ -31,7 +30,7 @@ Each section request now carries the complete ordered script outline (1–20 sec
 
 Normalized identical text and conservative whole-passage near-copies trigger one continuity-specific repair instead of becoming an accepted section or suggestion. The guard supports text without spaces, including Japanese. This detects obvious copying, not semantic equivalence or overall writing quality; distinct prose and brief callbacks still require editorial review. Thinking settings are unchanged by this continuity fix.
 
-Scripts must contain known linked claim/source references before accepting model output. Long project notes and production directions use compatible frontend/backend limits. A script approval creates an editable outline; it does not approve publication. The same captured quotations are available for explicit, reversible Storyboard claim-review receipts, even when no legacy research plan exists.
+Scripts must contain known linked claim/source references before accepting model output. Long project notes and production directions use compatible frontend/backend limits. A script approval creates an editable outline and continues to Create Video; it does not approve publication or open a separate claim-review step.
 
 ## Add sections and import a complete script
 
@@ -123,4 +122,4 @@ pnpm --dir apps/web run build
 
 The headless-video command includes source-link repair, storyboard synchronization, the saved-research API, and the Director production/readiness route tests. These checks are local and do not request a GitHub Actions runner.
 
-Then use a project with a saved captured-research artifact to open **Production → Plan Scenes → Create Video → Publish Kit**. Check scenes and output, download a generated PNG for each destination, open the blog HTML offline and inspect its diagrams and cited sources. Confirm Director output, rights and disclosure requirements manually; a saved plan or passing test is not a completed media artifact.
+Then use a project with a saved captured-research artifact to open **Production → Create Video → Publish Kit**. Check scenes and output, download a generated PNG for each destination, open the blog HTML offline and inspect its diagrams and cited sources. Confirm Director output, rights and disclosure requirements manually; a saved plan or passing test is not a completed media artifact.

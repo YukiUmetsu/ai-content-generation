@@ -16,7 +16,7 @@ const sha1=bytes=>createHash("sha1").update(bytes).digest("hex");
 const DIGEST=/^[a-f0-9]{64}$/u;
 const COMMONS="https://commons.wikimedia.org/w/api.php";
 const CC0="https://creativecommons.org/publicdomain/zero/1.0/";
-const MAX_MEDIA=20*1024*1024,MAX_PREPARED=3,MAX_ATTEMPTS=6;
+const MAX_MEDIA=20*1024*1024,MAX_PREPARED=8,MAX_ATTEMPTS=12;
 const UA="ContentGen/0.1 (local video editor; https://github.com/YukiUmetsu/ai-content-generation)";
 const text=(value,limit)=>String(value??"").replace(/<[^>]*>/gu,"")
   .replace(/[\u0000-\u001f\u007f]/gu," ").replace(/\s+/gu," ").trim().slice(0,limit);
@@ -281,10 +281,12 @@ export async function prepareAutomaticCommonsMedia({suggestions,shotMap,existing
           claim=null;
         }
         const url=`/__video_media/${record.sha256}.jpg`;
+        const photoTitle=text(candidate.title,120);
         result.bindings[beatId]={assetType:"photo",url,sha256:record.sha256,
           provider:"wikimedia-commons",assetId:candidate.assetId,sourceUrl:record.sourceUrl,
           license:record.license,licenseUrl:CC0,creator:record.creator,width:record.width,
-          height:record.height,rightsStatus:"draft-provider-license",automaticallyPrepared:true};
+          height:record.height,rightsStatus:"draft-provider-license",automaticallyPrepared:true,
+          ...(photoTitle?{title:photoTitle}:{})};
         result.assets.push({url,path:destination,sha256:record.sha256,assetType:"photo"});
         result.prepared++;
         break;

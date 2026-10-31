@@ -121,6 +121,21 @@ const polyCatalog = {
 };
 function response(body, code=200) { return new Response(JSON.stringify(body), { status: code, headers: { "content-type": "application/json" } }); }
 
+test("accounting software is searched as a computer screen or an app icon", () => {
+  const software = { plan: { shots: [
+    { id: "shot-books", purpose: "Compare the old process", visualChange: "Show a comparison chart",
+      visualElements: [{ label: "Interest chart", detail: "Shows financial cost over time" }] },
+  ], sound: [{ shotId: "shot-books", narration: "The team still enters every invoice in accounting software by hand." }] } };
+  const [need] = planSceneAssetNeeds(software);
+  assert.equal(need.strategy, "search");
+  assert.equal(need.query, "accounting software laptop screen");
+  assert.deepEqual(need.pictureWords, ["accounting", "software"]);
+  assert.match(need.reason, /computer|icon/i);
+  const japanese = planSceneAssetNeeds({ plan: { shots: [{ id: "shot-jp", purpose: "Show the tool" }],
+    sound: [{ shotId: "shot-jp", narration: "会計ソフトは請求書を受信箱から台帳へ移します。" }] } });
+  assert.equal(japanese[0].query, "accounting software laptop screen");
+});
+
 test("asset needs prefer real tangible subjects; pure charts stay in Kumiki", () => {
   const needs = planSceneAssetNeeds(bundle);
   assert.equal(needs[0].shotId, "shot-house");
@@ -129,23 +144,19 @@ test("asset needs prefer real tangible subjects; pure charts stay in Kumiki", ()
   assert.equal(needs[1].strategy, "kumiki");
 });
 
-test("discovery is opt-in, metadata-only, and does not download any assets", async () => {
+test("discovery is opt-in and does not search Poly Haven", async () => {
   const calls = [];
-  const fetchImpl = async (url, options) => {
-    calls.push({url:String(url),options});
-    assert.equal(new URL(url).hostname, "api.polyhaven.com");
-    assert.match(options.headers["User-Agent"], /ContentGen/);
-    return response(polyCatalog);
+  const fetchImpl = async (url) => {
+    calls.push(String(url));
+    return response({results:[]});
   };
-  await assert.rejects(discoverShotAssets({bundle, providers:["polyhaven"]}, {fetchImpl}), /explicit/i);
+  await assert.rejects(discoverShotAssets({bundle, providers:["openverse"]}, {fetchImpl}), /explicit/i);
   assert.equal(calls.length, 0);
-  const result = await discoverShotAssets({bundle, providers:["polyhaven"], allowExternalSearch:true}, {fetchImpl});
-  assert.equal(calls.length, 1);
-  assert.equal(result.scenes.length, 2);
-  assert.equal(result.scenes[0].candidates[0].assetId, "roof_tiles");
-  assert.equal(result.scenes[0].candidates[0].license, "CC0-1.0");
-  assert.equal(result.scenes[1].candidates.length, 0);
-  assert.equal(result.scenes[1].strategy, "kumiki");
+  const result = await discoverShotAssets({bundle, providers:["polyhaven","openverse"], allowExternalSearch:true}, {fetchImpl});
+  assert.equal(calls.some(url => url.includes("polyhaven")), false);
+  assert.equal(calls.some(url => url.includes("openverse")), true);
+  assert.match(result.warnings.join(" "), /Poly Haven search has been retired/);
+  assert.equal(result.scenes[0].candidates.length, 0);
 });
 
 test("Openverse adds CC0-only scene photo leads without treating index metadata as verified rights",async()=>{
@@ -190,7 +201,7 @@ test("Openverse rate limits leave Kumiki fallback available without fabricating 
 
 test("job cancellation propagates into provider requests without removing per-request deadlines",async()=>{
   const cancel=new AbortController();let requestSignal;
-  await discoverShotAssets({bundle,providers:["polyhaven"],allowExternalSearch:true},
+  await discoverShotAssets({bundle,providers:["openverse"],allowExternalSearch:true},
     {signal:cancel.signal,fetchImpl:async(_url,options)=>{
       requestSignal=options.signal;return response(polyCatalog);
     }});
@@ -359,9 +370,9 @@ test("default scene discovery uses the no-key providers and never Pexels",async(
   const visited=[];
   const results=await discoverShotAssets({bundle,allowExternalSearch:true},
     {fetchImpl:async url=>{visited.push(new URL(String(url)).hostname);
-      return String(url).includes("polyhaven")?response(polyCatalog):response({results:[]});},
+      return response({results:[]});},
     pexelsKey:"retired-private-key"});
-  assert.ok(visited.includes("api.polyhaven.com"));
+  assert.equal(visited.includes("api.polyhaven.com"), false);
   assert.ok(visited.includes("api.openverse.org"));
   assert.ok(!visited.includes("api.pexels.com"));
   assert.doesNotMatch(JSON.stringify(results),/retired-private-key/);

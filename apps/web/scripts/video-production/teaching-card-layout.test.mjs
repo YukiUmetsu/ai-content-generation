@@ -10,6 +10,7 @@ const examples = [
   { label: "A data packet", note: "Same packet travels across a network", width: 220, height: 165 },
   { label: "Costs", note: "Additional payments beyond the listing price", width: 625, height: 100 },
   { label: "住宅ローン", note: "支払う利息が長年にわたって増えていきます", width: 345, height: 124 },
+  { label: "File automation", note: "Supporting files stay attached to invoices", width: 650, height: 84 },
 ];
 test("title and explanatory note fit as one nonoverlapping block at actual scene dimensions", () => {
   for (const example of examples) {
@@ -19,7 +20,9 @@ test("title and explanatory note fit as one nonoverlapping block at actual scene
     assert.equal(compact(first.title.lines.join("")), compact(example.label));
     assert.equal(compact(first.detail.lines.join("")), compact(example.note));
     assert.ok(first.titleBottom < first.detailTop, "title and explanation must never collide");
-    assert.ok(first.contentBottom <= example.height, "content must stay within the card height");
+    assert.ok(first.contentBottom <= example.height - 10, "glyph box must stay 10px inside the card bottom");
+    const glyphTop = first.title.baselines[0] - first.title.fontSize * 1.08;
+    assert.ok(glyphTop >= 11.5, "glyph box must stay 12px inside the card top");
     assert.ok(first.title.baselines.every(Number.isFinite));
     for (const block of [first.title, first.detail]) {
       for (const line of block.lines) {

@@ -2,6 +2,7 @@
  * Director draft. Approval and factual review belong to publication, not preview. */
 import { createHash } from "node:crypto";
 import { compilePreproductionBundle } from "./preproduction.mjs";
+import { SCRIPT_SCENE_MOTION, scriptSceneVisuals } from "./script-scene-visuals.mjs";
 
 import {MAX_SCRIPT_SECTIONS,SCRIPT_ROLES,isScriptSectionId,scriptSectionRole,scriptAnswerIndex,scriptStoryboardClaimRefs} from "./script-contract.mjs";
 const safeText=(value,max)=>typeof value==="string"&&value.trim().length>0&&
@@ -179,11 +180,14 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
       const id=`shot_${index+1}_${part+1}`;
       const opening=index===0&&part===0,ending=index===answerIndex&&part===chunks.length-1;
       const postscript=index>answerIndex;
+      const visuals=scriptSceneVisuals(narration);
       shots.push({id,explanationId,family:opening?"question":ending||postscript?"summary":
         ({hook:"question",context:"evidence",mechanism:"process",practical:"comparison",closing:"summary",custom:"process",promotion:"summary"}[scriptSectionRole(section)]),
         purpose:opening?"hook":ending?"answer":postscript?"postscript":"explain",subjectIds:["topic_focus"],
         visualChange:flat(beat?.visualObjective??section.purpose),
         onScreenText:flat(beat?.onScreenText??section.heading),
+        ...(visuals?{visualElements:visuals}:{}),
+        motion:{...SCRIPT_SCENE_MOTION},
         claimIds,assetRefs:[]});
       sound.push({shotId:id,narration,delivery:opening?"curious":ending?"reflective":"conversational",
         energy:opening?"energetic":ending?"calm":"focused",pauseAfterMs:250,sfxIntent:null});
@@ -195,10 +199,14 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
   const answerShot=shots.findLastIndex(shot=>shot.explanationId===`explain_${answerIndex+1}`);
   const payoff=answerShot;
   const indexes=[0,Math.floor(payoff/2),payoff];
-  const phases=["problem","mechanism","payoff"].map((kind,index)=>({kind,
-    shotId:shots[indexes[index]].id,
-    visualAction:["Reveal the core question and context.","Compare how the relevant factors change.","Reveal the supported takeaway and limitation."][index],
-    learningChange:["Understand the decision to investigate.","Identify the mechanism and evidence.","Connect the answer to a practical conclusion."][index]}));
+  const phases=["problem","mechanism","payoff"].map((kind,index)=>{
+    const shot=shots[indexes[index]];
+    const spoken=sound.find(item=>item.shotId===shot.id)?.narration??shot.onScreenText;
+    const lead=spoken.split(/[,、.!?。！？]/u).map(part=>part.trim()).find(part=>part.length>=12)??spoken;
+    return {kind,shotId:shot.id,
+      visualAction:`Show ${shot.onScreenText}: ${lead}`.replace(/\s+/gu," ").trim().slice(0,300),
+      learningChange:`${shot.onScreenText}: ${lead}`.replace(/\s+/gu," ").trim().slice(0,220)};
+  });
   const teachClaims=[...new Set(indexes.flatMap(index=>shots[index].claimIds))];
   const plan={schemaVersion:1,kind:"preproduction-plan",researchId:dossier.id,
     styleId:"cinematic-explainer-v1",story:{pattern:"investigation",premise:input.title,

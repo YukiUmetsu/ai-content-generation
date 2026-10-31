@@ -35,6 +35,25 @@ import { withSceneClipJob } from "./video-production/scene-clip-jobs.mjs";
 import {listRecoveryIntents,reserveRecoveryAttempt,writeRecoveryIntent} from "./video-production/recovery-intent.mjs";
 
 const run=promisify(execFile),root=fileURLToPath(new URL("../",import.meta.url));
+function capturedText(value){
+  if(typeof value==="string")return value;
+  if(value&&typeof value==="object"&&typeof value.toString==="function"&&value.constructor?.name==="Buffer")return value.toString("utf8");
+  return "";
+}
+/** pnpm prints `$ tsc -b && vite build` before a failed script. That line is a log, not a command to copy. */
+export function exportPageBuildMessage(error){
+  const raw=[capturedText(error?.stderr),capturedText(error?.stdout),capturedText(error?.message)].join("\n");
+  const typescript=/error (TS\d+): ([^\n]{1,240})/u.exec(raw);
+  if(typescript){
+    const detail=typescript[2].replace(/(?:\/[\w.+~-]+){2,}/gu,"a local file").replace(/\s+/gu," ").trim().slice(0,180);
+    return `The video page failed to build (${typescript[1]}: ${detail}). Fix that type error, then select Generate draft video again. Studio runs the build itself.`;
+  }
+  return "The video page failed to build before the draft could start. Select Generate draft video again. Studio runs the build itself; a log line that starts with $ is not a command to copy.";
+}
+async function buildExportPage(){
+  try{await run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024});}
+  catch(error){throw Error(exportPageBuildMessage(error));}
+}
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 function identityParts(input){
   const voiceSettings=Object.fromEntries(Object.entries(input.settings).filter(([key])=>key!=="apiKeyHash"));
@@ -101,9 +120,44 @@ function mediaToolMessage(code,detail){
   }
   return mediaToolJobs[code]??null;
 }
-function renderFailure(phase,error,context={}){
+/** Keep a short cause from our own errors and tool failures. Drop paths, secrets, stacks, and narration. */
+function safeFailureReason(error){
+  const raw=[capturedText(error?.message),capturedText(error?.stderr)].join("\n");
+  let text=raw.split(/\r?\n/u).filter(line=>line.trim()&&!/^\s*at\s+/u.test(line)&&!/^\$\s/u.test(line)).join(" ");
+  text=text
+    .replace(/https?:\/\/\S+/giu,"")
+    .replace(/(?:[A-Za-z]:\\[\w\\ .-]+|(?:\/[\w.+~@-]+){2,})/gu,"")
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu,"")
+    .replace(/\b(?:sk-|rk-|api[_-]?key|bearer|token|secret|password)\S*/giu,"")
+    .replace(/\b[a-f0-9]{32,}\b/giu,"")
+    .replace(/Command failed:\s*/giu,"")
+    .replace(/"[^"]{40,}"|'[^']{40,}'/gu,"")
+    .replace(/\s+/gu," ")
+    .trim();
+  const embedded=/(?:TypeError|RangeError|ReferenceError|SyntaxError|Error):\s+(.{8,180}?)(?:\.|$)/u.exec(text);
+  let reason=(embedded?.[1]??text).replace(/^[:\s-]+/u,"").trim().split(/[.!?]/u)[0].trim();
+  reason=reason.replace(/[^\p{L}\p{N}\p{P}\p{Zs}+#:_-]/gu,"").trim().slice(0,160);
+  if(reason.length<12||reason.split(/\s+/u).length>22)return "";
+  if(/[\\/]|\.\.|https?:|secret|api[_-]?key|bearer|\bpassword\b|\btoken\b/iu.test(reason))return "";
+  const namesCause=/\b(?:fail(?:ed|ure|s)?|invalid|timeout|timed out|exceeded|closed|crashed|unavailable|decoder|encoder|chromium|ffmpeg|diagram|layout|frame|asset|caption|narration|thumbnail|export|render|scene|permission|disk|locked|refused|reset|denied|unsupported|not found|does not exist|doesn't exist|too short|too long|enospc|eacces|econn)\b/iu.test(reason);
+  return namesCause?reason:"";
+}
+function acceptedStoredDetail(detail){
+  if(typeof detail!=="string")return "";
+  const text=detail.replace(/\s+/gu," ").trim();
+  if(text.length<12||text.length>240)return "";
+  if(/[\\/]|\.\.|https?:|secret|api[_-]?key|bearer|\bpassword\b|\btoken\b/iu.test(text))return "";
+  return text;
+}
+function stageFailure(phase,error){
+  const [code,generic]=failureRecovery[phase]??["render_failed","Draft production failed. Open Jobs for the failed step, check local tools and retry."];
+  const reason=safeFailureReason(error);
+  if(!reason)return{code,message:generic};
+  return{code,message:`${generic.split(".")[0]}: ${reason}.`.slice(0,240)};
+}
+export function renderFailure(phase,error,context={}){
   // Diagnostic strings can contain provider responses, script text, local
-  // paths or credentials. Only recognize a small set of safe machine errors.
+  // paths or credentials. Recognized causes are kept; everything else is stripped.
   if(/\bENOSPC\b|no space left on device/iu.test(String(error?.message??"")))
     return{code:"disk_full",message:"Local disk space is exhausted. Free disk space, then retry the draft; verified scenes can be reused."};
   if(/^Scene review coverage invalid: review still storage exceeds the 256 MiB budget/u.test(String(error?.message??"")))
@@ -163,21 +217,22 @@ function renderFailure(phase,error,context={}){
   }
   const mediaTool=recognizedMediaToolFailure(error);
   if(mediaTool)return mediaTool;
-  const [code,message]=failureRecovery[phase]??["render_failed","Draft production failed. Open Jobs for the failed step, check local tools and retry."];
-  return{code,message};
+  return stageFailure(phase,error);
 }
-function persistedFailure(job){
+export function persistedFailure(job){
   const failing=job?.nodes?.find(node=>["FAILED","READY"].includes(node.state)&&
     typeof node.errorCode==="string");
   if(failing?.errorCode==="disk_full")return renderFailure("",Error("ENOSPC"));
   if(failing?.errorCode==="review_still_storage_limit")return renderFailure("",Error("Scene review coverage invalid: review still storage exceeds the 256 MiB budget"));
   if(failing?.errorCode==="scene_review_limit")return renderFailure("",Error("Scene review coverage invalid: the 64-still limit supports at most 64 narrated scenes"));
   if(failing?.errorCode==="qa_integrity_failed")return renderFailure("",Error("QA_REPORT_INTEGRITY_FAILED"));
+  const storedDetail=failing?.errorDetail??job?.attempts?.find(attempt=>
+    attempt.nodeId===failing?.id&&attempt.errorCode===failing?.errorCode)?.errorDetail;
+  const safeDetail=acceptedStoredDetail(storedDetail);
+  if(safeDetail)return{code:failing.errorCode,message:safeDetail};
   for(const [phase,[code,message]] of Object.entries(failureRecovery)){
     if(failing?.errorCode===code)return{code,message,phase};
   }
-  const storedDetail=failing?.errorDetail??job?.attempts?.find(attempt=>
-    attempt.nodeId===failing?.id&&attempt.errorCode===failing?.errorCode)?.errorDetail;
   const reloadedMediaTool=mediaToolMessage(failing?.errorCode,storedDetail);
   if(reloadedMediaTool)return{code:failing.errorCode,message:reloadedMediaTool};
   if(failing?.errorCode==="jobs_unavailable")return{code:"jobs_unavailable",
@@ -417,7 +472,7 @@ export function createDirectorProduction(deps={}){
     return {fingerprint,identityFingerprint:selected.selections.some(asset=>relevant.has(asset.shotId))?
       fingerprint:undefined};
   }
-  const build=deps.build??(()=>run("pnpm",["build"],{cwd:root,timeout:300000,maxBuffer:1024*1024}));
+  const build=deps.build??buildExportPage;
   const browser=deps.findBrowser??findChromium;
   const outputRoot=deps.outputRoot??join(homedir(),"Movies","ContentGen","Studio");
   const mediaIndexPath=join(outputRoot,"production-media-index-v1.json");
@@ -1346,7 +1401,7 @@ export function createDirectorProduction(deps={}){
                   const deadline=AbortSignal.timeout(35000);
                   const searchSignal=signal?AbortSignal.any([signal,deadline]):deadline;
                   const suggestions=await searchAssets({bundle:input.bundle,destination:"landscape",
-                    providers:["polyhaven","openverse"],allowExternalSearch:true},
+                    providers:["openverse"],allowExternalSearch:true},
                   {signal:searchSignal});
                   if(signal?.aborted)throw Error("Media search cancelled.");
                   if(deadline.aborted)throw Error("Media search timed out; use scene search to retry.");

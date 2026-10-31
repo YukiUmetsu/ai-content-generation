@@ -16,7 +16,7 @@ const plan: GeneralVisualPlan = {
 };
 
 describe("generic deterministic explainer scene", () => {
-  it("renders an approved scene photo with cinematic motion instead of the unrelated schematic", () => {
+  it("keeps the Kumiki diagram moving beside a supporting scene photo", () => {
     const photo = { assetType: "photo" as const, url: `/__video_media/${"a".repeat(64)}.jpg`,
       sha256: "a".repeat(64), provider: "pexels" as const, assetId: "49",
       sourceUrl: "https://www.pexels.com/photo/roof-49/", license: "Pexels License" as const,
@@ -28,8 +28,8 @@ describe("generic deterministic explainer scene", () => {
     expect(first).toContain('data-contentgen-stock-photo=""');
     expect(first).toContain(photo.url);
     expect(first).toContain("A PACKET MOVES");
-    expect(first).not.toContain('data-semantic-scene="');
-    expect(first).not.toContain('data-km-diagram-stage');
+    expect(first).toContain("data-km-diagram-stage");
+    expect(first).toContain('data-contentgen-kumiki-stage=""');
     expect(first).not.toEqual(last);
   });
 
@@ -77,7 +77,7 @@ describe("generic deterministic explainer scene", () => {
     expect(first).toContain('data-media-time="0.033333"');
     expect(loop).toContain('data-media-time="0.033333"');
     expect(first).toContain(media.url);
-    expect(first).not.toContain('data-general-node="');
+    expect(first).toContain("data-km-diagram-stage");
   });
   it("renders meaningful visual labels and accessible 16:9 SVG", () => {
     const svg = renderToStaticMarkup(<GeneralExportScene plan={plan} frame={94} />);
@@ -242,10 +242,16 @@ describe("authored timeline motion in the actual MP4 export React scene",()=>{
       index===2?{...chapter,visual:{...chapter.visual,motion:{
         revealDelayPercent:30,revealPace:"deliberate",camera:"cinematic",transition:"fade"}}}:chapter)};
     const event=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={120}/>);
+    const holding=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={130}/>);
     const revealed=renderToStaticMarkup(<GeneralExportScene plan={tuned} frame={179}/>);
     expect(event).toContain('data-payoff-locked="true"');
+    expect(event).toContain('data-payoff-hold="true"');
     expect(event).not.toContain('DELIVERED, NOT MAGIC');
+    expect(holding).toContain('data-payoff-hold="true"');
+    expect(holding).not.toContain('data-general-copy="heading"');
     expect(revealed).toContain('DELIVERED, NOT MAGIC');
+    expect(revealed).toContain('data-general-copy="heading"');
+    expect(revealed).not.toContain('data-payoff-hold="true"');
     expect(revealed).toContain('data-semantic-scene="synthesis"');
   });
   it("gates unrevealed Kumiki process stages rather than only title cards",()=>{
@@ -303,6 +309,77 @@ describe("specific teaching details in the actual encoded video frames",()=>{
    expect(legacy).not.toContain('data-teaching-detail=""');
    expect(legacy).toContain("Router");
  });
+});
+
+describe("script interactions", () => {
+  it("changes the Kumiki layout before ten seconds of one spoken scene", () => {
+    const narration = "File automation watches an inbox, files each invoice into the right folder, and leaves a receipt the bookkeeper can find.";
+    const long: GeneralVisualPlan = {
+      ...plan,
+      manifest: { ...plan.manifest, durationFrames: 360 },
+      chapters: [{ ...plan.chapters[0], endFrame: 360, narration, intent: "general-intro" }],
+    };
+    const early = renderToStaticMarkup(<GeneralExportScene plan={long} frame={30} />);
+    const later = renderToStaticMarkup(<GeneralExportScene plan={long} frame={200} />);
+    expect(early).toContain('data-script-interaction="question-lens"');
+    expect(early).toContain('data-script-line=""');
+    expect(early).toContain("File automation watches an inbox");
+    expect(later).toContain('data-script-interaction="journey"');
+    expect(later).toContain("files each invoice into the right folder");
+    expect(later).toContain("data-km-diagram-stage");
+  });
+  it("closes a ring on an example and moves a cause toward its effect", () => {
+    const scene = (narration: string, frame: number) => {
+      const planForSentence: GeneralVisualPlan = {
+        ...plan,
+        manifest: { ...plan.manifest, durationFrames: 360 },
+        chapters: [{ ...plan.chapters[0], endFrame: 360, narration, intent: "general-flow" }],
+      };
+      return renderToStaticMarkup(<GeneralExportScene plan={planForSentence} frame={frame} />);
+    };
+    const early = scene("For example the inbox keeps every invoice the bookkeeper still needs.", 40);
+    const later = scene("For example the inbox keeps every invoice the bookkeeper still needs.", 100);
+    expect(early).toContain('data-semantic-layout="example"');
+    expect(early).toContain("FOR EXAMPLE");
+    expect(early).toContain('data-example-ring=""');
+    expect(early).not.toEqual(later);
+    const caused = scene("The worker waits because the folder path is full right now.", 80);
+    expect(caused).toContain('data-semantic-layout="cause"');
+    expect(caused).toContain('data-cause-traveler=""');
+    expect(caused).toContain("LEADS TO");
+  });
+  it("draws the layout stored from the local model", () => {
+    const narration = "File automation watches an inbox.";
+    const directed: GeneralVisualPlan = {
+      ...plan,
+      chapters: [{
+        ...plan.chapters[0], narration, intent: "general-flow",
+        interactions: { source: "model", slots: [{
+          index: 0, style: "warning", intent: "general-intro", phrase: narration, startFrame: 0, endFrame: 60,
+        }] },
+      }],
+    };
+    const html = renderToStaticMarkup(<GeneralExportScene plan={directed} frame={30} />);
+    expect(html).toContain('data-script-interaction="warning"');
+    expect(html).toContain('data-semantic-layout="warning"');
+    expect(html).toContain("WATCH THIS");
+  });
+  it("prints the stored claim instead of the whole spoken window", () => {
+    const narration = "File automation watches an inbox before the folder receives it.";
+    const directed: GeneralVisualPlan = {
+      ...plan,
+      chapters: [{
+        ...plan.chapters[0], narration, intent: "general-flow",
+        interactions: { source: "model", slots: [{
+          index: 0, style: "example", intent: "general-intro", action: "ring", objects: ["inbox"],
+          phrase: narration, line: "automation watches an inbox", startFrame: 0, endFrame: 60,
+        }] },
+      }],
+    };
+    const html = renderToStaticMarkup(<GeneralExportScene plan={directed} frame={30} />);
+    expect(html).toContain("automation watches an inbox");
+    expect(html).not.toContain("before the folder receives it");
+  });
 });
 
 describe("information-dense question scenes retain real teaching notes", () => {

@@ -122,15 +122,73 @@ function Synthesis({state,motion,renderNode}:SceneDiagramsProps){
     </g>}
   </g>;
 }
+function ExampleSpotlight({state,motion,renderNode}:SceneDiagramsProps){
+  const all=state.visual.items;
+  const focus=Math.min(all.length-1,Math.max(0,motion.focusIndex));
+  const ring=188-motion.lightSweep*36;
+  const rest=all.map((label,index)=>({label,index})).filter(item=>item.index!==focus);
+  return <g data-semantic-layout="example">
+    <circle data-example-ring="" cx="1420" cy="430" r={ring} fill="none" stroke={gold} strokeWidth="2"
+      strokeDasharray="8 10" opacity={0.35+motion.lightSweep*0.45}
+      transform={`rotate(${(motion.lightSweep*48).toFixed(2)} 1420 430)`}/>
+    <text x="1420" y="286" textAnchor="middle" fill={gold} fontSize="20" fontWeight="750" letterSpacing="3">FOR EXAMPLE</text>
+    <AnimatedNode label={all[focus]} note={state.visual.itemNotes?.[focus]} index={focus}
+      x={1140} y={340} width={560} height={150} motion={motion} renderNode={renderNode}/>
+    {rest.map((item,position)=>{
+      const col=position%2,row=Math.floor(position/2);
+      return <AnimatedNode key={item.index} label={item.label} note={state.visual.itemNotes?.[item.index]} index={item.index}
+        x={1088+col*360} y={560+row*128} width={340} height={112} motion={motion} renderNode={renderNode}/>;
+    })}
+  </g>;
+}
+function CauseLink({state,motion,renderNode}:SceneDiagramsProps){
+  const all=state.visual.items;
+  const height=all.length>=5?78:96,gap=16,startY=300;
+  const travel=(all.length-1)*(height+gap);
+  return <g data-semantic-layout="cause">
+    <path d={`M1088 ${startY+height/2} V${startY+height/2+travel}`} fill="none" stroke={sea} strokeWidth="3"
+      strokeDasharray="7 9" strokeDashoffset={Math.round((1-motion.lightSweep)*48)} strokeLinecap="round"/>
+    <circle data-cause-traveler="" cx="1088" cy={startY+height/2+motion.lightSweep*travel} r="9" fill={gold}/>
+    {all.map((label,index)=>{
+      const y=startY+index*(height+gap);
+      return <AnimatedNode key={index} label={label} note={state.visual.itemNotes?.[index]} index={index}
+        x={1110} y={y} width={640} height={height} motion={motion} renderNode={renderNode}/>;
+    })}
+    <text x="1420" y={startY+all.length*(height+gap)+28} textAnchor="middle" fill={ghost}
+      fontSize="20" fontWeight="750" letterSpacing="3">LEADS TO</text>
+  </g>;
+}
+function WarningPulse({state,motion,renderNode}:SceneDiagramsProps){
+  const all=state.visual.items;
+  const focus=Math.min(all.length-1,Math.max(0,motion.focusIndex));
+  const height=all.length>=5?78:96,gap=16,startY=300;
+  const pointY=startY+focus*(height+gap)+height/2;
+  const shown=motion.reveal[focus]?.visible;
+  return <g data-semantic-layout="warning">
+    {shown&&<circle data-warning-pulse="" cx="1410" cy={pointY} r={22+motion.lightSweep*34}
+      fill="none" stroke={gold} strokeWidth="3" opacity={0.9-motion.lightSweep*0.55}/>}
+    {all.map((label,index)=>{
+      const y=startY+index*(height+gap);
+      return <AnimatedNode key={index} label={label} note={state.visual.itemNotes?.[index]} index={index}
+        x={1110} y={y} width={640} height={height} motion={motion} renderNode={renderNode}/>;
+    })}
+    <text x="1420" y={startY+all.length*(height+gap)+28} textAnchor="middle" fill={gold}
+      fontSize="20" fontWeight="750" letterSpacing="3">WATCH THIS</text>
+  </g>;
+}
 export function SemanticDiagram(props:SceneDiagramsProps){
   const {state,motion}=props;
   const perspective=`translate(${motion.cameraX} ${motion.cameraY}) translate(1420 565) scale(${motion.cameraScale}) translate(-1420 -565)`;
+  const picture=motion.style==="example"?<ExampleSpotlight {...props}/>:
+    motion.style==="cause"?<CauseLink {...props}/>:
+    motion.style==="warning"?<WarningPulse {...props}/>:
+    state.intent==="general-intro"?<IntroLens {...props}/>:
+    state.intent==="general-comparison"?<Contrast {...props}/>:
+    state.intent==="general-breakdown"?<Decomposition {...props}/>:
+    state.intent==="general-payoff"?<Synthesis {...props}/>:null;
   return <g data-semantic-scene={motion.style} data-teaching-phase={motion.phase}
     data-semantic-subjects={state.visual.direction?.subjectIds.join(",")??undefined}
     transform={perspective}>
-    {state.intent==="general-intro"?<IntroLens {...props}/>:
-      state.intent==="general-comparison"?<Contrast {...props}/>:
-      state.intent==="general-breakdown"?<Decomposition {...props}/>:
-      state.intent==="general-payoff"?<Synthesis {...props}/>:null}
+    {picture}
   </g>;
 }

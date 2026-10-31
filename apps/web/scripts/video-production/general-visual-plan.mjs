@@ -68,7 +68,8 @@ export function compileGeneralVisuals(job, timeline, speech) {
         ...(actual ? { startFrame: toFrame(range.startSample, timeline.fps),
           endFrame: toFrame(range.startSample + actual.samples, timeline.fps) } : {}) }] };
     }
-    return { id: beat.id, intent: beat.visualIntent, visual: structuredClone(beat.visual), startFrame, endFrame,
+    return { id: beat.id, intent: beat.visualIntent, narration: typeof beat.narration === "string" ? beat.narration : "",
+      visual: structuredClone(beat.visual), startFrame, endFrame,
       ...(dialogue ? { dialogue } : {}),
       claimRefs: [...beat.claimRefs], evidenceRefs, eventIds: [...beat.eventIds] };
   });

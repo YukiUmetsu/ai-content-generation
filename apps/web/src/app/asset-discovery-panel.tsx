@@ -95,7 +95,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
     setBusy("search");setNotice("");setPending(null);
     try{
       // This button is the user-facing opt-in to public-provider requests.
-      const result=await localAssets("suggest",{bundle,destination,providers:["polyhaven","openverse"],allowExternalSearch:true});
+      const result=await localAssets("suggest",{bundle,destination,providers:["openverse"],allowExternalSearch:true});
       setSearch({bundle,destination,data:result as unknown as Results});
       setNotice("Ranked search suggestions only—no files were downloaded or selected. Check original sources and rights before importing; some providers offer reference links only.");
     }catch(error){setNotice(error instanceof Error?error.message:"Asset search failed.");}
@@ -189,7 +189,7 @@ export function AssetDiscoveryPanel({bundle,projectId,selectedShotId,productionI
     <Search className="size-4"/>Scene asset discovery</h2>}>
     <div className="space-y-4 text-sm">
       <p className="text-muted-foreground">Find relevant video footage, photos, 3D models and materials for each storyboard scene.
-        Search uses <a href="https://polyhaven.com/" className="underline" target="_blank" rel="noopener noreferrer">Poly Haven</a> and Openverse. For Pexels, download directly from its website and import the file below—no API key needed.</p>
+        Search uses Openverse. For Pexels, download directly from its website and import the file below—no API key needed.</p>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex gap-1" role="group" aria-label="Target video orientation">
           <Button variant={destination==="landscape"?"primary":"outline"} size="sm" disabled={!!busy}

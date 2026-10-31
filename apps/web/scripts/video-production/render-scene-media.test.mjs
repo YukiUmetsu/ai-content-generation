@@ -38,6 +38,7 @@ test("selected approved Pexels photo is frozen and bound to its exact storyboard
   assert.equal(prepared.bindings["beat-01"].url, `/__video_media/${digest(photo)}.jpg`);
   assert.equal(prepared.bindings["beat-01"].sha256, digest(photo));
   assert.equal(prepared.bindings["beat-01"].creator, "A Photographer");
+  assert.equal(prepared.bindings["beat-01"].title, "Roof photograph");
   assert.deepEqual(await readFile(prepared.assets[0].path), photo);
   assert.equal(prepared.assets[0].url, prepared.bindings["beat-01"].url);
   const again = await prepareApprovedSceneMedia({ projectId: ctx.projectId, shotMap: shots,

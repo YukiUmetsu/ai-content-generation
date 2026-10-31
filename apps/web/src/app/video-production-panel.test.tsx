@@ -657,6 +657,22 @@ it("automatically begins the saved production when invoked from Generate draft v
   expect(screen.getByRole("button",{name:"View in Jobs"})).toBeEnabled();
 });
 
+it("does not ask for a narrator when the video page failed to build",async()=>{
+  vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
+    if(String(input).endsWith("/plan"))return reply(plan);
+    if(String(input).endsWith("/check"))return new Response(JSON.stringify({error:
+      "The video page failed to build before the draft could start. Select Generate draft video again. Studio runs the build itself; a log line that starts with $ is not a command to copy."}),{status:422});
+    throw Error("Unexpected draft request: "+input);
+  });
+  render(<ProductionPanel dossier={dossier} bundle={bundle} initialStage="narration"/>);
+  const user=userEvent.setup();
+  await user.click(await screen.findByRole("button",{name:/Generate draft video/i}));
+  expect(await screen.findByText("Draft did not start")).toBeInTheDocument();
+  expect(screen.getByText(/Studio runs the build itself/)).toBeInTheDocument();
+  expect(screen.queryByText(/Choose a narrator below/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/pnpm build/)).not.toBeInTheDocument();
+});
+
 it("shows a missing narrator as an actionable error when auto-started from the script",async()=>{
   vi.spyOn(globalThis,"fetch").mockImplementation(async input=>{
     if(String(input).endsWith("/plan"))return reply(plan);

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { getProductionStages, PRODUCTION_STAGE_ORDER } from "./production-progress";
 
-describe("eight-step production progress", () => {
+describe("production progress", () => {
   it("always displays the full navigable workflow without inventing completion", () => {
     const stages = getProductionStages({});
     expect(stages.map(stage => stage.id)).toEqual(PRODUCTION_STAGE_ORDER);
     expect(stages.map(stage => stage.id)).toEqual([
-      "setup", "discover", "select", "script", "storyboard", "produce", "optimize", "export",
+      "setup", "discover", "select", "script", "produce", "optimize", "export",
     ]);
     expect(stages.every(stage => stage.status === "not_started")).toBe(true);
   });
@@ -58,7 +58,7 @@ describe("eight-step production progress", () => {
     const stages=getProductionStages({setupReady:true,sessionId:"session-1",ideaId:"idea-1",
       discoveryArtifactId:"new",scriptReady:true,storyboardReady:true,
       storyboardResearchArtifactId:"old",visualReady:true,optimizationReady:true,exportReady:true});
-    for(const id of ["storyboard","produce","optimize","export"]){
+    for(const id of ["produce","optimize","export"]){
       expect(stages.find(stage=>stage.id===id)?.status).toBe("stale");
     }
     expect(stages.find(stage=>stage.id==="script")?.status).toBe("complete");
@@ -70,19 +70,17 @@ describe("eight-step production progress", () => {
     expect(stages.find(stage=>stage.id==="produce")?.status).toBe("stale");
   });
 
-  it("keeps storyboard warnings as explicit review even with saved media", () => {
-    const stages=getProductionStages({storyboardReady:true,missingEvidenceClaims:2,
-      storyboardEditorialWarnings:1,visualReady:true});
-    const storyboard=stages.find(stage=>stage.id==="storyboard");
-    expect(storyboard?.status).toBe("needs_review");
-    expect(storyboard?.reason).toMatch(/2/);
+  it("does not insert a scene-plan review step before a saved draft", () => {
+    const stages=getProductionStages({storyboardReady:true,visualReady:true,audioReady:true});
+    expect(stages.map(stage=>stage.id)).not.toContain("storyboard");
+    expect(stages.find(stage=>stage.id==="produce")?.status).toBe("complete");
   });
 
   it("invalidates script approval and all saved downstream stages when its source context changes", () => {
     const stages = getProductionStages({scriptReady:false,scriptStale:true,storyboardReady:true,
       storyboardScriptStale:true,visualReady:true,audioReady:true,optimizationReady:true,exportReady:true});
     expect(stages.find(stage => stage.id === "script")?.status).toBe("stale");
-    for (const id of ["storyboard","produce","optimize","export"]) {
+    for (const id of ["produce","optimize","export"]) {
       expect(stages.find(stage => stage.id === id)?.status).toBe("stale");
     }
   });

@@ -7,6 +7,7 @@ import { ShortSafeFrame } from "@/components/visual/short-safe-frame";
 import type { SafeFrameItem } from "@/components/visual/safe-frame";
 import { compileChapterAttention, sampleChapterAttention } from "./attention-style";
 import { portraitProfile } from "./portrait-profile";
+import { chapterInteractions, interactionAt, visibleScriptPhrase } from "../../scripts/video-production/script-interaction.mjs";
 import { ConversationCharacters } from "./conversation-characters";
 import { characterRigsForChapter } from "./scene-character-rigs";
 import type { ExportRigPlan } from "./scene-character-rigs";
@@ -43,7 +44,11 @@ export function PortraitGeneralExportScene({ plan, frame }: { plan: GeneralVisua
   if (state.visual.chart) throw new Error("Portrait charts require a separately verified chart reflow; use labeled qualitative scenes until available.");
   const heading = fitSvgText(state.visual.headline, { maxWidthPx: 780, preferredSize: 74, minSize: 42, maxLines: 3 });
   const subheading = fitSvgText(state.visual.subhead, { maxWidthPx: 770, preferredSize: 34, minSize: 24, maxLines: 3 });
+  const slot = interactionAt(chapterInteractions({
+    ...chapter, narration: chapter.narration || state.visual.items.join(", "),
+  }, plan.manifest.fps), state.localFrame);
   const hiddenPayoff = state.intent === "general-payoff" && state.visibleItems === 0;
+  const scriptPhrase = hiddenPayoff ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, attention?.showDiagram === false ? 0 : state.visibleItems);
   const items = state.visual.items.slice(0, attention?.showDiagram === false ? 0 : state.visibleItems);
   const split = state.intent === "general-comparison" && state.visual.items.length === 2;
   return <ShortSafeFrame profile={profile} items={contentBoxes} guides={false}
@@ -91,7 +96,20 @@ export function PortraitGeneralExportScene({ plan, frame }: { plan: GeneralVisua
         fill={accent} fontSize="20" letterSpacing="2">QUALITATIVE · NOT TO SCALE</text>}
       <path d="M116 1532 H893" stroke="#4F6C78" strokeWidth="2"/>
       <rect x="116" y="1532" width={777 * ((state.chapterIndex + state.progress) / state.chapterCount)} height="4" fill={accent}/>
+      <rect data-script-interaction={slot.style} data-script-phrase={scriptPhrase}
+        x={116 + slot.progress * 620} y="1544" width="72" height="8" rx="4" fill={colors[slot.index % colors.length]}/>
     </svg>
     {chapter.dialogue && <ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} portrait/>}
+    {state.visual.stockMedia && <div data-contentgen-stock-frame="" role="img"
+      aria-label={`Illustrative ${state.visual.stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
+      style={{position:"absolute",left:116,top:1568,width:848,height:250,overflow:"hidden",borderRadius:22,background:"#142431"}}>
+      {state.visual.stockMedia.assetType === "photo"
+        ? <img data-contentgen-stock-photo="" src={state.visual.stockMedia.url} alt="" decoding="async"
+          style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+        : <video data-contentgen-stock-video="" muted playsInline aria-hidden="true"
+          data-media-time={((state.localFrame * plan.manifest.fps.den / plan.manifest.fps.num) % state.visual.stockMedia.durationSeconds).toFixed(6)}
+          src={state.visual.stockMedia.url} preload="auto"
+          style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>}
+    </div>}
   </ShortSafeFrame>;
 }

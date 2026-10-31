@@ -68,7 +68,7 @@ test("exact renderer SVG card-fit failure is reported with a specific shot inste
   view.plan.chapters[1].intent = "general-comparison";
   view.plan.chapters[1].visual.items = ["A", "B", "C"];
   view.plan.chapters[1].visual.itemNotes = [
-    "住宅所有者の長期保守管理費用と予想外の修繕費用を詳しく比較する",
+    "住宅所有者の長期保守管理費用と予想外の修繕費用を詳しく比較するための追加の内訳説明です",
     "Short", "Short",
   ];
   const report = analyzed(view);

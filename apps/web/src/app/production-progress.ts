@@ -1,5 +1,5 @@
-/** Persisted artifact state—not a decorative completion percentage—drives the eight-stage navigator. */
-export const PRODUCTION_STAGE_ORDER = ["setup", "discover", "select", "script", "storyboard", "produce", "optimize", "export"] as const;
+/** Persisted artifact state—not a decorative completion percentage—drives the production navigator. */
+export const PRODUCTION_STAGE_ORDER = ["setup", "discover", "select", "script", "produce", "optimize", "export"] as const;
 export type ProductionStageId = typeof PRODUCTION_STAGE_ORDER[number];
 export type ProductionStageStatus = "not_started" | "running" | "complete" | "needs_review" | "failed" | "stale";
 export interface ProductionStage {
@@ -32,9 +32,6 @@ export interface ProductionProgressInput {
   storyboardReady?: boolean;
   storyboardScriptStale?: boolean;
   storyboardResearchArtifactId?: string | null;
-  missingEvidenceClaims?: number;
-  unreviewedClaims?: number;
-  storyboardEditorialWarnings?: number;
   visualReady?: boolean;
   audioReady?: boolean;
   optimizationReady?: boolean;
@@ -66,11 +63,6 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
   const stale=Boolean(input.storyboardScriptStale || input.scriptStale ||
     (input.storyboardReady&&input.storyboardResearchArtifactId&&evidenceId&&
     input.storyboardResearchArtifactId!==evidenceId));
-  const missing=input.missingEvidenceClaims??0;
-  const reviews=input.unreviewedClaims??0;
-  const repeated=input.storyboardEditorialWarnings??0;
-  const boardStatus:ProductionStageStatus=!input.storyboardReady?"not_started":stale?"stale":
-    missing>0||reviews>0||repeated>0?"needs_review":"complete";
   const downstream=(ready:boolean,hasSavedWork=ready):ProductionStageStatus=>
     stale&&hasSavedWork?"stale":ready?"complete":"not_started";
   return [
@@ -89,13 +81,6 @@ export function getProductionStages(input:ProductionProgressInput): ProductionSt
     stage("script",input.scriptStale?"stale":input.scriptReady?"complete":input.scriptActivity==="running"?"running":input.scriptActivity==="failed"?"failed":"not_started",
       input.scriptStale?"Research or creative inputs changed. Reapprove the updated script.":
       input.scriptReady?"The script has an approved revision.":"Review the AI-written script and its evidence.","Review script"),
-    stage("storyboard",boardStatus,
-      stale?"Research changed. Review the previous storyboard before rebuilding.":
-      missing>0?`${missing} claims lack resolved source evidence.`:
-      reviews>0?`${reviews} claims need factual review.`:
-      repeated>0?`${repeated} scenes may repeat earlier information.`:
-      input.storyboardReady?"An editable storyboard is saved.":"Plan visuals from the approved script.",
-      input.storyboardReady?"Review storyboard":"Create storyboard"),
     stage("produce",downstream(Boolean(input.visualReady&&input.audioReady),Boolean(input.visualReady||input.audioReady)),
       stale&&(input.visualReady||input.audioReady)?"Existing media may need rebuilding against updated evidence.":
       input.visualReady&&input.audioReady?"Video and audio artifacts are available.":"Produce and review visuals, narration and sound.","Open producer"),

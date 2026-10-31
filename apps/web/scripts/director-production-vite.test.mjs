@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import { once } from "node:events";
 import { compilePreproductionBundle } from "./video-production/preproduction.mjs";
-import { createDirectorProduction, configureRenderJob } from "./director-production-vite.mjs";
+import { createDirectorProduction, configureRenderJob, exportPageBuildMessage, renderFailure, persistedFailure } from "./director-production-vite.mjs";
 import {listRecoveryIntents} from "./video-production/recovery-intent.mjs";
 
 const fixture=name=>JSON.parse(readFileSync(new URL("../../../examples/"+name,import.meta.url),"utf8"));
@@ -18,6 +18,37 @@ const inputs=()=>{
 };
 const config={provider:"local",voiceId:"licensed-local-voice",providerRevision:"test-engine-v1",
   modelId:"installed-model",endpoint:"http://127.0.0.1:8765",localVoiceAuthorized:true};
+test("a failed video-page build does not look like a command to copy",()=>{
+  const failed={message:"Command failed: pnpm build\n$ tsc -b && vite build",
+    stderr:Buffer.from("$ tsc -b && vite build\nsrc/video-export/general-scene.tsx(16,86): error TS7016: Could not find a declaration file for module '../../scripts/video-production/script-interaction.mjs'. '/Users/example/content-gen/apps/web/scripts/video-production/script-interaction.mjs' implicitly has an 'any' type.\n")};
+  const message=exportPageBuildMessage(failed);
+  assert.match(message,/TS7016/);
+  assert.match(message,/Studio runs the build itself/);
+  assert.doesNotMatch(message,/pnpm build|\$ tsc|\/Users\/example|Command failed/);
+  const unknown=exportPageBuildMessage({message:"Command failed: pnpm build\n$ tsc -b && vite build"});
+  assert.match(unknown,/not a command to copy/);
+  assert.doesNotMatch(unknown,/pnpm build|\$ tsc/);
+});
+test("production failures name the safe cause and omit paths, secrets, and narration",()=>{
+  const rendered=renderFailure("rendering",Error("page.evaluate: Error: Semantic scene requires a valid bounded frame and diagram state.\n    at Scene (/Users/secret/general-scene.tsx:159:11)"));
+  assert.equal(rendered.code,"scene_render_failed");
+  assert.equal(rendered.message,"Scene rendering failed: Semantic scene requires a valid bounded frame and diagram state.");
+  assert.doesNotMatch(rendered.message,/secret|Users|general-scene/);
+  const closed=renderFailure("rendering",Error("Target page, context or browser has been closed"));
+  assert.match(closed.message,/browser has been closed/);
+  const narration=renderFailure("rendering",Error("You know the feeling of staring at a perfectly balanced ledger, only to realize the contract that backs the revenue is gone from /Users/secret/doc.pdf"));
+  assert.match(narration.message,/Check Chromium and visual assets/);
+  assert.doesNotMatch(narration.message,/ledger|secret|contract/);
+  const audio=renderFailure("audio",Error("Audio mastering failed: the mix timeline is invalid"));
+  assert.equal(audio.code,"audio_mix_failed");
+  assert.match(audio.message,/Audio mixing failed: Audio mastering failed: the mix timeline is invalid/);
+  const stored="Scene rendering failed: Semantic scene requires a valid bounded frame and diagram state.";
+  assert.equal(persistedFailure({nodes:[{id:"node-render",state:"FAILED",errorCode:"scene_render_failed",errorDetail:stored}]}).message,stored);
+  const poisoned=persistedFailure({nodes:[{id:"node-render",state:"FAILED",errorCode:"scene_render_failed"}],
+    attempts:[{nodeId:"node-render",errorCode:"scene_render_failed",errorDetail:stored+" /Users/secret/frame.png"}]});
+  assert.match(poisoned.message,/Check Chromium and visual assets/);
+  assert.doesNotMatch(poisoned.message,/secret|Semantic scene/);
+});
 function request(method,path,payload,headers={}){
   const req=Readable.from(payload===undefined?[]:[Buffer.from(JSON.stringify(payload))]);
   Object.assign(req,{method,url:path,headers:{host:"127.0.0.1:5173",
@@ -1597,7 +1628,7 @@ test("an opted-in draft saves scene-specific free media suggestions with Jobs pr
   assert.equal(server.status().state,"done");
   assert.equal(searchCalls.length,1);
   assert.equal(searchCalls[0].input.allowExternalSearch,true);
-  assert.deepEqual(searchCalls[0].input.providers,["polyhaven","openverse"]);
+  assert.deepEqual(searchCalls[0].input.providers,["openverse"]);
   assert.equal(searchCalls[0].options.pexelsKey,undefined);
   assert.deepEqual(events.map(entry=>entry[0]),["browser-preflight","asset-search","asset-preparation","narration","complete"]);
   assert.equal(events[2][1].assetSearch.status,"partial");
