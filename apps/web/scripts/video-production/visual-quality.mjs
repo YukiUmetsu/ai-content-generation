@@ -74,6 +74,16 @@ export function analyzeRenderedSceneQuality({ plan, shotMap, beats }) {
   });
   for (let i = 0; i < plan.chapters.length; i++) {
     const chapter = plan.chapters[i], visual = chapter.visual;
+    // The director's instructions live only in direction fields. An exact
+    // match on screen is strong evidence that internal copy escaped.
+    const onScreen = normalized(visual.subhead);
+    if (onScreen.length >= 12 && [visual.direction?.learningChange,visual.direction?.visualAction]
+      .some(value=>typeof value==="string" && (normalized(value)===onScreen ||
+        (onScreen.length >= 40 && normalized(value).startsWith(onScreen))))) {
+      add("editorial-copy-leak", "error", i,
+        "An internal visual or teaching instruction is displayed as audience copy.",
+        "Write a short viewer-facing audienceCopy in the storyboard, then recompile. Keep direction text private.");
+    }
     try { validateTextGeometry(chapter); }
     catch {
       add("renderer-text-overflow", "error", i,
@@ -117,9 +127,9 @@ export function analyzeRenderedSceneQuality({ plan, shotMap, beats }) {
       if (run.every(c => c.intent === chapter.intent && !sceneIsAuthored(c.visual)) &&
         elementsSimilar(run[0].visual.items, run[1].visual.items) &&
         elementsSimilar(run[1].visual.items, run[2].visual.items)) {
-        add("repeated-schematic", "warning", i,
+        add("repeated-schematic", "error", i,
           "Three consecutive scenes use the same renderer layout and almost the same visible elements.",
-          "Change the teaching structure: show a comparison, breakdown, a distinct visual state, or consolidate these shots.", [i - 2, i - 1]);
+          "Premium visuals need a concrete change in subject or state. Use an authored comparison, layered illustration, diagram transformation, or consolidate these shots.", [i - 2, i - 1]);
       }
     }
   }
