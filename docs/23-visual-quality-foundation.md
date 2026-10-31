@@ -1,0 +1,141 @@
+# Visual quality foundation — original 2D/2.5D explainer scenes
+
+**Status (2026-10-31): FOUNDATION IMPLEMENTED; PREMIUM MP4 NOT YET PRODUCED.** Implemented: audience/editorial copy separation and QA; Kumiki ST1 and approved recipes vendored; a reviewed PNG `VisualBriefV1`/`VisualAssetPackV1` boundary; an opt-in loopback ComfyUI API client and CLI; hash-only private stage serving; and a frame-exact Kumiki 2.5D scene slot in the general explainer exporter. Still needed: the owner's configured checkpoint/API workflow and reviewed artwork, a rendered 10-second MP4 and human visual approval, a multiple-scene benchmark, Jobs UI/ledger migration, and optional Kinetograph evaluation. This document retains the downstream roadmap.
+
+**Read this first:** Kumiki ST1 and the initial ComfyUI/PNG integration are now in the draft PR. Next: configure a checkpoint and **one reviewed 10-second desk/invoice scene**, render an actual MP4 with the existing Chromium/FFmpeg path, and check motion/artwork/typography before scaling to 45–60 seconds. Do not build another animation system or export stack. Each numbered step below has a merge gate.
+
+## The creative result, not a slideshow
+
+Every substantive beat needs one **specific visible subject** and a meaningful **before → operation → after** visual change. Merely displaying a headline over a stock image, panning a still, or shuffling three labels is a *rough layout*, not a premium scene.
+
+1. **Original art:** ComfyUI (when installed, verified, enabled and rights-reviewed) supplies scene-specific environments, subjects and edited reference art, not typography or accurate financial documents.
+2. **Exact information:** SVG/React generates all legible prices, documents, forms, arrows, code, charts, captions and UI. Never outsource precise text or numbers to diffusion pixels.
+3. **Layered motion:** Background, independently moving props, contact shadows, foreground and overlays form a reusable scene. ContentGen owns measured narration and the absolute frame; Kumiki's pure frame samplers and host renderer compute transforms and choreography.
+4. **Actual export review:** Inspect the encoded MP4 at first, middle, last, arrival and payoff frames; watch normal-speed video without audio, then with audio. A static QA report is only a warning system.
+
+### Three distinct starting art directions (reference presets, not hardcoded brands)
+
+| Direction and best use | Palette | Imagery / typography / movement |
+| --- | --- | --- |
+| **Warm editorial diorama** — desk, receipts, household costs | Walnut `#734A34`, paper `#F5EBD8`, petrol `#1E5559`, amber `#D69B4B` | Photographic/illustrated environment, tangible paper layers and shadows; readable geometric sans-serif; paper lands, correspondence lines attach, camera gently changes focus. |
+| **Investigative evidence board** — history, documentary, mystery | Ink `#16232F`, parchment `#E8DCC6`, vermilion `#B34C37`, brass `#B89A5B` | Layered maps/archives with source labels, paper grain and selective light; restrained serif headings with sans-serif data; evidence moves into a relationship, not a carousel. |
+| **Precision vector lab** — software and abstract mechanisms | Deep blue `#101F36`, cool white `#EFF5FA`, cyan `#2C9DAE`, coral `#EE775B` | Sharp SVG diagrams and deliberate geometric cutaways; clean sans-serif/numeric typography; states, data flow and cause-effect reveal through aligned motion. |
+
+Use configured BrandKit typography/tokens where available. The colors above are examples for art direction, not new global design tokens. Confirm font installation/glyph coverage (including Japanese) and commercial rights before relying on a font in export.
+
+### Visual composition contract for the first 1920 × 1080 benchmark
+
+- Reserve roughly **100 px side / 80 px top** as working guides and a **bottom 150 px caption-safe band**. These are *initial guides*, not a permanent platform policy. Check the actual text/subject bounding boxes.
+- Establish one obvious focal subject; place data annotations adjacent to the thing they explain. For the invoice example, align an exact SVG document with a perspective-calibrated tabletop and an appropriate contact shadow.
+- Keep generated text out of illustration prompts. On-screen copy must be short, necessary and editable. **`onScreenText`/`audienceCopy` are viewer text; `visualChange`/`learningChange`/`visualAction` are never viewer text.** If the new optional `audienceCopy` is absent, the bridge temporarily uses the first spoken sentence as a backward-compatible fallback and reports that limitation.
+- When the camera, subject, or visual state moves, the motion should reveal **which amount differs, which part connects, which process changes, or what outcome follows**. No default ornamental bounce/slow-zoom substitution.
+- Keep each main subject's identity, apparent scale, lighting direction, material treatment and visual role consistent between shots. Broken masks, gibberish document pixels and floating props fail manual visual QA.
+- Compose 9:16 separately once the 16:9 benchmark is strong; do not simply crop the 16:9 design.
+
+## 1. What the code actually supports — verified 2026-10-31
+
+**Approval assumption:** The project owner has **approved the existing Kumiki-UI library and scene templates for use**. Treat them as ready-made production building blocks. Do **not** require another Kumiki design-approval process; perform only ContentGen-specific vendor, data-contract and MP4 integration checks.
+
+**Current vendor pin.** ContentGen's [`apps/web/kumiki.config.json`](../apps/web/kumiki.config.json) now pins inspected Kumiki commit [`898bb60`](https://github.com/YukiUmetsu/kumiki-ui/tree/898bb601eb13ad056168a209677920c7af7dbe5f). The previous pin was `e1f0d04`. All 124 vendored files matched the pinned commit during source verification. Changes after this revision require reinspection.
+
+| Surface | In ContentGen's vendor pin? | What it actually does / adoption decision |
+| --- | --- | --- |
+| `VideoExportStage`, `process-journey`, `DiagramStage`, `chart-story`, `character-presenter` | **Yes** | Existing browser capture, diagrams, quantitative charts and rigs. Reuse now; do not replace the scene clock. |
+| `motion-director` (MD1), `camera-stage`, `visual-transformation` (VT1) | **Yes** | Deterministic motion planning, SVG camera viewport and visual transformations. `camera-stage` is **not** the newer CC1 director. Integrate carefully in host scene code; vendoring alone does not make scenes cinematic. |
+| `layer-stack` | **Yes** | Paints and edits document layers; **not** a depth-map generator or automatic 2.5D cinema engine. Custom renderer may use its layer painter; video still needs authored parallax/shadows. |
+| `scene-template-foundation` (ST1), `before-after`, `guided-inspection`, `worked-example`, plus shared `layered-cutaway` and `page-turn-story` recipes | **Yes, now vendored** | Approved upstream; ContentGen added recipe closure and the host `PremiumLayeredScene` calls `SceneTemplateView` using `environment-reveal`. No new aesthetic sign-off. |
+| `follow-subject-through-sections` (FS1) and `environment-parallax` | **Yes, transitive ST1 dependencies** | Available as approved helpers for further scenes; no ContentGen FS1 shot has been rendered yet. |
+| `audio-visual-cue`, `frame-accurate-clip`, `cinematic-camera-director` (CC1) | **Not independently adopted** | Upstream capabilities remain optional. Current 2.5D implementation relies on existing measured beat frames and ST1 absolute-frame camera. |
+| Optional Three.js cutaway/book/glass/world renderers | **Shared ST1 closure installed** | `three` and `@types/three` are now pinned; no real 3D content has passed ContentGen GPU capture review. |
+
+The source-audit notes in upstream [`docs/22-premium-scene-animation-review.md`](https://github.com/YukiUmetsu/kumiki-ui/blob/898bb601eb13ad056168a209677920c7af7dbe5f/docs/22-premium-scene-animation-review.md) describe earlier unverified *test evidence*, **not a veto over the owner's approval**. ContentGen must still prove its own vendor build, frame-seek and encoded MP4 path. Use [`docs/15-explainer-lessons.md`](https://github.com/YukiUmetsu/kumiki-ui/blob/898bb601eb13ad056168a209677920c7af7dbe5f/docs/15-explainer-lessons.md) and [`docs/visual-production-contract.md`](https://github.com/YukiUmetsu/kumiki-ui/blob/898bb601eb13ad056168a209677920c7af7dbe5f/docs/visual-production-contract.md) for integration checks. Do **not** implement the speculative full Composition v2 described in Kumiki rendering proposals.
+
+**Existing ContentGen execution path:** [`produce.mjs`](../apps/web/scripts/video-production/produce.mjs) → `asset-search`/`asset-preparation` → measured TTS/`buildSampleTimeline` → `compileGeneralVisuals`/`planExplainerLayouts` → [`main.tsx`](../apps/web/src/video-export/main.tsx) and [`general-scene.tsx`](../apps/web/src/video-export/general-scene.tsx) → [`VideoExportStage`](../apps/web/src/video-export/main.tsx) frame seek → [`render.mjs`](../apps/web/scripts/video-production/render.mjs) Chromium capture + FFmpeg mux → QA/release. [`production-jobs.mjs`](../apps/web/scripts/video-production/production-jobs.mjs) adapts Rust's existing persisted Jobs DAG; it is **not** permission to create a second scheduler. `render.mjs` already checks plan/build hashes, frame bounds and FFprobe output. Preserve these safeguards.
+
+### Technology decision table: choose per *visual need*, not per buzzword
+
+| Need / example | Use first | Use only if needed | Never use for this |
+| --- | --- | --- | --- |
+| Correct invoice, arithmetic, form, code, source citations, chart | **SVG/React** using measured text and sourced numbers; overlay on artwork | Kumiki `chart-story`, `DiagramStage`, ST1 `worked-example` **after pin** | Diffusion-generated readable text or numerical labels |
+| Recognizable desk/room/landscape, lighting and texture | User-approved image or **local ComfyUI** background; retain provenance | 2–4 foreground/depth-separated planes generated or manually masked | Generic stock replacement or one huge flat generated poster |
+| Cutout prop/hand/document without accurate text | ComfyUI inpaint/reference-guided cutout with alpha mask, **then manual check** | SVG vector object when geometry/text must be controlled | Unregistered view-angle prompt sequences as an object turntable |
+| Semantic 2D movement: paper slides, amount changes, parts connect | **Approved Kumiki ST1** `before-after`/`guided-inspection` or MD1/VT1, plus host-authored editable SVG; install missing items first | Custom host React keyed by **absolute frame** if no recipe expresses the action | Random CSS timing, perpetual bouncing, cosmetic Ken Burns on a still |
+| 2.5D travel / persistent subject through multiple rooms | Approved Kumiki FS1/environment-parallax **after ContentGen registry update**; three or more registered layers with depth/anchors | Host adapter only for missing image/subject slots | Pretending the camera truly rotated around a flat image |
+| Talking guide / recurring character | Current Kumiki `character-presenter` with a properly segmented, licensed rig | Pixi/advanced puppet only after proven capture and mouth/eye QA | A single portrait that bobs while narration plays |
+| Real orbit, exploded 3D cutaway, curved page, physical glass | Approved Kumiki 3D renderer/scene if the action needs view-dependent geometry | Authored Blender/glTF for a missing subject; bake footage if ContentGen GPU frame seeking fails | ComfyUI angle variants as faithful 3D; flat CSS advertised as geometry |
+| Final video export | **Existing `VideoExportStage` + Chromium + FFmpeg** | Kinetograph adapter only after license, deterministic parity and production review | Feeding model-generated TSX/HTML directly into renderer |
+
+Do not depend on Poly Haven or any catalog having a specific object. **ComfyUI is an image-making tool, not a video timeline, exact typography engine or 3D reconstruction guarantee.** For a repeated object from new angles, use the *same reference image* plus constrained reference/pose/depth guidance and reject shape drift; if a true orbit must be exact, model once in Blender or use a controlled 3D representation.
+
+## 2. Explicit visual and copy contracts
+
+For each **5–9-second teaching beat**, budget one physical/logical action, one focal subject, and a before→operation→after payoff. These are review budgets, not arbitrary rewriting of a complete narration:
+
+| Field | Word/count budget | Example and rule |
+| --- | --- | --- |
+| Narration | **~12–24 words** at normal delivery, adjusted to measured TTS | “The invoice says one hundred twenty. The receipt says one hundred. The amounts differ by twenty dollars.” Never truncate the spoken script to fit a visual template. |
+| Audience caption/headline | **0–9 words**; 1 focal caption | “Why does the receipt show $20 less?” Exact editable text only. |
+| Object labels | **1–2 labels**, normally **1–4 words** each | `Invoice $120`, `Receipt $100`; keep data as SVG/text. |
+| Asset-generation brief | **50–100 words** per distinct image | Subject, silhouette, camera/vanishing point, lighting, palette, empty placement zone, background/foreground separation, exclusions. No rendered letters/numbers. |
+| Action direction | **1 action, 3 key states**, at least **1 held result** | Desk → invoice slides in → receipt overlaps → $20 discrepancy circled. |
+| Image options | **2–4 contact-sheet candidates** per hero environment, not an open-ended search | Reject poor geometry/lighting before upscaling or masking. |
+
+Keep `onScreenText`/`audienceCopy` separate from `visualChange`/`visualAction`/`learningChange`. The latter are **private instructions**, never audience subtitles. Use original facts/evidence IDs from ContentGen research; never let an image model invent amounts. Word limits are *per visual beat*, not one-line limits on the narration file.
+
+**Implemented v1 contract:** [`visual-asset-factory.mjs`](../apps/web/scripts/video-production/visual-asset-factory.mjs) validates `VisualBriefV1 = {kind, schemaVersion:1, beatId, claimRefs, subject, initialState, action, finalState, framing, aspect, artDirection, onScreenText, assetRoles, cueEventIds}`. A saved `VisualAssetPackV1` uses `{kind, schemaVersion:1, beatId, briefSha256, assets:[{id,role,mimeType,sha256,file,width,height,anchor,depth,rights,reviewStatus,provenance:{generator,model,workflowSha256,seed}}]}`. Source images are **PNG only in v1**, stored as `assets/<sha256>.png` under one job-owned root. The validator enforces file hashes, file count/size, basic PNG geometry, transparency for overlapping layers, unique IDs and roles, verified rights, human review, and exact brief identity. It does **not** yet validate masks at the pixel level, prove a licensed model, or audit the full scene visually. A model response is a candidate, **not** a trusted asset path or rights declaration.
+
+## 3. Implementation steps and gates (one reviewable PR per slice)
+
+| Step | Exact work and code seam | Proof required before next step |
+| --- | --- | --- |
+| **0. Baseline** | Freeze one current draft and identify 3 worst scenes. Use `visual-quality.mjs`, existing scene-review coverage and the stored MP4. Record why each fails (wrong subject, generic cards, illegible text, meaningless motion, repetition). | Before/after evaluation sheet, not an aggregate “quality score”. Existing `editorial-copy-leak`/`repeated-schematic` tests pass. |
+| **1. Install approved Kumiki components in ContentGen — DONE (source/build)** | Inspected Kumiki `898bb60`; vendored ST1 plus three recipe wrappers and dependencies. Updated lockfile and Three.js versions. Source vendor verification and TypeScript/Vite build pass. **Do not re-review Kumiki's design quality.** | **Source/build proven; actual Chromium MP4 regression still pending.** |
+| **2. Kumiki-powered benchmark — PARTIAL** | `PremiumLayeredScene` uses `SceneTemplateSpec`/`SceneTemplateView` for deterministic depth/parallax, editable SVG invoice and receipt faces, frame-keyed arrival with contact shadows, and a comparison connector; approved layered packs select it in the current plan. Generated art still needs perspective-matching human review. | A **10-second real MP4** with distinct invoice and receipt, `$120` vs `$100`, and a `$20` mismatch held legibly. Seek/markup tests exist; human playback review does not. |
+| **3. Versioned brief + asset pack — DONE (initial PNG v1)** | [`visual-asset-factory.mjs`](../apps/web/scripts/video-production/visual-asset-factory.mjs) validates versioned briefs, reviewed layered packs, SHA geometry, PNG CRC/decoding, transparent planes, IDs, rights and provenance; plan typing is extended. | Node positive/negative tests pass. Real generated artwork, pixel-mask QA and source-license audit remain manual. |
+| **4. Asset serving + Jobs ledger migration — PARTIAL** | `produce.mjs` now binds approved packs to beats after `planExplainerLayouts`, and `stage-server.mjs` serves only hash-verified PNG buffers; Chromium checks the images decoded. Rust Jobs/Studio UI **do not yet select or ledger-migrate** packs, nor is v1 WebP supported. | Source tests and build pass; actual Chromium capture, Jobs migration and restart evidence remain. |
+| **5. Local ComfyUI connector — DONE (client/CLI), SERVICE UNCONFIGURED** | [`comfyui-client.mjs`](../apps/web/scripts/video-production/comfyui-client.mjs) restricts to HTTP loopback, verifies API-format nodes, queues/polls/downloads history output with size/timeout/cancellation bounds. [`visual-assets-cli.mjs`](../apps/web/scripts/video-production/visual-assets-cli.mjs) separates generation candidates from human-approved packing; [usage](../apps/web/workflows/comfyui/README.md). | Mocked HTTP-contract tests pass. No ComfyUI/GPU/checkpoint is available in this build environment; actual GPU output and full cancel/recovery tests remain. |
+| **6. Original multi-layer art** | First ComfyUI workflow: generate 2–4 desk background options **without any text or form**. Choose one and create/mask separate desk surface, hand/prop (if needed), foreground occluder and contact shadow, with shared perspective. Keep visible page data as host SVG. Optional reference-guided inpainting aligns variants; reject an object whose silhouette/corners change across views. | Approved contact sheet + registered PNG/alpha pack. Same desk identity/light direction across three captured frames; edges pass full-resolution zoom; at least 2 independently moving semantic layers. |
+| **7. Scene-specific motion and SFX cues** | Drive the approved Kumiki recipe using `buildSampleTimeline` absolute frames and map asset-pack anchors to the scene renderer. Use MD1/VT1/`camera-stage` or newly vendored CC1 where needed. Synchronize existing SFX/voice events; document slides under hand, its shadow follows, camera holds during reading, and the result is held 0.5–1.0 s. | Compare first, 25%, 50%, 75%, last and event/payoff frames. Random seeks return equivalent poses; a silent viewer identifies the mismatch. Do not rebuild movement that Kumiki already provides. |
+| **8. 45–60-second sequence** | Produce **6–9 teaching beats** with at least **3 distinct subject/action categories** (physical object, evidence comparison, quantitative mechanism), one consistent art direction and visible callbacks to the same subject. Use SVG for chart numbers and Kumiki chart-story for proven quantitative work; never use the same card stack for three consecutive scenes. | Entire voiced MP4 reviewed for continuity, factual correctness, pacing, caption-safe areas and variation. Each beat changes understanding, not just the layout. |
+| **9. Automated visual + human gates** | Expand scene quality report with asset-role completeness, copy limits, reveal/payout holds, deterministic seek, alpha bounds, safe areas, image decode, original source/rights and repeated-layout tests. Store up to the existing bounded review-still budget; **do not** assume a zero-warning report proves aesthetics. | CI source/integration tests; saved first/key/last frames, contact sheet, audio-on/off watch; reviewer can fail and re-run **only affected scenes/assets** while keeping immutable prior release. |
+| **10. Optional Kinetograph** | Only if Chromium is a measured bottleneck or native motion becomes necessary, prototype a **separate** adapter next to `render.mjs`. Compare exact frame timing, fonts, alpha, shadows, overlays, audio, resume, codec and QA output on the approved benchmark. Check [PolyForm Small Business license](https://github.com/0xS4N4TG/kinetograph/blob/main/LICENSE.md), project eligibility and distribution rights; no model-authored executable TSX/HTML. | Default renderer stays Chromium. Kinetograph remains disabled unless a license decision, security review and real MP4 parity report pass. |
+
+### Exact first benchmark storyboard (30 fps example; retime to measured narration)
+
+| Frames | Subject action, not decorative movement | Auditable viewer result |
+| --- | --- | --- |
+| `0–44` | Empty desk establishes light, vanishing point and empty document zone; camera **holds**. | Viewer locates the surface; no dummy slide title. |
+| `45–104` | Exact SVG invoice (`$120`) slides into perspective; contact shadow follows. | `$120` is legible; paper visibly belongs to the desk. |
+| `105–184` | Exact SVG receipt (`$100`) moves over the invoice with distinct depth and a restrained overlap. | Viewer can compare two amounts; nothing morphs to gibberish. |
+| `185–244` | Difference becomes a **source-linked** `$20` SVG line/arrow; only relevant values brighten. | The mismatch is demonstrated, not announced. |
+| `245–299` | Lock camera and hold the full side-by-side comparison. | Readability and understanding before the cut. |
+
+Use these as **initial timing targets**, not fake narration alignment. On a real job derive cue offsets from measured speech and `plan.events`; fail an action that arrives after its spoken explanation. Do not represent a changing dollar value as image-model texture. Export at the exact existing `manifest` raster/FPS and validate with FFprobe.
+
+### ComfyUI workflow, input, output, and failure contract
+
+1. Configure explicitly: `COMFYUI_ENDPOINT=http://127.0.0.1:8188` (example only; user may choose another loopback port), a chosen installed checkpoint, image dimensions, reference image path and deterministic seed. Probe `/system_stats` or `/object_info` for availability and required nodes; use a **verified** workflow exported in **API format**, not a UI screenshot/workflow graph copied by hand.
+2. **Workflow A — environment:** text/reference-guided image generation of a *blank wooden desk with large empty paper placement area*; no visible letters, numerals, invoices, hands or baked shadows for the later document. Export a scene-sized raster with candidate ID and seed.
+3. **Workflow B — layer extraction:** remove/segment foreground objects using vetted installed masking/inpainting nodes **or a manual mask**. Transparent PNG/WebP, alpha bounds and shared alignment must survive. A flat background alone is not an animatable pack.
+4. **Workflow C — controlled variant:** only where the script really needs a changed pose or viewpoint, reuse reference art with camera/structure guidance. Write an explicit “same subject” acceptance test. If corners, handle count or material drifts, regenerate; do not fake a 3D orbit.
+5. Connector receives prompt ID → waits for history completion → selects its output filename/subfolder/type → downloads bytes from `/view` → verifies signatures, image decode, dimensions, hash, alpha, allowed size → moves into job-owned content-addressed storage. Treat returned filenames as **untrusted identifiers**, not arbitrary paths. Store prompt/workflow/seed provenance privately; do not log sensitive prompts or machine paths into Jobs events.
+6. One-click production should **not require opening ComfyUI manually for each beat**. It should check that a previously configured service/checkpoint is ready, report asset progress and allow cached asset reuse. If unavailable, use a clearly marked **non-premium local fallback** or stop the premium job with an actionable error; never silently claim the image was generated.
+
+**Deployment note:** ComfyUI installation alone is not setup. The user must have a working model/checkpoint, approved workflow nodes, storage budget, GPU/CPU capacity, and a tested API. Do not hardwire checkpoint names, workflow node IDs or output locations into the application. Store approved workflow templates in a versioned `apps/web/workflows/comfyui/` directory **when Step 5 starts**; until then that path is proposed, not shipped.
+
+## 4. Release decision and quality bars
+
+| Gate | Automated check | Human review | Current state |
+| --- | --- | --- | --- |
+| Editorial privacy | `audienceCopy` fallback never prints private instruction; `editorial-copy-leak` | Viewer sees no production notes | **Implemented** |
+| Repeated schematic | `repeated-schematic` error for three generic repeats | Varied semantic actions, not decorative template rotation | **Implemented** |
+| Asset fidelity | Hash/PNG CRC/decode/alpha requirement/dimension/anchor/role/rights validation | Subject, hands and shadows look coherent; no gibberish/warping | **Code gate implemented; actual artwork not approved** |
+| Causal motion | Before/action/after cues, deterministic seeks, payoff hold | Silent first viewing explains what changed | **ST1 slot and seek tests implemented; MP4 watch pending** |
+| Readable data | Exact editable SVG values, safe rectangles, font readiness | Pause on documents: every number is correct and legible | **SVG evidence overlays implemented; exact document benchmark not approved** |
+| Qualified video | Actual MP4, FFprobe, frame parity, bounded stills | Normal-speed 10 s, then 45–60 s approval in both aspects | **Not approved** |
+
+**Definition of done for this upgrade:** a reviewer accepts both 10-second and 45–60-second **encoded** examples, with original relevant visual subjects, meaningful motion, no fake numerals, consistent lighting/art direction, traceable asset rights, and no repeated-slide fallback. No benchmark MP4 = no “quality upgrade complete” claim.
+
+**Review/ownership discipline:** Keep generated art and user character ZIPs out of Git and committed fixtures; use synthetic invoice figures only. PRs must state the changed contract, test command/results, one example MP4/review contact sheet and rollback/fallback. Existing `render-source-plan.json`, `planHash`, `buildHash`, per-segment resume and Rust Jobs are the source of truth. A new asset revision invalidates dependent scene frames, **not** all narration or unrelated scenes.
+
+**Research scope:** Source-inspected both ContentGen's current `produce.mjs`, `stage-server.mjs`, `general-scene.tsx`, `main.tsx`, `production-jobs.mjs`, `kumiki.config.json` and Kumiki `898bb60` ST1/FS1, audio cue, environment, layer stack, render handshake and quality documents. This was an API/source audit. **Kumiki's current components are approved by the project owner**; no additional upstream visual sign-off is required for this plan. Integration evidence is still required for **ContentGen-generated videos**.

@@ -1,9 +1,10 @@
 # Specification index
 
-**Rule:** each subject has one normative owner. Read the index and the required files for the task; avoid loading the entire pack into a limited-context model.
+**Rule:** each subject has one normative owner. Read this index and the required files for the task; avoid loading the entire pack into a limited-context model. **Start with [current implementation status](CURRENT-STATUS.md)** to distinguish shipped code from future specifications. The owner has approved existing Kumiki-UI components; not every approved component is currently vendored into ContentGen.
 
 | File | Owns | Read for |
 |---|---|---|
+| [CURRENT-STATUS](CURRENT-STATUS.md) | Dated code inventory, live workflows, remaining gaps and documentation precedence | **First read** when interpreting old implementation/status claims |
 | [01-system](01-system.md) | Product scope, system architecture, boundaries, repository layout | Any new subsystem |
 | [02-runtime](02-runtime.md) | Provider contracts, DAG jobs, cache, memory/disk hygiene, local dev | Models, tools, jobs, infra |
 | [03-data](03-data.md) | SQLite ownership, constraints, migrations, graph and versioned artifacts | All persistence changes |
@@ -20,10 +21,13 @@
 | [15-video-performance-system](15-video-performance-system.md) | Trend/opportunity evidence, distinct title+thumbnail hypotheses, hook/short/long story grammar, analytics feedback | Creative strategy, high-retention explainers |
 | [2026-10-21 market scan](research/2026-10-21-video-market-scan.md) | Dated performance examples, surveys, platform trend evidence, topic opportunities | Refreshing current topic hypotheses |
 | [21-scene-asset-discovery](21-scene-asset-discovery.md) | Approved per-scene stock/3D discovery, provider restrictions, local import manifests and current renderer gap | Scene asset suggestions and third-party media imports |
+| [23-visual-quality-foundation](23-visual-quality-foundation.md) | Source-audited Kumiki capability matrix, technology choices, 10-step 2D/2.5D rollout, ComfyUI integration and acceptance gates | Implementing cinematic visual scenes without breaking the existing renderer |
 | [14-kumiki-integration](14-kumiki-integration.md) | Implemented Kumiki registry/video handshake and unimplemented boundary | Visual scenes, motion, renderer adapters |
 | [11-tools](11-tools.md) | Swappable tool candidates, benchmarks and primary references | New dependencies |
 
 **Code-adjacent fixtures:** [`../examples/core-schema.sql`](../examples/core-schema.sql), [`../examples/research-intelligence.sql`](../examples/research-intelligence.sql), [`../examples/creative-production.sql`](../examples/creative-production.sql), and example JSON for provider profiles, jobs, research, articles/SEO, design tokens, graphics, thumbnails, characters and release manifests. Examples are contracts to adapt and test, **not automatically applied migrations or confirmed third-party APIs**. The runnable shared frontend foundation and its Kumiki pin/upgrade procedure live in [`../apps/web/README.md`](../apps/web/README.md).
+
+**Historical plans:** All files in `superpowers/specs/` and `superpowers/plans/` preserve design decisions and assumptions as of their dates. They are **archived context, not continuously updated live status**. Cross-check with `CURRENT-STATUS.md` and the code before implementing an old plan. Dated market research is likewise not a live prices/policies feed.
 
 **Creative workflow path:** 05,08,12,15 + dated market scan; Kumiki scene compilation → 14; TTS/SFX → 13; validated research snapshots → 04. Never turn public views into a fake CTR/retention/revenue or a causal "viral score."
 

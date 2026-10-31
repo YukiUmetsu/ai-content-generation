@@ -36,6 +36,20 @@ async function waitForRigImages(stage: HTMLElement) {
   }
 }
 
+async function waitForPremiumImages(stage: HTMLElement) {
+  const scene = stage.querySelector<HTMLElement>("[data-premium-layered-scene]");
+  if (!scene) return;
+  const images = [...scene.querySelectorAll<HTMLImageElement>("img[data-km-asset-id]")];
+  if (images.length !== 3) throw new Error("Premium 2.5D scene must display exactly three reviewed layers");
+  await Promise.all(images.map(async (image) => {
+    if (!/^\/__visual_assets\/[a-f0-9]{64}\.png$/u.test(image.getAttribute("src") ?? ""))
+      throw new Error("Premium visual references an unapproved image URL");
+    await image.decode();
+    if (image.naturalWidth < 128 || image.naturalHeight < 128)
+      throw new Error("Premium visual layer failed image decode or dimensions");
+  }));
+}
+
 /** Browser font/geometry validation; no screenshot analysis or AI vision costs. */
 async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" | "general-explainer-visual-plan", payoffFrame: number, portrait: boolean) {
   const start = performance.now();
@@ -50,6 +64,7 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   await waitForChartStoryReadiness(stage);
   await prepareStockMediaFrame(stage);
   await waitForRigImages(stage);
+  await waitForPremiumImages(stage);
   for (const conversation of stage.querySelectorAll<HTMLElement>("[data-conversation-characters]")) {
     const bounds = conversation.getBoundingClientRect();
     const performers = conversation.querySelectorAll<HTMLElement>("[data-conversation-performer]");

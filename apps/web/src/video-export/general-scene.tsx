@@ -21,6 +21,8 @@ import { SemanticMechanicScene } from "./semantic-mechanic-scene";
 import { ConversationCharacters } from "./conversation-characters";
 import { characterRigsForChapter } from "./scene-character-rigs";
 import type { ExportRigPlan } from "./scene-character-rigs";
+import { PremiumLayeredScene } from "./premium-layered-scene";
+import type { PremiumVisualScene } from "./premium-layered-scene";
 
 const ink = "#F5F2EB";
 const muted = "#A5B9C5";
@@ -144,6 +146,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
   const chapterFrames=chapter.endFrame-chapter.startFrame;
   const spoken = chapter.narration || state.visual.items.join(", ");
+  /* eslint-disable react-hooks/preserve-manual-memoization -- Export plans are SHA-pinned and immutable across frame seeks; retain the existing per-chapter caches. */
   const interactions = useMemo(() => chapterInteractions({
     ...chapter, narration: spoken,
   }, plan.manifest.fps), [chapter, spoken, plan.manifest.fps]);
@@ -173,6 +176,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     durationFrames: chapter.endFrame - chapter.startFrame, fps: plan.manifest.fps,
     locale: plan.locale ?? "en-US", evidence: plan.evidence,
   }) : undefined, [chart, chapter, state.visual.headline, plan.manifest.fps, plan.locale, plan.evidence]);
+  /* eslint-enable react-hooks/preserve-manual-memoization */
   const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
   const scriptPhrase = isPayoffHidden || payoffLocked ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, diagramState.visibleItems);
   const scriptLine = scriptPhrase ? fitSvgText(scriptPhrase, { maxWidthPx: 800, preferredSize: 28, minSize: 18, maxLines: 2 }) : undefined;
@@ -188,6 +192,10 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       <HomeCostStoryScene state={state} motion={semanticMotion} frames={chapterFrames}/>
       {chapter.dialogue&&<ConversationCharacters chapter={chapter} frame={frame} rigs={characterRigsForChapter(plan as GeneralVisualPlan & ExportRigPlan,chapter.id)} compact/>}
     </div>;
+  }
+  if (state.visual.premiumScene) {
+    return <PremiumLayeredScene scene={state.visual.premiumScene as PremiumVisualScene}
+      frame={state.localFrame} frames={chapterFrames} fps={plan.manifest.fps}/>;
   }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
   <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} data-payoff-hold={isPayoffHidden ? "true" : undefined} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>

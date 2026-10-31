@@ -34,26 +34,22 @@ flowchart LR
 
 **Rust owns** data, approval, source rights, jobs, artifact hashes, migrations, typed schemas and resource limits. **React owns** responsive creation/editing, timeline/scene controls and preview. **Adapters** own vendor-specific APIs/process invocation; optional tools do not block app startup. **SQLite is canonical**; FTS/vector indexes and graph views are rebuildable projections. Models can be local but SEO search and analytics still need user-authorized network access.
 
-## Suggested repository (create only when needed)
+## Current repository boundaries (2026-10-31)
 
 ```text
-apps/api/                  # Axum startup/HTTP, auth/origin validation
-apps/web/                  # React/Vite workspace; accessible UI
-crates/domain/             # owned model types, invariants, schema versions
-crates/storage/            # SQLite repositories, migrations, artifact store
-crates/workflow/           # DAG engine, checkpoints, resources, leases
-crates/providers/          # capability ports; optional adapter features
-crates/research/           # ingestion, retrieval, claims, SEO
-crates/content/            # article, lesson, course, publishing plans
-crates/media/              # scene/timeline schemas, QA and render requests
-crates/catalog/            # hierarchy, characters, products/releases
-crates/quality/            # findings, release gates and measurements
-adapters/                  # optional TS/Python tools using typed IPC
-examples/                  # fixtures, small reproducible samples
-data/                      # local DB/artifact roots, ignored by Git
+crates/core/               # Rust domain types, persisted Jobs and invariants
+crates/server/             # Axum HTTP, SQLite migrations, research/creative APIs
+apps/web/                  # React/Vite editor, Kumiki vendor, Node video tools
+apps/web/scripts/video-production/  # TTS, planning, media, capture and QA
+apps/web/src/video-export/           # frame-driven browser renderer
+examples/                  # schema and media/job fixtures
+docs/                      # normative requirements, runbooks and historical plans
 ```
 
-Keep a single Cargo workspace; crates import domain/ports, never concrete adapters. Prefer one executable and a few optional worker processes over permanent microservices. Don't scaffold empty crates to satisfy the diagram.
+This is the **actual** source layout, not an instruction to create more crates.
+Keep one Cargo workspace and versioned capability boundaries. Prefer the
+existing Rust Jobs/Node video worker over new schedulers or duplicate renderers.
+For feature availability, see [current status](CURRENT-STATUS.md).
 
 ## Ownership and boundary rules
 

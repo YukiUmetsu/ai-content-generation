@@ -55,12 +55,27 @@ test("non-adjacent duplicate headlines and narration are identified by stable sh
 test("three generic scenes with the same diagram and elements are flagged, and a semantic mechanic clears only that warning", () => {
   const view = generic(sample());
   let report = analyzed(view);
-  assert.ok(report.findings.some(f => f.code === "repeated-schematic" && f.shotId === view.shotMap[2].shotId));
+  assert.ok(report.findings.some(f => f.code === "repeated-schematic" && f.severity === "error" && f.shotId === view.shotMap[2].shotId));
   view.plan.chapters.forEach(chapter => {
     chapter.visual.direction.visualMechanic = { version: 1, operator: "accumulate" };
   });
   report = analyzed(view);
   assert.ok(!report.findings.some(f => f.code === "repeated-schematic"));
+});
+
+test("an editorial visual instruction shown as subhead is a premium-quality error", () => {
+  const view=generic(sample());
+  view.plan.chapters[1].visual.direction.learningChange="Reveal the full receipt with a slow camera push.";
+  view.plan.chapters[1].visual.subhead="Reveal the full receipt with a slow camera push.";
+  const flagged=analyzed(view);
+  assert.ok(flagged.findings.some(f=>f.code==="editorial-copy-leak" && f.severity==="error" && f.shotId===view.shotMap[1].shotId));
+  view.plan.chapters[1].visual.subhead="The receipt shows what was actually paid.";
+  const clean=analyzed(view);
+  assert.ok(!clean.findings.some(f=>f.code==="editorial-copy-leak"));
+
+  view.plan.chapters[1].visual.direction.visualAction="Create a dramatic explanatory animation of invoice values flowing into the ledger while the camera slowly tracks across the desk";
+  view.plan.chapters[1].visual.subhead="Create a dramatic explanatory animation of invoice values flowing into the ledger…";
+  assert.ok(analyzed(view).findings.some(f=>f.code==="editorial-copy-leak"),"truncated director directions must be caught too");
 });
 
 test("exact renderer SVG card-fit failure is reported with a specific shot instead of crashing preview", () => {

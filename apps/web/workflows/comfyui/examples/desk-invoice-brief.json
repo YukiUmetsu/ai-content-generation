@@ -1,0 +1,16 @@
+{
+  "kind": "contentgen-visual-brief",
+  "schemaVersion": 1,
+  "beatId": "desk-invoice",
+  "claimRefs": ["claim-invoice"],
+  "subject": "An invoice and receipt on a desk",
+  "initialState": "A clean desktop establishes the comparison area",
+  "action": "The invoice and receipt appear as separate masked planes",
+  "finalState": "An exact editable twenty-dollar discrepancy is highlighted",
+  "framing": "Oblique, desk-level three-quarter camera with a clear left-side information zone",
+  "aspect": "16:9",
+  "artDirection": "Premium warm editorial diorama; consistent walnut material, amber side light, realistic paper contact shadows; no generated text, forms, handwriting, numerals or logos",
+  "onScreenText": ["Invoice $120", "Receipt $100", "Difference $20"],
+  "assetRoles": ["background", "subject", "foreground"],
+  "cueEventIds": ["evidence-reveal"]
+}

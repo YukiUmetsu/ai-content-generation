@@ -26,6 +26,7 @@ import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
 import { prepareAutomaticCommonsMedia } from "./automatic-commons-assets.mjs";
 import { generateProductionThumbnails } from "./premium-thumbnails.mjs";
 import { mediaToolFailureReason } from "./media-tool-error.mjs";
+import { prepareVisualAssetPackV1 } from "./visual-asset-factory.mjs";
 
 const run = promisify(execFile);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -119,7 +120,7 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
 
 /**
  * @param {object} candidate JSON video-production-job v1
- * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
+ * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string,visualScenes?:Array<{brief:object,pack:object,assetsRoot:string}>}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,generateThumbnails?:Function,toolVersions?:object}} deps
  */
 export async function produceVideo(candidate, options, deps = {}) {
@@ -263,6 +264,34 @@ export async function produceVideo(candidate, options, deps = {}) {
         expectedFingerprint: options.expectedSceneMediaFingerprint, signal: options.signal,
         autoApprovedBundle:options.sceneAssetBundle,
       }, { ffprobe: options.ffprobe }) : { bindings: {}, assets: [] };
+    // Opt-in premium scenes are immutable, reviewed 2.5D planes. Validate every
+    // hash and claim binding before narration/provider work; no stock fallback.
+    const visualScenes = new Map();
+    const visualAssets = [];
+    if (options.visualScenes !== undefined) {
+      if (job.visualFamily !== "general-explainer-v1" || job.destination.width !== 1920 ||
+        job.destination.height !== 1080 || !Array.isArray(options.visualScenes) ||
+        options.visualScenes.length > 6) fail("premium visual packs require up to six landscape general-explainer beats");
+      const beats = new Map(job.beats.map((beat) => [beat.id, beat]));
+      for (const input of options.visualScenes) {
+        const prepared = await (deps.prepareVisualAssetPack ?? prepareVisualAssetPackV1)(input);
+        const beat = beats.get(prepared.beatId);
+        if (!beat || visualScenes.has(prepared.beatId) || input.brief.aspect !== "16:9" ||
+          input.brief.claimRefs.some((ref) => !beat.claimRefs.includes(ref)) ||
+          input.brief.cueEventIds.some((id) => !beat.eventIds.includes(id)) ||
+          prepared.layers.length !== 3 ||
+          ["background", "subject", "foreground"].some((role) => !prepared.layers.some((item) => item.role === role)) ||
+          input.brief.onScreenText.length !== 3 ||
+          input.brief.onScreenText.some((line) => line.length > 38))
+          fail(`premium beat ${prepared.beatId} needs matching claims/cues, 3 layers and 3 short authored lines`);
+        visualScenes.set(prepared.beatId, { beatId: prepared.beatId, brief: {
+          subject: input.brief.subject, initialState: input.brief.initialState,
+          action: input.brief.action, finalState: input.brief.finalState,
+          onScreenText: input.brief.onScreenText,
+        }, layers: prepared.layers });
+        visualAssets.push(...prepared.browserAssets);
+      }
+    }
     if(job.visualFamily==="general-explainer-v1"&&options.autoPrepareFreeMedia===true&&options.sceneShotMap&&
       options.prepareAssetSuggestions){
       let savedSuggestions=null;
@@ -350,6 +379,15 @@ export async function produceVideo(candidate, options, deps = {}) {
     }
     await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
     plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
+    if (visualScenes.size) {
+      plan = { ...plan, chapters: plan.chapters.map((chapter) => {
+        const premiumScene = visualScenes.get(chapter.id);
+        if (!premiumScene) return chapter;
+        if (chapter.visual.stockMedia || chapter.visual.chart || chapter.dialogue)
+          fail(`premium beat ${chapter.id} conflicts with stock media, a chart, or character dialogue`);
+        return { ...chapter, visual: { ...chapter.visual, premiumScene } };
+      }) };
+    }
     const frames = plan.manifest.durationFrames;
     const reviewFrames = selectSceneReviewFrames(plan);
     const sourcePlan = JSON.stringify(plan);
@@ -376,7 +414,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     const captionBytes=await readFile(audio.srtPath);
     if(!captionBytes.length)fail("caption generation produced an empty subtitle file");
     stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan,
-      approvedMedia: sceneMedia.assets, characterAssets: characterPacks.assets });
+      approvedMedia: sceneMedia.assets, characterAssets: characterPacks.assets, visualAssets });
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {

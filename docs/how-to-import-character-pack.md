@@ -221,16 +221,25 @@ There is no implicit license clearance: `provenance` fields are artist claims
 until reviewed. You must have permission to use the artwork and any voice
 recordings before publishing or offering downloads.
 
-## Next implementation stage
+## Remaining work (2026-10-31)
 
-- Pinned Kumiki-compatible server-side package/rig validation and explicit
-  rights decisions. Only independently validated/approved revisions may render.
-- Reusable character registration and project cast links; explicit local
-  catalog cleanup/retention controls. Browser-only project IDs are preserved
-  as strings without depending on asynchronous Discovery project mirroring.
-- Rig/pose/viseme validation through an actual *pinned* Kumiki renderer API.
-- Character preview using real layer transforms, manual approval, versioned
-  voice bindings and project cast linking.
-- Jobs-backed performance/render/QA integration, revisions, and rights checks.
+**Now implemented:** server-owned saved ZIP revisions, browser and render-worker
+validation of the archive/layers, project Pip/Quill cast and per-scene revision
+bindings, pinned Kumiki `CharacterPresenter` rendering, measured dialogue
+windows, action/blink checks, and focused browser-to-FFmpeg smoke tests.
+An installed rig is **not** the same as a human-approved commercial video.
 
-No progress toward those stages is implied by a successful ZIP inspection.
+**Still missing or limited:**
+
+- Generalized binding of arbitrary imported character IDs; current automatic
+  latest-revision production path is Pip/Quill-specific.
+- Automatic incorporation of downloaded `character.pose-corrections.json`
+  sidecars into a saved ZIP/render revision; explicitly repack first.
+- Genuine phoneme-level lip sync, when the source provides no phoneme data.
+- Full end-to-end UI-edited multi-speaker scene → authorized narrator/audio
+  → complete narrated MP4 acceptance and live crash/restart testing.
+- Rights, consent and manual aesthetic review of actual user-supplied artwork
+  and voices for a commercial release.
+
+See [Kumiki integration](14-kumiki-integration.md) and
+[current implementation status](CURRENT-STATUS.md) for the renderer boundary.
