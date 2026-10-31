@@ -156,6 +156,36 @@ test("real synthetic research dossier maps to a valid test-only, source-linked r
   assert.ok(bridge.warnings.some(x=>x.includes("not been human-reviewed")));
 });
 
+test("internal director instructions never become audience supporting copy",()=>{
+  const d=dossier(),p=plan();
+  p.shots[0].visualChange="Design a meaningful visual change with dramatic camera motion.";
+  p.teachingSequences[0].phases[0].learningChange="Animate a 3D camera orbit around the subject.";
+  p.sound[0].narration="An invoice shows the total amount before fees are added. Watch the document as the costs become visible.";
+  const compiled=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  const first=compiled.job.beats[0];
+  assert.equal(first.visual.subhead,"An invoice shows the total amount before fees are added.");
+  assert.equal(first.visual.direction.learningChange,p.teachingSequences[0].phases[0].learningChange);
+  assert.ok(!first.visual.subhead.includes("camera orbit"));
+  assert.ok(compiled.warnings.some(message=>message.includes("audienceCopy")));
+
+  p.shots[0].audienceCopy="The invoice is the starting point.";
+  const explicit=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  assert.equal(explicit.job.beats[0].visual.subhead,"The invoice is the starting point.");
+  assert.equal(explicit.job.beats[1].visual.subhead,compiled.job.beats[1].visual.subhead);
+  assert.equal(parseVideoProductionJob(explicit.job).ok,true);
+
+  p.shots[0].audienceCopy=undefined;
+  p.sound[0].narration="領収書には実際に支払われた金額が記載されています。請求書の金額と比較して違いを確認します。";
+  const japanese=compilePreproductionRenderJob(d,compilePreproductionBundle(d,p));
+  assert.equal(japanese.job.beats[0].visual.subhead,"領収書には実際に支払われた金額が記載されています。");
+  delete p.shots[0].audienceCopy;
+
+  for(const bad of ["", "A".repeat(116),"Hidden\nmetadata"]){
+    const invalid=structuredClone(p);invalid.shots[0].audienceCopy=bad;
+    assert.throws(()=>compilePreproductionBundle(d,invalid),/invalid-text|invalid|plan/i);
+  }
+});
+
 test("editing only one shot changes only the corresponding render beat with stable job identity",()=>{
   const d=dossier(),b=bundle();
   const original=compilePreproductionRenderJob(d,b);
