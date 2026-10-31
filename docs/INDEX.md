@@ -20,6 +20,7 @@
 | [15-video-performance-system](15-video-performance-system.md) | Trend/opportunity evidence, distinct title+thumbnail hypotheses, hook/short/long story grammar, analytics feedback | Creative strategy, high-retention explainers |
 | [2026-10-21 market scan](research/2026-10-21-video-market-scan.md) | Dated performance examples, surveys, platform trend evidence, topic opportunities | Refreshing current topic hypotheses |
 | [21-scene-asset-discovery](21-scene-asset-discovery.md) | Approved per-scene stock/3D discovery, provider restrictions, local import manifests and current renderer gap | Scene asset suggestions and third-party media imports |
+| [23-visual-quality-foundation](23-visual-quality-foundation.md) | First visual-quality guardrail, 2D/2.5D creative contract, and staged ComfyUI/Kinetograph adoption | Improving rendered scene craft and avoiding slide-like output |
 | [14-kumiki-integration](14-kumiki-integration.md) | Implemented Kumiki registry/video handshake and unimplemented boundary | Visual scenes, motion, renderer adapters |
 | [11-tools](11-tools.md) | Swappable tool candidates, benchmarks and primary references | New dependencies |
 
