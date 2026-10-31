@@ -13,6 +13,16 @@ const safe=(v,n)=>{
   const out=v.trim().replace(/\s+/gu," ").replace(/[\u0000-\u001f]/gu," ");
   return out.length<=n?out:out.slice(0,n-1).trimEnd()+"…";
 };
+/** Audience copy comes from an explicit on-screen field or the spoken script.
+ * Direction/learningChange describes what to animate, not text to display. */
+function supportingCopy(shot,narration){
+  if(shot.audienceCopy!==undefined)return safe(shot.audienceCopy,115);
+  const speech=narration.trim().replace(/\s+/gu," ");
+  // Japanese sentence endings need no whitespace between sentences.
+  const sentence=speech.match(/^[^。！？]*[。！？]/u)?.[0]??
+    speech.match(/^.*?[.!?](?=\s|$)/u)?.[0]??speech;
+  return safe(sentence,115);
+}
 const label=id=>safe(id.replace(/[-_]+/gu," ").replace(/\b[a-z]/gu,c=>c.toUpperCase()),44);
 const mapFamily={
   question:"general-flow",process:"general-flow",mechanism:"general-flow",
@@ -55,11 +65,11 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
       throw Error("Shot "+shot.id+" needs at least 20 characters of narration for the current renderer.");
     if(!phase)warnings.push("Shot "+shot.id+" is not linked to a teaching phase.");
     const headline=safe(shot.onScreenText,68);
-    const subhead=safe(phase?.learningChange||shot.visualChange,115);
+    const subhead=supportingCopy(shot,voice.narration);
     if(shot.onScreenText.trim().length>68)
       warnings.push("Shot "+shot.id+": long screen title shortened to fit the exporter.");
-    if((phase?.learningChange||shot.visualChange).trim().length>115)
-      warnings.push("Shot "+shot.id+": long supporting text shortened to fit the exporter.");
+    if(shot.audienceCopy===undefined)
+      warnings.push("Shot "+shot.id+": no explicit audience supporting copy; using an excerpt of narrated speech. Add audienceCopy to refine on-screen text.");
     const subjects=[...new Set(shot.subjectIds.map(label))].slice(0,5);
     const sequence=plan.teachingSequences?.find(x=>x.phases.some(p=>p.shotId===shot.id));
     const mappings=phase?.kind==="analogy" ? sequence?.analogy?.mappings??[] : [];
