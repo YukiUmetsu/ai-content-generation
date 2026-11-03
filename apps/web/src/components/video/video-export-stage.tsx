@@ -74,6 +74,14 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
     [...root.querySelectorAll<HTMLElement>("[data-km-camera-viewport-3d]")]
       .some(el=>el.dataset.cameraFrame!==String(frame)||
         !el.querySelector<HTMLCanvasElement>("canvas")?.width)||
+    [...root.querySelectorAll<HTMLElement>("[data-km-hero-viewer][data-km-frame-addressed]")].some(el=>
+      el.querySelector<HTMLCanvasElement>("canvas")?.dataset.kmHeroFrame!==String(frame))||
+    root.querySelector("[data-km-book-textures=pending]")||
+    [...root.querySelectorAll<HTMLElement>("[data-km-book-frame]")].some(el=>{
+      const canvas=el.querySelector<HTMLCanvasElement>("[data-km-book-canvas]");
+      // A reel's absolute frame differs from the book's local frame.
+      return !canvas?.width||canvas.dataset.kmGlFrame!==el.dataset.kmBookFrame;
+    })||
     root.querySelector("[data-km-caption-performer][data-caption-status=pending]")||
     root.querySelector("[data-km-frame-clip][data-clip-status=pending]")||
     [...root.querySelectorAll<HTMLElement>("[data-km-hero-viewer]")].some(el=>!el.querySelector("[role=alert]")&&
@@ -81,6 +89,7 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
     if(performance.now()-start>15000)throw new Error("Video frame did not settle at "+frame+".");
     await nextPaint();
   }
+  if(root.querySelector("[data-km-book-textures=error]"))throw new Error("3D storybook image decoding failed.");
   if(root.querySelector("[data-km-explainer-fallback], [data-km-camera-viewport-3d] [role=alert], [data-km-hero-viewer] [role=alert]"))
     throw new Error("Video frame has layout or 3D rendering errors.");
   const stage=root.querySelector<HTMLElement>("[data-km-explainer-stage]");
