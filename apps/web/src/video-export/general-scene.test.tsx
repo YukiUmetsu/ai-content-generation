@@ -33,6 +33,24 @@ describe("generic deterministic explainer scene", () => {
     expect(first).not.toEqual(last);
   });
 
+  it("renders stock media as a full-bleed backdrop with a legibility scrim, not a scaled diagram", () => {
+    const photo = { assetType: "photo" as const, url: `/__video_media/${"a".repeat(64)}.jpg`,
+      sha256: "a".repeat(64), provider: "pexels" as const, assetId: "49",
+      sourceUrl: "https://www.pexels.com/photo/roof-49/", license: "Pexels License" as const,
+      licenseUrl: "https://www.pexels.com/license/", creator: "Photographer" };
+    const withMedia: GeneralVisualPlan = { ...plan, chapters: plan.chapters.map(chapter =>
+      chapter.id === "path" ? { ...chapter, visual: { ...chapter.visual, stockMedia: photo } } : chapter) };
+    const rendered = renderToStaticMarkup(<GeneralExportScene plan={withMedia} frame={65} />);
+    expect(rendered).not.toContain("scale(0.58)");
+    expect(rendered).toContain('data-contentgen-stock-scrim=""');
+    expect(rendered.indexOf('data-contentgen-stock-frame=""')).toBeLessThan(rendered.indexOf("<svg "));
+    // The full-bleed backdrop is absolutely positioned, so it paints above in-flow
+    // content unless the SVG is a positioned sibling; without this the photo covers
+    // the entire frame and the diagram, headline and chrome are never visible.
+    const svgTag = rendered.slice(rendered.indexOf("<svg "), rendered.indexOf(">", rendered.indexOf("<svg ")));
+    expect(svgTag).toContain("position:relative");
+  });
+
   it("uses an edited per-scene focal position in the actual photo and footage layer",()=>{
     const base={url:`/__video_media/${"f".repeat(64)}.jpg`,sha256:"f".repeat(64),
       provider:"pexels" as const,assetId:"49",sourceUrl:"https://www.pexels.com/photo/roof-49/",

@@ -143,10 +143,13 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
   const chapterFrames=chapter.endFrame-chapter.startFrame;
-  const spoken = chapter.narration || state.visual.items.join(", ");
+  // `spoken`, `chart` and `headline` are all properties of `chapter`
+  // (getGeneralFrame returns the chapter's own `visual` object), so `chapter`
+  // alone is the correct and complete memo dependency; listing the derived
+  // values too is what React Compiler rejects as unprovable memoization.
   const interactions = useMemo(() => chapterInteractions({
-    ...chapter, narration: spoken,
-  }, plan.manifest.fps), [chapter, spoken, plan.manifest.fps]);
+    ...chapter, narration: chapter.narration || chapter.visual.items.join(", "),
+  }, plan.manifest.fps), [chapter, plan.manifest.fps]);
   const slot = interactionAt(interactions, state.localFrame);
   const specialized = Boolean(state.visual.direction?.visualMechanic || state.visual.direction?.transformation);
   const stockMedia = state.visual.stockMedia;
@@ -168,11 +171,11 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     ?entryFadeOpacity(state.localFrame,chapterFrames,state.visual.motion):0;
 
   const typographyScale = attention?.titleScale ?? 1;
-  const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
-    chart, beatId: chapter.id, title: state.visual.headline,
+  const chartStory = useMemo(() => chapter.visual.chart ? buildQuantitativeChartStory({
+    chart: chapter.visual.chart, beatId: chapter.id, title: chapter.visual.headline,
     durationFrames: chapter.endFrame - chapter.startFrame, fps: plan.manifest.fps,
     locale: plan.locale ?? "en-US", evidence: plan.evidence,
-  }) : undefined, [chart, chapter, state.visual.headline, plan.manifest.fps, plan.locale, plan.evidence]);
+  }) : undefined, [chapter, plan.manifest.fps, plan.locale, plan.evidence]);
   const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
   const scriptPhrase = isPayoffHidden || payoffLocked ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, diagramState.visibleItems);
   const scriptLine = scriptPhrase ? fitSvgText(scriptPhrase, { maxWidthPx: 800, preferredSize: 28, minSize: 18, maxLines: 2 }) : undefined;
@@ -190,13 +193,29 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     </div>;
   }
   return <div data-general-export-frame="" style={{ position: "relative", width: 1920, height: 1080, fontFamily: "Geist Variable, Geist, Arial, sans-serif" }}>
-  <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} data-payoff-hold={isPayoffHidden ? "true" : undefined} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block" }}>
+  {stockMedia && <div data-contentgen-stock-frame="" data-asset-motion={slot.style} role="img" aria-label={`Illustrative ${stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
+    style={{position:"absolute",left:0,top:0,width:1920,height:1080,overflow:"hidden"}}>
+    {stockMedia.assetType === "photo"
+      ? <img data-contentgen-stock-photo="" src={stockMedia.url} alt="" decoding="async"
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`,
+          transform:`scale(${pictureMotion.scale.toFixed(5)}) translate3d(${pictureMotion.x.toFixed(3)}px,${pictureMotion.y.toFixed(3)}px,0)`,
+          transformOrigin:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`}}/>
+      : <video data-contentgen-stock-video="" data-media-time={mediaTime.toFixed(6)}
+        src={stockMedia.url} preload="auto" muted playsInline aria-hidden="true"
+        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
+          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`,
+          transform:`scale(${pictureMotion.scale.toFixed(5)}) translate3d(${pictureMotion.x.toFixed(3)}px,${pictureMotion.y.toFixed(3)}px,0)`}} />}
+    <div data-contentgen-stock-scrim="" aria-hidden="true" style={{position:"absolute",inset:0,
+      background:`linear-gradient(90deg,rgba(16,29,45,0.98) 0%,rgba(16,29,45,0.98) 50%,rgba(16,29,45,0.82) 56%,rgba(16,29,45,0.38) 64%,rgba(16,29,45,0) 72%),linear-gradient(180deg,rgba(12,22,32,0.5) 0%,rgba(12,22,32,0) 20%,rgba(12,22,32,0) 80%,rgba(12,22,32,0.5) 100%)`}} />
+  </div>}
+  <svg data-kumiki-hook-recipe={attention?.recipe ?? undefined} data-kumiki-typography-recipe={state.visual.typographyStyle} data-payoff-hold={isPayoffHidden ? "true" : undefined} xmlns="http://www.w3.org/2000/svg" role="img" aria-label={isPayoffHidden ? "The closing answer is about to appear" : `${state.visual.headline}: ${state.visual.subhead}`} viewBox="0 0 1920 1080" width="1920" height="1080" style={{ fontFamily: "Geist Variable, Geist, Arial, sans-serif", display: "block", position: "relative" }}>
     <defs>
       <linearGradient id="general-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#101D2D"/><stop offset="1" stopColor="#1D3A48"/></linearGradient>
       <radialGradient id="general-glow"><stop offset="0" stopColor="#D9AF7C" stopOpacity=".16"/><stop offset="1" stopColor="#D9AF7C" stopOpacity="0"/></radialGradient>
       {attention && state.visual.typographyStyle === "wipe" && <clipPath id="kumiki-title-wipe"><rect x="110" y="195" width={attention.wipeWidth} height="690" /></clipPath>}
     </defs>
-    <rect width="1920" height="1080" fill="url(#general-bg)" />
+    <rect width="1920" height="1080" fill={stockMedia ? "none" : "url(#general-bg)"} />
     <circle cx="1545" cy="500" r="605" fill="url(#general-glow)" />
     <path d="M120 156 H1800" stroke="#506676" strokeWidth="2" opacity=".7"/>
     <rect x="120" y="90" width="14" height="14" rx="4" fill={accent}/>
@@ -213,8 +232,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
       {scriptLine.lines.map((line, i) => <text key={`${i}-${line}`} x="120" y={968 + i * 40} fill={muted} fontSize={scriptLine.fontSize}>{line}</text>)}
     </g>}
     {!chartStory && <g data-contentgen-kumiki-stage="" data-script-interaction={slot.style}
-      data-script-phrase={scriptPhrase}
-      transform={stockMedia ? "translate(1420 700) scale(0.58) translate(-1420 -520)" : undefined}>
+      data-script-phrase={scriptPhrase}>
       {state.visual.direction?.visualMechanic &&
       ["problem","mechanism","payoff"].includes(state.visual.direction.phase)
       ? <SemanticMechanicScene mechanic={state.visual.direction.visualMechanic}
@@ -239,21 +257,6 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     {!stockMedia&&transitionOpacity>0&&<rect data-scene-entry-fade="" width="1920" height="1080"
       fill="#101D2D" opacity={transitionOpacity} pointerEvents="none"/>}
   </svg>
-  {stockMedia && <div data-contentgen-stock-frame="" data-asset-motion={slot.style} role="img" aria-label={`Illustrative ${stockMedia.assetType === "photo" ? "photo" : "footage"} for this scene`}
-    style={{position:"absolute",left:1040,top:214,width:760,height:168,overflow:"hidden",borderRadius:22,
-      background:"#142431",border:"2px solid #526b73",boxShadow:"0 18px 48px #07131c80"}}>
-    {stockMedia.assetType === "photo"
-      ? <img data-contentgen-stock-photo="" src={stockMedia.url} alt="" decoding="async"
-        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
-          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`,
-          transform:`scale(${pictureMotion.scale.toFixed(5)}) translate3d(${pictureMotion.x.toFixed(3)}px,${pictureMotion.y.toFixed(3)}px,0)`,
-          transformOrigin:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`}}/>
-      : <video data-contentgen-stock-video="" data-media-time={mediaTime.toFixed(6)}
-        src={stockMedia.url} preload="auto" muted playsInline aria-hidden="true"
-        style={{width:"100%",height:"100%",objectFit:"cover",display:"block",
-          objectPosition:`${((stockMedia.focalPoint?.x??.5)*100).toFixed(1)}% ${((stockMedia.focalPoint?.y??.5)*100).toFixed(1)}%`,
-          transform:`scale(${pictureMotion.scale.toFixed(5)}) translate3d(${pictureMotion.x.toFixed(3)}px,${pictureMotion.y.toFixed(3)}px,0)`}} />}
-  </div>}
   {!stockMedia && chartStory && <div data-general-chart-container="" style={{ position: "absolute", left: 1040, top: 230, width: 760, height: 590 }}>
     <ChartStoryView spec={chartStory.spec} frame={state.localFrame} width={760} height={590} />
   </div>}

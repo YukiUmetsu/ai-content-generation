@@ -12,6 +12,10 @@
 
 **Still proposed/deferred:** comprehensive docs/11 Composition schema, generalized audio lane playback/mixing, automatic provider TTS, full headless 2D/3D compositor and complete cinematic quality qualification. Do not generate unimplemented imports or pretend successful release gates.
 
+**Adopted 2026-11-03 (pin `d14e26baf3`):** `subject-stage` + `device-frame` + `icon-plate` + `one-change-hold` are vendored (4 files, 322 LOC, no npm deps, no Three.js) for a future photo-first beat composition. The 20 scene recipes that wrap `scene-template-foundation` were **not** adopted: that item is ~7,162 LOC and declares `three`/`@types/three`, which `scene-templates-react.tsx` forces a bundler to resolve even though only `orbit-globe-gl.ts` imports it. Upstream records those compositions as unaudited ("not a visual signoff"). Revisit only as a separate Three.js-isolation decision.
+
+**Landscape stock-photo beats:** an approved `visual.stockMedia` image is now a full-bleed backdrop with a `#101D2D`/`#0C1620` legibility scrim, and the teaching diagram renders at full scale exactly as it does without a photo. The previous 760×168 letterboxed strip plus the `scale(0.58)` diagram squash are removed. The capture SVG must remain a positioned sibling of that backdrop, otherwise the absolutely positioned photo paints over the whole frame.
+
 ## Versioned adapter contract
 
 Build a **KumikiRenderAdapter** in ContentGen's optional TS worker, not the Rust domain layer. It consumes an approved SemanticStoryboard + BrandKit/DeliveryProfile snapshot + stable asset refs, resolves currently supported Kumiki source registry versions, then emits:
@@ -29,7 +33,7 @@ Rust orchestrates this worker via typed IPC, verifies output hashes and owns con
 
 ## Frontend foundation (`apps/web`)
 
-The shared studio shell consumes a **source-vendored** Kumiki registry, not an npm package. It is pinned to commit `962656e28cb781bb4e3fc4e6d92cf3dcba6f0eaa`; `apps/web/kumiki.config.json` declares the revision and item closure, and `apps/web/vendor/kumiki.lock.json` records the SHA-256 of every vendored file. `apps/web/scripts/vendor-kumiki.mjs` resolves the root `registry.json` dependency closure and verifies or updates the copy; `pnpm kumiki:verify` fails on any drift. Do not edit `src/components/ui/*` or `src/styles/kumiki/*` in place — fix upstream or adapt at the call site.
+The shared studio shell consumes a **source-vendored** Kumiki registry, not an npm package. It is pinned to commit `d14e26baf372f0861d9f795856ccc8dc24b5f20c`; `apps/web/kumiki.config.json` declares the revision and item closure, and `apps/web/vendor/kumiki.lock.json` records the SHA-256 of every vendored file. `apps/web/scripts/vendor-kumiki.mjs` resolves the root `registry.json` dependency closure and verifies or updates the copy; `pnpm kumiki:verify` fails on any drift. Do not edit `src/components/ui/*` or `src/styles/kumiki/*` in place — fix upstream or adapt at the call site.
 
 Ownership stays split: `src/app` owns neutral editor chrome (sidebar, header, tabs, split pane, inspector, preview frame); `src/features/<id>` owns one feature body behind `FeatureSlotProps`; creative output is scoped inside a preview/artboard container. The shell bridges Kumiki's `--km-*` semantic tokens into Tailwind, supports `data-km-appearance` light/dark and `data-km-density` compact/spacious, and must not introduce a parallel theme or brand-overridden editor chrome. Import paths, slot rules, token usage and the upgrade procedure are documented in [`apps/web/README.md`](../apps/web/README.md).
 

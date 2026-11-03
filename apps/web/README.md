@@ -362,7 +362,7 @@ targets.
 | Item | Value |
 |---|---|
 | Repository | `https://github.com/YukiUmetsu/kumiki-ui` |
-| Pinned commit | `275209e228bc981dd176838e20f6a0d51761b3a9` |
+| Pinned commit | `d14e26baf372f0861d9f795856ccc8dc24b5f20c` |
 | Config | `kumiki.config.json` |
 | Hash lock | `vendor/kumiki.lock.json` |
 | Script | `scripts/vendor-kumiki.mjs` |
@@ -381,15 +381,64 @@ Selected items and their dependency closure:
   `motion-preset`, `scene-storyboard`, `motion-react`, and the required
   timeline/path/mask/morph/animated-text modules.
 - **Video delivery:** `video-export-stage` and `video-platform-presets`.
+- **Subject-led shots:** `subject-stage` with `device-frame`, `icon-plate` and
+  `one-change-hold`. All four are dependency-free (no npm packages, no Three.js)
+  and remain available for a future photo-first beat composition; the current
+  landscape stock-photo treatment below does not import them yet.
 - **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
   `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
-The configuration selects 19 top-level items; the pinned registry resolves
-34 items and vendors 85 unique files including the two stylesheets. All
-required npm dependencies already exist in `package.json`; this expansion
-adds no new runtime dependencies.
+The configuration selects 28 top-level items; the pinned registry resolves
+43 items and vendors 100 unique files including the two stylesheets. The npm
+dependency closure is unchanged (`class-variance-authority`, `motion`,
+`@base-ui/react` only) — the 2026-11-03 pin bump adds no new runtime
+dependencies and no WebGL/Three.js surface.
 
-### Upstream adoption candidates (checked 2026-10-22)
+### Upstream adoption log (2026-11-03 pin bump)
+
+The pin moved from `e1f0d04e` (2026-10-27) to `d14e26baf3` (2026-11-03),
+425 commits. Before bumping, every file in `vendor/kumiki.lock.json` was
+diffed against the new commit at git-blob level: **95 of 96 files were
+byte-identical**, both vendored stylesheets were identical, and the only
+changed file was `registry/video/video-export-stage.tsx`, which gained
+purely additive readiness guards for 3D book and hero-viewer canvases this
+renderer never emits.
+
+Deliberately **not** adopted: the 20 new scene recipes
+(`question-reveal`, `before-after`, `cause-effect`, `data-story`,
+`timeline-journey`, …). All of them are 11-line wrappers over
+`scene-template-foundation`, which is 25 files / ~7,162 LOC and declares
+`three` + `@types/three`. `scene-templates-react.tsx` statically imports all
+eight bespoke stages, so a bundler must resolve `three` even though only
+`orbit-globe-gl.ts` imports it — new WebGL inside the headless capture path.
+Upstream's own `docs/22` records those compositions as "not a visual
+signoff" and "do not mark these visually accepted yet". Revisit only with a
+separate three.js isolation decision and real playback review.
+
+### Landscape stock-photo composition
+
+Beats with an approved `visual.stockMedia` photo no longer degrade the
+teaching visual. Previously the diagram was squashed with
+`translate(1420 700) scale(0.58) translate(-1420 -520)` to make room for a
+760 × 168 letterboxed strip pinned at (1040, 214). Now:
+
+- the photo/footage renders full-bleed behind the frame
+  (`data-contentgen-stock-frame`), with `object-fit: cover`, the authored
+  `focalPoint` as `object-position`, and the existing picture motion;
+- a two-axis scrim (`data-contentgen-stock-scrim`, `#101D2D`/`#0C1620` only)
+  keeps the left text column at least as legible as the old flat background
+  before releasing to the photograph across the right third;
+- the diagram renders at **full scale, identical to a beat without a photo**.
+
+The SVG must stay a positioned sibling of the backdrop: an absolutely
+positioned layer paints above in-flow content, so without `position: relative`
+on the SVG the backdrop covers the whole frame. That regression is asserted
+in `general-scene.test.tsx`.
+
+Portrait output keeps its 848 × 250 media strip for now; the 9:16 composition
+is a separate milestone and is not modified by this change.
+
+### Upstream adoption candidates (checked 2026-10-22, superseded by the 2026-11-03 log above)
 
 Kumiki main had advanced **22 commits** beyond this pin at the audit (140 registry items vs 110 at the pin). Generic `general-flow` beats with two to five stages now use the **existing pinned** `DiagramStage` + `ProcessJourney` components: fixed non-overlapping layouts, connected graph routes, one frame-addressable traveling subject, explicit stage handoffs, deterministic seeking, SVG text labels, and a still fallback for very short beats. Breakdown beats display equal-size **qualitative categories** rather than invented proportional bars; numeric charts require a separate source-backed data contract. Intro/comparison/payoff views remain unchanged. Browser preflight rejects reported diagram node overlap; real-time 16:9 export and visual inspection are still required before production sign-off.
 
