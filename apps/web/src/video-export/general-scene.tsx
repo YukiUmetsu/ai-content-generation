@@ -143,10 +143,13 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     : null;
   const diagramState = attention && !attention.showDiagram ? { ...state, visibleItems: 0 } : state;
   const chapterFrames=chapter.endFrame-chapter.startFrame;
-  const spoken = chapter.narration || state.visual.items.join(", ");
+  // `spoken`, `chart` and `headline` are all properties of `chapter`
+  // (getGeneralFrame returns the chapter's own `visual` object), so `chapter`
+  // alone is the correct and complete memo dependency; listing the derived
+  // values too is what React Compiler rejects as unprovable memoization.
   const interactions = useMemo(() => chapterInteractions({
-    ...chapter, narration: spoken,
-  }, plan.manifest.fps), [chapter, spoken, plan.manifest.fps]);
+    ...chapter, narration: chapter.narration || chapter.visual.items.join(", "),
+  }, plan.manifest.fps), [chapter, plan.manifest.fps]);
   const slot = interactionAt(interactions, state.localFrame);
   const specialized = Boolean(state.visual.direction?.visualMechanic || state.visual.direction?.transformation);
   const stockMedia = state.visual.stockMedia;
@@ -168,11 +171,11 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
     ?entryFadeOpacity(state.localFrame,chapterFrames,state.visual.motion):0;
 
   const typographyScale = attention?.titleScale ?? 1;
-  const chartStory = useMemo(() => chart ? buildQuantitativeChartStory({
-    chart, beatId: chapter.id, title: state.visual.headline,
+  const chartStory = useMemo(() => chapter.visual.chart ? buildQuantitativeChartStory({
+    chart: chapter.visual.chart, beatId: chapter.id, title: chapter.visual.headline,
     durationFrames: chapter.endFrame - chapter.startFrame, fps: plan.manifest.fps,
     locale: plan.locale ?? "en-US", evidence: plan.evidence,
-  }) : undefined, [chart, chapter, state.visual.headline, plan.manifest.fps, plan.locale, plan.evidence]);
+  }) : undefined, [chapter, plan.manifest.fps, plan.locale, plan.evidence]);
   const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
   const scriptPhrase = isPayoffHidden || payoffLocked ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, diagramState.visibleItems);
   const scriptLine = scriptPhrase ? fitSvgText(scriptPhrase, { maxWidthPx: 800, preferredSize: 28, minSize: 18, maxLines: 2 }) : undefined;
