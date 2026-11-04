@@ -46,12 +46,10 @@
    "profile": "cushion"
   },
   "lid-left": {
-   "layer": -0.097,
-   "inflate": 0.002
+   "surface": "parent"
   },
   "lid-right": {
-   "layer": -0.097,
-   "inflate": 0.002
+   "surface": "parent"
   }
  },
  "effectors": {
