@@ -56,6 +56,11 @@ test("different scenes come from data with no scene code", () => {
   assert.equal(other.objects.length, 1);
   assert.equal(other.actions.filter(action => action.verb === "speak").length, 1);
 });
+test("an actor who stays put lays an object down during the line about it", () => {
+  const still = brief({ cast: [{ id: "pip", start: [-.2, 0, .1], yaw: .3 }, brief().cast[1]] });
+  const frames = resolveActionFrames(ruleDirector(still), { speechWindows });
+  assert.equal(frames["invoice-laid"].startFrame, speechWindows.a.startFrame + 6);
+});
 test("listeners look at whoever is speaking", () => {
   const listening = ruleDirector(brief()).actions.filter(action => action.verb === "look-at");
   assert.deepEqual(listening.map(action => [action.actor, action.target.actor]), [["quill", "pip"], ["pip", "quill"], ["quill", "pip"]]);

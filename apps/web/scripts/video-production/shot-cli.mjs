@@ -20,8 +20,9 @@ const brief = await read(join(fixture, "brief.json")), grips = await read(join(f
 const script = await read(join(fixture, "lines.json"));
 for (const line of brief.lines) line.text = script.lines.find(item => item.id === line.id)?.text;
 const firstDraft = ruleDirector(brief);
-let windows = (await read(join(fixture, "draft-timing.json"))).windows, spoken = null, layout = null;
-if (values.voice) {
+let windows, spoken = null, layout = null;
+if (!values.voice) windows = (await read(join(fixture, "draft-timing.json"))).windows;
+else {
   // Measured speech replaces the draft timing, so every anchored action retimes itself.
   const apiKey = await productionProviderKey("fish");
   spoken = await synthesizeLines(script.lines, { dir: join(root, "voice"), locale: script.locale, modelId: script.modelId, apiKey });

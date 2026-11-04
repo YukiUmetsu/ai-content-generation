@@ -19,7 +19,8 @@ function stageObject(item, brief, actions, previousEnd) {
   const { actor, effector } = item.holder;
   const line = brief.lines.find(entry => entry.about === item.id);
   const entry = actions.find(action => action.actor === actor && action.verb === "enter");
-  let anchor = previousEnd ?? (entry ? { after: entry.id, offsetFrames: 4 } : { frame: 8 });
+  // An actor who walks in sets down on arrival. Otherwise the object moves with the line about it.
+  let anchor = previousEnd ?? (entry ? { after: entry.id, offsetFrames: 4 } : line ? { speech: line.id, offsetFrames: 6 } : { frame: 8 });
   if (item.examine) {
     actions.push({ id: `${item.id}-examined`, actor, verb: "examine", effector, object: item.id, ...item.examine, expression: item.examineExpression ?? "focused",
       holdFrames: 30, at: line ? { speech: line.id, offsetFrames: -LEAD_FRAMES } : anchor, durationFrames: 24 });
