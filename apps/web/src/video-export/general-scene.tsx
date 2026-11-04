@@ -20,6 +20,7 @@ import { TeachingStateScene } from "./teaching-state-scene";
 import { SemanticMechanicScene } from "./semantic-mechanic-scene";
 import { ConversationCharacters } from "./conversation-characters";
 import { characterRigsForChapter } from "./scene-character-rigs";
+import { PerformanceClipScene } from "./performance-clip-scene";
 import type { ExportRigPlan } from "./scene-character-rigs";
 
 const ink = "#F5F2EB";
@@ -134,6 +135,15 @@ function Diagram({ state, fps, chapterFrames }: { state: GeneralFrame; fps: Rati
 }
 
 export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; frame: number }) {
+  const state = getGeneralFrame(plan, frame);
+  const { performanceClip, stockMedia } = state.visual;
+  // A rendered 3D shot needs no scrim or diagram. Without its clip, production has already stopped.
+  if (performanceClip && stockMedia?.assetType === "video") return <PerformanceClipScene media={stockMedia} clip={performanceClip}
+    localFrame={state.localFrame} fps={plan.manifest.fps}/>;
+  return <GeneralChapterScene plan={plan} frame={frame}/>;
+}
+
+function GeneralChapterScene({ plan, frame }: { plan: GeneralVisualPlan; frame: number }) {
   const state = getGeneralFrame(plan, frame);
   const chapter = plan.chapters[state.chapterIndex];
   const chart = state.visual.chart;

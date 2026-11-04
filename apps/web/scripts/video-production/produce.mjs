@@ -14,6 +14,8 @@ import { buildSampleTimeline, fitSceneDurations } from "./timeline.mjs";
 import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
+import { applyPerformanceShots } from "./performance-shots.mjs";
+import { frameToSample, makeSound } from "./shot-audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
 import { planExplainerLayouts } from "./script-layout-plan.mjs";
@@ -122,6 +124,20 @@ async function interruptedRenderCache(priorRoot, currentOutput, buildHash) {
  * @param {{out:string,provider:string,providerRevision:string,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],localEndpoint?:string,paidUsageApproved?:boolean,allowTestAssets?:boolean,browserExecutable?:string,distRoot?:string,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,prepareAssetSuggestions?:(options:{signal?:AbortSignal})=>Promise<object>,autoPrepareFreeMedia?:boolean,reuseSpeechCacheFrom?:string,reuseRenderSegmentsFrom?:string,sceneAssetProjectId?:string,sceneShotMap?:Array<{shotId:string,beatId:string}>,sceneAssetBundle?:object,expectedSceneMediaFingerprint?:string}} options
  * @param {{synthesizeNarration?:Function,renderMasterAudio?:Function,startLocalStageServer?:Function,renderVideoSegments?:Function,preflightExport?:Function,mux?:Function,probeMp4?:Function,generateThumbnails?:Function,toolVersions?:object}} deps
  */
+/** Contact foley for rendered shots, placed by scene and mixed by the normal master. */
+async function performanceSfx(sounds, plan, dir) {
+  if (!sounds.length) return { sfx: [], events: {} };
+  await mkdir(dir, { recursive: true });
+  const sfx = [], events = {};
+  for (const sound of sounds) {
+    const chapter = plan.chapters.find(item => item.id === sound.chapterId);
+    const id = `${sound.chapterId}-${sound.id}`;
+    events[id] = frameToSample(chapter.startFrame, plan.manifest.fps) + sound.sample;
+    sfx.push({ id, eventId: id, assetPath: await makeSound(sound.sound, dir), licenseStatus: "verified", gainDb: sound.sound === "paper-land" ? -9 : -16 });
+  }
+  return { sfx, events };
+}
+
 export async function produceVideo(candidate, options, deps = {}) {
   const parsed = parseVideoProductionJob(candidate);
   if (!parsed.ok) fail(`invalid job: ${parsed.findings.filter((f) => f.severity === "error").map((f) => f.code).join(", ")}`);
@@ -348,6 +364,14 @@ export async function produceVideo(candidate, options, deps = {}) {
         },
       })) };
     }
+    // Shots need measured speech, so they render here, after narration and before capture.
+    const performance = await (deps.applyPerformanceShots ?? applyPerformanceShots)(plan, {
+      shots: options.performanceShots, speech, outputDir: join(out, ".render", "performance-shots"),
+      signal: options.signal, onProgress: options.onProgress,
+    });
+    plan = performance.plan;
+    const performanceSounds = await performanceSfx(performance.sounds, plan, join(out, ".render", "performance-shots", "sounds"));
+    timeline = { ...timeline, eventSamples: { ...timeline.eventSamples, ...performanceSounds.events } };
     await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
     plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
     const frames = plan.manifest.durationFrames;
@@ -361,9 +385,9 @@ export async function produceVideo(candidate, options, deps = {}) {
     await writeFile(join(renderRoot, "render-source-plan.json"), JSON.stringify({
       schemaVersion: 1, buildHash: preflight.buildHash, planHash, plan,
     }), { flag: "wx", mode: 0o600 });
-    const sfx = job.sounds.map((effect) => ({
+    const sfx = [...job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
-    }));
+    })), ...performanceSounds.sfx];
     await options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…",
       ...(fitted.adjustments.length?{timingAdjustments:fitted.adjustments}:{}) });
     const audio = await (deps.renderMasterAudio ?? renderMasterAudio)({ beats: speech, timeline, sfx }, {
@@ -376,7 +400,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     const captionBytes=await readFile(audio.srtPath);
     if(!captionBytes.length)fail("caption generation produced an empty subtitle file");
     stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan,
-      approvedMedia: sceneMedia.assets, characterAssets: characterPacks.assets });
+      approvedMedia: [...sceneMedia.assets, ...performance.assets], characterAssets: characterPacks.assets });
     if (stage.buildHash !== preflight.buildHash) fail("scene build changed since renderer preflight; narration cache is safe but video export aborted");
     let render;
     try {

@@ -58,5 +58,6 @@ export async function renderPerformanceShot({ root, intent, cast, grips, speechW
     actors: cast.map(actor => ({ id: actor.id, pack: actor.pack, profile: actor.profile })),
     render: { profile, width, height }, ...(look ? { look } : {}) }));
   await runTool(tool, ["build-shot", "--spec", resolve(specPath), "--output", resolve(output), ...(saveBlend ? [] : ["--no-blend"])], { signal, onEvent });
-  return { output, manifest: JSON.parse(await readFile(join(output, "shot-manifest.json"), "utf8")) };
+  const { contacts } = JSON.parse(await readFile(bakePath, "utf8"));
+  return { output, contacts, manifest: JSON.parse(await readFile(join(output, "shot-manifest.json"), "utf8")) };
 }
