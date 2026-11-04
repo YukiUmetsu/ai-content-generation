@@ -17,7 +17,8 @@
   },
   "body": {
    "layer": 0,
-   "inflate": 0.055
+   "inflate": 0.055,
+   "back": 0.9
   },
   "bowtie": {
    "layer": -0.058,
@@ -29,7 +30,8 @@
   },
   "head": {
    "layer": -0.03,
-   "inflate": 0.055
+   "inflate": 0.062,
+   "back": 0.95
   },
   "beak": {
    "layer": -0.0845,

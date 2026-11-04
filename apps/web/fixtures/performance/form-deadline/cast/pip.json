@@ -17,7 +17,8 @@
   },
   "torso": {
    "layer": 0,
-   "inflate": 0.034
+   "inflate": 0.034,
+   "back": 0.9
   },
   "satchel": {
    "layer": -0.036,
@@ -25,7 +26,8 @@
   },
   "head": {
    "layer": -0.024,
-   "inflate": 0.032
+   "inflate": 0.052,
+   "back": 0.95
   },
   "mouth": {
    "layer": -0.0565,

@@ -42,7 +42,8 @@
     0.045
    ],
    "yaw": -0.3,
-   "seed": 11
+   "seed": 11,
+   "variantFadeFrames": 4
   }
  ],
  "objects": [

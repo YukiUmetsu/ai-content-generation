@@ -15,7 +15,7 @@ import { evaluateInteraction } from "./interaction-choreography";
 import type { InteractionContact, InteractionPlan, Vec3 } from "./interaction-choreography";
 import type { RationalFps } from "./types";
 
-export type BakedPartState = Omit<CharacterPartState, "variantFrom" | "variantMix"> & { yaw?: number; pitch?: number };
+export type BakedPartState = CharacterPartState & { yaw?: number; pitch?: number };
 export interface ShotBakeV1 {
   schema_version: 1;
   fps: RationalFps;
@@ -52,6 +52,8 @@ export interface ShotBakeActor {
   /** Effector name to the part it drives. IK owns that part while its influence is up. */
   limbs?: Record<string, string>;
   gait?: ShotGait;
+  /** Frames to blend a changed drawing in, for parts the rig does not already crossfade. 0 keeps hard cuts. */
+  variantFadeFrames?: number;
 }
 export interface LightKey { frame: number; level: number }
 export interface ShotBakeInput {
@@ -118,6 +120,25 @@ export function applyGait(parts: Record<string, BakedPartState>, gait: ShotGait,
     parts[gait.body] = { ...parts[gait.body], y: parts[gait.body].y - gait.bob * Math.abs(Math.sin(phase)) * weight };
 }
 
+/** Blend a part's new drawing in over a few frames. Parts the rig already crossfades are left alone. */
+export function fadeDrawings(parts: Record<string, BakedPartState>, history: readonly Record<string, BakedPartState>[], frames: number,
+  active: Map<string, { from: string; start: number }>): void {
+  const previous = history[history.length - 1];
+  const now = history.length;
+  for (const [partId, part] of Object.entries(parts)) {
+    if (part.variantFrom !== undefined) { active.delete(partId); continue; }
+    const before = previous?.[partId];
+    const was = before?.variant ?? "";
+    const is = part.variant ?? "";
+    if (before && was !== is) active.set(partId, { from: was, start: now });
+    const fade = active.get(partId);
+    if (!fade) continue;
+    const mix = Math.min(1, (now - fade.start + 1) / frames);
+    if (mix >= 1) { active.delete(partId); continue; }
+    parts[partId] = { ...part, variantFrom: fade.from, variantMix: mix };
+  }
+}
+
 function lightLevel(keys: readonly LightKey[], frame: number): number {
   const sorted = [...keys].sort((a, b) => a.frame - b.frame);
   if (frame <= sorted[0].frame) return sorted[0].level;
@@ -156,6 +177,7 @@ export function bakeShot(input: ShotBakeInput): ShotBakeResult {
     contacts: [...interaction.contacts],
   };
   const travelled = new Map(input.actors.map(actor => [actor.id, 0]));
+  const fades = new Map(input.actors.map(actor => [actor.id, new Map<string, { from: string; start: number }>()]));
   for (let frame = 0; frame < frames; frame++) {
     const state = evaluateInteraction(interaction, frame);
     const previous = evaluateInteraction(interaction, Math.max(0, frame - 1));
@@ -179,9 +201,11 @@ export function bakeShot(input: ShotBakeInput): ShotBakeResult {
       const evaluated = evaluateCharacter(actor.definition, actor.instance, actor.cues, frame);
       const parts: Record<string, BakedPartState> = {};
       for (const [partId, part] of Object.entries(evaluated.parts)) {
-        const { x, y, rotation, scaleX, scaleY, variant } = part;
-        parts[partId] = { x, y, rotation, scaleX, scaleY, ...(variant ? { variant } : {}) };
+        const { x, y, rotation, scaleX, scaleY, variant, variantFrom, variantMix } = part;
+        parts[partId] = { x, y, rotation, scaleX, scaleY, ...(variant ? { variant } : {}),
+          ...(variantFrom !== undefined ? { variantFrom } : {}), ...(variantMix !== undefined ? { variantMix } : {}) };
       }
+      if (actor.variantFadeFrames) fadeDrawings(parts, channel.parts, actor.variantFadeFrames, fades.get(actor.id)!);
       for (const [effector, partId] of Object.entries(actor.limbs ?? {})) {
         const weight = state.effectors[`${actor.id}.${effector}`]?.influence ?? 0;
         const rest = evaluateCharacter(actor.definition, actor.instance, [], 0).parts[partId];

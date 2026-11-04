@@ -30,6 +30,10 @@ test("each actor's gait and limbs reach the bake, and no walk action is cued", (
   assert.deepEqual(actor.limbs, { hand: "arm" });
   assert.equal(actor.cues.filter(cue => cue.kind === "action").length, 0);
 });
+test("a drawing fade on an actor reaches the bake", () => {
+  const [actor] = compile({ cast: [{ ...base().cast[0], variantFadeFrames: 4 }] }).actors;
+  assert.equal(actor.variantFadeFrames, 4);
+});
 test("spoken lines fall back to the labelled approximate cycle without mouth data", () => {
   const speech = compile().actors[0].cues.filter(cue => cue.kind === "speech");
   assert.deepEqual(speech.map(cue => [cue.startFrame, cue.endFrame, cue.precision]), [[10, 40, "approximate"]]);
