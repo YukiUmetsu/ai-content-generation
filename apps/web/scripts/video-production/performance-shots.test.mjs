@@ -18,6 +18,12 @@ async function fakeRender({ output, intent }, bytes = "video") {
   return { manifest: { frames: intent.durationFrames, contact_error_m: { "a.hand": .0001 }, video_sha256: createHash("sha256").update(bytes).digest("hex") },
     contacts: [{ frame: 40, kind: "place", object: "paper" }] };
 }
+/** build-shot writes its manifest. The fake does the same, so a cache can be read back. */
+const withManifest = render => async input => {
+  const result = await render(input);
+  await writeFile(join(input.output, "shot-manifest.json"), JSON.stringify(result.manifest));
+  return result;
+};
 const dir = () => mkdtemp(join(tmpdir(), "perf-shot-"));
 const shots = { desk: { intent: { materials: { paper: "paper" } }, profile: "review", label: { text: "gap" } } };
 
@@ -62,4 +68,26 @@ test("contacts become foley with the report saying how lips were made", async t 
   const result = await applyPerformanceShots(plan(), { outputDir, shots }, { renderShot: fakeRender, mouthCues: async () => null });
   assert.equal(result.sounds[0].sound, "paper-land");
   assert.equal(result.report[0].lipSync, "approximate cycle");
+});
+
+test("an unchanged scene reuses its clip, and new narration timing renders again", async t => {
+  const outputDir = await dir(); t.after(() => rm(outputDir, { recursive: true }));
+  let renders = 0;
+  const renderShot = async input => { renders += 1; return fakeRender(input); };
+  const first = await applyPerformanceShots(plan(), { outputDir, shots }, { renderShot: withManifest(renderShot), mouthCues: async () => null });
+  const again = await applyPerformanceShots(plan(), { outputDir, shots }, { renderShot: withManifest(renderShot), mouthCues: async () => null });
+  assert.equal(renders, 1);
+  assert.equal(first.report[0].cacheHit, false);
+  assert.equal(again.report[0].cacheHit, true);
+  assert.equal(again.sounds.length, 1, "a reused clip keeps its foley");
+  const retimed = plan();
+  retimed.chapters[1].dialogue.turns[0].startFrame = 50;
+  await applyPerformanceShots(retimed, { outputDir, shots }, { renderShot: withManifest(renderShot), mouthCues: async () => null });
+  assert.equal(renders, 2);
+});
+test("a damaged cached clip stops production instead of being trusted", async t => {
+  const outputDir = await dir(); t.after(() => rm(outputDir, { recursive: true }));
+  const first = await applyPerformanceShots(plan(), { outputDir, shots }, { renderShot: withManifest(fakeRender), mouthCues: async () => null });
+  await writeFile(first.assets[0].path, "tampered");
+  await assert.rejects(applyPerformanceShots(plan(), { outputDir, shots }, { renderShot: withManifest(fakeRender), mouthCues: async () => null }), /changed after render/u);
 });

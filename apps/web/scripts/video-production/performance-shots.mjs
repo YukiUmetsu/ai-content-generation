@@ -3,10 +3,11 @@
  */
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { foleyEvents } from "./shot-audio.mjs";
 import { mouthCuesFor, visemeCues } from "./shot-lipsync.mjs";
-import { renderPerformanceShot } from "./shot-render.mjs";
+import { renderPerformanceShot, shotCacheKey } from "./shot-render.mjs";
 
 const fail = (message) => { throw new Error(`Performance shot failed: ${message}`); };
 
@@ -14,6 +15,17 @@ async function sha256File(path) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path)) hash.update(chunk);
   return hash.digest("hex");
+}
+
+/** A finished bundle for this exact key, or null. A half-written folder is never a hit. */
+async function loadCachedShot(output) {
+  try {
+    const [manifest, contacts] = await Promise.all([readFile(join(output, "shot-manifest.json"), "utf8"), readFile(join(output, "contacts.json"), "utf8")]);
+    return { manifest: JSON.parse(manifest), contacts: JSON.parse(contacts) };
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 /** Spoken windows for one scene, relative to the scene's first frame. */
@@ -44,19 +56,24 @@ export async function applyPerformanceShots(plan, { shots = {}, speech = [], out
     }
     const complete = turns.length > 0 && Object.keys(lipSync).length === turns.length;
     await onProgress?.({ phase: "performance-shot", message: `Rendering the 3D shot for ${chapter.id}…` });
-    const output = join(outputDir, chapter.id);
-    const result = await render({ ...shot, intent, speechWindows, lipSync: complete ? lipSync : undefined, shotId: chapter.id,
+    const key = shotCacheKey({ intent, speechWindows, lipSync: complete ? lipSync : null, assetHashes: shot.assetHashes ?? {}, tools: shot.tools ?? {},
+      render: { profile: shot.profile, look: shot.look ?? null, width: plan.manifest.width, height: plan.manifest.height } });
+    const output = join(shot.cacheRoot ?? outputDir, chapter.id, key);
+    // An unchanged scene reuses its verified clip, so editing one scene renders one scene.
+    const saved = await loadCachedShot(output);
+    const result = saved ?? await render({ ...shot, intent, speechWindows, lipSync: complete ? lipSync : undefined, shotId: chapter.id,
       output, signal, width: plan.manifest.width, height: plan.manifest.height });
     if (result.manifest.frames !== durationFrames) fail(`scene ${chapter.id} rendered ${result.manifest.frames} frames, expected ${durationFrames}`);
     const path = join(output, "shot.mp4");
     const sha256 = await sha256File(path);
     if (sha256 !== result.manifest.video_sha256) fail(`scene ${chapter.id} video changed after render`);
+    if (!saved) await writeFile(join(output, "contacts.json"), JSON.stringify(result.contacts ?? []));
     const url = `/__video_media/${sha256}.mp4`;
     const seconds = durationFrames * plan.manifest.fps.den / plan.manifest.fps.num;
     assets.push({ assetType: "video", sha256, url, path });
     for (const event of foleyEvents(result.contacts ?? [], shot.intent.materials ?? {}, plan.manifest.fps))
       sounds.push({ ...event, chapterId: chapter.id });
-    report.push({ chapterId: chapter.id, sha256, profile: shot.profile, contactErrorM: result.manifest.contact_error_m,
+    report.push({ chapterId: chapter.id, sha256, cacheHit: Boolean(saved), profile: shot.profile, contactErrorM: result.manifest.contact_error_m,
       lipSync: complete ? "rhubarb" : "approximate cycle" });
     chapters.push({ ...chapter, visual: { ...chapter.visual,
       stockMedia: { assetType: "video", url, sha256, durationSeconds: seconds, title: chapter.id, focalPoint: { x: .5, y: .5 } },
