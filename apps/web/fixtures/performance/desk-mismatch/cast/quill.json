@@ -40,6 +40,14 @@
   "wing-right": {
    "layer": -0.056,
    "inflate": 0.02
+  },
+  "lid-left": {
+   "layer": -0.097,
+   "inflate": 0.002
+  },
+  "lid-right": {
+   "layer": -0.097,
+   "inflate": 0.002
   }
  },
  "effectors": {

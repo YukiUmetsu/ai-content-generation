@@ -215,9 +215,16 @@ export interface CharacterGazeSpec {
 }
 
 export interface CharacterBlinkSpec {
-  /** Parts switched to `variant` during a blink. */
-  parts: string[];
-  variant: string;
+  /** Parts switched to `variant` during a blink (a drawing-swap blink). */
+  parts?: string[];
+  variant?: string;
+  /**
+   * Parts moved toward these deltas during a blink (a lid-sweep blink). The amount eases from 0
+   * to 1 over the closing fraction, holds, then eases back. Additive, like an expression pose.
+   */
+  pose?: CharacterPoseMap;
+  /** Fraction of `durationFrames` spent closing, and again opening. Default 0.35. */
+  closeFraction?: number;
   /** Frames between blink starts, inclusive range. Seeded per instance; seek-stable. */
   intervalFrames: { min: number; max: number };
   durationFrames: number;
