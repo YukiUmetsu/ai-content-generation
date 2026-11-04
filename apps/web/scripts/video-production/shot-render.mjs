@@ -3,7 +3,7 @@
  */
 import { createHash } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { access, cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
