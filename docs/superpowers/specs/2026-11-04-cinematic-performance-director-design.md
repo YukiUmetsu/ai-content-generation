@@ -1,6 +1,6 @@
 # Cinematic Performance Director — design
 
-**Status:** approved plan, 2026-11-04. Phase 1 chooses the character path.
+**Status:** approved, 2026-11-04. Phase 1 chose inflated actors built from Character Studio packs.
 **Repos:** `content-gen`, `kumiki-ui`, `kumiki-blender`.
 
 ## 1. Intent
@@ -56,7 +56,7 @@ A model may propose this object. Code does all frame math. A validator rejects u
 
 ### 4.2 Interaction choreography (`kumiki-ui`)
 
-A pure, frame-addressable evaluator next to `registry/craft/everyday-interactions.ts`. It extends that module instead of adding a parallel one. It implements the `character-interaction` row in `docs/10-character-audio.md`.
+A pure, frame-addressable evaluator at `registry/motion/interaction-choreography.ts`. It does not extend `everyday-interactions.ts`, because that file imports Three.js through `hero-action`. It implements the `character-interaction` row in `docs/10-character-audio.md`.
 
 - **Input:** actors with named effectors and head joints, objects with named grips and rest surfaces, ordered operations, world-space start poses, and timing presets.
 - **Behavior:** an object is either at rest on a surface or attached to one effector. Attachment changes only on a declared contact frame. The object pose is continuous across that frame. Gaze leads the hand. Reach uses anticipation and follow-through from a named timing preset.
@@ -75,7 +75,7 @@ New `plan-shot` and `build-shot` commands that follow the existing `plan-*` and 
 
 - **Input:** set manifest, actor assets, prop assets, look profile, render profile, `ShotBake`.
 - **Output:** `.blend`, H.264 clip, `shot-manifest.json` with input hashes, Blender version, per-frame contact distances, and timing.
-- **Actor kinds:** `layered-puppet` and `rigged-mesh`. Both expose the same effector and joint interface, so the interaction layer does not know which one renders. Phase 1 decides which kind is the default.
+- **Actors:** a Character Studio pack plus a staging profile. Layers become inflated meshes with bone chains that follow the drawn limbs. Phase 1 rejected a from-scratch mesh because it did not hold the character design.
 - **Failure:** missing assets, wrong effector names or bake mismatch stop the build with a named diagnostic.
 
 ### 4.5 Reusable UI (`kumiki-ui`)
@@ -135,5 +135,7 @@ Render work runs as Jobs attempts. It is cancellable, bounded, and resumes from 
 
 - Agent-built fur and feathers may not hold the character design. Phase 1 exists to find this out.
 - Real shots will render slower than the trivial test, which took about 2 s per frame. A full-length film must use 3D selectively.
-- Mouth cues from Rhubarb are English-first and approximate. Reports must say so.
+- Mouth cues from Rhubarb are English-first and estimated. Reports must say so.
+- Hands overlap held objects. They do not close around them.
+- A flat rig's `walk` action fakes depth, so 3D shots use `gait`, which follows real ground travel.
 - `three` in a Node-only step must stay out of the export bundle.
