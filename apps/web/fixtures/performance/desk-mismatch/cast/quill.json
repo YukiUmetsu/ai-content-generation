@@ -1,0 +1,57 @@
+{
+ "schema_version": 1,
+ "height_m": 0.24,
+ "grid_step": 4,
+ "parts": {
+  "tail": {
+   "layer": 0.016,
+   "inflate": 0.012
+  },
+  "leg-left": {
+   "layer": 0.01,
+   "inflate": 0.014
+  },
+  "leg-right": {
+   "layer": 0.01,
+   "inflate": 0.014
+  },
+  "body": {
+   "layer": 0,
+   "inflate": 0.055
+  },
+  "bowtie": {
+   "layer": -0.058,
+   "inflate": 0.006
+  },
+  "wing-left": {
+   "layer": -0.03,
+   "inflate": 0.022
+  },
+  "head": {
+   "layer": -0.03,
+   "inflate": 0.055
+  },
+  "beak": {
+   "layer": -0.0845,
+   "inflate": 0.002
+  },
+  "wing-right": {
+   "layer": -0.056,
+   "inflate": 0.02
+  }
+ },
+ "effectors": {
+  "hand.left": {
+   "part": "wing-left",
+   "joints": 3
+  },
+  "hand.right": {
+   "part": "wing-right",
+   "joints": 3
+  }
+ },
+ "ground_parts": [
+  "leg-left",
+  "leg-right"
+ ]
+}

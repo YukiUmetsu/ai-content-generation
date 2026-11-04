@@ -1,0 +1,7 @@
+{ "locale": "en", "modelId": "s2.1-pro-free", "minGapFrames": 8,
+  "note": "Fictional figures. Public community Fish voices for this benchmark only. Commercial voice rights are not verified.",
+  "lines": [
+    { "id": "pip-line", "actor": "pip", "voiceId": "644c1556ad2243a28eb57160b9601037", "text": "Here's the invoice. One hundred twenty dollars.", "notBeforeFrame": 12 },
+    { "id": "quill-line", "actor": "quill", "voiceId": "f4011527d52045bebe004aa874695276", "text": "Hmm. The receipt says one hundred.", "notBeforeFrame": 108 },
+    { "id": "gap-line", "actor": "pip", "voiceId": "644c1556ad2243a28eb57160b9601037", "text": "So where did the other twenty go?", "notBeforeFrame": 214 }
+  ] }

@@ -1,0 +1,2 @@
+{ "note": "Estimated windows for silent motion review. Measured narration replaces these.",
+  "windows": { "pip-line": { "startFrame": 18, "endFrame": 84 }, "quill-line": { "startFrame": 112, "endFrame": 176 }, "gap-line": { "startFrame": 232, "endFrame": 288 } } }

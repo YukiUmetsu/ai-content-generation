@@ -1,0 +1,13 @@
+{ "schema_version": 1, "width": 800, "height": 2000, "margin": 60, "paper": [246, 244, 238], "ink": [52, 50, 58], "grain": 8,
+  "fonts": { "body": "/System/Library/Fonts/Supplemental/Courier New.ttf", "bold": "/System/Library/Fonts/Supplemental/Courier New Bold.ttf" },
+  "blocks": [
+    { "kind": "text", "text": "RECEIPT", "font": "bold", "size": 96, "align": "center" },
+    { "kind": "text", "text": "LEDGERWOOD SUPPLY", "size": 46, "align": "center" },
+    { "kind": "text", "text": "REG 02  14:07", "size": 40, "align": "center" },
+    { "kind": "rule", "weight": 4 },
+    { "kind": "row", "label": "PAPER STOCK", "value": "$70", "size": 54 },
+    { "kind": "row", "label": "DELIVERY", "value": "$30", "size": 54 },
+    { "kind": "rule" },
+    { "kind": "text", "text": "PAID", "font": "bold", "size": 90 },
+    { "kind": "text", "text": "$100", "font": "bold", "size": 260, "align": "center" }
+  ] }

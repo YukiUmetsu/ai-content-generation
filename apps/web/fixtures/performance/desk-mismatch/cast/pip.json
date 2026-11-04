@@ -1,0 +1,61 @@
+{
+ "schema_version": 1,
+ "height_m": 0.15,
+ "grid_step": 3,
+ "parts": {
+  "tail": {
+   "layer": 0.03,
+   "inflate": 0.03
+  },
+  "leg_left": {
+   "layer": 0.012,
+   "inflate": 0.01
+  },
+  "leg_right": {
+   "layer": 0.012,
+   "inflate": 0.01
+  },
+  "torso": {
+   "layer": 0,
+   "inflate": 0.034
+  },
+  "satchel": {
+   "layer": -0.036,
+   "inflate": 0.01
+  },
+  "head": {
+   "layer": -0.024,
+   "inflate": 0.032
+  },
+  "mouth": {
+   "layer": -0.0565,
+   "inflate": 0.0008
+  },
+  "scarf": {
+   "layer": -0.04,
+   "inflate": 0.01
+  },
+  "arm_left": {
+   "layer": -0.05,
+   "inflate": 0.01
+  },
+  "arm_right": {
+   "layer": -0.05,
+   "inflate": 0.01
+  }
+ },
+ "effectors": {
+  "hand.right": {
+   "part": "arm_right",
+   "joints": 2
+  },
+  "hand.left": {
+   "part": "arm_left",
+   "joints": 2
+  }
+ },
+ "ground_parts": [
+  "leg_left",
+  "leg_right"
+ ]
+}

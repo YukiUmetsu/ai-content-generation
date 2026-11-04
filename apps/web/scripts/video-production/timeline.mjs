@@ -130,6 +130,7 @@ export function writeSceneSpeechSrt(timeline, speech) {
   for(const range of timeline.beats){
     const scene=byId.get(range.id);
     if(!scene)fail(`missing caption scene ${range.id}`);
+    if(scene.intentionalSilence)continue;
     if(!Array.isArray(scene.turns)){
       cues.push(range);texts[range.id]=scene.text;continue;
     }

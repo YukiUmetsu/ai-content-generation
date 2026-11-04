@@ -91,7 +91,7 @@ async function saveVoiceStem(beats, timeline, outputPath) {
           if (Math.abs(value) >= 32766) fail(`clipping in generated speech beat ${segment.id}`);
           if (value !== 0) hasSignal = true;
         }
-        if (!hasSignal) fail(`unexpected silence in generated narration beat ${segment.id}`);
+        if (!hasSignal && !segment.intentionalSilence) fail(`unexpected silence in generated narration beat ${segment.id}`);
         await handle.writeFile(data);
         measuredSamples+=segment.samples;
         if(composite){
