@@ -5,7 +5,8 @@
  "parts": {
   "tail": {
    "layer": 0.03,
-   "inflate": 0.03
+   "inflate": 0.03,
+   "profile": "cushion"
   },
   "leg_left": {
    "layer": 0.012,
@@ -39,11 +40,13 @@
   },
   "arm_left": {
    "layer": -0.05,
-   "inflate": 0.01
+   "inflate": 0.01,
+   "profile": "cushion"
   },
   "arm_right": {
    "layer": -0.05,
-   "inflate": 0.01
+   "inflate": 0.01,
+   "profile": "cushion"
   }
  },
  "effectors": {

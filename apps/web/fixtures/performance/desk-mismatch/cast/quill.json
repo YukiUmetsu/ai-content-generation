@@ -5,7 +5,8 @@
  "parts": {
   "tail": {
    "layer": 0.016,
-   "inflate": 0.012
+   "inflate": 0.012,
+   "profile": "cushion"
   },
   "leg-left": {
    "layer": 0.01,
@@ -26,12 +27,14 @@
   },
   "wing-left": {
    "layer": -0.03,
-   "inflate": 0.022
+   "inflate": 0.022,
+   "profile": "cushion"
   },
   "head": {
    "layer": -0.03,
    "inflate": 0.062,
-   "back": 0.95
+   "back": 0.95,
+   "profile": "cushion"
   },
   "beak": {
    "layer": -0.0845,
@@ -39,7 +42,8 @@
   },
   "wing-right": {
    "layer": -0.056,
-   "inflate": 0.02
+   "inflate": 0.02,
+   "profile": "cushion"
   },
   "lid-left": {
    "layer": -0.097,
