@@ -1,3 +1,4 @@
+import { createManualVideoDraft } from "./manual-draft.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -327,4 +328,18 @@ test("house-math scenes cannot silently attach an unrendered general chart", () 
   const job = structuredClone(original);
   job.beats[0].visual = chartFixture().beats[1].visual;
   assert.ok(errorCodes(parseVideoProductionJob(job)).includes("unknown-field"));
+});
+
+test("a general scene may request a performance shot, and a bad version is rejected", () => {
+  const { job } = createManualVideoDraft({ title: "How a heat pump moves energy", viewerQuestion: "Why use electricity to move heat?",
+    audience: "Homeowners", locale: "en-US", length: "smoke", hookStrategy: "unexpected-reveal", typographyStyle: "overshoot", scenes: [
+      { headline: "Where does the heat go?", narration: "A heat pump moves energy between indoor and outdoor air rather than making heat directly from fuel.", items: ["Outdoor air", "Indoor coil"] },
+      { headline: "Follow the refrigerant", narration: "Refrigerant carries heat through a compressor and coils, changing pressure and temperature along the way.", intent: "general-flow", items: ["Outdoor coil", "Compressor", "Indoor coil"] },
+      { headline: "Energy is moved", narration: "The electrical input runs a compressor, while the delivered heating can also include heat taken from outside.", items: ["Electricity input", "Moved heat"] },
+    ] });
+  const direction = { phase: "mechanism", subjectIds: ["heat"], visualAction: "Move the page.", learningChange: "See the gap." };
+  job.beats[1].visual.direction = { ...direction, performance: { version: 1 } };
+  assert.equal(parseVideoProductionJob(job).ok, true);
+  job.beats[1].visual.direction = { ...direction, performance: { version: 2 } };
+  assert.ok(parseVideoProductionJob(job).findings.some(item => item.code === "invalid-performance-intent"));
 });

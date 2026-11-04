@@ -32,6 +32,7 @@
   ],
   "materials": { "invoice": "paper", "receipt": "paper" },
   "accentFrame": 222,
+  "label": { "text": "$20 gap", "x": 1180, "y": 110, "startFrame": 244, "endFrame": 300 },
   "subjects": [{ "id": "totals", "bounds": { "min": [-0.12, 0, 0.06], "max": [0.09, 0.01, 0.19] } }],
   "shots": [
     { "id": "wide", "kind": "establish", "subjects": ["quill"], "purpose": "Locate both characters and the invoice on the desk.",

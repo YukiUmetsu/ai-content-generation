@@ -9,8 +9,9 @@ import { mouthCuesFor, visemeCues } from "./shot-lipsync.mjs";
 import { layoutLines, masterShotAudio, synthesizeLines } from "./shot-audio.mjs";
 import { muxVideo } from "./produce.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
+import { composeShotFilm } from "./shot-compose.mjs";
 
-const { values } = parseArgs({ options: { fixture: { type: "string" }, root: { type: "string" }, voice: { type: "boolean", default: false },
+const { values } = parseArgs({ options: { fixture: { type: "string" }, root: { type: "string" }, voice: { type: "boolean", default: false }, chromium: { type: "string" },
   profile: { type: "string", default: "draft" }, output: { type: "string" }, width: { type: "string", default: "1920" }, height: { type: "string", default: "1080" } } });
 const read = async path => JSON.parse(await readFile(path, "utf8"));
 const fixture = resolve(values.fixture), root = resolve(values.root);
@@ -64,6 +65,12 @@ if (spoken) {
   const audio = await masterShotAudio({ lines: spoken, layout, contacts: bake.contacts, materials: intent.materials ?? {},
     accentFrame: intent.accentFrame, fps: intent.fps, dir: join(output, "audio-work"), output: join(output, "audio") });
   await muxVideo(join(output, "shot.mp4"), audio.wavPath, join(output, "final.mp4"));
+  if (values.chromium) {
+    const composed = await composeShotFilm({ clipPath: join(output, "shot.mp4"), audioPath: audio.wavPath, out: join(output, "composed"),
+      browserExecutable: values.chromium, id: "shot", title: intent.objective, fps: intent.fps, durationFrames: intent.durationFrames,
+      width: Number(values.width), height: Number(values.height), label: intent.label });
+    console.log(JSON.stringify(composed));
+  }
   console.log(JSON.stringify({ loudness: audio.loudness, sfx: audio.sfxCueSamples }));
 }
 console.log(JSON.stringify({ seconds: Math.round((Date.now() - started) / 1000), contact: result.manifest.contact_error_m, frames_rendered: result.manifest.frames_rendered }));
