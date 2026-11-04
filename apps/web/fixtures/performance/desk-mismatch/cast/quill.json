@@ -34,7 +34,8 @@
    "layer": -0.03,
    "inflate": 0.062,
    "back": 0.95,
-   "profile": "cushion"
+   "profile": "dome",
+   "fringe": 30
   },
   "beak": {
    "layer": -0.0845,
