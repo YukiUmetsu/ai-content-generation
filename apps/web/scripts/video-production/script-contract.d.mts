@@ -1,6 +1,8 @@
 export const MAX_SCRIPT_SECTIONS: 20;
 export const SCRIPT_ROLES: readonly ["hook","context","mechanism","practical","closing","custom","promotion"];
 type Role=typeof SCRIPT_ROLES[number];
+export const SCRIPT_OUTLINE: readonly {readonly id:string;readonly heading:string;readonly purpose:string}[];
+export function isOutlineHeading(value:unknown):boolean;
 export function isScriptSectionId(value:unknown):value is string;
 export function scriptSectionRole(section:{id?:string;sectionId?:string;role?:Role}):Role;
 export function scriptAnswerIndex(sections:readonly {id?:string;role?:Role}[]):number;

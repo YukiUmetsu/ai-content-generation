@@ -3,6 +3,7 @@
  */
 import { fitSvgText } from "./text-layout.mjs";
 import { layoutTeachingCard } from "./teaching-card-layout.mjs";
+import { editorialLeak } from "./audience-copy.mjs";
 
 const stop = new Set("a an and are as at be but by for from has have how in into is it its of on or our that the their there these this to was were what when where which why with you your will can do does more than beyond new add adds".split(" "));
 const normalized = value => String(value ?? "").toLocaleLowerCase().normalize("NFKC")
@@ -74,6 +75,15 @@ export function analyzeRenderedSceneQuality({ plan, shotMap, beats }) {
   });
   for (let i = 0; i < plan.chapters.length; i++) {
     const chapter = plan.chapters[i], visual = chapter.visual;
+    // Outline labels and direction notes are written for the author. On screen they are a defect, not a style choice.
+    const notes = [visual.direction?.learningChange, visual.direction?.visualAction];
+    const leaks = [["headline", visual.headline], ["supporting line", visual.subhead]]
+      .map(([field, shown]) => [field, editorialLeak(shown, notes)]).filter(([, leak]) => leak);
+    if (leaks.length) {
+      add("editorial-copy-leak", "error", i,
+        `The ${leaks.map(([field]) => field).join(" and ")} shows ${leaks.some(([, leak]) => leak === "outline-label") ? "an outline label" : "a direction note"} instead of words for the viewer.`,
+        "Write the on-screen title and supporting line for the viewer, or clear them so the scene shows what it says. Keep direction notes private.");
+    }
     try { validateTextGeometry(chapter); }
     catch {
       add("renderer-text-overflow", "error", i,

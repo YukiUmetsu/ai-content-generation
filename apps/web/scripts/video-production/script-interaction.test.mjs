@@ -44,6 +44,12 @@ test("a phrase stays hidden until every named diagram label is already on screen
   assert.equal(visibleScriptPhrase("Rent, Buy, Repair", ["Rent", "Buy", "Repair"], 2), "");
   assert.equal(visibleScriptPhrase("Rent, Buy, Repair", ["Rent", "Buy", "Repair"], 3), "Rent, Buy, Repair");
   assert.equal(visibleScriptPhrase("The router forwards a packet", ["Route"], 0), "The router forwards a packet");
+  // A line that only repeats the headline or supporting line is not shown a second time.
+  const copy = ["Here is how the gap opens", "The invoice is entered when the bill arrives."];
+  assert.equal(visibleScriptPhrase("The invoice is entered when the bill arrives", [], 0, copy), "");
+  assert.equal(visibleScriptPhrase("the bill arrives", [], 0, copy), "");
+  assert.equal(visibleScriptPhrase("The payment is entered later", [], 0, copy), "The payment is entered later");
+  assert.equal(visibleScriptPhrase("gap", [], 0, copy), "gap");
 });
 
 test("an example, a cause, and a warning each choose their own picture", () => {

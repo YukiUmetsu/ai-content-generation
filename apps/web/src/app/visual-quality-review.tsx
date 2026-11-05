@@ -13,6 +13,11 @@ export type VisualQualityReport = {
   findings:VisualQualityFinding[];limitation:string;
 };
 
+/** What kind of problem a finding is, by its code. A new code needs one entry here. */
+const FINDING_KINDS:Record<string,string>={"renderer-text-overflow":"Text fit","editorial-copy-leak":"Screen text"};
+const findingKind=(finding:{code:string;severity:"error"|"warning"})=>
+  FINDING_KINDS[finding.code]??(finding.severity==="error"?"Text fit":"Storytelling");
+
 export function VisualQualityReview({report,activeShotId,shotIds,onInspectShot,onEditShot}:{
   report?:VisualQualityReport;activeShotId:string;shotIds:string[];
   onInspectShot:(shotId:string)=>void;onEditShot?:(shotId:string)=>void;
@@ -72,7 +77,7 @@ export function VisualQualityReview({report,activeShotId,shotIds,onInspectShot,o
             <button type="button" onClick={()=>onInspectShot(f.shotId)}
               aria-label={`Inspect ${shotLabel(f.shotId)}: ${f.message}`}
               className={`w-full rounded-control border p-3 text-left text-xs transition-colors hover:bg-surface-subtle ${f.shotId===activeShotId?"border-primary bg-primary/10":"border-border"}`}>
-              <span className="block font-semibold">{shotLabel(f.shotId)} · {f.severity==="error"?"Text fit":"Storytelling"}</span>
+              <span className="block font-semibold">{shotLabel(f.shotId)} · {findingKind(f)}</span>
               <span className="mt-1 block text-muted-foreground">{f.message}</span>
             </button>
           </li>)}

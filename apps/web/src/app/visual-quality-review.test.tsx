@@ -37,3 +37,15 @@ it("prompts to refresh old preview responses with no quality report",()=>{
   render(<VisualQualityReview activeShotId="s1" shotIds={["s1"]} onInspectShot={vi.fn()}/>);
   expect(screen.getByText(/Refresh the actual scene preview/)).toBeInTheDocument();
 });
+
+it("names each finding by its kind, so a text leak is not called a text-fit problem",async()=>{
+  const user=userEvent.setup();
+  const leak:VisualQualityReport={...report,summary:{errors:2,warnings:1,affectedShots:3,totalShots:3},
+    findings:[...report.findings,{code:"editorial-copy-leak",severity:"error",shotId:"s2",relatedShotIds:[],
+      message:"The headline shows an outline label",suggestion:"Write the title for the viewer"}]};
+  render(<VisualQualityReview report={leak} activeShotId="s1" shotIds={["s1","s2","s3"]} onInspectShot={vi.fn()}/>);
+  await user.click(screen.getByRole("button",{name:/Review all 3 findings/}));
+  expect(screen.getByText("Shot 1 · Text fit")).toBeInTheDocument();
+  expect(screen.getByText("Shot 2 · Screen text")).toBeInTheDocument();
+  expect(screen.getByText("Shot 3 · Storytelling")).toBeInTheDocument();
+});

@@ -6,6 +6,7 @@ import { parseResearchDossier, parsePreproductionPlan } from "./preproduction.mj
 import { createManualVideoDraft } from "./manual-draft.mjs";
 import { parseVideoProductionJob } from "./job.mjs";
 import { normalizeVisualElements } from "./visual-elements.mjs";
+import { HEADLINE_MAX, KICKER_MAX, audienceCopy, audienceKicker, scenePlace } from "./audience-copy.mjs";
 
 const hash=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
 const safe=(v,n)=>{
@@ -54,12 +55,17 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     if(!voice||voice.narration.trim().length<20)
       throw Error("Shot "+shot.id+" needs at least 20 characters of narration for the current renderer.");
     if(!phase)warnings.push("Shot "+shot.id+" is not linked to a teaching phase.");
-    const headline=safe(shot.onScreenText,68);
-    const subhead=safe(phase?.learningChange||shot.visualChange,115);
-    if(shot.onScreenText.trim().length>68)
+    // Screen text is what the scene says or what an author wrote for the screen.
+    // visualChange and learningChange are private direction notes and are never displayed.
+    const copy=audienceCopy(voice.narration,{authoredHeadline:shot.onScreenText,
+      authoredSupport:shot.audienceCopy,fallbackSupport:plan.story.question});
+    const headline=safe(copy.headline,HEADLINE_MAX),subhead=copy.support;
+    if(copy.source.headline==="authored"&&shot.onScreenText.trim().length>HEADLINE_MAX)
       warnings.push("Shot "+shot.id+": long screen title shortened to fit the exporter.");
-    if((phase?.learningChange||shot.visualChange).trim().length>115)
-      warnings.push("Shot "+shot.id+": long supporting text shortened to fit the exporter.");
+    if(copy.source.headline!=="authored")
+      warnings.push("Shot "+shot.id+": its screen title is an outline label, so the first spoken sentence is shown instead. Write a title for the viewer to replace it.");
+    if(copy.source.support!=="authored")
+      warnings.push("Shot "+shot.id+": no supporting line was written for the viewer, so a spoken sentence is shown. Add audienceCopy to choose the words.");
     const subjects=[...new Set(shot.subjectIds.map(label))].slice(0,5);
     const sequence=plan.teachingSequences?.find(x=>x.phases.some(p=>p.shotId===shot.id));
     const mappings=phase?.kind==="analogy" ? sequence?.analogy?.mappings??[] : [];
@@ -76,7 +82,8 @@ export function compilePreproductionRenderJob(dossier,bundle,{platform="youtube"
     if(voice.sfxIntent)warnings.push("Shot "+shot.id+": requested SFX '"+safe(voice.sfxIntent,60)+
       "' is not rendered automatically by plan compilation. The Video Director resolves reviewed CC0 sounds during Check and Start; unmatched intents stay silent.");
     return {intent,items:unique,headline,subhead,
-      narration:voice.narration,emphasis:safe(i===0?"THE QUESTION":i===plan.shots.length-1?"THE ANSWER":phase?.kind??shot.purpose,28)};
+      narration:voice.narration,emphasis:safe(audienceKicker({place:scenePlace(plan.shots,i),index:i,
+        total:plan.shots.length,locale:dossier.topic.locale}),KICKER_MAX)};
   });
   const authored=createManualVideoDraft({
     title:safe(dossier.topic.title,180),viewerQuestion:safe(plan.story.question,240),

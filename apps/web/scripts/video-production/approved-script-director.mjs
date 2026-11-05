@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { compilePreproductionBundle } from "./preproduction.mjs";
 import { SCRIPT_SCENE_MOTION, scriptSceneVisuals } from "./script-scene-visuals.mjs";
+import { audienceCopy, fitCopy, isAuthoredScreenText, sameScreenText, spokenSentences } from "./audience-copy.mjs";
 
 import {MAX_SCRIPT_SECTIONS,SCRIPT_ROLES,isScriptSectionId,scriptSectionRole,scriptAnswerIndex,scriptStoryboardClaimRefs} from "./script-contract.mjs";
 const safeText=(value,max)=>typeof value==="string"&&value.trim().length>0&&
@@ -170,6 +171,8 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
   const acts=[{id:"act_setup",question:input.viewerQuestion,purpose:"Establish the audience problem and initial evidence.",payoff:"Explain what must be compared."},
     {id:"act_resolution",question:input.viewerQuestion,purpose:"Demonstrate the mechanism and practical answer.",payoff:"Resolve the audience question with caveats."}];
   const explanation=[],shots=[],sound=[];
+  // The section heading stays a private label for direction notes. It is shown only when an author wrote it.
+  const outlineLabel=new Map();
   for(let index=0;index<units.length;index++){
     const {section,claimIds,beat}=units[index],explanationId=`explain_${index+1}`;
     const chunks=splitNarration(flat(section.text));
@@ -181,11 +184,16 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
       const opening=index===0&&part===0,ending=index===answerIndex&&part===chunks.length-1;
       const postscript=index>answerIndex;
       const visuals=scriptSceneVisuals(narration);
+      // A storyboard headline that only repeats the default derived from the section is not an author's choice.
+      const sectionDefault=audienceCopy(section.text,{fallbackSupport:input.viewerQuestion}).headline;
+      const authoredHeadline=[beat?.onScreenText,section.heading].find(text=>isAuthoredScreenText(text)&&!sameScreenText(text,sectionDefault));
+      const copy=audienceCopy(narration,{authoredHeadline,fallbackSupport:input.viewerQuestion});
+      outlineLabel.set(id,flat(section.heading));
       shots.push({id,explanationId,family:opening?"question":ending||postscript?"summary":
         ({hook:"question",context:"evidence",mechanism:"process",practical:"comparison",closing:"summary",custom:"process",promotion:"summary"}[scriptSectionRole(section)]),
         purpose:opening?"hook":ending?"answer":postscript?"postscript":"explain",subjectIds:["topic_focus"],
         visualChange:flat(beat?.visualObjective??section.purpose),
-        onScreenText:flat(beat?.onScreenText??section.heading),
+        onScreenText:authoredHeadline?flat(authoredHeadline):copy.headline,audienceCopy:copy.support,
         ...(visuals?{visualElements:visuals}:{}),
         motion:{...SCRIPT_SCENE_MOTION},
         claimIds,assetRefs:[]});
@@ -204,13 +212,13 @@ export function compileApprovedScriptDirector({productionId,script,evidence,sour
     const spoken=sound.find(item=>item.shotId===shot.id)?.narration??shot.onScreenText;
     const lead=spoken.split(/[,、.!?。！？]/u).map(part=>part.trim()).find(part=>part.length>=12)??spoken;
     return {kind,shotId:shot.id,
-      visualAction:`Show ${shot.onScreenText}: ${lead}`.replace(/\s+/gu," ").trim().slice(0,300),
-      learningChange:`${shot.onScreenText}: ${lead}`.replace(/\s+/gu," ").trim().slice(0,220)};
+      visualAction:`Show ${outlineLabel.get(shot.id)}: ${lead}`.replace(/\s+/gu," ").trim().slice(0,300),
+      learningChange:`${outlineLabel.get(shot.id)}: ${lead}`.replace(/\s+/gu," ").trim().slice(0,220)};
   });
   const teachClaims=[...new Set(indexes.flatMap(index=>shots[index].claimIds))];
   const plan={schemaVersion:1,kind:"preproduction-plan",researchId:dossier.id,
     styleId:"cinematic-explainer-v1",story:{pattern:"investigation",premise:input.title,
-      hook:script.sections[0].heading,question:input.viewerQuestion,
+      hook:fitCopy(spokenSentences(script.sections[0].text)[0],320),question:input.viewerQuestion,
       answerExplanationId:`explain_${answerIndex+1}`,acts},explanation,shots,continuity,sound,
     teachingSequences:[{id:"sequence_core",mode:"direct",question:input.viewerQuestion,
       technicalSubjectId:"topic_focus",analogy:null,claimIds:teachClaims,phases}]};

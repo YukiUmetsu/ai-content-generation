@@ -1,6 +1,8 @@
 /** Spoken-scene interactions on the existing frame clock.
  * ContentGen only chooses which Kumiki layout is active. It does not add a second timeline.
  */
+import { repeatsScreenText } from "./audience-copy.mjs";
+
 const NATIVE_STYLE = {
   "general-intro": "question-lens",
   "general-flow": "journey",
@@ -103,9 +105,11 @@ export function chapterInteractions(chapter, fps = { num: 30, den: 1 }) {
 }
 
 /** Drop a phrase that would print a diagram label the viewer has not seen yet. */
-export function visibleScriptPhrase(phrase, items = [], visibleCount = 0) {
+export function visibleScriptPhrase(phrase, items = [], visibleCount = 0, shownCopy = []) {
   const text = String(phrase ?? "").trim();
   if (!text) return "";
+  // The headline and supporting line already show these words; a second copy is noise.
+  if (repeatsScreenText(text, shownCopy)) return "";
   const shown = new Set(items.slice(0, Math.max(0, visibleCount)).map(item => String(item).toLocaleLowerCase()));
   const hidden = items.map(item => String(item).trim()).filter(name => name && !shown.has(name.toLocaleLowerCase()));
   const lower = text.toLocaleLowerCase();

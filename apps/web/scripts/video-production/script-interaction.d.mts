@@ -49,7 +49,7 @@ export declare function chapterInteractions(
   chapter: ScriptInteractionChapter,
   fps?: { num: number; den: number },
 ): ScriptInteractionSchedule;
-export declare function visibleScriptPhrase(phrase: string, items?: readonly string[], visibleCount?: number): string;
+export declare function visibleScriptPhrase(phrase: string, items?: readonly string[], visibleCount?: number, shownCopy?: readonly string[]): string;
 export declare function interactionAt(
   schedule: ScriptInteractionSchedule,
   localFrame: number,
