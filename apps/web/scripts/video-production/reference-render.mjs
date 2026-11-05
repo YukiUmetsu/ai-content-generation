@@ -69,6 +69,16 @@ export async function writeContactSheet({ video, plan, output, position = 0.7, c
   }
 }
 
+/** Stretches of the finished film where the picture barely changes, from FFmpeg's freeze detector.
+ * This measures pixels, so it also catches stillness the plan did not declare.
+ */
+export async function measureStillness(video, { ffmpeg = "ffmpeg", minSeconds = 1, noise = .004 } = {}, { run = exec } = {}) {
+  const { stderr } = await run(ffmpeg, ["-hide_banner", "-nostdin", "-i", video, "-vf", `freezedetect=n=${noise}:d=${minSeconds},metadata=mode=print:file=-`, "-an", "-f", "null", "-"],
+    { maxBuffer: 1 << 24, timeout: 600000 }).catch(error => { throw Error(`Stillness measurement failed: ${error.message}`); });
+  const stretches = [...String(stderr).matchAll(/freeze_start: ([\d.]+)[\s\S]*?freeze_duration: ([\d.]+)/gu)].map(match => ({ startSeconds: Number(match[1]), seconds: Number(match[2]) }));
+  return { thresholdSeconds: minSeconds, stretches, longestSeconds: stretches.reduce((longest, item) => Math.max(longest, item.seconds), 0) };
+}
+
 /** Sentence rules only: the same input always gives the same layouts, with no model running. */
 const rulesOnlyLayouts = (plan, options) => planExplainerLayouts(plan, { ...options,
   readModel: async () => ({ model: "rules-only", endpoint: "http://127.0.0.1:9/v1/chat/completions" }),
@@ -96,13 +106,17 @@ export async function renderReference(options, deps = {}) {
     const manifest = JSON.parse(await readFile(join(release, "render-manifest.json"), "utf8"));
     const plan = manifest.plan;
     const quality = analyzeRenderedSceneQuality({ plan, shotMap, beats: job.beats });
-    const sheet = await (deps.writeContactSheet ?? writeContactSheet)({ video: join(release, "video.mp4"), plan, output: join(out, "contact-sheet.png") });
+    const sheet = await (deps.writeContactSheet ?? writeContactSheet)({ video: join(release, "video.mp4"), plan, output: join(out, "contact-sheet.png"), columns: 2 });
+    const stillness = await (deps.measureStillness ?? measureStillness)(join(release, "video.mp4"));
+    const pacing = (produced.storyReport ?? []).map(item => item.pacing).filter(Boolean);
     const report = {
       schemaVersion: 1, kind: "contentgen-reference-render-report", fixture: fixture.productionId, title: job.topic?.title ?? null,
       voice: draftVoice ? { kind: "draft", engine: draftVoice.engineId, notice: "Test-only operating-system voice. Never publish." }
         : { kind: "local-endpoint" },
       layouts: options.useModel ? "configured-model" : "sentence-rules",
       durationSeconds: plan.manifest.durationFrames * plan.manifest.fps.den / plan.manifest.fps.num,
+      pacing: { stillness, longestDeclaredStillSeconds: pacing.reduce((longest, item) => Math.max(longest, item.longestStillSeconds), 0),
+        stories: produced.storyReport ?? [] },
       scenes: screenTextReport(plan), findings: quality.findings, compileWarnings: warnings,
       video: join(release, "video.mp4"), contactSheet: sheet.output,
     };
@@ -127,5 +141,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
     voiceEngine: values["voice-engine"], voice: values.voice, useModel: values["use-model"], browserExecutable: values.chromium },
   { onProgress: event => { if (event.phase && event.phase !== "rendering") console.log(`[${event.phase}] ${event.message ?? ""}`); } });
   console.log(JSON.stringify({ video: report.video, contactSheet: report.contactSheet, seconds: report.durationSeconds,
+    longestDeclaredStillSeconds: report.pacing.longestDeclaredStillSeconds, measuredStillStretches: report.pacing.stillness.stretches.length, longestMeasuredStillSeconds: report.pacing.stillness.longestSeconds,
     findings: report.findings.map(item => `${item.severity}:${item.code}:${item.shotId}`) }, null, 1));
 }
