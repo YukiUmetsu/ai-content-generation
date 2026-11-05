@@ -27,40 +27,58 @@ export function sceneNeedsStory(chapter) {
     !visual?.direction?.visualMechanic && !visual?.direction?.transformation && !visual?.direction?.performance;
 }
 
-/**
+/** Direct every eligible scene. Pure, so the Studio preview shows the same stories before any voice exists.
+ * @param {object} plan general explainer plan
+ * @param {{vocabulary:object,timings?:Map<string,{pauses?:object[],spokenSeconds?:number}>}} context
+ */
+export function directPlanStories(plan, { vocabulary, timings = new Map() }) {
+  // Portrait layouts are authored separately and do not draw stories yet.
+  if (plan?.kind !== "general-explainer-visual-plan" || plan.manifest.width < plan.manifest.height) return plan;
+  const { fps, width, height } = plan.manifest;
+  let stage = newStoryStage();
+  const chapters = plan.chapters.map(chapter => {
+    if (!sceneNeedsStory(chapter)) { stage = newStoryStage(); return chapter; }
+    const frames = chapter.endFrame - chapter.startFrame;
+    const phrases = phraseWindows({ phrases: speechPhrases(chapter.narration), frames, fps, ...timings.get(chapter.id) });
+    const directed = directSceneStory({ id: chapter.id, fps, width, height, frames, phrases, locale: plan.locale }, { vocabulary, stage });
+    stage = directed.stage;
+    return { ...chapter, visual: { ...chapter.visual, story: directed.spec } };
+  });
+  return { ...plan, chapters };
+}
+
+/** The production step: measured timing, a compile check and cues.
  * @param {object} plan general explainer plan
  * @param {{speech:object[],ffmpeg?:string,signal?:AbortSignal,enabled?:boolean}} options
  * @returns {Promise<{plan:object,report:object[],cues?:object[]}>}
  */
 export async function applyObjectStories(plan, { speech = [], ffmpeg, signal, enabled = true } = {}, deps = {}) {
-  // Portrait layouts are authored separately and do not draw stories yet.
   if (!enabled || plan?.kind !== "general-explainer-visual-plan" || plan.manifest.width < plan.manifest.height) return { plan, report: [] };
   const vocabulary = deps.vocabulary ?? await loadStoryVocabulary();
   const check = deps.check ?? await loadStoryChecker();
   const pausesOf = deps.detectPauses ?? detectPauses;
-  const { fps, width, height } = plan.manifest;
-  let stage = newStoryStage();
-  const chapters = [], report = [];
-  for (const chapter of plan.chapters) {
-    if (!sceneNeedsStory(chapter)) { stage = newStoryStage(); chapters.push(chapter); continue; }
-    const frames = chapter.endFrame - chapter.startFrame;
+  const timings = new Map(), timingLabel = new Map();
+  for (const chapter of plan.chapters.filter(sceneNeedsStory)) {
     const measured = speech.find(item => item.id === chapter.id);
     // Pauses refine the timing. Without them phrases keep their text-based estimate, and the report says so.
-    let pauses = [], timing = "estimated";
+    let pauses = [];
+    timingLabel.set(chapter.id, "estimated");
     if (measured?.wavPath) {
-      try { pauses = await pausesOf(measured.wavPath, { ffmpeg, signal }); timing = "measured-pauses"; }
+      try { pauses = await pausesOf(measured.wavPath, { ffmpeg, signal }); timingLabel.set(chapter.id, "measured-pauses"); }
       catch (error) { if (signal?.aborted) throw error; }
     }
-    const spokenSeconds = measured?.samples ? measured.samples / (measured.sampleRate ?? 48000) : undefined;
-    const phrases = phraseWindows({ phrases: speechPhrases(chapter.narration), frames, fps, spokenSeconds, pauses });
-    const directed = directSceneStory({ id: chapter.id, fps, width, height, frames, phrases, locale: plan.locale }, { vocabulary, stage });
-    stage = directed.stage;
-    const verdict = check(directed.spec);
-    if (!verdict.ok) throw Error(`The story for scene ${chapter.id} is invalid: ${verdict.diagnostics.filter(item => item.severity === "error").map(item => item.message).join(" ")}`);
-    report.push({ chapterId: chapter.id, phrases: phrases.length, timing, pausesFound: pauses.length, pacing: verdict.pacing,
-      warnings: verdict.diagnostics.filter(item => item.severity === "warning").map(item => item.code) });
-    chapters.push({ ...chapter, visual: { ...chapter.visual, story: directed.spec } });
+    timings.set(chapter.id, { pauses, ...(measured?.samples ? { spokenSeconds: measured.samples / (measured.sampleRate ?? 48000) } : {}) });
   }
-  const cues = chapters.filter(chapter => chapter.visual?.story).flatMap(chapter => storyCues(chapter.visual.story).map(cue => ({ ...cue, chapterId: chapter.id, absolute: chapter.startFrame + cue.frame })));
-  return { plan: { ...plan, chapters }, report, cues: thinCues(cues, { fps }) };
+  const directed = directPlanStories(plan, { vocabulary, timings });
+  const report = [], cues = [];
+  for (const chapter of directed.chapters) {
+    const spec = chapter.visual?.story;
+    if (!spec) continue;
+    const verdict = check(spec);
+    if (!verdict.ok) throw Error(`The story for scene ${chapter.id} is invalid: ${verdict.diagnostics.filter(item => item.severity === "error").map(item => item.message).join(" ")}`);
+    report.push({ chapterId: chapter.id, phrases: spec.beats.length, timing: timingLabel.get(chapter.id), pausesFound: timings.get(chapter.id).pauses.length, pacing: verdict.pacing,
+      warnings: verdict.diagnostics.filter(item => item.severity === "warning").map(item => item.code) });
+    cues.push(...storyCues(spec).map(cue => ({ ...cue, chapterId: chapter.id, absolute: chapter.startFrame + cue.frame })));
+  }
+  return { plan: directed, report, cues: thinCues(cues, { fps: plan.manifest.fps }) };
 }
