@@ -16,13 +16,17 @@ export const STORY_STAGING = Object.freeze({
   settleSeconds: .45,
   /** How far a meter moves when the words say something rises or falls. */
   levelStep: .3,
+  /** Object beats between two full-frame breaks, so a statement stays an event. */
+  beatsBetweenBreaks: 3,
+  /** Longest caption for a full-frame statement. */
+  statementWords: 14,
 });
 
 const slug = (value) => String(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "idea";
-const arrangementKind = (count, signals) => (count <= 1 ? "solo" : count === 2 ? "pair" : "row");
+const arrangementKind = (count) => (count <= 1 ? "solo" : count === 2 ? "pair" : "row");
 const artIdOf = (entry) => entry.art.split(":")[1];
 
-function newStage() { return { order: [], objects: new Map(), unit: undefined }; }
+function newStage() { return { order: [], held: [], objects: new Map(), unit: undefined, sinceBreak: Infinity }; }
 
 /** Add a vocabulary object or a word to the stage's cast. */
 function castObject(stage, entry, locale) {
@@ -143,9 +147,9 @@ function readPhrase(window, compiled, stage, locale) {
   const objects = mentionedObjects(window.text, compiled);
   const signals = phraseSignals(window.text, locale);
   const amounts = spokenAmounts(window.text, { defaultUnit: stage.unit });
-  if (amounts[0]?.unit) stage.unit = amounts[0].unit;
+  if (amounts[0]?.unit && !amounts[0].unit.suffix) stage.unit = amounts[0].unit;
   // Money words name the amount, not an object on stage.
-  const things = objects.filter(entry => !amounts.length || !/^(?:dollars?|cash|money)$/iu.test(entry.term));
+  const things = objects.filter(entry => (!amounts.length || !/^(?:dollars?|cash|money)$/iu.test(entry.term)) && !amounts.some(amount => entry.start >= amount.start && entry.start < amount.end));
   return { objects: things, signals, amounts, deniedEntry: deniedTerm(window.text, compiled) };
 }
 
@@ -179,25 +183,57 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
     // A checked model proposal replaces what the rules read. Amounts still come from the words.
     const facts = proposed ? { ...read, objects: proposed.objects, deniedEntry: null, signals: { ...Object.fromEntries(Object.keys(read.signals).map(key => [key, false])), ...proposed.signals } } : read;
     firstFacts ??= facts;
+    const finalLine = scene.final && phraseIndex === scene.phrases.length - 1;
+    const breakDue = !proposed && (finalLine || stage.sinceBreak >= staging.beatsBetweenBreaks);
+    const beatId = `${scene.id}-${beats.length + 1}`;
+    const clearStage = () => { stage.held = order.length ? order : stage.held; order = []; stage.order = []; stage.sinceBreak = 0; };
+    // A question or the film's last line fills the frame. A statement is an event, so it stays rare.
+    if (breakDue && (finalLine || (facts.signals.question && !facts.amounts.length && !facts.objects.length))) {
+      beats.push({ id: beatId, startFrame: window.startFrame, endFrame: window.endFrame, arrangement: { kind: "statement", objects: [] }, ops: [],
+        caption: { text: captionFor(window.text, facts.amounts, staging.statementWords), ...(facts.amounts.length ? { emphasis: facts.amounts.map(item => item.text) } : {}) } });
+      clearStage();
+      continue;
+    }
+    // An amount with nothing to belong to is itself the subject.
+    const valuedOnStage = order.filter(id => stage.objects.get(id)?.value).length;
+    if (breakDue && facts.amounts.length && !facts.objects.length && valuedOnStage < 2 && !facts.signals.question) {
+      const amount = facts.amounts[0], id = `figure-${slug(amount.text)}`, frames = window.endFrame - window.startFrame;
+      stage.objects.set(id, { id, label: phraseConcepts(window.text)[0] ?? "", value: { amount: amount.value, unit: amount.unit } });
+      beats.push({ id: beatId, startFrame: window.startFrame, endFrame: window.endFrame, arrangement: { kind: "figure", objects: [id] },
+        ops: [{ kind: "set-value", object: id, value: amount.unit?.fraction ? amount.value / 100 : amount.value, atFrame: window.startFrame, durationFrames: Math.max(1, Math.round(frames * staging.countShare)) }],
+        caption: { text: captionFor(window.text, facts.amounts), emphasis: [amount.text] } });
+      clearStage();
+      continue;
+    }
+    stage.sinceBreak += 1;
     let mentioned = facts.objects.map(entry => castObject(stage, entry, locale));
     // An idea with no picture becomes a word, so the stage still follows the narration.
     if (!proposed && !mentioned.length && !facts.amounts.length) {
-      const taken = order.map(id => stage.objects.get(id)?.label?.toLocaleLowerCase());
+      const taken = (order.length ? order : stage.held).map(id => stage.objects.get(id)?.label?.toLocaleLowerCase());
       const concept = phraseConcepts(window.text).find(label => !taken.includes(label.toLocaleLowerCase()));
-      const label = concept ?? (order.length ? null : phraseKeyword(window.text, locale));
+      const label = concept ?? (order.length || stage.held.length ? null : phraseKeyword(window.text, locale));
       if (label) mentioned = [castObject(stage, { label }, locale)];
     }
-    const previous = order;
+    // After a break the earlier objects can come back, but they are not on stage yet.
+    const onStageBefore = order;
+    const previous = order.length ? order : stage.held;
+    stage.held = [];
     const denied = facts.deniedEntry ? castObject(stage, facts.deniedEntry, locale) : null;
     const hasValues = previous.some(id => stage.objects.get(id)?.value);
     order = proposed ? [...mentioned] : arrange(previous, mentioned, continues(window.text, facts.signals, hasValues, facts.amounts.length > 0), staging.maxOnStage, facts.signals.both);
     // A question about an amount brings the two values together, so the gap between them can be measured.
     const valuedNow = order.filter(id => stage.objects.get(id)?.value);
     if (facts.signals.question && facts.amounts.length && valuedNow.length >= 2) order = valuedNow.slice(0, 2);
-    if (!order.length) throw Error(`Scene ${scene.id} has nothing to show for "${window.text}".`);
-    const entered = order.filter(id => !previous.includes(id));
+    // Nothing to picture and nothing to return to: the words themselves are the scene.
+    if (!order.length) {
+      beats.push({ id: beatId, startFrame: window.startFrame, endFrame: window.endFrame, arrangement: { kind: "statement", objects: [] }, ops: [], caption: { text: captionFor(window.text, facts.amounts, staging.statementWords) } });
+      stage.sinceBreak = 0;
+      stage.order = order;
+      continue;
+    }
+    const entered = order.filter(id => !onStageBefore.includes(id));
     const frames = window.endFrame - window.startFrame;
-    const ops = phraseOps({ facts: { ...facts, mentioned, denied, transitive: /\b(?:builds? up|fills?|raises?|adds?|produces?|makes?)\b/iu.test(window.text) }, frames, frameRate, stage, order, previous, entered, staging });
+    const ops = phraseOps({ facts: { ...facts, mentioned, denied, transitive: /\b(?:builds? up|fills?|raises?|adds?|produces?|makes?)\b/iu.test(window.text) }, frames, frameRate, stage, order, previous: onStageBefore, entered, staging });
     const onlySome = mentioned.length === 1 && order.length > 1 && !entered.length;
     beats.push({ id: `${scene.id}-${beats.length + 1}`, startFrame: window.startFrame, endFrame: window.endFrame,
       arrangement: { kind: arrangementKind(order.length, facts.signals), objects: [...order] },

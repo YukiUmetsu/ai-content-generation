@@ -1198,6 +1198,7 @@ A landscape scene with no picture of its own is directed from its narration. Kum
 - **Staging:** `STORY_STAGING` in `story-director.mjs` sets how many objects share the stage and when a long phrase needs a second change.
 - **Timing:** phrases are placed by text length, then moved to real pauses found in the narration audio. If the pause scan fails, the report says `estimated`.
 - **Stage continuity:** objects and values carry into the next scene. A scene with its own picture resets the stage.
+- **Variety:** a question and the film's last line fill the frame as a statement. An amount with nothing to belong to becomes a large counting figure. Each section has its own light (`SECTION_TONES` in `story-scene.tsx`). `beatsBetweenBreaks` in `STORY_STAGING` keeps breaks rare enough to stay events.
 - **Thumbnails:** a film with enough objects gets three concepts from its own subjects and numbers: the contradiction, the headline fact and the hidden cause. `story-thumbnails.mjs` picks them and Kumiki's recipes compose them. Otherwise the script-only covers are used.
 - **Sound:** `STORY_CUES` in `story-sound.mjs` gives each operation a synthesized cue, a gain and a priority. Cues closer than 0.16 s give way to the stronger one. All of them are mixed into one track, so a long film has no cue limit. Change the table to rebalance them.
 

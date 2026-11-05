@@ -14,7 +14,8 @@ import type { AnimatedMetricPlan, MetricFormatSpec } from "../visual/animated-me
 import { planExplainerLayout } from "../visual/explainer-layout";
 import type { MeasureText } from "../media/text-layout";
 
-export const OBJECT_STORY_ARRANGEMENTS = ["solo", "pair", "row", "stack", "ring"] as const;
+/** `statement` clears the stage so the caption fills the frame. `figure` makes one object's value the subject. */
+export const OBJECT_STORY_ARRANGEMENTS = ["solo", "pair", "row", "stack", "ring", "statement", "figure"] as const;
 export type ObjectStoryArrangementKind = (typeof OBJECT_STORY_ARRANGEMENTS)[number];
 export const OBJECT_STORY_MARKS = ["check", "cross", "question", "warning"] as const;
 export type ObjectStoryMark = (typeof OBJECT_STORY_MARKS)[number];
@@ -97,7 +98,7 @@ export interface ObjectStorySpec {
   maxStillSeconds?: number;
 }
 export interface ObjectStoryDiagnostic {
-  code: "invalid-spec" | "unknown-object" | "unknown-arrangement" | "beat-order" | "beat-gap" | "op-outside-beat" | "object-not-on-stage" |
+  code: "invalid-spec" | "unknown-object" | "unknown-arrangement" | "empty-arrangement" | "figure-needs-value" | "beat-order" | "beat-gap" | "op-outside-beat" | "object-not-on-stage" |
     "value-not-declared" | "level-out-of-range" | "no-link" | "beat-without-change" | "caption-no-room" | "too-many-objects" | "still-stretch";
   severity: "error" | "warning";
   message: string;
@@ -156,6 +157,7 @@ const scaleRect = (r: Rect, factor: number): Rect => {
 
 /** Normalized areas. Wide outputs put a lone subject beside its caption, and groups above it. */
 function stageFor(kind: ObjectStoryArrangementKind, landscape: boolean): { area: Rect; placement: readonly ("right" | "left" | "below" | "above")[] } {
+  if (kind === "statement") return { area: { x: .1, y: .14, width: .8, height: .72 }, placement: ["below"] };
   if (!landscape) return { area: { x: .07, y: .12, width: .86, height: .5 }, placement: ["below", "above"] };
   if (kind === "solo" || kind === "stack") return { area: { x: .5, y: .1, width: .44, height: .8 }, placement: ["left", "below"] };
   return { area: { x: .06, y: .13, width: .88, height: .58 }, placement: ["below", "above"] };
@@ -167,6 +169,8 @@ function layOut(arrangement: ObjectStoryArrangement, width: number, height: numb
   const box = { x: area.x * width, y: area.y * height, width: area.width * width, height: area.height * height };
   const n = arrangement.objects.length, gap = Math.min(box.width, box.height) * .08;
   const out = new Map<string, Rect>();
+  if (arrangement.kind === "statement") return out;
+  if (arrangement.kind === "figure") { out.set(arrangement.objects[0], box); return out; }
   const place = (id: string, cx: number, cy: number, w: number, h: number) => out.set(id, { x: cx - w / 2, y: cy - h / 2, width: w, height: h });
   if (arrangement.kind === "ring" && n > 2) {
     const size = Math.min(box.width, box.height) * .42, rx = (box.width - size) / 2, ry = (box.height - size) / 2;
@@ -194,7 +198,47 @@ const wordsOf = (text: string): string[] => text.trim().split(/\s+/u).filter(Boo
 /** A word per reveal step. Unspaced text such as Japanese reveals by character. */
 const stepsOf = (line: string): string[] => (line.includes(" ") || !/[\u3000-\u9fff\uff00-\uffef]/u.test(line) ? wordsOf(line) : [...line]);
 
+/** Words filling lines no wider than `limit`, or null if one word alone is too wide. Unspaced text wraps by character. */
+function wrapWords(text: string, font: string, limit: number, measure: MeasureText): string[] | null {
+  const spaced = text.includes(" ") || !/[\u3000-\u9fff\uff00-\uffef]/u.test(text);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of spaced ? wordsOf(text) : [...text]) {
+    const next = line ? (spaced ? `${line} ${word}` : line + word) : word;
+    if (measure(font, next) <= limit) { line = next; continue; }
+    if (!line) return null;
+    lines.push(line);
+    line = word;
+    if (measure(font, line) > limit) return null;
+  }
+  return line ? [...lines, line] : lines;
+}
+
+function revealFor(spec: ObjectStorySpec, beat: ObjectStoryBeat, lines: readonly string[], startFrame: number) {
+  const frameRate = spec.fps.num / spec.fps.den;
+  return Math.min(Math.max(1, beat.endFrame - startFrame), Math.round(lines.flatMap(stepsOf).length * frameRate * .28));
+}
+
+/** A statement fills the middle of the frame at a size the viewer reads from across a room. */
+function placeStatement(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: ObjectStoryCaption, startFrame: number, options: ObjectStoryOptions): CaptionPlan | null {
+  const { width, height } = spec;
+  const short = Math.min(width, height), { area } = stageFor("statement", width >= height);
+  const boxWidth = area.width * width, largest = Math.round(short * (options.captionScale ?? .066) * 1.7);
+  for (const fontSizePx of [largest, Math.round(largest * .85), Math.round(largest * .72), Math.round(largest * .6)]) {
+    const font = (options.captionFont ?? DEFAULT_FONT).replace("{size}", String(fontSizePx));
+    const lineHeightPx = Math.round(fontSizePx * 1.16);
+    const lines = wrapWords(caption.text, font, boxWidth, options.measure);
+    if (!lines || lines.length * lineHeightPx > area.height * height) continue;
+    const boxHeight = lines.length * lineHeightPx;
+    return { lines, rect: { x: area.x * width, y: (height - boxHeight) / 2, width: boxWidth, height: boxHeight }, align: "center", fontSizePx, lineHeightPx,
+      // The words are the whole picture here, so they arrive across the spoken line.
+      emphasis: caption.emphasis ?? [], startFrame, revealFrames: Math.max(1, Math.round((beat.endFrame - startFrame) * .85)) };
+  }
+  return null;
+}
+
 function placeCaption(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: ObjectStoryCaption, rects: ReadonlyMap<string, Rect>, startFrame: number, options: ObjectStoryOptions): CaptionPlan | null {
+  if (beat.arrangement.kind === "statement") return placeStatement(spec, beat, caption, startFrame, options);
   const { width, height } = spec;
   const short = Math.min(width, height), largest = Math.round(short * (options.captionScale ?? .066));
   const subjects = [...rects].map(([id, r]) => ({ id, region: { x: r.x / width, y: r.y / height, width: r.width / width, height: r.height / height } }));
@@ -204,14 +248,12 @@ function placeCaption(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: Obj
       lineHeightPx: Math.round(fontSizePx * 1.2), viewport: { width, height }, subjects, protect: subjects.map(item => item.id), maxLines: 4, placement,
       safeMargin: .06, gapPx: short * .03, language: spec.language }, options.measure);
     if (result.ok) {
-      const steps = result.text.lines.flatMap(stepsOf).length;
-      const frameRate = spec.fps.num / spec.fps.den;
       const rect = { x: result.text.rect.x * width, y: result.text.rect.y * height, width: result.text.rect.width * width, height: result.text.rect.height * height };
       // Beside a subject the caption reads from its edge; under a group it sits centred on the group.
       const centred = result.text.placement === "below" || result.text.placement === "above";
       return { lines: result.text.lines, rect: centred ? { ...rect, x: (width - rect.width) / 2 } : rect, align: centred ? "center" : "start",
         fontSizePx, lineHeightPx: result.text.lineHeightPx, emphasis: caption.emphasis ?? [], startFrame,
-        revealFrames: Math.min(Math.max(1, beat.endFrame - startFrame), Math.round(steps * frameRate * .28)) };
+        revealFrames: revealFor(spec, beat, result.text.lines, startFrame) };
     }
   }
   return null;
@@ -241,6 +283,9 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
   const known = (id: string, beatId: string) => { if (!objects.has(id)) { error("unknown-object", `Beat "${beatId}" names object "${id}", which the story does not declare.`, beatId); return false; } return true; };
   const checkArrangement = (arrangement: ObjectStoryArrangement, beatId: string) => {
     if (!OBJECT_STORY_ARRANGEMENTS.includes(arrangement?.kind)) { error("unknown-arrangement", `Beat "${beatId}" uses an unknown arrangement.`, beatId); return false; }
+    if (!arrangement.objects.length && arrangement.kind !== "statement") { error("empty-arrangement", `Beat "${beatId}" has nobody on stage. Use a statement to clear it.`, beatId); return false; }
+    if (arrangement.kind === "statement" && arrangement.objects.length) { error("empty-arrangement", `A statement clears the stage, so beat "${beatId}" cannot list objects.`, beatId); return false; }
+    if (arrangement.kind === "figure" && (arrangement.objects.length !== 1 || !objects.get(arrangement.objects[0])?.value)) { error("figure-needs-value", `A figure shows one object's value, so beat "${beatId}" needs one object with a value.`, beatId); return false; }
     if (arrangement.objects.length > MAX_OBJECTS) error("too-many-objects", `Beat "${beatId}" puts ${arrangement.objects.length} objects on stage. Keep it to ${MAX_OBJECTS} or split the beat.`, beatId);
     return arrangement.objects.every(id => known(id, beatId));
   };
@@ -290,7 +335,9 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
       ops.push({ op, startFrame, endFrame });
       changes.push([startFrame, endFrame]);
     }
-    if (!moved && !ops.length && !beat.hold)
+    // In a statement the words are the subject, so a new line is a change.
+    const statementChanged = beat.arrangement.kind === "statement" && Boolean(beat.caption) && beat.caption?.text !== captionText;
+    if (!moved && !ops.length && !beat.hold && !statementChanged)
       diagnostics.push({ code: "beat-without-change", severity: "error", beatId: beat.id, message: `Beat "${beat.id}" changes nothing on screen. Give it an operation, rearrange the stage, or merge it with the previous beat.` });
     if (beat.focus !== undefined && !rects.has(beat.focus))
       error("object-not-on-stage", `Beat "${beat.id}" focuses on "${beat.focus}", which is not on stage.`, beat.id);
@@ -304,6 +351,7 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
       captionText = text.text;
       if (!caption) error("caption-no-room", `The caption of beat "${beat.id}" does not fit beside its objects. Shorten it or use fewer objects.`, beat.id);
     }
+    if (statementChanged && caption) changes.push([beat.startFrame, Math.min(beat.endFrame, beat.startFrame + caption.revealFrames)]);
     const focus = beat.focus ? rects.get(beat.focus) : undefined;
     resolved.push({ beat, rects, from: previous, ops, caption, camera: { scale: focus ? 1.14 : 1, origin: focus ? centre(focus) : { x: spec.width / 2, y: spec.height / 2 } } });
     previous = rects;
@@ -346,6 +394,8 @@ export interface ObjectStoryObjectFrame {
   dimmed: boolean;
   /** 0 to 1 attention pulse from a highlight or an arriving object. */
   pulse: number;
+  /** The value is the subject of this beat, so a renderer draws it large. */
+  figure: boolean;
   label?: string;
   art?: string;
   value?: { text: string; progress: number };
@@ -486,7 +536,7 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
     }
     if (opacity <= 0) continue;
     const metric = plan.metrics.get(id);
-    objects.push({ id, rect, opacity, dimmed: Boolean(beat.focus && beat.focus !== id), pulse: pulses.get(id) ?? 0,
+    objects.push({ id, rect, opacity, dimmed: Boolean(beat.focus && beat.focus !== id), pulse: pulses.get(id) ?? 0, figure: beat.arrangement.kind === "figure" && inNow,
       ...(object.label ? { label: object.label } : {}), ...(object.art ? { art: object.art } : {}),
       ...(metric && at >= metric.shownFrom ? { value: { text: evaluateAnimatedMetric(metric.plan, at).display, progress: eased(metric.shownFrom, metric.shownFrom + plan.transitionFrames, "ease-out-back") } } : {}),
       ...(levels.has(id) ? { level: levels.get(id)! } : {}),
