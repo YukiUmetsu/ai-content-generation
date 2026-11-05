@@ -41,7 +41,10 @@ export function thumbnailCopy(job) {
   return { title, sections, headlines };
 }
 
-async function loadKumikiComposer() {
+/** Illustrations are embedded as base64 SVG images. Nothing else may be an image. */
+const onlyEmbeddedArt = (svg) => [...svg.matchAll(/<image\b[^>]*>/giu)].every(match => /href="data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+"/u.test(match[0]));
+
+async function loadThumbnailModule(path, name) {
   const { createServer } = await import("vite");
   // This is a one-shot, server-side TS module loader. Do not load Studio's
   // Vite config: that initializes app plugins, proxies and an HMR listener
@@ -50,10 +53,11 @@ async function loadKumikiComposer() {
     resolve:{alias:{"@":join(webRoot,"src")}},
     server:{middlewareMode:true,hmr:false,host:"127.0.0.1"},logLevel:"silent"});
   try {
-    const module = await vite.ssrLoadModule("/src/features/platform-optimization/cover-art.ts");
-    return module.createCoverArtwork;
+    return (await vite.ssrLoadModule(path))[name];
   } finally { await vite.close(); }
 }
+const loadKumikiComposer = () => loadThumbnailModule("/src/features/platform-optimization/cover-art.ts", "createCoverArtwork");
+const loadStoryComposer = () => loadThumbnailModule("/src/features/platform-optimization/story-thumbnails.tsx", "createStoryThumbnails");
 
 function verifyPng(bytes) {
   if (bytes.length < 128 || bytes.length > 12 * 1024 * 1024 ||
@@ -170,7 +174,7 @@ export async function rasterizeThumbnailSvg(svgPath, pngPath, {
 async function rasterizeThumbnailWithChromium(svgPath, pngPath, { signal, browserExecutable, launchBrowser }) {
   if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
   const svg = await readFile(svgPath, "utf8");
-  if (svg.length > 2_000_000 || /<(?:script|foreignObject|image)\b|url\s*\(\s*['"]?(?:https?:|file:|\/\/)/iu.test(svg))
+  if (svg.length > 2_000_000 || !onlyEmbeddedArt(svg) || /<(?:script|foreignObject)\b|url\s*\(\s*['"]?(?:https?:|file:|\/\/)/iu.test(svg))
     throw Error("Kumiki returned an unsafe or incomplete thumbnail composition.");
   let browser, page;
   try {
@@ -257,13 +261,13 @@ async function persistConcept(directory,name,source,png,sourceSha256,sha256){
 }
 
 export async function generateProductionThumbnails(job, { outputDir,cacheDir,reuseCacheDir,sceneJobs,
-  ffmpeg = "ffmpeg", signal, browserExecutable,
-  compose = loadKumikiComposer, convert } = {}) {
+  ffmpeg = "ffmpeg", signal, browserExecutable, concepts = [],
+  compose = loadKumikiComposer, composeStory = loadStoryComposer, convert } = {}) {
   if (!outputDir) throw Error("Thumbnails need an owned production output directory.");
   if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
   const copy = thumbnailCopy(job);
-  const build = await compose();
-  const artworks = build(copy.title, copy.sections, "youtube-landscape", undefined,
+  // A film with three story concepts shows its own subject. Otherwise the script-only covers are used.
+  const artworks = concepts.length === 3 ? (await composeStory())(concepts) : (await compose())(copy.title, copy.sections, "youtube-landscape", undefined,
     "youtube", "draft", undefined, copy.headlines);
   if (!Array.isArray(artworks) || artworks.length !== 3 ||
     new Set(artworks.map(art => art.id)).size !== 3) {
@@ -276,7 +280,7 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
     if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
     const art = artworks[index];
     if (!art?.media || typeof art.svg !== "string" || art.svg.length > 2_000_000 ||
-      /<(?:script|foreignObject|image)\b/iu.test(art.svg)) {
+      /<(?:script|foreignObject)\b/iu.test(art.svg) || !onlyEmbeddedArt(art.svg)) {
       throw Error("Kumiki returned an unsafe or incomplete thumbnail composition.");
     }
     const name = `thumbnail-${index + 1}`;
@@ -313,7 +317,7 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
       const digest=hash(bytes);
       if(cacheDir&&!cached)await persistConcept(cacheDir,name,source,bytes,sourceSha256,digest);
       if(attempt)await sceneJobs.completeScene(attempt,{sha256:digest});
-      outputs[index] = { id: name, label: art.label, headline: copy.headlines[index],
+      outputs[index] = { id: name, label: art.label, headline: concepts[index]?.headline ?? copy.headlines[index],
         file: `${name}.png`, source: `${name}.svg`, sha256: digest,
         sourceSha256, width: 1280, height: 720 };
     }catch(error){
