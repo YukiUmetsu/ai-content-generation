@@ -29,7 +29,11 @@ export function ObjectStoryWord({ text, width, height }: { text: string; width: 
 }
 
 function StageObject({ object, height, renderObject }: { object: ObjectStoryObjectFrame; height: number; renderObject: ObjectStoryProps["renderObject"] }) {
-  const { rect, opacity, dimmed, pulse, label, value, mark, level } = object;
+  const { rect, opacity, dimmed, pulse, label, value, mark, level, figure } = object;
+  if (figure && value) return <div data-km-story-object={object.id} data-km-story-figure="" style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: height * .02 }}>
+    <span data-km-story-value="" style={{ color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .24, rect.height * .5), lineHeight: 1, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", transform: `scale(${(1 + pulse * .06) * value.progress})` }}>{value.text}</span>
+    {label && <p style={{ margin: 0, color: INK, fontWeight: 650, fontSize: height * .05, lineHeight: 1.2 }}>{label}</p>}
+  </div>;
   const labelSize = Math.max(height * .034, Math.min(rect.width * .1, height * .04));
   const art = renderObject?.(object, { width: rect.width, height: rect.height - (label ? labelSize * 1.5 : 0) }) ?? null;
   // A word object already says its label, so it takes the label's room too.

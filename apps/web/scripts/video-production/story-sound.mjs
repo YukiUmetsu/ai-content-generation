@@ -13,6 +13,7 @@ export const STORY_CUES = Object.freeze({
   absorb: { sound: "story-whoosh", gainDb: -20, priority: 4 },
   "measure-gap": { sound: "story-measure", gainDb: -18, priority: 5 },
   highlight: { sound: "story-glow", gainDb: -25, priority: 1 },
+  statement: { sound: "story-whoosh", gainDb: -23, priority: 4 },
   check: { sound: "story-check", gainDb: -18, priority: 5 },
   cross: { sound: "story-cross", gainDb: -18, priority: 5 },
   question: { sound: "story-question", gainDb: -19, priority: 5 },
@@ -29,7 +30,8 @@ export function storyCues(spec, table = STORY_CUES) {
   let onStage = new Set(spec.carried?.objects ?? []);
   for (const beat of spec.beats) {
     const arrived = beat.arrangement.objects.filter(id => !onStage.has(id));
-    if (arrived.length) add("enter", beat.startFrame, `${beat.id}-enter`);
+    if (beat.arrangement.kind === "statement") add("statement", beat.startFrame, `${beat.id}-statement`);
+    else if (arrived.length) add("enter", beat.startFrame, `${beat.id}-enter`);
     onStage = new Set(beat.arrangement.objects);
     (beat.ops ?? []).forEach((op, index) => add(op.kind === "mark" ? op.mark : op.kind, op.atFrame ?? beat.startFrame, `${beat.id}-${index}`));
   }

@@ -49,11 +49,12 @@ export function directPlanStories(plan, { vocabulary, timings = new Map(), propo
   if (plan?.kind !== "general-explainer-visual-plan" || plan.manifest.width < plan.manifest.height) return plan;
   const { fps, width, height } = plan.manifest;
   let stage = newStoryStage();
+  const lastStory = plan.chapters.filter(sceneNeedsStory).at(-1);
   const chapters = plan.chapters.map(chapter => {
     if (!sceneNeedsStory(chapter)) { stage = newStoryStage(); return chapter; }
     const frames = chapter.endFrame - chapter.startFrame;
     const phrases = scenePhrases(chapter, fps, timings.get(chapter.id));
-    const directed = directSceneStory({ id: chapter.id, fps, width, height, frames, phrases, locale: plan.locale }, { vocabulary, stage, proposal: proposals.get(chapter.id) ?? null });
+    const directed = directSceneStory({ id: chapter.id, fps, width, height, frames, phrases, locale: plan.locale, final: chapter === lastStory }, { vocabulary, stage, proposal: proposals.get(chapter.id) ?? null });
     stage = directed.stage;
     return { ...chapter, visual: { ...chapter.visual, story: directed.spec } };
   });

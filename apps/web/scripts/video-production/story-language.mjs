@@ -13,8 +13,10 @@ export const STORY_UNITS = Object.freeze([
   { id: "gbp", words: ["pound", "pounds"], symbol: "£", format: { kind: "currency", currency: "GBP", precision: 0 } },
   { id: "jpy", words: ["yen", "円"], symbol: "¥", format: { kind: "currency", currency: "JPY", precision: 0 } },
   { id: "percent", words: ["percent", "%"], symbol: "%", format: { kind: "percent", precision: 0 }, fraction: true },
+  ...["minute", "hour", "day", "week", "month", "year"].map(name => ({ id: name, words: [name, `${name}s`], suffix: ` ${name}s`, format: { kind: "number", unit: `${name}s`, precision: 0 } })),
 ]);
-const BY_SYMBOL = new Map(STORY_UNITS.map(unit => [unit.symbol, unit]));
+const BY_SYMBOL = new Map(STORY_UNITS.filter(unit => unit.symbol).map(unit => [unit.symbol, unit]));
+const TIME_WORDS = "minutes?|hours?|days?|weeks?|months?|years?";
 const BY_WORD = new Map(STORY_UNITS.flatMap(unit => unit.words.map(word => [word, unit])));
 
 /** Signal words by meaning, per language. English word lists and Japanese fragments. */
@@ -64,7 +66,7 @@ export function mentionedObjects(phrase, compiled) {
     taken.push([start, end]);
     found.push({ entry, term, start });
   }
-  return found.sort((a, b) => a.start - b.start).map(item => ({ ...item.entry, term: item.term }));
+  return found.sort((a, b) => a.start - b.start).map(item => ({ ...item.entry, term: item.term, start: item.start }));
 }
 
 function spelledValue(words) {
@@ -84,14 +86,14 @@ function spelledValue(words) {
 export function spokenAmounts(phrase, { defaultUnit } = {}) {
   const text = flatten(phrase).toLocaleLowerCase();
   const found = [];
-  for (const match of text.matchAll(/([$€£¥])\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(k|m|thousand|million|billion))?|(\d[\d,]*(?:\.\d+)?)\s?(%|percent|dollars?|euros?|pounds?|yen|円)/gu)) {
+  for (const match of text.matchAll(/([$€£¥])\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(k|m|thousand|million|billion))?|(\d[\d,]*(?:\.\d+)?)\s?(%|percent|dollars?|euros?|pounds?|yen|円|minutes?|hours?|days?|weeks?|months?|years?)/gu)) {
     const digits = (match[2] ?? match[4]).replaceAll(",", "");
     const scale = { k: 1e3, m: 1e6, thousand: 1e3, million: 1e6, billion: 1e9 }[match[3]] ?? 1;
     const unit = match[1] ? BY_SYMBOL.get(match[1]) : BY_WORD.get(match[5]);
     found.push({ start: match.index, end: match.index + match[0].length, value: Number(digits) * scale, unit });
   }
   const numberWord = [...Object.keys(SMALL), ...Object.keys(TENS), ...Object.keys(SCALE)].join("|");
-  for (const match of text.matchAll(new RegExp(`\\b((?:${numberWord})(?:(?:[ -]|\\s+and\\s+)(?:${numberWord}))*)\\b(?:\\s+(dollars?|bucks|euros?|pounds?|yen|percent))?`, "gu"))) {
+  for (const match of text.matchAll(new RegExp(`\\b((?:${numberWord})(?:(?:[ -]|\\s+and\\s+)(?:${numberWord}))*)\\b(?:\\s+(dollars?|bucks|euros?|pounds?|yen|percent|${TIME_WORDS}))?`, "gu"))) {
     const words = match[1].split(/[ -]+/u).filter(Boolean);
     const unit = match[2] ? BY_WORD.get(match[2]) : undefined;
     // "one tool" is a count. A spelled number alone is an amount only when it is big enough to be one.
@@ -101,7 +103,8 @@ export function spokenAmounts(phrase, { defaultUnit } = {}) {
     if (value === null || found.some(item => match.index < item.end && item.start < match.index + match[0].length)) continue;
     found.push({ start: match.index, end: match.index + match[0].length, value, unit: unit ?? defaultUnit });
   }
-  return found.sort((a, b) => a.start - b.start).map(item => ({ ...item, text: formatAmount(item.value, item.unit) }));
+  // "One day" is an expression. "Ninety minutes" is a quantity.
+  return found.filter(item => !item.unit?.suffix || item.value >= 2).sort((a, b) => a.start - b.start).map(item => ({ ...item, text: formatAmount(item.value, item.unit) }));
 }
 
 /** The object a negation points at: "a habit, not a tool" denies the tool, not the habit. */
@@ -112,6 +115,7 @@ export function deniedTerm(phrase, compiled) {
 
 export function formatAmount(value, unit) {
   if (unit?.fraction) return `${value}%`;
+  if (unit?.suffix) return `${new Intl.NumberFormat("en").format(value)}${unit.suffix}`;
   const number = new Intl.NumberFormat("en").format(value);
   return unit ? `${unit.symbol}${number}` : number;
 }

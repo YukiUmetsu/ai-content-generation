@@ -313,3 +313,41 @@ test("the QA report records how each scene was directed and how long it sits sti
   assert.deepEqual(report.scenes[1].warnings, ["still-stretch"]);
   assert.equal(storyPacing([{ chapterId: "c", pacing: null }]).scenes[0].longestStillSeconds, null);
 });
+
+test("a question with no amount and the film's last line fill the frame, and breaks stay rare", () => {
+  const question = directSceneStory({ ...scene("s", "The invoice is here. What did it actually do? The receipt is there."), final: false }, { vocabulary });
+  assert.deepEqual(question.spec.beats.map(beat => beat.arrangement.kind), ["solo", "statement", "solo"]);
+  assert.equal(question.spec.beats[1].caption.text, "What did it actually do?");
+  assert.deepEqual(question.spec.beats[1].ops, []);
+  const last = directSceneStory({ ...scene("s", "The invoice is here. Keep each number next to its document, every single time."), final: true }, { vocabulary });
+  assert.equal(last.spec.beats.at(-1).arrangement.kind, "statement");
+  const rare = directSceneStory(scene("s", "The invoice is here. What is it really? Why is it there? The receipt is there."), { vocabulary });
+  assert.deepEqual(rare.spec.beats.map(beat => beat.arrangement.kind), ["solo", "statement", "solo", "solo"]);
+  const words = directSceneStory(scene("s", "Why is it so?"), { vocabulary });
+  assert.equal(words.spec.beats[0].arrangement.kind, "statement", "with nothing to picture, the words are the scene");
+});
+
+test("objects come back after a break instead of restarting the stage", () => {
+  const { spec } = direct("The invoice is here. What did it actually do? It keeps going.");
+  assert.deepEqual(spec.beats.map(beat => beat.arrangement.objects), [["invoice"], [], ["invoice"]]);
+});
+
+test("an amount with nothing to belong to becomes a counting figure", () => {
+  const { spec } = direct("Expect to lose ninety minutes.");
+  const beat = spec.beats[0];
+  assert.equal(beat.arrangement.kind, "figure");
+  assert.equal(beat.ops[0].value, 90);
+  assert.equal(beat.caption.emphasis[0], "90 minutes");
+  assert.deepEqual(spec.objects[0].value.format, { kind: "number", unit: "minutes", precision: 0 });
+});
+
+test("time amounts are read, but an expression like one day is not", () => {
+  assert.equal(spokenAmounts("It takes ninety minutes.")[0].text, "90 minutes");
+  assert.equal(spokenAmounts("About 3 hours later.")[0].text, "3 hours");
+  assert.equal(spokenAmounts("One day it stops.").length, 0);
+});
+
+test("a statement sounds like a change of scene", () => {
+  const cues = storyCues({ fps, beats: [{ id: "a", startFrame: 0, endFrame: 30, arrangement: { kind: "statement", objects: [] }, ops: [] }] });
+  assert.deepEqual(cues.map(cue => cue.sound), ["story-whoosh"]);
+});

@@ -141,7 +141,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   // A rendered 3D shot needs no scrim or diagram. Without its clip, production has already stopped.
   if (performanceClip && stockMedia?.assetType === "video") return <PerformanceClipScene media={stockMedia} clip={performanceClip}
     localFrame={state.localFrame} fps={plan.manifest.fps}/>;
-  if (state.visual.story) return <StoryScene spec={state.visual.story} localFrame={state.localFrame}/>;
+  if (state.visual.story) return <StoryScene spec={state.visual.story} localFrame={state.localFrame} section={state.chapterIndex}/>;
   return <GeneralChapterScene plan={plan} frame={frame}/>;
 }
 
