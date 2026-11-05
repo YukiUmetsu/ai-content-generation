@@ -42,6 +42,16 @@ test("a film with no measured gap still gets three concepts from its paired obje
   assert.deepEqual(concepts.map(item => item.recipe), ["comparison", "hero-fact", "hidden-mechanism"]);
 });
 
+test("a duration is never shown beside the title as if it described it", () => {
+  const concepts = storyThumbnailConcepts(plan(story([
+    beat(["invoice"], "Waiting 90 minutes helps", [{ kind: "set-value", object: "invoice" }], ["90 minutes"]),
+    beat(["receipt"], "It costs $40", [{ kind: "set-value", object: "receipt" }], ["$40"]),
+  ])), { title });
+  assert.equal(concepts.find(item => item.recipe === "hero-fact").cue, "$40");
+  const durationOnly = storyThumbnailConcepts(plan(story([beat(["invoice"], "Waiting 90 minutes helps", [{ kind: "set-value", object: "invoice" }], ["90 minutes"])])), { title });
+  assert.equal(durationOnly.find(item => item.recipe === "hero-fact").cue, undefined);
+});
+
 test("a film with too little to show returns fewer concepts, so the script covers are used", () => {
   assert.equal(storyThumbnailConcepts(plan(), { title }).length, 0);
   assert.equal(storyThumbnailConcepts(plan(story([beat(["word-fix"], "Only a word")])), { title }).length, 0);
