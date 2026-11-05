@@ -1,10 +1,31 @@
-# Executable build plan for OpenCode
+# Build plan
 
-**Status:** implementation roadmap, not shipped features. **Primary goal:** produce original, evidence-grounded, premium **branded** explainers on YouTube landscape and Shorts/Reels/TikTok portrait, with provider-swappable narration, synchronized music/SFX, editable thumbnails, and an economical local-first production pipeline.
+**Status:** roadmap and acceptance criteria. Section 0 records what exists and the current priority; sections 3–10 keep the original task acceptance criteria. **Primary goal:** produce original, evidence-grounded, premium **branded** explainers on YouTube landscape and Shorts/Reels/TikTok portrait, with provider-swappable narration, synchronized music/SFX, editable thumbnails, and an economical local-first production pipeline.
 
-**Working mode:** one task ID per OpenCode execution. Inspect the repository and actual installed Kumiki APIs first; make the smallest working change, run acceptance fixtures, report evidence and stop. **Do not silently invoke Codex, ChatGPT Work, paid APIs or large model downloads.** Repositories/services may be read or edited only through explicitly available/approved tools. All ContentGen code mentioned below is **planned**, not assumed to exist.
+**Working mode:** one task ID per OpenCode execution. Inspect the repository and actual installed Kumiki APIs first; make the smallest working change, run acceptance fixtures, report evidence and stop. **Do not silently invoke Codex, ChatGPT Work, paid APIs or large model downloads.** Repositories/services may be read or edited only through explicitly available/approved tools. The tasks below were written before any code existed. Compare each one against the running code and tests before treating it as open.
 
 **Normative references:** [01 architecture](01-system.md), [02 runtime](02-runtime.md), [03 data](03-data.md), [05 content](05-content.md), [06 media](06-media.md), [08 QA](08-assurance.md), [12 Brand Studio](12-brand-studio.md), [13 audio](13-audio-production.md), [14 Kumiki](14-kumiki-integration.md), [15 Creative Intelligence](15-video-performance-system.md), [16 Creative Pattern Library](16-creative-pattern-library.md). [Dated video research](research/2026-10-21-video-market-scan.md) informs creative hypotheses, **not** current immutable facts.
+
+## 0. Current state and priority (2026-11-05)
+
+**Exists and runs:** the Rust/Axum server with SQLite migrations `0001`–`0021` and durable Jobs; the Studio with the seven-stage Production flow; Fish and local narration; the FFmpeg master with ducking; the Kumiki landscape render with review stills, thumbnails and a hash-verified release; Character Studio rigs; and Blender-rendered performance shots staged from a fixture through `shot-cli.mjs`. [Production workflow](production-workflow.md) and [Kumiki integration](14-kumiki-integration.md) describe the behaviour.
+
+**The gap:** automation stops at the script. A hand-staged ten-second performance shot looks like a film. The automatic draft of a full script is one repeated card layout, with editorial instructions and section roles shown as on-screen text. Nothing in the Studio path authors `visual.direction.performance` or passes `performanceShots` to the renderer.
+
+**Priority order.** Each task ends with a real rendered MP4 of one fixed reference script, compared with the previous one. Owners follow the split in [Kumiki integration](14-kumiki-integration.md): Blender work in `kumiki-blender`, general motion and UI in `kumiki-ui`, intent, validation, narration and Jobs here. Anything that differs between scenes is data, not code.
+
+| ID | Task | Owner | Exit evidence |
+|---|---|---|---|
+| V01 | Baseline: render a fixed reference script and keep it as the "before" | content-gen | MP4, contact sheet and defect list |
+| V02 | Viewer-facing text only: no editorial instruction or section role on screen; clipping, overflow and repetition block a draft | content-gen | Failing fixtures for each defect, clean reference render |
+| V03 | Scene director: one scene recipe per beat from a closed catalogue, with typed slots filled from narration and claims; a model proposes, a validator decides | content-gen | Validator cases, reference render with varied scenes |
+| V04 | More scene recipes: adopt Kumiki story-pattern items; split anything that needs Three.js upstream first | kumiki-ui, then vendor | Pinned items, `pnpm kumiki:verify`, rendered sample per recipe |
+| V05 | Automatic performance shots: reusable set, prop and staging data; a brief author; a Jobs node that passes shots to the Studio render | all three | Hook and payoff shots rendered from a script with no hand staging |
+| V06 | Edit and sound: pacing, transitions, captions and cue sync from Kumiki items | kumiki-ui, content-gen | Reference render with measured cut and cue timing |
+| V07 | Packaging: three different thumbnail hypotheses with a hero still from a rendered shot | content-gen | Three rendered thumbnails that pass preflight |
+| V08 | Review loop: sample frames per scene, run the checks, re-plan a failing scene once | content-gen | Report that names each failing scene and the replacement |
+| V09 | One action: Discover → Idea → Script → Scene plan → Render → Publish Kit as one Jobs DAG that stops only for consent | content-gen | A draft produced from one action, with every stop recorded in Jobs |
+| V10 | Portrait: re-author shorts after landscape is good (see P01–P03) | all three | Destination-specific portrait render |
 
 ## 1. Delivery strategy and finish lines
 
@@ -12,7 +33,7 @@
 
 **First useful release (R1):** using checked-in synthetic, *clearly labeled* inputs, create one approved BrandKit, choose one of three genuinely different title/thumbnail/hook hypotheses, explain a specific home-cost mechanism through a **coherent 8+-minute** narrative with meaningful animated mechanisms and examples, **automatically generate real narrator speech from script text via Fish Audio API or a configured local TTS engine**, add semantically anchored SFX, mix it, render a **16:9 MP4** (initial editorial target **9–15 minutes**, longer if the subject warrants), export a distinct mobile-legible thumbnail and caption file, and generate an audit/QA report. A **30–60-second** mock-voice/offline fixture remains the cheap **smoke test**, not R1 completion; imported audio alone does not meet the automation goal. **Do not mark R1 complete with silent video, static screenshot montage, generic title cards or fake evidence.**
 
-**Second useful release (R2):** re-author that concept for a true **9:16** platform layout and a **destination-specific short-form narrative**, not a crop or sped-up long video. Editorial starting targets (to be revised using actual retention/revenue): YouTube Shorts **45–120s**, TikTok **90–180s**, Instagram Reels **45–60s** for discovery or **120–180s** for deeper mini-explainers, Facebook Reels **120–180s**. Switch brand presets and narrator backends without rewriting media logic, and demonstrate targeted rerendering. Recheck each platform's upload/monetization limits before integration; [the duration research and platform citations](superpowers/specs/2026-10-22-headless-video-production-design.md#1a-duration-and-destination-profiles-research-reviewed-2026-10-22) distinguish platform constraints from observational benchmarks.
+**Second useful release (R2):** re-author that concept for a true **9:16** platform layout and a **destination-specific short-form narrative**, not a crop or sped-up long video. Editorial starting targets (to be revised using actual retention/revenue): YouTube Shorts **45–120s**, TikTok **90–180s**, Instagram Reels **45–60s** for discovery or **120–180s** for deeper mini-explainers, Facebook Reels **120–180s**. Switch brand presets and narrator backends without rewriting media logic, and demonstrate targeted rerendering. Recheck each platform's upload/monetization limits before integration; [the duration research and platform citations](research/2026-10-22-duration-destination-profiles.md) distinguish platform constraints from observational benchmarks.
 
 **First scalable release (R3):** editable UI for brand/storyboard/thumbnail, restart-safe queue, bounded disk use, provider capabilities/rights tracking, non-destructive revisions, measurable experiment imports and transparent human publishing approval. Online trends, automatic upload, payments, character lip sync and generative video are **not** R1 requirements.
 

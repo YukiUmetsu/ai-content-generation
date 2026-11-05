@@ -362,7 +362,7 @@ targets.
 | Item | Value |
 |---|---|
 | Repository | `https://github.com/YukiUmetsu/kumiki-ui` |
-| Pinned commit | `d14e26baf372f0861d9f795856ccc8dc24b5f20c` |
+| Pinned commit | the `commit` field of `kumiki.config.json` (the single record; do not repeat the hash in prose) |
 | Config | `kumiki.config.json` |
 | Hash lock | `vendor/kumiki.lock.json` |
 | Script | `scripts/vendor-kumiki.mjs` |
@@ -385,12 +385,14 @@ Selected items and their dependency closure:
   `one-change-hold`. All four are dependency-free (no npm packages, no Three.js)
   and remain available for a future photo-first beat composition; the current
   landscape stock-photo treatment below does not import them yet.
+- **Rendered performance shots:** `interaction-choreography` and `shot-bake`.
+  They run in the Node bundle built by `pnpm build:shot`, never in the export page.
 - **Styles:** `src/styles/tokens.css` → `src/styles/kumiki/tokens.css`,
   `src/styles/global.css` → `src/styles/kumiki/global.css`.
 
-The configuration selects 28 top-level items; the pinned registry resolves
-43 items and vendors 100 unique files including the two stylesheets. The npm
-dependency closure is unchanged (`class-variance-authority`, `motion`,
+`kumiki.config.json` lists the selected items and `vendor/kumiki.lock.json`
+lists every vendored file with its hash. The npm
+dependency closure of the export page is unchanged (`class-variance-authority`, `motion`,
 `@base-ui/react` only) — the 2026-11-03 pin bump adds no new runtime
 dependencies and no WebGL/Three.js surface.
 

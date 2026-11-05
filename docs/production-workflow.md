@@ -108,6 +108,37 @@ The page reuses the current project catalog, browser-local storyboard, last save
 
 Production now embeds Video Director's scene, asset, sound, voice and draft-export controls **inside Create Video**; there is no separate Director sidebar destination. Research, the storyboard planner, Jobs and all existing release gates remain distinct. Unsaved edits block leaving the embedded editor until saved or discarded. A real edit-to-full-narrated-MP4 browser walkthrough and speaker-aware cast editing remain outstanding.
 
+## Draft video render: Jobs, recovery and release integrity
+
+**Generate draft video** in a saved YouTube production runs these steps. Nothing publishes automatically.
+
+1. Find that production's completed YouTube script. Other destination drafts are independent.
+2. Refresh the saved storyboard, keep unaffected scene edits, and back up the previous document before any overwrite.
+3. Compile a renderable Director plan. Unsupported factual claims are draft warnings, not publishing clearance.
+4. Run preflight. A missing voice, consent, FFmpeg or Chromium keeps its setup visible with a retry action.
+5. Submit the render's stages to the Rust Jobs scheduler before any TTS or media work starts.
+6. Optionally search scene media and prepare reviewed assets. [Scene asset discovery](21-scene-asset-discovery.md) owns providers, limits and rights.
+7. Synthesize narration, build the timeline, mix audio, render scenes, export thumbnails, mux and run quality checks.
+8. Show the playable MP4 with MP4, SRT caption and cover-frame PNG downloads.
+
+**Runtime.** The Rust server on `127.0.0.1:8787` must be running; production fails closed when persistent tracking cannot be created. Override only with a loopback `CONTENTGEN_JOBS_ORIGIN`. The Node renderer uses Chromium, FFmpeg and the authorized Fish or local TTS. Provider credentials are never stored in Jobs. Worker transition routes are `POST /api/jobs/{job_id}/nodes/{node_id}/{start|heartbeat|succeed|fail}`. They are local-process-only and reject Origin-bearing browser requests.
+
+**Heartbeat and recovery.** Each active attempt renews an ownership-checked heartbeat every 20 seconds. Rust sweeps expired video attempts every 30 seconds after a two-minute timeout, and reconciles orphaned attempts at server startup. A worker that loses ownership aborts its render so it cannot publish. For saved productions the Node coordinator writes a private render intent before creating the Jobs attempt. The intent binds the scene revision and the approved voice and media settings, and omits provider keys. After a restart the coordinator may continue an interrupted run **once**, after it rechecks the scene revision, voice authorization and readiness. A failure after the Jobs claim needs a deliberate retry, so uncertain paid voice work is never repeated unattended. Cancellation, live claims and missing permissions never start production.
+
+**Retry and reuse.** **Retry draft video** re-arms the failed Jobs node and keeps completed step records. A retry reuses hash-verified narration beats, redraws only missing, changed or damaged H.264 segments, and skips Chromium when every scene and still is verified. Thumbnail concepts are verified and regenerated one by one. Completed Jobs nodes keep bounded content-identity ledgers: media selection fingerprint, narration beat hashes, master-audio hash, plan and build hashes, segment hashes and final artifact hashes. A ledger is evidence, not proof that a missing artifact is reusable; the retry validates the owned cache.
+
+**Release integrity.** The exporter captures a review still for every narrated scene and fails the draft when stills are missing, out of order or changed, when there are more than 64, or when they exceed 256 MiB. `render-manifest.json` and `qa-report.json` record `visualCoverage`. Each completed run gets one immutable UUID-owned media record. Before final Jobs success, and again on restart, Studio verifies the MP4, captions, cover and thumbnail hashes against the manifest digest and withholds changed files. Stills are sampled frames, and hash integrity is not playback QA: a person must still watch the whole video.
+
+**Versions.** The first completed video for a production needs no extra confirmation. A second or later version requires **Generate updated version**. Failed attempts do not count as releases.
+
+**Sound.** New videos may bind one quiet bed (-34 dB, with fades) from already imported, human-reviewed, hash-verified CC0 music when its title or tags match the script. No match stays silent, and a pinned track or a deliberate mute survives storyboard regeneration. The FFmpeg master ducks each sustained bed against the narration waveform and records the settings as `soundDucking` in the manifest. [Audio production](13-audio-production.md) owns the rest.
+
+**Covers and thumbnails.** `cover-still.png` is the verified first frame, not a designed thumbnail. The render also exports three 1280×720 Kumiki thumbnail concepts as PNG and editable SVG, each with its own Jobs attempt. Publish Kit shows the three rendered PNGs and keeps a manually selected or approved thumbnail pinned. Browser-side concept edits do not start a server-side export Job.
+
+**Voices and cast.** Project voice favorites (migration `0019`), character voice bindings (`0020`) and scene cast (`0021`) are revision-checked SQLite registries behind `/api/project-voices/{project_id}` and `/api/scene-cast/{project_id}/{source_plan_sha256}`. Consent and credentials are never stored there. A scene may hold two to sixteen ordered speech turns; each turn is measured, cached and captioned separately. [Kumiki integration](14-kumiki-integration.md) owns how saved Character Studio revisions bind to scenes and to rendered performance shots.
+
+**Known gaps, as last recorded on 2026-10-31.** No full real-browser walkthrough from a scene edit to a watched narrated MP4. No guaranteed licensed footage for every scene. No live process-restart drill across heartbeat expiry. No intentional speech overlaps. No cross-device sync of non-cast scene edits. No voice rights or provider checks for commercial multi-voice output.
+
 ## Local verification gate (without GitHub Actions)
 
 From the repository root, run these checks after installing the existing dependencies:
