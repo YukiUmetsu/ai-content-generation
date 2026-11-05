@@ -6,9 +6,12 @@ import { compilePreproductionRenderJob } from "./preproduction-render-bridge.mjs
 import { buildSampleTimeline } from "./timeline.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
 import { analyzeRenderedSceneQuality } from "./visual-quality.mjs";
+import { directPlanStories } from "./story-scenes.mjs";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const sha=o=>createHash("sha256").update(JSON.stringify(o)).digest("hex");
+const storyVocabulary=()=>JSON.parse(readFileSync(new URL("./story-vocabulary.json",import.meta.url),"utf8"));
 const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
 /** Frame-accurate editor mock timeline; NOT measured narration. */
 export function estimateNarrationSamples(narration,locale="en-US",wpm=145){
@@ -27,7 +30,8 @@ export function compileLiveVisualPreview(dossier,bundle,{spokenWpm=145}={}){
     id:beat.id,samples:estimateNarrationSamples(beat.narration,job.locale,spokenWpm),
     pauseAfterMs:beat.pauseAfterMs,eventIds:beat.eventIds
   })),{fps:job.destination.fps,events:job.events});
-  const visualPlan=compileGeneralVisuals(job,timeline);
+  // The same stories the MP4 will show, on an estimated clock.
+  const visualPlan=directPlanStories(compileGeneralVisuals(job,timeline),{vocabulary:storyVocabulary()});
   if(visualPlan.chapters.length!==source.shotMap.length)throw Error("Visual preview scene count mismatch.");
   const quality=analyzeRenderedSceneQuality({plan:visualPlan,shotMap:source.shotMap,beats:job.beats});
   return {

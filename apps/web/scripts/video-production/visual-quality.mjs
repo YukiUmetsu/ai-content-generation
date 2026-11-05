@@ -18,7 +18,7 @@ const overlap = (left, right) => {
 };
 const strongMatch = (a, b, minimum) => same(a, b) || (tokens(a).size >= minimum && tokens(b).size >= minimum &&
   overlap(a, b).shared >= minimum && overlap(a, b).score >= .7);
-const sceneIsAuthored = visual => Boolean(visual.sceneRecipe || visual.chart ||
+const sceneIsAuthored = visual => Boolean(visual.story || visual.sceneRecipe || visual.chart ||
   visual.direction?.visualMechanic || visual.direction?.transformation);
 const placeholders = /^(?:main idea|how it changes|house|categories|item\s*\d+|step\s*\d+|node\s*\d+)$/iu;
 const impossibleDirection = /\b(?:split[- ]screen|cutaway|isometric|3d|three[- ]dimensional|camera orbit|photorealistic|morph(?:ing)?|stock footage|picture[- ]in[- ]picture)\b/iu;

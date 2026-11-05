@@ -5,6 +5,8 @@ import { captionFor, compileVocabulary, mentionedObjects, phraseKeyword, phraseS
 import { directSceneStory, newStoryStage } from "./story-director.mjs";
 import { detectPauses, phraseWindows, speechPhrases } from "./speech-phrases.mjs";
 import { applyObjectStories, sceneNeedsStory } from "./story-scenes.mjs";
+import { compileApprovedScriptDirector } from "./approved-script-director.mjs";
+import { compileLiveVisualPreview } from "./live-visual-preview.mjs";
 import { STORY_CUES, mixCueTrack, storyCues, thinCues } from "./story-sound.mjs";
 
 const vocabulary = JSON.parse(await readFile(new URL("./story-vocabulary.json", import.meta.url), "utf8"));
@@ -183,4 +185,13 @@ test("cues mix at their samples with their gains, and the track never wraps", ()
   assert.deepEqual([...mixCueTrack([{ sample: 1, pcm, gainDb: 0 }, { sample: 2, pcm, gainDb: -6.0206 }], 4)], [0, 1000, 1500, 500]);
   assert.deepEqual([...mixCueTrack([{ sample: 0, pcm: Int16Array.from([30000]), gainDb: 0 }, { sample: 0, pcm: Int16Array.from([30000]), gainDb: 0 }], 1)], [32767]);
   assert.deepEqual([...mixCueTrack([{ sample: 3, pcm, gainDb: 0 }], 4)], [0, 0, 0, 1000], "a cue is cut at the end of the film");
+});
+
+test("the Studio preview shows the same stories the MP4 will, before any voice exists", () => {
+  const { dossier, bundle } = compileApprovedScriptDirector(fixture);
+  const preview = compileLiveVisualPreview(dossier, bundle);
+  assert.equal(preview.plan.chapters.length, 5);
+  assert.ok(preview.plan.chapters.every(chapter => chapter.visual.story?.beats.length));
+  assert.deepEqual(preview.plan.chapters[0].visual.story.beats[0].arrangement.objects, ["invoice"]);
+  assert.equal(preview.quality.findings.some(item => item.code === "repeated-schematic"), false);
 });
