@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { compileObjectStory } from "@/components/video/object-story";
+import { icons } from "lucide-react";
 import { FINANCE_OBJECTS } from "@/components/domains/finance-object-model";
 import { BUSINESS_OBJECTS } from "@/components/domains/business-object-model";
 import { TECHNOLOGY_OBJECTS } from "@/components/domains/technology-object-model";
@@ -33,7 +34,10 @@ function directed() {
 describe("object story scenes", () => {
   it("every vocabulary art names an object Kumiki can draw", () => {
     const known = new Set([...FINANCE_OBJECTS.map(item => `finance:${item.kind}`), ...BUSINESS_OBJECTS.map(item => `business:${item.kind}`), ...TECHNOLOGY_OBJECTS.map(item => `technology:${item.kind}`)]);
-    for (const entry of vocabulary.objects) expect(known.has(entry.art), entry.art).toBe(true);
+    for (const entry of vocabulary.objects) {
+      const [family, name] = entry.art.split(":");
+      expect(family === "icon" ? Object.hasOwn(icons, name) : known.has(entry.art), entry.art).toBe(true);
+    }
   });
 
   it("the directed reference script compiles and meets the stillness budget", () => {

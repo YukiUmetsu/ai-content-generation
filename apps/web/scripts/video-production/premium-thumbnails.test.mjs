@@ -238,3 +238,17 @@ test("a repetitive short script still receives three grounded thumbnail messages
   assert.equal(new Set(three).size,3);
   assert.ok(three.every(headline=>headline.includes("house budget")));
 });
+
+test("a story concept that fails preflight falls back to the script covers and says why", async () => {
+  const warnings = [];
+  const outputDir = await mkdtemp(join(tmpdir(), "story-thumbs-"));
+  const concepts = [{ id: "a", headline: "A" }, { id: "b", headline: "B" }, { id: "c", headline: "C" }];
+  const art = id => ({ id, label: id, media: {}, svg: "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1280\" height=\"720\"></svg>" });
+  await assert.rejects(generateProductionThumbnails({ topic: { title: "A title" }, beats: [{ id: "x", narration: "Some narration", visual: { headline: "Some headline" } }, { id: "y", narration: "Other narration", visual: { headline: "Other headline" } }] }, {
+    outputDir, concepts, onWarning: message => warnings.push(message),
+    composeStory: async () => () => { throw Error("text too long"); },
+    compose: async () => () => [art("one"), art("two")],
+  }), /three distinct/u);
+  assert.deepEqual(warnings, ["Story thumbnails were not usable: text too long"]);
+  await rm(outputDir, { recursive: true, force: true });
+});

@@ -7,6 +7,7 @@ import { frameToSample } from "./shot-audio.mjs";
 export const STORY_CUES = Object.freeze({
   enter: { sound: "story-pop", gainDb: -21, priority: 2 },
   "set-value": { sound: "story-tick", gainDb: -22, priority: 3 },
+  level: { sound: "story-draw", gainDb: -24, priority: 3 },
   connect: { sound: "story-draw", gainDb: -23, priority: 3 },
   transfer: { sound: "story-whoosh", gainDb: -20, priority: 4 },
   absorb: { sound: "story-whoosh", gainDb: -20, priority: 4 },

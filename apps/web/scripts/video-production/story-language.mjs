@@ -21,8 +21,13 @@ const BY_WORD = new Map(STORY_UNITS.flatMap(unit => unit.words.map(word => [word
 export const STORY_SIGNALS = Object.freeze({
   en: {
     negation: /\b(?:not|never|no|nothing|nobody|none|without|doesn['’]t|isn['’]t|aren['’]t|can['’]t|won['’]t|don['’]t|didn['’]t)\b/iu,
-    problem: /\b(?:wrong|missing|mismatch(?:es)?|fails?|failed|hide|hides|hidden|lost|duplicate|short payment|error|mistake|problem|risk|gap)\b/iu,
+    problem: /\b(?:wrong|missing|mismatch(?:es)?|fails?|failed|hide|hides|hidden|lost|duplicate|short payment|error|mistake|problem|risk|gap|blocks?|blocked|crash(?:es)?)\b/iu,
+    rising: /\b(?:ris(?:es|ing)|builds?|building|grows?|growing|increases?|increasing|climbs?|climbing|more of|piles? up|spikes?)\b/iu,
+    falling: /\b(?:falls?|falling|drops?|dropping|shrinks?|fades?|fading|wears? off|declines?|less of|clears?|decreases?|runs? out)\b/iu,
+    moving: /\b(?:moves?|sends?|flows?|passes?|arrives?|reaches|travels?|goes to|delivers?|carr(?:y|ies)|borrow(?:s|ed)?|pays?|comes? due)\b/iu,
     resolved: /\b(?:correct|right|fix(?:ed)?|solved|resolves?|matches|match|balanced?|balances|verified|works?|done|clean)\b/iu,
+    /** A problem word directly denied: "never missing" is good news. */
+    deniedProblem: /\b(?:not|never|no|isn['’]t|wasn['’]t|without)\s+(?:\w+\s+)?(?:wrong|missing|lost|hidden|broken|failed|a problem|an error)\b/iu,
     contrast: /\b(?:but|however|instead|versus|vs\.?|while|whereas|not a|rather than)\b/iu,
     cause: /\b(?:because|so|therefore|which means|leads? to|causes?|as a result|that is why|why)\b/iu,
     sequence: /\b(?:then|next|later|after|before|when|first|finally|from|into|through|to the)\b/iu,
@@ -30,7 +35,8 @@ export const STORY_SIGNALS = Object.freeze({
   },
   ja: {
     negation: /ない|ません|なし/u, problem: /間違|不足|問題|失敗|隠|消え|ずれ/u, resolved: /解決|正し|一致|完了/u,
-    contrast: /しかし|でも|一方|ではなく/u, cause: /なぜ|だから|ので|ため|その結果/u, sequence: /まず|次に|そして|あとで|から/u, both: /両方|どちらも|並べ/u,
+    rising: /増え|上が|高ま|たま/u, falling: /減|下が|消え/u, moving: /移|送|届|流れ/u,
+    deniedProblem: /問題ない|失っていない/u, contrast: /しかし|でも|一方|ではなく/u, cause: /なぜ|だから|ので|ため|その結果/u, sequence: /まず|次に|そして|あとで|から/u, both: /両方|どちらも|並べ/u,
   },
 });
 
@@ -114,6 +120,31 @@ export function phraseSignals(phrase, locale = "en") {
   const table = STORY_SIGNALS[language(locale)];
   const text = flatten(phrase);
   return { question: /[?？]\s*$/u.test(text), ...Object.fromEntries(Object.entries(table).map(([name, pattern]) => [name, pattern.test(text)])) };
+}
+
+/** Generic nouns that name no idea a viewer could picture. */
+const VAGUE = new Set("amount bit case day end fact half kind lot matter moment part place point reason rest side sort start stuff way".split(" "));
+
+/** Noun phrases a phrase talks about, in spoken order: "a chemical called adenosine", "the signal".
+ * A cheap reader, not a parser: a noun usually follows a determiner, and "called" names a thing.
+ */
+export function phraseConcepts(phrase) {
+  const text = flatten(phrase);
+  const found = [];
+  const add = (index, words) => {
+    const clean = words.filter(word => !STOP.has(word.toLocaleLowerCase()));
+    const head = clean[clean.length - 1];
+    if (!head || head.length < 3 || VAGUE.has(head.toLocaleLowerCase()) || /(?:ly|ed|ier)$/iu.test(head)) return;
+    found.push({ index, label: clean.slice(-2).join(" ").replace(/^\p{Ll}/u, letter => letter.toLocaleUpperCase()) });
+  };
+  for (const match of text.matchAll(/\bcalled\s+([\p{L}-]+)/giu)) add(match.index, [match[1]]);
+  for (const match of text.matchAll(/\b(?:a|an|the|your|our|their|this|that|these|those|its|my)\s+((?:[\p{L}'’-]+\s+)?[\p{L}'’-]+)/giu)) {
+    const words = match[1].split(/\s+/u);
+    // "the signal keeps going" reads two words past the noun, so a verb-like second word is dropped.
+    const second = words[1]?.toLocaleLowerCase() ?? "";
+    add(match.index, STOP.has(second) || /(?:s|ing|ed)$/u.test(second) && !/ss$/u.test(second) ? words.slice(0, 1) : words);
+  }
+  return found.sort((a, b) => a.index - b.index).map(item => item.label);
 }
 
 /** The word or two a phrase is about, for an idea with no picture. */

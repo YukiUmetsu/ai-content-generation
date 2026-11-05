@@ -29,7 +29,7 @@ export function ObjectStoryWord({ text, width, height }: { text: string; width: 
 }
 
 function StageObject({ object, height, renderObject }: { object: ObjectStoryObjectFrame; height: number; renderObject: ObjectStoryProps["renderObject"] }) {
-  const { rect, opacity, dimmed, pulse, label, value, mark } = object;
+  const { rect, opacity, dimmed, pulse, label, value, mark, level } = object;
   const labelSize = Math.max(height * .034, Math.min(rect.width * .1, height * .04));
   const art = renderObject?.(object, { width: rect.width, height: rect.height - (label ? labelSize * 1.5 : 0) }) ?? null;
   // A word object already says its label, so it takes the label's room too.
@@ -38,8 +38,11 @@ function StageObject({ object, height, renderObject }: { object: ObjectStoryObje
   return <div data-km-story-object={object.id} style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity: dimmed ? opacity * .42 : opacity }}>
     <div style={{ position: "absolute", left: 0, top: 0, width: rect.width, height: artHeight, transform: `scale(${1 + pulse * .09})`, filter: pulse > .01 ? `drop-shadow(0 0 ${pulse * height * .03}px ${ACCENT})` : undefined }}>
       {art ?? <ObjectStoryWord text={label ?? object.id} width={rect.width} height={artHeight} />}
-      {mark && <span data-km-story-mark={mark.kind} aria-label={mark.kind} style={{ position: "absolute", right: "-2%", top: "-2%", width: rect.width * .2, height: rect.width * .2, borderRadius: "50%", display: "grid", placeItems: "center",
-        background: MARKS[mark.kind].color, color: SURFACE, fontWeight: 800, fontSize: rect.width * .13, transform: `scale(${mark.progress})` }}>{MARKS[mark.kind].glyph}</span>}
+      {level !== undefined && <div data-km-story-level={level.toFixed(3)} aria-hidden="true" style={{ position: "absolute", left: "12%", right: "12%", bottom: "-1%", height: height * .022, borderRadius: height * .011, overflow: "hidden", background: "var(--km-shot-track, rgba(255,255,255,.14))" }}>
+        <div style={{ width: `${level * 100}%`, height: "100%", borderRadius: "inherit", background: WARM }} />
+      </div>}
+      {mark && <span data-km-story-mark={mark.kind} aria-label={mark.kind} style={{ position: "absolute", right: "-2%", top: "-2%", width: rect.width * .26, height: rect.width * .26, borderRadius: "50%", display: "grid", placeItems: "center",
+        background: MARKS[mark.kind].color, color: SURFACE, fontWeight: 800, fontSize: rect.width * .17, transform: `scale(${mark.progress})` }}>{MARKS[mark.kind].glyph}</span>}
       {value && <span data-km-story-value="" style={{ position: "absolute", left: "50%", bottom: "4%", transform: `translateX(-50%) scale(${value.progress})`, padding: `${height * .008}px ${height * .018}px`, borderRadius: height * .014, whiteSpace: "nowrap",
         background: SURFACE, color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .17, height * .066), fontVariantNumeric: "tabular-nums", boxShadow: "0 6px 24px rgba(0,0,0,.35)" }}>{value.text}</span>}
     </div>

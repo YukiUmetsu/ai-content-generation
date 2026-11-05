@@ -31,6 +31,17 @@ test("no number appears that the film did not show, and word objects never becom
   assert.ok(concepts.every(item => item.primaryArt !== undefined));
 });
 
+test("a film with no measured gap still gets three concepts from its paired objects", () => {
+  const concepts = storyThumbnailConcepts(plan(story([
+    beat(["invoice"], "Start with one document"),
+    beat(["invoice", "receipt"], "It looks fine at first"),
+    beat(["invoice", "receipt"], "Two papers tell one story"),
+    beat(["budget"], "Your books hide the problem", [{ kind: "mark", object: "budget", mark: "cross" }]),
+  ])), { title });
+  assert.deepEqual(concepts.map(item => item.headline), ["Two papers tell one story", title, "Your books hide the problem"]);
+  assert.deepEqual(concepts.map(item => item.recipe), ["comparison", "hero-fact", "hidden-mechanism"]);
+});
+
 test("a film with too little to show returns fewer concepts, so the script covers are used", () => {
   assert.equal(storyThumbnailConcepts(plan(), { title }).length, 0);
   assert.equal(storyThumbnailConcepts(plan(story([beat(["word-fix"], "Only a word")])), { title }).length, 0);
