@@ -29,6 +29,17 @@ No Pexels keyword crawling, bulk downloads, asset-pack redistribution, access-ch
 
 Commercial *finished videos* still need human review. Quaternius, Sketchfab, Fab and Mixamo are not automatic download providers; their per-item redistribution/download terms differ. Users can source those manually through their original sites until verified adapters exist.
 
+### Candidate sources that are not integrated
+
+Recheck current vendor terms before adding an automated download for any of these. A provider's search result never certifies trademarks, releases or full commercial rights.
+
+| Source | Practical production use | Integration caution |
+| --- | --- | --- |
+| [Pixabay](https://pixabay.com/service/about/api/) | Candidate photos, footage, illustration, sound | Review its [Content License](https://pixabay.com/service/license-summary/) and API limits. |
+| [Unsplash](https://help.unsplash.com/en/articles/2511245-unsplash-api-guidelines) | Photo search and preview | The API requires hotlinked URLs, download tracking and photographer attribution, and its guidelines discourage unattended bulk use. It is not a drop-in offline cache. |
+| [Freesound](https://freesound.org/docs/api/) | Scene-matched SFX | Filter by each clip's CC license and archive creator and source. Avoid NC material for commercial video. |
+| [Mixkit](https://mixkit.co/license/) | Manual stock video, music and SFX selection | Product categories have different terms, including restricted stock-video variants. Raw-asset redistribution is not allowed. |
+
 ## Integration boundary and follow-up
 
 - Vite's loopback-only bridge is an interim Studio worker. For durable catalog/release ownership, promote manifests and approvals into ContentGen's Rust/SQLite asset ledger with migrations and hash verification. Keep secrets server-side.

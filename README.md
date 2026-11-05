@@ -4,24 +4,13 @@ Build a **local-first, research-driven content production studio**: accumulate e
 
 **Target:** Apple Silicon M4, 24 GB unified memory. **Backend:** Rust/Axum/SQLite. **UI:** React/TypeScript. **Default development agent:** `opencode --model magnitude/qwen3.6-35b-a3b:gguf:q2`. **Runtime model:** configured through adapters, not OpenCode itself. All cloud providers and heavyweight media engines are optional.
 
-Replace the previous `docs/` directory rather than merging both versions; obsolete pages would provide conflicting instructions. Preserve any project-specific notes or actual migrations separately.
-
-Start with [AGENTS.md](AGENTS.md) → [docs/INDEX.md](docs/INDEX.md) → the current milestone in [docs/10-build-plan.md](docs/10-build-plan.md). The domain/backend specification is not yet implemented; the shared frontend foundation is runnable in [`apps/web`](apps/web/README.md).
-
-## First OpenCode task
-
-```text
-Read AGENTS.md, docs/INDEX.md, docs/01-system.md, docs/02-runtime.md,
-docs/03-data.md and docs/10-build-plan.md. Implement milestone A only.
-Do not auto-install large models, paid providers or video engines. Show
-actual test/build results, disk usage, known limitations and next steps.
-```
+Start with [AGENTS.md](AGENTS.md) → [docs/INDEX.md](docs/INDEX.md) → the current milestone in [docs/10-build-plan.md](docs/10-build-plan.md). The Rust server, the SQLite migrations, the Studio and the video production pipeline are implemented. [Production workflow](docs/production-workflow.md) describes what they do today, and section 0 of the build plan records the current priority. The frontend is documented in [`apps/web`](apps/web/README.md).
 
 ## Video-first vertical slice and Brand Studio
 
 The target video workflow is **approved BrandKit → researched script/semantic beats → provider-neutral narration (Fish Audio or local/imported) → alignment + rights-checked SFX/music → Kumiki-UI compositions → offline FFmpeg mastering/encoding → QA → approved multi-platform packages**. Branding is repeatable but not generic: use semantic color, fonts, camera language, narration persona, SFX grammar and platform-specific composition. Video-first milestone track is specified in [build plan](docs/10-build-plan.md); full article/research product scope remains available.
 
-Owners: [12 — Brand Studio](docs/12-brand-studio.md), [13 — Audio production](docs/13-audio-production.md), [14 — Kumiki integration](docs/14-kumiki-integration.md). These are **specifications/fixtures, not claims of implemented ContentGen services**.
+Owners: [12 — Brand Studio](docs/12-brand-studio.md), [13 — Audio production](docs/13-audio-production.md), [14 — Kumiki integration](docs/14-kumiki-integration.md). They own the contracts. [Production workflow](docs/production-workflow.md) records what the pipeline does today.
 
 ## Opt-in YouTube niche monitoring (local server)
 
