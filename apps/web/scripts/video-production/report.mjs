@@ -7,7 +7,14 @@ const hash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/i.test(valu
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
 
 /** No caller can set commercialReady. A separate verified human-review workflow is mandatory. */
-export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, toolVersions, reviewStatus = "not-reviewed", captionReadability, visualCoverage }) {
+/** How each directed scene was made and how long it sits still. Checked from the plan, not from pixels. */
+export function storyPacing(stories) {
+  const scenes = stories.map(({ chapterId, director, timing, phrases, warnings, pacing }) => ({ chapterId, director, timing, phrases, warnings,
+    longestStillSeconds: pacing?.longestStillSeconds ?? null, changesPerMinute: pacing?.changesPerMinute ?? null }));
+  return { basis: "declared-story-plan", longestStillSeconds: scenes.reduce((longest, scene) => Math.max(longest, scene.longestStillSeconds ?? 0), 0), scenes };
+}
+
+export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, toolVersions, reviewStatus = "not-reviewed", captionReadability, visualCoverage, stories = [] }) {
   const fps = job?.destination?.fps;
   if (!integer(fps?.num, 1) || !integer(fps?.den, 1) || fps.num / fps.den > 120) fail("invalid rational FPS");
   if (job.destination.presetId !== "youtube") fail("unsupported release output profile");
@@ -59,7 +66,7 @@ export function buildQaReport({ job, timeline, audio, render, mp4, artifacts, to
     rightsVerified, reviewStatus, durationSeconds, frameCount: mp4.frameCount,
     audioVideoDriftSeconds: Math.abs(durationSeconds - videoFromFrames), namedPayoffFrame,
     peakScratchBytes: render.peakScratchBytes, loudness: audio.loudness,
-    artifacts, segments: render.segmentHashes, reviewStills, ...(visualCoverage ? { visualCoverage } : {}), tools: toolVersions,
+    artifacts, segments: render.segmentHashes, reviewStills, ...(visualCoverage ? { visualCoverage } : {}), ...(stories.length ? { storyPacing: storyPacing(stories) } : {}), tools: toolVersions,
     findings: [...audio.findings, ...(captionReadability?.findings ?? []), {
       severity: "warning", code: "human-review-required",
       message: "Watch and listen to the entire exported film at normal speed and verify commercial rights before publication.",

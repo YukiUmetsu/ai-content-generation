@@ -233,6 +233,9 @@ async function boot() {
         throw new Error(`Saved character ${id} has no matching spoken scene.`);
     }
   }
+  // Story captions are measured when a scene mounts, so the font must be ready first.
+  // Otherwise placement could differ between render segments.
+  await document.fonts.load("700 64px 'Geist Variable'");
   createRoot(root).render(<ExportApp plan={plan} />);
 }
 
