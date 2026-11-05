@@ -154,7 +154,7 @@ const scaleRect = (r: Rect, factor: number): Rect => {
 function stageFor(kind: ObjectStoryArrangementKind, landscape: boolean): { area: Rect; placement: readonly ("right" | "left" | "below" | "above")[] } {
   if (!landscape) return { area: { x: .07, y: .12, width: .86, height: .5 }, placement: ["below", "above"] };
   if (kind === "solo" || kind === "stack") return { area: { x: .5, y: .1, width: .44, height: .8 }, placement: ["left", "below"] };
-  return { area: { x: .06, y: .08, width: .88, height: .6 }, placement: ["below", "above"] };
+  return { area: { x: .06, y: .13, width: .88, height: .58 }, placement: ["below", "above"] };
 }
 
 /** Pixel rects for the objects of an arrangement, largest that fit, centred in their area. */
@@ -178,9 +178,11 @@ function layOut(arrangement: ObjectStoryArrangement, width: number, height: numb
     arrangement.objects.forEach((id, i) => place(id, box.x + box.width / 2, top + size / 2 + i * (size + gap), size, size));
     return out;
   }
-  const size = Math.min((box.width - gap * (n - 1)) / n, box.height);
-  const left = box.x + (box.width - (size * n + gap * (n - 1))) / 2;
-  arrangement.objects.forEach((id, i) => place(id, left + size / 2 + i * (size + gap), box.y + box.height / 2, size, size));
+  // Two objects stand apart, so what sits between them (a gap, a link) has room to be seen.
+  const spacing = n === 2 ? Math.max(gap, box.width * .2) : gap;
+  const size = Math.min((box.width - spacing * (n - 1)) / n, box.height);
+  const left = box.x + (box.width - (size * n + spacing * (n - 1))) / 2;
+  arrangement.objects.forEach((id, i) => place(id, left + size / 2 + i * (size + spacing), box.y + box.height / 2, size, size));
   return out;
 }
 
