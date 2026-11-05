@@ -1,0 +1,40 @@
+{
+ "schema_version": 1,
+ "width": 1200,
+ "height": 1600,
+ "margin": 90,
+ "paper": [
+  250,
+  238,
+  214
+ ],
+ "ink": [
+  120,
+  26,
+  30
+ ],
+ "fonts": {
+  "body": "/System/Library/Fonts/Supplemental/Courier New.ttf",
+  "bold": "/System/Library/Fonts/Supplemental/Courier New Bold.ttf"
+ },
+ "blocks": [
+  {
+   "kind": "text",
+   "text": "RECEIVED",
+   "font": "bold",
+   "size": 130,
+   "align": "center"
+  },
+  {
+   "kind": "rule",
+   "weight": 6
+  },
+  {
+   "kind": "text",
+   "text": "MONDAY",
+   "font": "bold",
+   "size": 230,
+   "align": "center"
+  }
+ ]
+}

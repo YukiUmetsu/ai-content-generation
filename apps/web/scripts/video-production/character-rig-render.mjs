@@ -279,13 +279,18 @@ function verifyPack(archive, draft, id) {
   }
   if (definition.blink !== undefined) {
     const blink = definition.blink;
-    if (!object(blink) || !Array.isArray(blink.parts) || !blink.parts.length ||
-      !safeId(blink.variant) || !object(blink.intervalFrames) ||
+    // A blink swaps drawings (`parts` + `variant`), sweeps lids (`pose`), or both.
+    const swaps = object(blink) && Array.isArray(blink.parts) && blink.parts.length > 0 && safeId(blink.variant);
+    const sweeps = object(blink) && object(blink.pose) && Object.keys(blink.pose).length > 0;
+    if (!object(blink) || (!swaps && !sweeps) || !object(blink.intervalFrames) ||
       !Number.isSafeInteger(blink.intervalFrames.min) || blink.intervalFrames.min < 1 ||
       !Number.isSafeInteger(blink.intervalFrames.max) || blink.intervalFrames.max < blink.intervalFrames.min ||
       !Number.isSafeInteger(blink.durationFrames) || blink.durationFrames < 1)
       fail(`Saved ${id} has an invalid blink schedule.`);
-    for (const partId of blink.parts) validVariants({ [partId]: blink.variant }, "Blink");
+    if (blink.closeFraction !== undefined && !(Number.isFinite(blink.closeFraction) && blink.closeFraction > 0 && blink.closeFraction <= .5))
+      fail(`Saved ${id} has an invalid blink closeFraction.`);
+    if (swaps) for (const partId of blink.parts) validVariants({ [partId]: blink.variant }, "Blink");
+    if (sweeps) validPose(blink.pose, "Blink");
   }
   if (definition.idle !== undefined) {
     if (!object(definition.idle) || !object(definition.idle.parts)) fail("Character idle motion is invalid.");

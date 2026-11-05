@@ -1,0 +1,204 @@
+{
+ "objective": "Show that the form arrived after its due day.",
+ "visualChange": "A due day and a received day sit side by side, and they disagree.",
+ "claimIds": [],
+ "durationFrames": 180,
+ "fps": {
+  "num": 30,
+  "den": 1
+ },
+ "timing": "expressive",
+ "maxHeadTurn": 13,
+ "cast": [
+  {
+   "id": "quill",
+   "start": [
+    0.62,
+    0,
+    0.05
+   ],
+   "mark": [
+    0.13,
+    0,
+    0.05
+   ],
+   "yaw": -0.3,
+   "seed": 5,
+   "gait": {
+    "left": "leg-left",
+    "right": "leg-right",
+    "body": "body",
+    "stride": 0.09,
+    "lift": 34,
+    "swing": 7,
+    "bob": 6
+   },
+   "variantFadeFrames": 4,
+   "clear": [
+    0.27,
+    0,
+    0.05
+   ],
+   "maxViewAngle": 30
+  },
+  {
+   "id": "pip",
+   "start": [
+    -0.155,
+    0,
+    0.12
+   ],
+   "yaw": 0.3,
+   "seed": 3,
+   "clear": [
+    -0.3,
+    0,
+    0.12
+   ],
+   "maxViewAngle": 30
+  }
+ ],
+ "objects": [
+  {
+   "id": "notice",
+   "pitch": 1.2,
+   "holder": {
+    "actor": "quill",
+    "effector": "hand.left",
+    "grip": "top",
+    "offset": [
+     0.01,
+     0.02,
+     0.01
+    ]
+   },
+   "lay": {
+    "to": [
+     0.05,
+     0,
+     0.12
+    ],
+    "toYaw": 0.06,
+    "releaseHeight": 0.03
+   },
+   "material": "paper",
+   "bendable": true
+  },
+  {
+   "id": "stamp",
+   "pitch": 1.05,
+   "holder": {
+    "actor": "pip",
+    "effector": "hand.right",
+    "grip": "left",
+    "offset": [
+     -0.008,
+     0.016,
+     0.012
+    ]
+   },
+   "lay": {
+    "to": [
+     -0.045,
+     0,
+     0.108
+    ],
+    "toYaw": -0.05,
+    "releaseHeight": 0.035
+   },
+   "material": "paper",
+   "bendable": true
+  }
+ ],
+ "lines": [
+  {
+   "id": "due-line",
+   "actor": "quill",
+   "about": "notice"
+  },
+  {
+   "id": "late-line",
+   "actor": "pip",
+   "about": "stamp"
+  }
+ ],
+ "shots": {
+  "wide": {
+   "subjects": [
+    "pip"
+   ],
+   "camera": {
+    "position": [
+     0.0,
+     0.14,
+     0.95
+    ],
+    "endPosition": [
+     -0.02,
+     0.145,
+     0.88
+    ],
+    "focus": [
+     -0.02,
+     0.1,
+     0.05
+    ],
+    "endFocus": [
+     -0.02,
+     0.1,
+     0.05
+    ],
+    "fov": 26,
+    "near": 0.01,
+    "far": 30
+   }
+  },
+  "reveal": {
+   "subjects": [
+    "days"
+   ],
+   "bounds": {
+    "min": [
+     -0.12,
+     0,
+     0.05
+    ],
+    "max": [
+     0.1,
+     0.01,
+     0.19
+    ]
+   },
+   "moveFrames": 30,
+   "camera": {
+    "position": [
+     -0.015,
+     0.4,
+     0.33
+    ],
+    "endPosition": [
+     -0.015,
+     0.36,
+     0.3
+    ],
+    "focus": [
+     -0.015,
+     0,
+     0.12
+    ],
+    "endFocus": [
+     -0.015,
+     0,
+     0.12
+    ],
+    "fov": 24,
+    "near": 0.01,
+    "far": 30
+   }
+  }
+ },
+ "light": {
+  "dim": "window",
+  "lift": "bounce"
+ }
+}

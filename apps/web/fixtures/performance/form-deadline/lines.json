@@ -1,0 +1,22 @@
+{
+ "locale": "en",
+ "modelId": "s2.1-pro-free",
+ "minGapFrames": 8,
+ "note": "Fictional. Same public community voices, benchmark only.",
+ "lines": [
+  {
+   "id": "due-line",
+   "actor": "quill",
+   "voiceId": "f4011527d52045bebe004aa874695276",
+   "text": "This form was due on Friday.",
+   "notBeforeFrame": 34
+  },
+  {
+   "id": "late-line",
+   "actor": "pip",
+   "voiceId": "644c1556ad2243a28eb57160b9601037",
+   "text": "But it arrived on Monday!",
+   "notBeforeFrame": 100
+  }
+ ]
+}

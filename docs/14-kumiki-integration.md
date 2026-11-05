@@ -16,6 +16,15 @@
 
 **Landscape stock-photo beats:** an approved `visual.stockMedia` image is now a full-bleed backdrop with a `#101D2D`/`#0C1620` legibility scrim, and the teaching diagram renders at full scale exactly as it does without a photo. The previous 760×168 letterboxed strip plus the `scale(0.58)` diagram squash are removed. The capture SVG must remain a positioned sibling of that backdrop, otherwise the absolutely positioned photo paints over the whole frame.
 
+**Adopted 2026-11-04: rendered performance shots.** A storyboard scene may set `visual.direction.performance`. `performance-director.mjs` writes a `PerformanceIntent` from a semantic brief, `performance-compiler.mjs` turns it into Kumiki contracts, and the Kumiki `interaction-choreography` and `shot-bake` items resolve every frame. `kumiki-blender build-shot` renders those frames, and the clip plays through the existing frame-verified video path with one optional label.
+
+- **Boundary:** no `bpy` in this repository. Blender work stays in `kumiki-blender`. Generic motion and UI stay in Kumiki. ContentGen keeps intent, validation, narration, mastering, cache identity and fixtures.
+- **Three.js:** the 2026-11-03 decision stands for the export page. `three` is a dev dependency used only by the Node bundle `dist-shot/bake-entry.mjs` (`pnpm build:shot`). `src/video-shot/export-boundary.test.ts` fails if the export page imports it.
+- **Actors:** a saved Character Studio pack becomes inflated, bendable meshes, so identity stays exact. A from-scratch 3D model was tested and rejected on 2026-11-04. Keep the camera within about 25 degrees of an actor's facing, because the art has one view.
+- **Failure:** a scene that requests a shot and cannot get one stops production. It never falls back to a diagram.
+- **Reuse:** a shot is reused only when the intent, spoken windows, mouth cues, asset hashes, tools and render settings all match. Its video hash is checked again.
+- **Setup:** set `KUMIKI_BLENDER_ROOT`, `KUMIKI_BLENDER`, and optionally `CONTENTGEN_RHUBARB` for mouth shapes from real audio. Without Rhubarb, lines use the labelled approximate cycle.
+
 ## Versioned adapter contract
 
 Build a **KumikiRenderAdapter** in ContentGen's optional TS worker, not the Rust domain layer. It consumes an approved SemanticStoryboard + BrandKit/DeliveryProfile snapshot + stable asset refs, resolves currently supported Kumiki source registry versions, then emits:

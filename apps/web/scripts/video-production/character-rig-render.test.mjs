@@ -74,6 +74,22 @@ test("preflight rejects invalid saved animation references before narration or b
   }
 });
 
+test("preflight accepts a lid-sweep blink pose in place of a drawing swap",async()=>{
+  const original=await archive("pip");
+  // Same byte length, so the archive stays valid: the swap variant becomes a pose on an existing part.
+  const altered=mutateSavedAnimation(original,'"variant": "closed"','"pose": {"eyes":{}}');
+  const parsed=readCharacterZip(altered);
+  assert.deepEqual(parsed.definition.blink.pose,{eyes:{}});
+  const draft=record("pip",altered,parsed.definition.revision);
+  const mock=mockCatalog([draft],new Map([[draft.id,altered]]));
+  const rigs=await loadProjectCharacterRigs({projectId,speakers:["pip"],fetchImpl:mock.fetchImpl});
+  assert.equal(rigs.rigs.pip.definition.blink.variant,undefined);
+  const broken=mutateSavedAnimation(original,'"variant": "closed"','"pose": {"nope":{}}');
+  const bad=record("pip",broken,readCharacterZip(broken).definition.revision);
+  const badMock=mockCatalog([bad],new Map([[bad.id,broken]]));
+  await assert.rejects(loadProjectCharacterRigs({projectId,speakers:["pip"],fetchImpl:badMock.fetchImpl}),/part|pose/i);
+});
+
 test("preflight preserves supported Kumiki hold phases in saved custom animation",async()=>{
   const original=await archive("pip");
   const modified=mutateSavedAnimation(original,

@@ -365,18 +365,31 @@ function mouthAt(
   };
 }
 
-/** Whether a blink is open at `frame`. Schedule is rebuilt from the seed each call (seek-stable). */
-function isBlinking(spec: NonNullable<CharacterDefinition["blink"]>, seed: number, frame: number): boolean {
+/** Progress 0..1 through the blink at `frame`, or null when the eyes are open. Seek-stable. */
+function blinkProgress(spec: NonNullable<CharacterDefinition["blink"]>, seed: number, frame: number): number | null {
   const random = seededRandom(seed);
   const span = Math.max(1, spec.intervalFrames.max - spec.intervalFrames.min + 1);
   const nextInterval = () => spec.intervalFrames.min + Math.floor(random() * span);
   const duration = Math.max(1, spec.durationFrames);
   let start = nextInterval();
   while (start <= frame) {
-    if (frame < start + duration) return true;
+    if (frame < start + duration) return (frame - start + 1) / (duration + 1);
     start += duration + nextInterval();
   }
-  return false;
+  return null;
+}
+
+function isBlinking(spec: NonNullable<CharacterDefinition["blink"]>, seed: number, frame: number): boolean {
+  return blinkProgress(spec, seed, frame) !== null;
+}
+
+/** How far the lids are closed: ease in, hold, ease out. */
+export function blinkAmount(progress: number, closeFraction = .35): number {
+  const fraction = Math.min(.5, Math.max(1e-6, closeFraction));
+  const ease = (t: number) => { const c = clamp01(t); return c * c * (3 - 2 * c); };
+  if (progress < fraction) return ease(progress / fraction);
+  if (progress > 1 - fraction) return ease((1 - progress) / fraction);
+  return 1;
 }
 
 /**
@@ -626,10 +639,12 @@ export function evaluateCharacter(
       context.report("unknown-variant", "error", `Mouth variant "${now.variant}" is not defined on "${definition.speech.mouthPart}".`);
     }
   }
-  if (definition.blink && !reduced && isBlinking(definition.blink, instance.seed, f)) {
-    for (const id of definition.blink.parts) {
-      if (context.partById.get(id)?.variants?.[definition.blink.variant]) variants.set(id, definition.blink.variant);
+  const blink = definition.blink && !reduced ? blinkProgress(definition.blink, instance.seed, f) : null;
+  if (definition.blink && blink !== null) {
+    for (const id of definition.blink.parts ?? []) {
+      if (context.partById.get(id)?.variants?.[definition.blink.variant ?? ""]) variants.set(id, definition.blink.variant!);
     }
+    if (definition.blink.pose) applyPose(definition.blink.pose, blinkAmount(blink, definition.blink.closeFraction), "additive");
   }
   // A speaking mouth may require a coordinated clean head/background plate.
   // Apply after full-head blinks/expressions so an old painted mouth never

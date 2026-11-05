@@ -7,3 +7,4 @@ coverage
 .vite
 
 apps/web/.qa/
+dist-shot

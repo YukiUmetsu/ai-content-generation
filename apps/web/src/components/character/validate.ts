@@ -166,8 +166,14 @@ export function validateCharacterDefinition(definition: CharacterDefinition): Ch
     const { min, max } = blink.intervalFrames;
     if (!(Number.isInteger(min) && Number.isInteger(max) && min >= 1 && max >= min)) error("blink-interval", "Blink intervals need whole frame counts with 1 ≤ min ≤ max.");
     if (blink.durationFrames < 1) error("blink-duration", "Blink durationFrames must be ≥ 1.");
-    for (const id of blink.parts) {
-      if (!partById.get(id)?.variants?.[blink.variant]) error("unknown-variant", `Blink variant "${blink.variant}" is not defined on "${id}".`, { partId: id });
+    if (!blink.pose && !(blink.parts?.length && blink.variant)) error("blink-empty", "A blink needs `parts` with a `variant`, or a `pose`.");
+    if (blink.closeFraction !== undefined && !(blink.closeFraction > 0 && blink.closeFraction <= .5))
+      error("blink-close-fraction", "Blink closeFraction must be above 0 and at most 0.5.");
+    for (const id of Object.keys(blink.pose ?? {})) {
+      if (!partById.has(id)) error("unknown-part", `Blink pose references unknown part "${id}".`, { partId: id });
+    }
+    for (const id of blink.parts ?? []) {
+      if (!partById.get(id)?.variants?.[blink.variant ?? ""]) error("unknown-variant", `Blink variant "${blink.variant}" is not defined on "${id}".`, { partId: id });
     }
   }
   for (const [id, spec] of Object.entries(definition.idle?.parts ?? {})) {

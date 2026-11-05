@@ -359,7 +359,10 @@ export function parseVideoProductionJob(input) {
         if (has(beat.visual, "direction")) {
           const path = `beats[${index}].visual.direction`;
           const dir = beat.visual.direction;
-          if (fields(dir, path, ["phase", "subjectIds", "visualAction", "learningChange", "transformation", "visualMechanic"])) {
+          if (fields(dir, path, ["phase", "subjectIds", "visualAction", "learningChange", "transformation", "visualMechanic", "performance"])) {
+            // The full intent is validated against the cast and set when its shot is prepared.
+            if (has(dir, "performance") && dir.performance?.version !== 1)
+              add("invalid-performance-intent", path+".performance", "Use PerformanceIntent version 1.");
             if (!["problem", "analogy", "mechanism", "payoff", "none"].includes(dir.phase))
               add("invalid-visual-phase", path+".phase", "Use an identified teaching phase.");
             if (!Array.isArray(dir.subjectIds) || dir.subjectIds.length < 1 || dir.subjectIds.length > 5 ||

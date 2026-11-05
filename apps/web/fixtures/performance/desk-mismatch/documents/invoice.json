@@ -1,0 +1,76 @@
+{
+ "schema_version": 1,
+ "width": 1748,
+ "height": 1914,
+ "margin": 130,
+ "paper": [
+  244,
+  238,
+  224
+ ],
+ "ink": [
+  38,
+  36,
+  40
+ ],
+ "fonts": {
+  "body": "/System/Library/Fonts/Supplemental/Georgia.ttf",
+  "bold": "/System/Library/Fonts/Supplemental/Georgia Bold.ttf"
+ },
+ "blocks": [
+  {
+   "kind": "text",
+   "text": "INVOICE",
+   "font": "bold",
+   "size": 150
+  },
+  {
+   "kind": "text",
+   "text": "No. 0417    Ledgerwood Supply Co.",
+   "size": 52,
+   "color": [
+    90,
+    84,
+    80
+   ]
+  },
+  {
+   "kind": "rule",
+   "weight": 5
+  },
+  {
+   "kind": "row",
+   "label": "Paper stock",
+   "value": "$70",
+   "size": 74
+  },
+  {
+   "kind": "row",
+   "label": "Delivery",
+   "value": "$30",
+   "size": 74
+  },
+  {
+   "kind": "row",
+   "label": "Handling",
+   "value": "$20",
+   "size": 74
+  },
+  {
+   "kind": "rule"
+  },
+  {
+   "kind": "row",
+   "label": "TOTAL",
+   "font": "bold",
+   "value": "$120",
+   "size": 120,
+   "value_size": 300,
+   "value_color": [
+    150,
+    34,
+    30
+   ]
+  }
+ ]
+}

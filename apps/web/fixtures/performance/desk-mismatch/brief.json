@@ -1,0 +1,219 @@
+{
+ "objective": "Show that the invoice total and the receipt total do not match.",
+ "visualChange": "Two separate documents become one side-by-side comparison with a visible gap.",
+ "claimIds": [],
+ "durationFrames": 300,
+ "fps": {
+  "num": 30,
+  "den": 1
+ },
+ "timing": "natural",
+ "maxHeadTurn": 13,
+ "cast": [
+  {
+   "id": "pip",
+   "start": [
+    -0.66,
+    0,
+    0.12
+   ],
+   "mark": [
+    -0.2,
+    0,
+    0.12
+   ],
+   "yaw": 0.3,
+   "seed": 27,
+   "gait": {
+    "left": "leg_left",
+    "right": "leg_right",
+    "body": "torso",
+    "stride": 0.07,
+    "lift": 34,
+    "swing": 9,
+    "bob": 7
+   },
+   "clear": [
+    -0.33,
+    0,
+    0.12
+   ],
+   "maxViewAngle": 30
+  },
+  {
+   "id": "quill",
+   "start": [
+    0.12,
+    0,
+    0.045
+   ],
+   "yaw": -0.3,
+   "seed": 11,
+   "variantFadeFrames": 4,
+   "clear": [
+    0.25,
+    0,
+    0.045
+   ],
+   "maxViewAngle": 30
+  }
+ ],
+ "objects": [
+  {
+   "id": "invoice",
+   "pitch": 1.05,
+   "holder": {
+    "actor": "pip",
+    "effector": "hand.right",
+    "grip": "left",
+    "offset": [
+     -0.008,
+     0.016,
+     0.012
+    ]
+   },
+   "lay": {
+    "to": [
+     -0.073,
+     0,
+     0.114
+    ],
+    "toYaw": -0.08,
+    "releaseHeight": 0.035
+   },
+   "material": "paper",
+   "bendable": true
+  },
+  {
+   "id": "receipt",
+   "pitch": 1.2,
+   "holder": {
+    "actor": "quill",
+    "effector": "hand.left",
+    "grip": "corner"
+   },
+   "examine": {
+    "to": [
+     -0.015,
+     0.095,
+     0.13
+    ],
+    "toPitch": 1.15,
+    "toYaw": 0.2
+   },
+   "lay": {
+    "to": [
+     0.055,
+     0,
+     0.115
+    ],
+    "toYaw": 0.05,
+    "releaseHeight": 0.03
+   },
+   "material": "paper",
+   "bendable": true
+  }
+ ],
+ "lines": [
+  {
+   "id": "pip-line",
+   "actor": "pip",
+   "about": "invoice"
+  },
+  {
+   "id": "quill-line",
+   "actor": "quill",
+   "about": "receipt"
+  },
+  {
+   "id": "gap-line",
+   "actor": "pip"
+  }
+ ],
+ "shots": {
+  "wide": {
+   "subjects": [
+    "quill"
+   ],
+   "camera": {
+    "position": [
+     -0.05,
+     0.135,
+     0.92
+    ],
+    "endPosition": [
+     -0.01,
+     0.14,
+     0.84
+    ],
+    "focus": [
+     -0.05,
+     0.12,
+     0.05
+    ],
+    "endFocus": [
+     -0.01,
+     0.125,
+     0.04
+    ],
+    "fov": 26,
+    "near": 0.01,
+    "far": 30
+   }
+  },
+  "reveal": {
+   "subjects": [
+    "totals"
+   ],
+   "bounds": {
+    "min": [
+     -0.125,
+     0,
+     0.06
+    ],
+    "max": [
+     0.085,
+     0.01,
+     0.17
+    ]
+   },
+   "camera": {
+    "position": [
+     -0.022,
+     0.37,
+     0.31
+    ],
+    "endPosition": [
+     -0.022,
+     0.325,
+     0.285
+    ],
+    "focus": [
+     -0.022,
+     0,
+     0.115
+    ],
+    "endFocus": [
+     -0.022,
+     0,
+     0.115
+    ],
+    "fov": 26,
+    "near": 0.01,
+    "far": 30
+   }
+  }
+ },
+ "light": {
+  "dim": "window",
+  "lift": "bounce"
+ },
+ "accentFrame": 222,
+ "label": {
+  "text": "$20 gap",
+  "x": 960,
+  "y": 930,
+  "startFrame": 244,
+  "endFrame": 300
+ }
+}
