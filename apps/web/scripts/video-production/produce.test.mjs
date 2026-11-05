@@ -350,7 +350,7 @@ test("production emits real stage transitions and forwards verified capture fram
   };
   const result=await produceVideo(ctx.job, { ...ctx.opts, onProgress: (event) => events.push(event) }, ctx.injected);
   const phases = events.map((event) => event.phase);
-  assert.deepEqual(phases, ["browser-preflight", "asset-search", "asset-preparation", "narration", "timeline", "scene-layouts", "audio", "captions", "rendering", "rendering", "thumbnails", "mux", "qa", "review"]);
+  assert.deepEqual(phases, ["browser-preflight", "asset-search", "asset-preparation", "narration", "timeline", "scene-layouts", "scene-stories", "audio", "captions", "rendering", "rendering", "thumbnails", "mux", "qa", "review"]);
   assert.deepEqual(events.find((event) => event.completedFrames === 90),
     { phase: "rendering", completedFrames: 90, totalFrames: 90 });
   const narration=events.find(event=>event.phase==="timeline")?.artifactLedger;

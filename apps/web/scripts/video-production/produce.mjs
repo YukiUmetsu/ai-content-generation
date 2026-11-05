@@ -15,6 +15,7 @@ import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
 import { renderMasterAudio } from "./audio.mjs";
 import { applyPerformanceShots } from "./performance-shots.mjs";
+import { applyObjectStories } from "./story-scenes.mjs";
 import { frameToSample, makeSound } from "./shot-audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
@@ -374,6 +375,9 @@ export async function produceVideo(candidate, options, deps = {}) {
     timeline = { ...timeline, eventSamples: { ...timeline.eventSamples, ...performanceSounds.events } };
     await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
     plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
+    await options.onProgress?.({ phase: "scene-stories", message: "Directing what changes on screen for each spoken phrase…" });
+    const stories = await (deps.applyObjectStories ?? applyObjectStories)(plan, { speech, ffmpeg: options.ffmpeg, signal: options.signal, enabled: options.objectStories !== false });
+    plan = stories.plan;
     const frames = plan.manifest.durationFrames;
     const reviewFrames = selectSceneReviewFrames(plan);
     const sourcePlan = JSON.stringify(plan);
@@ -524,7 +528,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     await rename(working, releaseDir);
     await options.onProgress?.({ phase: "review", message: "A verified draft is ready for human playback and listening.",
       artifactLedger:{kind:"technical-qa",technicalPass:qa.technicalPass===true,manifestHash} });
-    return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration,
+    return { releaseDir, videoPath: join(releaseDir, "video.mp4"), qa, planHash, regeneration, storyReport: stories.report,
       artifactHashes,manifestHash,thumbnails };
   } finally {
     if (stage) await stage.close();

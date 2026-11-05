@@ -25,6 +25,13 @@
 - **Reuse:** a shot is reused only when the intent, spoken windows, mouth cues, asset hashes, tools and render settings all match. Its video hash is checked again.
 - **Setup:** set `KUMIKI_BLENDER_ROOT`, `KUMIKI_BLENDER`, and optionally `CONTENTGEN_RHUBARB` for mouth shapes from real audio. Without Rhubarb, lines use the labelled approximate cycle.
 
+**Adopted 2026-11-05: object story scenes.** A landscape narrated scene with no picture of its own is drawn by Kumiki's `object-story` item. `story-director.mjs` reads each spoken phrase and writes an OS1 spec: who is on stage and what changes. `story-language.mjs` and `story-vocabulary.json` hold the words, amounts, units and signals as data. `speech-phrases.mjs` times phrases from text length and corrects them with real pauses in the audio. `story-scenes.mjs` runs after narration and before capture.
+
+- **Boundary:** Kumiki owns stage layout, caption placement, frame evaluation and the stillness report. ContentGen owns which objects and operations a phrase asks for.
+- **What keeps its own picture:** footage, charts, recipes, semantic mechanics, performance shots and dialogue scenes. Each of these ends stage continuity, so the next story starts clean.
+- **Failure:** an invalid story stops production and names the scene. The Node check in `dist-shot/story-entry.mjs` uses a cautious width estimate; the export page compiles again with real font metrics.
+- **Portrait:** not drawn yet. Portrait plans keep their existing scenes.
+
 ## Versioned adapter contract
 
 Build a **KumikiRenderAdapter** in ContentGen's optional TS worker, not the Rust domain layer. It consumes an approved SemanticStoryboard + BrandKit/DeliveryProfile snapshot + stable asset refs, resolves currently supported Kumiki source registry versions, then emits:

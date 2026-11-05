@@ -1,0 +1,924 @@
+{
+ "schemaVersion": 1,
+ "objects": [
+  {
+   "art": "finance:bank",
+   "label": "Bank",
+   "terms": [
+    "bank",
+    "banks",
+    "bank feed",
+    "bank statement"
+   ],
+   "termsJa": [
+    "銀行"
+   ]
+  },
+  {
+   "art": "finance:bank-branch",
+   "label": "Bank branch",
+   "terms": [
+    "bank branch"
+   ]
+  },
+  {
+   "art": "finance:investment-bank",
+   "label": "Investment bank",
+   "terms": [
+    "investment bank"
+   ]
+  },
+  {
+   "art": "finance:bank-account",
+   "label": "Bank account",
+   "terms": [
+    "account",
+    "accounts",
+    "bank account"
+   ]
+  },
+  {
+   "art": "finance:checking-account",
+   "label": "Checking account",
+   "terms": [
+    "checking account"
+   ]
+  },
+  {
+   "art": "finance:savings-account",
+   "label": "Savings account",
+   "terms": [
+    "savings account"
+   ]
+  },
+  {
+   "art": "finance:credit-card",
+   "label": "Credit card",
+   "terms": [
+    "credit card",
+    "credit cards",
+    "card",
+    "cards"
+   ],
+   "termsJa": [
+    "クレジットカード"
+   ]
+  },
+  {
+   "art": "finance:debit-card",
+   "label": "Debit card",
+   "terms": [
+    "debit card",
+    "debit cards"
+   ]
+  },
+  {
+   "art": "finance:gift-card",
+   "label": "Gift card",
+   "terms": [
+    "gift card"
+   ]
+  },
+  {
+   "art": "finance:atm",
+   "label": "ATM",
+   "terms": [
+    "atm"
+   ]
+  },
+  {
+   "art": "finance:payment-terminal",
+   "label": "Payment terminal",
+   "terms": [
+    "payment terminal"
+   ]
+  },
+  {
+   "art": "finance:cash-register",
+   "label": "Cash register",
+   "terms": [
+    "cash register"
+   ]
+  },
+  {
+   "art": "finance:loan",
+   "label": "Loan",
+   "terms": [
+    "loan",
+    "loans",
+    "debt",
+    "borrowing"
+   ],
+   "termsJa": [
+    "ローン",
+    "借金"
+   ]
+  },
+  {
+   "art": "finance:loan-agreement",
+   "label": "Loan agreement",
+   "terms": [
+    "loan agreement"
+   ]
+  },
+  {
+   "art": "finance:contract",
+   "label": "Contract",
+   "terms": [
+    "contract",
+    "contracts",
+    "agreement",
+    "agreements"
+   ]
+  },
+  {
+   "art": "finance:invoice",
+   "label": "Invoice",
+   "terms": [
+    "invoice",
+    "invoices",
+    "bill",
+    "bills"
+   ],
+   "termsJa": [
+    "請求書"
+   ]
+  },
+  {
+   "art": "finance:receipt",
+   "label": "Receipt",
+   "terms": [
+    "receipt",
+    "receipts",
+    "paper trail",
+    "proof of payment"
+   ],
+   "termsJa": [
+    "領収書",
+    "レシート"
+   ]
+  },
+  {
+   "art": "finance:tax-return",
+   "label": "Tax return",
+   "terms": [
+    "tax return",
+    "tax returns",
+    "taxes",
+    "tax",
+    "irs"
+   ],
+   "termsJa": [
+    "確定申告",
+    "税金"
+   ]
+  },
+  {
+   "art": "finance:insurance-policy",
+   "label": "Insurance policy",
+   "terms": [
+    "insurance",
+    "policy",
+    "policies",
+    "premium",
+    "premiums",
+    "insurance policy"
+   ]
+  },
+  {
+   "art": "finance:dollar",
+   "label": "US dollar",
+   "terms": [
+    "dollar",
+    "dollars",
+    "us dollar"
+   ]
+  },
+  {
+   "art": "finance:banknote",
+   "label": "Banknote",
+   "terms": [
+    "banknote"
+   ]
+  },
+  {
+   "art": "finance:cash-stack",
+   "label": "Cash stack",
+   "terms": [
+    "cash",
+    "money",
+    "payment",
+    "payments",
+    "paid",
+    "cash stack"
+   ],
+   "termsJa": [
+    "現金",
+    "お金",
+    "支払い"
+   ]
+  },
+  {
+   "art": "finance:coin",
+   "label": "Coin",
+   "terms": [
+    "coin"
+   ]
+  },
+  {
+   "art": "finance:coins",
+   "label": "Coins",
+   "terms": [
+    "coins",
+    "change",
+    "pennies"
+   ]
+  },
+  {
+   "art": "finance:interest",
+   "label": "Interest",
+   "terms": [
+    "interest",
+    "apr"
+   ]
+  },
+  {
+   "art": "finance:wallet",
+   "label": "Wallet",
+   "terms": [
+    "wallet",
+    "pocket",
+    "spending"
+   ]
+  },
+  {
+   "art": "finance:piggy-bank",
+   "label": "Piggy bank",
+   "terms": [
+    "savings",
+    "piggy bank",
+    "saving"
+   ]
+  },
+  {
+   "art": "finance:safe",
+   "label": "Safe",
+   "terms": [
+    "safe",
+    "secure storage"
+   ]
+  },
+  {
+   "art": "finance:vault",
+   "label": "Vault",
+   "terms": [
+    "vault"
+   ]
+  },
+  {
+   "art": "finance:house",
+   "label": "House",
+   "terms": [
+    "house",
+    "home",
+    "homes",
+    "property"
+   ]
+  },
+  {
+   "art": "finance:mortgage",
+   "label": "Mortgage",
+   "terms": [
+    "mortgage",
+    "mortgages"
+   ]
+  },
+  {
+   "art": "finance:storefront",
+   "label": "Storefront",
+   "terms": [
+    "store",
+    "shop",
+    "storefront"
+   ]
+  },
+  {
+   "art": "finance:business",
+   "label": "Business",
+   "terms": [
+    "business",
+    "businesses",
+    "company",
+    "companies",
+    "vendor",
+    "vendors",
+    "client",
+    "clients",
+    "customer",
+    "customers"
+   ]
+  },
+  {
+   "art": "finance:briefcase",
+   "label": "Briefcase",
+   "terms": [
+    "job",
+    "career",
+    "work",
+    "briefcase",
+    "freelancer",
+    "freelancers"
+   ]
+  },
+  {
+   "art": "finance:investment",
+   "label": "Investment",
+   "terms": [
+    "investment",
+    "investments",
+    "investing"
+   ]
+  },
+  {
+   "art": "finance:stock",
+   "label": "Stock market",
+   "terms": [
+    "stock",
+    "stocks",
+    "stock market",
+    "market"
+   ]
+  },
+  {
+   "art": "finance:growth",
+   "label": "Growth",
+   "terms": [
+    "growth",
+    "grow",
+    "grows",
+    "increase"
+   ]
+  },
+  {
+   "art": "finance:profit",
+   "label": "Profit",
+   "terms": [
+    "profit",
+    "profits",
+    "gain",
+    "gains"
+   ]
+  },
+  {
+   "art": "finance:loss",
+   "label": "Loss",
+   "terms": [
+    "loss",
+    "losses",
+    "shortfall"
+   ]
+  },
+  {
+   "art": "finance:calculator",
+   "label": "Calculator",
+   "terms": [
+    "calculator",
+    "calculate",
+    "calculation"
+   ]
+  },
+  {
+   "art": "finance:budget",
+   "label": "Budget",
+   "terms": [
+    "budget",
+    "budgets",
+    "books",
+    "ledger",
+    "ledgers",
+    "bookkeeping",
+    "spreadsheet",
+    "accounts book"
+   ],
+   "termsJa": [
+    "帳簿",
+    "予算",
+    "家計簿"
+   ]
+  },
+  {
+   "art": "finance:insurance",
+   "label": "Insurance",
+   "terms": [
+    "insurance"
+   ]
+  },
+  {
+   "art": "finance:risk",
+   "label": "Risk",
+   "terms": [
+    "risk"
+   ]
+  },
+  {
+   "art": "finance:transfer",
+   "label": "Money transfer",
+   "terms": [
+    "transfer",
+    "transfers",
+    "wire",
+    "money transfer"
+   ]
+  },
+  {
+   "art": "finance:transaction",
+   "label": "Transaction",
+   "terms": [
+    "transaction",
+    "transactions",
+    "charge",
+    "charges",
+    "entry",
+    "entries"
+   ]
+  },
+  {
+   "art": "finance:currency-exchange",
+   "label": "Currency exchange",
+   "terms": [
+    "currency exchange"
+   ]
+  },
+  {
+   "art": "finance:handshake",
+   "label": "Handshake",
+   "terms": [
+    "handshake"
+   ]
+  },
+  {
+   "art": "finance:partnership",
+   "label": "Partnership",
+   "terms": [
+    "partnership"
+   ]
+  },
+  {
+   "art": "finance:repayment",
+   "label": "Repayment schedule",
+   "terms": [
+    "repayment schedule"
+   ]
+  },
+  {
+   "art": "finance:payday",
+   "label": "Payday",
+   "terms": [
+    "payday"
+   ]
+  },
+  {
+   "art": "finance:stock-workstation",
+   "label": "Stock trading workstation",
+   "terms": [
+    "stock trading workstation"
+   ]
+  },
+  {
+   "art": "finance:stock-chart",
+   "label": "Stock price chart",
+   "terms": [
+    "stock price chart"
+   ]
+  },
+  {
+   "art": "finance:corporate-office",
+   "label": "Corporate headquarters",
+   "terms": [
+    "corporate headquarters"
+   ]
+  },
+  {
+   "art": "finance:money-printing-press",
+   "label": "Currency printing press",
+   "terms": [
+    "currency printing press"
+   ]
+  },
+  {
+   "art": "finance:money-bag",
+   "label": "Money bag",
+   "terms": [
+    "money bag"
+   ]
+  },
+  {
+   "art": "finance:bank-check",
+   "label": "Bank check",
+   "terms": [
+    "bank check"
+   ]
+  },
+  {
+   "art": "finance:bull-market",
+   "label": "Bull market",
+   "terms": [
+    "bull market"
+   ]
+  },
+  {
+   "art": "finance:bear-market",
+   "label": "Bear market",
+   "terms": [
+    "bear market"
+   ]
+  },
+  {
+   "art": "finance:financial-dashboard",
+   "label": "Financial dashboard",
+   "terms": [
+    "financial dashboard"
+   ]
+  },
+  {
+   "art": "finance:retail-store",
+   "label": "Retail store",
+   "terms": [
+    "retail store"
+   ]
+  },
+  {
+   "art": "finance:corporate",
+   "label": "Corporation",
+   "terms": [
+    "corporation"
+   ]
+  },
+  {
+   "art": "finance:gold-bars",
+   "label": "Gold bars",
+   "terms": [
+    "gold bars"
+   ]
+  },
+  {
+   "art": "business:org-chart",
+   "label": "Org chart",
+   "terms": [
+    "org chart"
+   ]
+  },
+  {
+   "art": "business:team",
+   "label": "Team",
+   "terms": [
+    "team",
+    "teams",
+    "people",
+    "staff",
+    "employees"
+   ],
+   "termsJa": [
+    "チーム"
+   ]
+  },
+  {
+   "art": "business:meeting",
+   "label": "Meeting",
+   "terms": [
+    "meeting",
+    "meetings"
+   ]
+  },
+  {
+   "art": "business:presentation",
+   "label": "Presentation",
+   "terms": [
+    "presentation",
+    "pitch"
+   ]
+  },
+  {
+   "art": "business:kpi-dashboard",
+   "label": "KPI dashboard",
+   "terms": [
+    "kpi dashboard"
+   ]
+  },
+  {
+   "art": "business:target",
+   "label": "Target",
+   "terms": [
+    "goal",
+    "goals",
+    "target",
+    "targets"
+   ],
+   "termsJa": [
+    "目標"
+   ]
+  },
+  {
+   "art": "business:milestone",
+   "label": "Milestone",
+   "terms": [
+    "milestone",
+    "milestones",
+    "roadmap"
+   ]
+  },
+  {
+   "art": "business:deadline",
+   "label": "Deadline",
+   "terms": [
+    "deadline",
+    "deadlines",
+    "due date"
+   ],
+   "termsJa": [
+    "締め切り",
+    "期限"
+   ]
+  },
+  {
+   "art": "business:workflow",
+   "label": "Workflow",
+   "terms": [
+    "workflow",
+    "workflows",
+    "process",
+    "processes",
+    "step",
+    "steps"
+   ]
+  },
+  {
+   "art": "business:checklist",
+   "label": "Checklist",
+   "terms": [
+    "checklist",
+    "checklists",
+    "habit",
+    "habits",
+    "routine",
+    "routines",
+    "list"
+   ],
+   "termsJa": [
+    "習慣",
+    "チェックリスト"
+   ]
+  },
+  {
+   "art": "business:idea",
+   "label": "Idea",
+   "terms": [
+    "idea",
+    "ideas",
+    "insight",
+    "fix",
+    "solution"
+   ],
+   "termsJa": [
+    "アイデア"
+   ]
+  },
+  {
+   "art": "business:megaphone",
+   "label": "Announcement",
+   "terms": [
+    "announcement",
+    "marketing",
+    "advertising"
+   ]
+  },
+  {
+   "art": "business:global-market",
+   "label": "Global market",
+   "terms": [
+    "global market"
+   ]
+  },
+  {
+   "art": "business:delivery-truck",
+   "label": "Delivery truck",
+   "terms": [
+    "delivery",
+    "deliveries",
+    "shipping",
+    "truck",
+    "delivery truck"
+   ]
+  },
+  {
+   "art": "business:shipping-box",
+   "label": "Shipping box",
+   "terms": [
+    "package",
+    "packages",
+    "parcel",
+    "box",
+    "shipping box"
+   ]
+  },
+  {
+   "art": "business:warehouse",
+   "label": "Warehouse",
+   "terms": [
+    "warehouse",
+    "inventory"
+   ]
+  },
+  {
+   "art": "business:factory",
+   "label": "Factory",
+   "terms": [
+    "factory",
+    "factories",
+    "manufacturing"
+   ]
+  },
+  {
+   "art": "technology:server-rack",
+   "label": "Server rack",
+   "terms": [
+    "server",
+    "servers",
+    "server rack"
+   ]
+  },
+  {
+   "art": "technology:router",
+   "label": "Network router",
+   "terms": [
+    "router",
+    "routers",
+    "network",
+    "internet",
+    "network router"
+   ]
+  },
+  {
+   "art": "technology:database",
+   "label": "Database",
+   "terms": [
+    "database",
+    "databases"
+   ],
+   "termsJa": [
+    "データベース"
+   ]
+  },
+  {
+   "art": "technology:storage-disk",
+   "label": "Storage disk",
+   "terms": [
+    "storage disk"
+   ]
+  },
+  {
+   "art": "technology:cloud",
+   "label": "Cloud",
+   "terms": [
+    "cloud"
+   ]
+  },
+  {
+   "art": "technology:api",
+   "label": "API connector",
+   "terms": [
+    "api",
+    "apis",
+    "api connector"
+   ]
+  },
+  {
+   "art": "technology:laptop",
+   "label": "Laptop",
+   "terms": [
+    "laptop",
+    "computer",
+    "computers",
+    "software",
+    "app",
+    "apps",
+    "tool",
+    "tools"
+   ],
+   "termsJa": [
+    "パソコン",
+    "ソフト",
+    "アプリ",
+    "ツール"
+   ]
+  },
+  {
+   "art": "technology:mobile-phone",
+   "label": "Mobile phone",
+   "terms": [
+    "phone",
+    "phones",
+    "smartphone",
+    "mobile",
+    "mobile phone"
+   ]
+  },
+  {
+   "art": "technology:cpu",
+   "label": "Processor",
+   "terms": [
+    "cpu",
+    "chip",
+    "processor"
+   ]
+  },
+  {
+   "art": "technology:ai-model",
+   "label": "AI model",
+   "terms": [
+    "ai",
+    "artificial intelligence",
+    "model",
+    "models",
+    "chatbot",
+    "ai model"
+   ],
+   "termsJa": [
+    "AI",
+    "人工知能"
+   ]
+  },
+  {
+   "art": "technology:padlock",
+   "label": "Security lock",
+   "terms": [
+    "password",
+    "passwords",
+    "lock",
+    "encryption",
+    "security",
+    "privacy",
+    "security lock"
+   ]
+  },
+  {
+   "art": "technology:security-key",
+   "label": "Security key",
+   "terms": [
+    "security key"
+   ]
+  },
+  {
+   "art": "technology:code-terminal",
+   "label": "Code terminal",
+   "terms": [
+    "code",
+    "terminal",
+    "script",
+    "scripts",
+    "code terminal"
+   ]
+  },
+  {
+   "art": "technology:container",
+   "label": "Container",
+   "terms": [
+    "container"
+   ]
+  },
+  {
+   "art": "technology:user-identity",
+   "label": "User identity",
+   "terms": [
+    "user identity"
+   ]
+  },
+  {
+   "art": "technology:settings",
+   "label": "Settings",
+   "terms": [
+    "settings"
+   ]
+  },
+  {
+   "art": "technology:bug",
+   "label": "Software bug",
+   "terms": [
+    "bug",
+    "bugs",
+    "error",
+    "errors",
+    "mistake",
+    "mistakes",
+    "software bug"
+   ]
+  },
+  {
+   "art": "technology:git-branch",
+   "label": "Version branch",
+   "terms": [
+    "version branch"
+   ]
+  }
+ ]
+}

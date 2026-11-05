@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { compileReferenceJob, renderReference, screenTextReport, writeContactSheet } from "./reference-render.mjs";
+import { compileReferenceJob, measureStillness, renderReference, screenTextReport, writeContactSheet } from "./reference-render.mjs";
 import { parseVideoProductionJob } from "./job.mjs";
 
 const fixturePath = new URL("../../fixtures/reference/invoice-receipt-gap.json", import.meta.url);
@@ -53,6 +53,12 @@ test("the contact sheet takes one frame inside each scene and cleans up its work
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("stillness is read from FFmpeg's freeze log", async () => {
+  const run = async () => ({ stderr: "freeze_start: 2.5\nfreeze_duration: 1.25\nfreeze_end: 3.75\nfreeze_start: 9\nfreeze_duration: 3\nfreeze_end: 12" });
+  assert.deepEqual(await measureStillness("/v.mp4", {}, { run }), { thresholdSeconds: 1, longestSeconds: 3,
+    stretches: [{ startSeconds: 2.5, seconds: 1.25 }, { startSeconds: 9, seconds: 3 }] });
+});
+
 test("a render writes a report, uses sentence rules by default and always stops the draft voice", async () => {
   const dir = await mkdtemp(join(tmpdir(), "reference-render-"));
   let closed = 0, seen;
@@ -69,6 +75,7 @@ test("a render writes a report, uses sentence rules by default and always stops 
       return {};
     },
     writeContactSheet: async ({ output }) => ({ output, scenes: 5 }),
+    measureStillness: async () => ({ thresholdSeconds: 1, stretches: [], longestSeconds: 0 }),
   };
   try {
     const { report } = await renderReference({ fixture: fixturePath.pathname, out: join(dir, "run") }, deps);

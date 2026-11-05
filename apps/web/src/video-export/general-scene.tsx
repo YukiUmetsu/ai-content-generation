@@ -21,6 +21,7 @@ import { SemanticMechanicScene } from "./semantic-mechanic-scene";
 import { ConversationCharacters } from "./conversation-characters";
 import { characterRigsForChapter } from "./scene-character-rigs";
 import { PerformanceClipScene } from "./performance-clip-scene";
+import { StoryScene } from "./story-scene";
 import type { ExportRigPlan } from "./scene-character-rigs";
 
 const ink = "#F5F2EB";
@@ -140,6 +141,7 @@ export function GeneralExportScene({ plan, frame }: { plan: GeneralVisualPlan; f
   // A rendered 3D shot needs no scrim or diagram. Without its clip, production has already stopped.
   if (performanceClip && stockMedia?.assetType === "video") return <PerformanceClipScene media={stockMedia} clip={performanceClip}
     localFrame={state.localFrame} fps={plan.manifest.fps}/>;
+  if (state.visual.story) return <StoryScene spec={state.visual.story} localFrame={state.localFrame}/>;
   return <GeneralChapterScene plan={plan} frame={frame}/>;
 }
 

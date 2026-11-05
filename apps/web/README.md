@@ -1189,6 +1189,20 @@ canvas. Inspect the actual silent preview at each scene start, mid-reveal,
 and final frame before generating narrated MP4s.
 
 
+### Object story scenes: something changes on every phrase
+
+A landscape scene with no picture of its own is directed from its narration. Kumiki's `object-story` item draws it. Each spoken phrase is a beat, and a beat must change something on screen.
+
+- **Objects:** `scripts/video-production/story-vocabulary.json` maps spoken terms to Kumiki's illustrated finance, business and technology objects. Add a term or a `termsJa` entry there. The label shown is the word the narrator used. An idea with no picture becomes a word, but only on an empty stage.
+- **Actions:** `story-language.mjs` holds units and signal words as data tables. Amounts count up while they are said. A question about an amount measures the gap between two values. Words that link things draw a connection. Problems, fixes and questions end on a mark.
+- **Staging:** `STORY_STAGING` in `story-director.mjs` sets how many objects share the stage and when a long phrase needs a second change.
+- **Timing:** phrases are placed by text length, then moved to real pauses found in the narration audio. If the pause scan fails, the report says `estimated`.
+- **Stage continuity:** objects and values carry into the next scene. A scene with its own picture resets the stage.
+
+`pnpm build` also builds `dist-shot/story-entry.mjs`, which checks each story before capture. `pnpm video:reference` reports the longest still stretch from the plan and from the finished MP4. Pass `objectStories: false` to `produceVideo` to turn stories off.
+
+**Known limit:** the rules read words, not meaning, so some choices will be literal. Japanese narration finds objects but has no spoken-amount parser yet.
+
 ### On-screen text: what the scene says, or what an author wrote
 
 A scene's headline, supporting line and kicker are for the viewer. They never show an outline heading ("Opening hook"), a section purpose, or a direction note (`visualChange`, `learningChange`). The rule lives in `scripts/video-production/audience-copy.mjs`:

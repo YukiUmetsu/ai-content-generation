@@ -90,7 +90,10 @@ async function prepareVideoFrame(target: number, kind: "house-math-visual-plan" 
   const payoffHold = stage.querySelector("[data-payoff-hold]")?.getAttribute("data-payoff-hold") === "true";
   // A rendered shot carries its meaning in picture. prepareStockMediaFrame has already proved its frame.
   const renderedShot = Boolean(stage.querySelector("[data-contentgen-performance-clip] video"));
-  if (!portrait && !copy.length && !payoffHold && !renderedShot && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
+  // An object story compiled against measured text, so a frame only has to show its objects.
+  const storyFrame = stage.querySelector("[data-km-object-story]");
+  if (storyFrame && !storyFrame.querySelector("[data-km-story-object]")) throw new Error(`Story scene has no objects at frame ${target}`);
+  if (!portrait && !copy.length && !payoffHold && !renderedShot && !storyFrame && !(kind === "general-explainer-visual-plan" && target === payoffFrame)) throw new Error("Video scene has no verifiable title copy");
   if (portrait) {
     const portraitRoot = stage.querySelector<HTMLElement>("[data-portrait-general-scene]");
     if (!portraitRoot || portraitRoot.dataset.safeFrameStatus !== "ok") {
