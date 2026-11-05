@@ -28,7 +28,8 @@
   "head": {
    "layer": -0.024,
    "inflate": 0.052,
-   "back": 0.95
+   "back": 0.95,
+   "fringe": 60
   },
   "mouth": {
    "layer": -0.0565,
