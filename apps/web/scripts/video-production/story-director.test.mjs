@@ -5,7 +5,7 @@ import { captionFor, compileVocabulary, mentionedObjects, phraseKeyword, phraseS
 import { directSceneStory, newStoryStage } from "./story-director.mjs";
 import { detectPauses, phraseWindows, speechPhrases } from "./speech-phrases.mjs";
 import { applyObjectStories, sceneNeedsStory } from "./story-scenes.mjs";
-import { STORY_CUES, storyCues, thinCues } from "./story-sound.mjs";
+import { STORY_CUES, mixCueTrack, storyCues, thinCues } from "./story-sound.mjs";
 
 const vocabulary = JSON.parse(await readFile(new URL("./story-vocabulary.json", import.meta.url), "utf8"));
 const fixture = JSON.parse(await readFile(new URL("../../fixtures/reference/invoice-receipt-gap.json", import.meta.url), "utf8"));
@@ -171,12 +171,16 @@ test("each visible change gets a cue on its frame, and a mark sounds like its me
   assert.ok(!carried.some(cue => cue.id === `${first.id}-enter`), "a carried object does not arrive again");
 });
 
-test("close cues give way to the more meaningful one, and a long film stays under the mixer limit", () => {
+test("close cues give way to the more meaningful one", () => {
   const cue = (absolute, key) => ({ ...STORY_CUES[key], absolute });
   const thin = thinCues([cue(10, "highlight"), cue(11, "check"), cue(100, "enter")], { fps });
   assert.deepEqual(thin.map(item => item.sound), ["story-check", "story-pop"]);
-  const many = Array.from({ length: 400 }, (_, index) => cue(index * 30, index % 10 ? "highlight" : "cross"));
-  const limited = thinCues(many, { fps, maxCues: 50 });
-  assert.equal(limited.length, 50);
-  assert.equal(limited.filter(item => item.sound === "story-cross").length, 40);
+  assert.equal(thinCues(Array.from({ length: 900 }, (_, index) => cue(index * 30, "enter")), { fps }).length, 900, "a long film keeps every cue");
+});
+
+test("cues mix at their samples with their gains, and the track never wraps", () => {
+  const pcm = Int16Array.from([1000, 1000]);
+  assert.deepEqual([...mixCueTrack([{ sample: 1, pcm, gainDb: 0 }, { sample: 2, pcm, gainDb: -6.0206 }], 4)], [0, 1000, 1500, 500]);
+  assert.deepEqual([...mixCueTrack([{ sample: 0, pcm: Int16Array.from([30000]), gainDb: 0 }, { sample: 0, pcm: Int16Array.from([30000]), gainDb: 0 }], 1)], [32767]);
+  assert.deepEqual([...mixCueTrack([{ sample: 3, pcm, gainDb: 0 }], 4)], [0, 0, 0, 1000], "a cue is cut at the end of the film");
 });

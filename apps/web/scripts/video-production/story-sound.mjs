@@ -35,12 +35,25 @@ export function storyCues(spec, table = STORY_CUES) {
   return cues.sort((a, b) => a.frame - b.frame);
 }
 
-/** Keep cues apart in time and under a limit, always preferring the most meaningful. */
-export function thinCues(cues, { fps, maxCues = 180 }) {
+/** Keep cues apart in time, always preferring the most meaningful. */
+export function thinCues(cues, { fps }) {
   const spacing = Math.ceil(MIN_CUE_SECONDS * fps.num / fps.den);
   const kept = [];
-  for (const cue of [...cues].sort((a, b) => b.priority - a.priority || a.frame - b.frame)) {
-    if (kept.length < maxCues && !kept.some(other => other.absolute !== undefined && Math.abs(other.absolute - cue.absolute) < spacing)) kept.push(cue);
-  }
+  for (const cue of [...cues].sort((a, b) => b.priority - a.priority || a.absolute - b.absolute))
+    if (!kept.some(other => Math.abs(other.absolute - cue.absolute) < spacing)) kept.push(cue);
   return kept.sort((a, b) => a.absolute - b.absolute);
+}
+
+/** Mix cues into one 16-bit PCM track, so a long film can have a cue on every change.
+ * @param {{sample:number,pcm:Int16Array,gainDb:number}[]} placed
+ * @param {number} totalSamples
+ * @returns {Int16Array}
+ */
+export function mixCueTrack(placed, totalSamples) {
+  const mix = new Float64Array(totalSamples);
+  for (const { sample, pcm, gainDb } of placed) {
+    const gain = 10 ** (gainDb / 20);
+    for (let index = 0; index < pcm.length && sample + index < totalSamples; index++) mix[sample + index] += pcm[index] * gain;
+  }
+  return Int16Array.from(mix, value => Math.max(-32768, Math.min(32767, Math.round(value))));
 }

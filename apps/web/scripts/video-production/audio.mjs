@@ -25,7 +25,10 @@ function pcmHeader(samples) {
   return header;
 }
 
-function readPcmData(bytes) {
+/** A complete mono 16-bit WAV file from raw PCM bytes. */
+export const wavBytes = (pcm) => Buffer.concat([pcmHeader(pcm.length / 2), pcm]);
+
+export function readPcmData(bytes) {
   if (bytes.length < 44 || bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WAVE" ||
     bytes.readUInt32LE(4) + 8 > bytes.length) fail("missing, truncated or invalid WAV speech");
   const end = bytes.readUInt32LE(4) + 8;

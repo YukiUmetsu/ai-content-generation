@@ -13,9 +13,10 @@ import { synthesizeNarration } from "./speech.mjs";
 import { buildSampleTimeline, fitSceneDurations } from "./timeline.mjs";
 import { resolveVisualSfxTimeline } from "./visual-sfx-timing.mjs";
 import { analyzeCaptionReadability } from "./caption-readability.mjs";
-import { renderMasterAudio } from "./audio.mjs";
+import { readPcmData, renderMasterAudio, wavBytes } from "./audio.mjs";
 import { applyPerformanceShots } from "./performance-shots.mjs";
 import { applyObjectStories } from "./story-scenes.mjs";
+import { mixCueTrack } from "./story-sound.mjs";
 import { frameToSample, makeSound } from "./shot-audio.mjs";
 import { compileHouseMathVisuals } from "./visual-plan.mjs";
 import { compileGeneralVisuals } from "./general-visual-plan.mjs";
@@ -137,6 +138,21 @@ async function performanceSfx(sounds, plan, dir) {
     sfx.push({ id, eventId: id, assetPath: await makeSound(sound.sound, dir), licenseStatus: "verified", gainDb: sound.gainDb ?? (sound.sound === "paper-land" ? -9 : -16) });
   }
   return { sfx, events };
+}
+
+/** One synthesized cue track for all story changes, mixed with no count limit. */
+async function storyCueTrack(cues, { fps, totalSamples, dir }) {
+  if (!cues.length) return { sfx: [], events: {} };
+  await mkdir(dir, { recursive: true });
+  const sources = new Map();
+  for (const name of new Set(cues.map(cue => cue.sound))) {
+    const bytes = readPcmData(await readFile(await makeSound(name, dir)));
+    sources.set(name, new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.length)));
+  }
+  const pcm = mixCueTrack(cues.map(cue => ({ sample: frameToSample(cue.absolute, fps), pcm: sources.get(cue.sound), gainDb: cue.gainDb })), totalSamples);
+  const assetPath = join(dir, "story-cues.wav");
+  await writeFile(assetPath, wavBytes(Buffer.from(pcm.buffer)));
+  return { sfx: [{ id: "story-cues", eventId: "story-cues", assetPath, licenseStatus: "verified", gainDb: 0 }], events: { "story-cues": 0 } };
 }
 
 export async function produceVideo(candidate, options, deps = {}) {
@@ -374,8 +390,9 @@ export async function produceVideo(candidate, options, deps = {}) {
     await options.onProgress?.({ phase: "scene-stories", message: "Directing what changes on screen for each spoken phrase…" });
     const stories = await (deps.applyObjectStories ?? applyObjectStories)(plan, { speech, ffmpeg: options.ffmpeg, signal: options.signal, enabled: options.objectStories !== false });
     plan = stories.plan;
-    const performanceSounds = await performanceSfx([...performance.sounds, ...(stories.sounds ?? [])], plan, join(out, ".render", "performance-shots", "sounds"));
-    timeline = { ...timeline, eventSamples: { ...timeline.eventSamples, ...performanceSounds.events } };
+    const performanceSounds = await performanceSfx(performance.sounds, plan, join(out, ".render", "performance-shots", "sounds"));
+    const storySound = await storyCueTrack(stories.cues ?? [], { fps: plan.manifest.fps, totalSamples: timeline.totalSamples, dir: join(out, ".render", "story-sound") });
+    timeline = { ...timeline, eventSamples: { ...timeline.eventSamples, ...performanceSounds.events, ...storySound.events } };
     await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
     plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
     const frames = plan.manifest.durationFrames;
@@ -391,7 +408,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     }), { flag: "wx", mode: 0o600 });
     const sfx = [...job.sounds.map((effect) => ({
       ...effect, assetPath: effect.licenseStatus === "verified" ? effect.assetRef : undefined,
-    })), ...performanceSounds.sfx];
+    })), ...performanceSounds.sfx, ...storySound.sfx];
     await options.onProgress?.({ phase: "audio", message: "Mixing voice, SFX and beat-level captions…",
       ...(fitted.adjustments.length?{timingAdjustments:fitted.adjustments}:{}) });
     const audio = await (deps.renderMasterAudio ?? renderMasterAudio)({ beats: speech, timeline, sfx }, {
