@@ -84,3 +84,17 @@ test("placeholder elements and unsupported split-screen directions receive disti
   assert.ok(report.findings.some(f => f.code === "unrealized-direction" && f.shotId === view.shotMap[0].shotId));
   assert.ok(report.findings.every(f => f.message && f.suggestion && f.shotId));
 });
+
+test("an outline label or a direction note shown as screen text is an error on that shot only", () => {
+  const view = generic(sample());
+  const clean = analyzed(view);
+  assert.equal(clean.findings.some(finding => finding.code === "editorial-copy-leak"), false);
+  view.plan.chapters[0].visual.headline = "Opening hook";
+  view.plan.chapters[1].visual.direction.learningChange = "Establish relatable stakes, baseline and scope without repeating the hook.";
+  view.plan.chapters[1].visual.subhead = "Establish relatable stakes, baseline and scope without repeating the hook.";
+  const leaks = analyzed(view).findings.filter(finding => finding.code === "editorial-copy-leak");
+  assert.deepEqual(leaks.map(finding => [finding.shotId, finding.severity]),
+    [[view.shotMap[0].shotId, "error"], [view.shotMap[1].shotId, "error"]]);
+  assert.match(leaks[0].message, /headline shows an outline label/u);
+  assert.match(leaks[1].message, /supporting line shows a direction note/u);
+});

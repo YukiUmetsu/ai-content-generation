@@ -48,7 +48,7 @@ export function PortraitGeneralExportScene({ plan, frame }: { plan: GeneralVisua
     ...chapter, narration: chapter.narration || state.visual.items.join(", "),
   }, plan.manifest.fps), state.localFrame);
   const hiddenPayoff = state.intent === "general-payoff" && state.visibleItems === 0;
-  const scriptPhrase = hiddenPayoff ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, attention?.showDiagram === false ? 0 : state.visibleItems);
+  const scriptPhrase = hiddenPayoff ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, attention?.showDiagram === false ? 0 : state.visibleItems, [state.visual.headline, state.visual.subhead]);
   const items = state.visual.items.slice(0, attention?.showDiagram === false ? 0 : state.visibleItems);
   const split = state.intent === "general-comparison" && state.visual.items.length === 2;
   return <ShortSafeFrame profile={profile} items={contentBoxes} guides={false}

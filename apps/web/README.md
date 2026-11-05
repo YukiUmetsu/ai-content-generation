@@ -1189,6 +1189,17 @@ canvas. Inspect the actual silent preview at each scene start, mid-reveal,
 and final frame before generating narrated MP4s.
 
 
+### On-screen text: what the scene says, or what an author wrote
+
+A scene's headline, supporting line and kicker are for the viewer. They never show an outline heading ("Opening hook"), a section purpose, or a direction note (`visualChange`, `learningChange`). The rule lives in `scripts/video-production/audience-copy.mjs`:
+
+- **Headline:** a title an author wrote, otherwise the scene's first spoken sentence. A default outline heading, or the "Section N" an import assigns, does not count as authored.
+- **Supporting line:** the shot's optional `audienceCopy`, otherwise the next spoken sentence that the headline does not already show.
+- **Kicker:** from `AUDIENCE_KICKERS`, a per-locale table keyed by the scene's place in the film (`opening`, `closing`, `postscript`, `step`). Edit the table to change the words or add a locale.
+- **Running line:** hidden when it only repeats the headline or supporting line.
+
+An older plan that carries an outline label or no `audienceCopy` is repaired from its narration when compiled, with a warning that names the shot. The scene quality review reports any outline label or direction note that still reaches the screen as an `editorial-copy-leak` error.
+
 ### New videos: replace placeholder boxes with teachable on-screen elements
 
 The AI preproduction planner now has an explicit, required **visualElements**

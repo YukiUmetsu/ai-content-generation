@@ -1,5 +1,5 @@
 /** Versioned, per-output AI-written script drafts. Every accepted edit is retained; suggestions never replace text automatically. */
-import {MAX_SCRIPT_SECTIONS,SCRIPT_ROLES,isScriptSectionId} from "../../scripts/video-production/script-contract.mjs";
+import {MAX_SCRIPT_SECTIONS,SCRIPT_OUTLINE,SCRIPT_ROLES,isScriptSectionId} from "../../scripts/video-production/script-contract.mjs";
 
 export type ScriptPlatform = "youtube" | "youtube_shorts" | "tiktok" | "instagram" | "facebook" | "blog" | "website";
 export type ScriptLocale = "en" | "ja";
@@ -82,13 +82,7 @@ const ID = /^[a-z0-9][a-z0-9_-]{1,79}$/i;
 const REF_ID = /^[a-z0-9][a-z0-9_-]{0,100}$/i;
 const PLATFORMS: ScriptPlatform[] = ["youtube", "youtube_shorts", "tiktok", "instagram", "facebook", "blog", "website"];
 export const SHORT_FORM_SCRIPT_PLATFORMS: readonly ScriptPlatform[] = ["youtube_shorts", "tiktok", "instagram", "facebook"];
-const SECTION_PLAN: ReadonlyArray<Pick<ScriptSection, "id" | "heading" | "purpose">> = [
-  { id: "hook", heading: "Opening hook", purpose: "Show a specific audience problem, immediate visual promise and central question." },
-  { id: "context", heading: "Why it matters", purpose: "Establish relatable stakes, baseline and scope without repeating the hook." },
-  { id: "mechanism", heading: "How it works", purpose: "Explain the causal mechanism with sourced examples, not a generic list." },
-  { id: "practical", heading: "What changes the outcome", purpose: "Compare options, sensitivity or useful next steps with limitations." },
-  { id: "closing", heading: "Answer and takeaway", purpose: "Resolve the opening question and make the caveats explicit." },
-];
+const SECTION_PLAN: ReadonlyArray<Pick<ScriptSection, "id" | "heading" | "purpose">> = SCRIPT_OUTLINE;
 export const SCRIPT_STORAGE_PREFIX = "contentgen:script-draft:v1:";
 export const MAX_SCRIPT_DRAFT_BYTES = 1024 * 1024;
 

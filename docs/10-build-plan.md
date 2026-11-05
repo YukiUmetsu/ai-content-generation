@@ -10,7 +10,7 @@
 
 **Exists and runs:** the Rust/Axum server with SQLite migrations `0001`–`0021` and durable Jobs; the Studio with the seven-stage Production flow; Fish and local narration; the FFmpeg master with ducking; the Kumiki landscape render with review stills, thumbnails and a hash-verified release; Character Studio rigs; and Blender-rendered performance shots staged from a fixture through `shot-cli.mjs`. [Production workflow](production-workflow.md) and [Kumiki integration](14-kumiki-integration.md) describe the behaviour.
 
-**The gap:** automation stops at the script. A hand-staged ten-second performance shot looks like a film. The automatic draft of a full script is one repeated card layout, with editorial instructions and section roles shown as on-screen text. Nothing in the Studio path authors `visual.direction.performance` or passes `performanceShots` to the renderer.
+**The gap:** automation stops at the script. A hand-staged ten-second performance shot looks like a film. The automatic draft of a full script is one repeated card layout whose labels are word pairs lifted from the narration. Nothing in the Studio path authors `visual.direction.performance` or passes `performanceShots` to the renderer.
 
 **Priority order.** Each task ends with a real rendered MP4 of one fixed reference script, compared with the previous one. Owners follow the split in [Kumiki integration](14-kumiki-integration.md): Blender work in `kumiki-blender`, general motion and UI in `kumiki-ui`, intent, validation, narration and Jobs here. Anything that differs between scenes is data, not code.
 
@@ -26,6 +26,8 @@
 | V08 | Review loop: sample frames per scene, run the checks, re-plan a failing scene once | content-gen | Report that names each failing scene and the replacement |
 | V09 | One action: Discover → Idea → Script → Scene plan → Render → Publish Kit as one Jobs DAG that stops only for consent | content-gen | A draft produced from one action, with every stop recorded in Jobs |
 | V10 | Portrait: re-author shorts after landscape is good (see P01–P03) | all three | Destination-specific portrait render |
+
+**Done:** V01 and V02 (2026-11-05). `pnpm video:reference` renders the reference script, and scenes show only what they say or what an author wrote for the screen. **Next:** V03.
 
 ## 1. Delivery strategy and finish lines
 

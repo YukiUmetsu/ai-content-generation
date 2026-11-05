@@ -29,6 +29,24 @@ describe("script-to-storyboard editable handoff",()=>{
     expect(validateStoryboard(board).filter(issue=>issue.severity==="error")).toEqual([]);
   });
 
+  it("shows what each scene says, not the outline heading or purpose, and keeps a title the author wrote",()=>{
+    const base=approvedScript();
+    const spoken=base.sections.map((section,index)=>({...section,
+      text:`Scene ${index+1} opens with a plain claim. Then it gives the reason behind that claim.`}));
+    const board=scriptToStoryboard({...base,sections:spoken},evidence);
+    for(const [index,beat] of board.beats.entries()){
+      expect(beat.onScreenText).toBe(`Scene ${index+1} opens with a plain claim`);
+      expect(beat.staticFallback).toBe(`Scene ${index+1} opens with a plain claim — Then it gives the reason behind that claim.`);
+      for(const note of [base.sections[index].heading,base.sections[index].purpose]){
+        expect(beat.onScreenText).not.toContain(note);
+        expect(beat.staticFallback).not.toContain(note);
+      }
+    }
+    const titled=scriptToStoryboard({...base,sections:spoken.map((section,index)=>index===1?{...section,heading:"The premium nobody explains"}:section)},evidence);
+    expect(titled.beats[1].onScreenText).toBe("The premium nobody explains");
+    expect(titled.beats[1].staticFallback).toBe("The premium nobody explains — Scene 2 opens with a plain claim.");
+  });
+
   it("accepts complete unapproved YouTube narration but rejects unfinished scripts",()=>{
     const draft={...approvedScript(),status:"draft" as const,approvedAt:null};
     expect(scriptToStoryboard(draft,evidence).beats).toHaveLength(draft.sections.length);
@@ -58,7 +76,9 @@ it("refreshes stale narration and claims but preserves individually edited visua
   expect(after.beats[0].onScreenText).toBe("Custom opening visual");
   expect(after.beats[0].visualObjective).toBe("Use a custom camera movement");
   expect(after.beats[1].narration).toBe(changed.sections[1].text);
-  expect(after.beats[1].onScreenText).toBe(changed.sections[1].heading);
+  // A replanned scene shows what it now says, never the outline heading.
+  expect(after.beats[1].onScreenText).not.toBe(changed.sections[1].heading);
+  expect(changed.sections[1].text.startsWith(after.beats[1].onScreenText.replace(/…$/u,""))).toBe(true);
   expect(after.assumptions).toContain(`Script revision: ${changed.updatedAt}.`);
   expect(validateStoryboard(after).filter(issue=>issue.severity==="error")).toEqual([]);
 });

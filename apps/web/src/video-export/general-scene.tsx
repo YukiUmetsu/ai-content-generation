@@ -187,7 +187,7 @@ function GeneralChapterScene({ plan, frame }: { plan: GeneralVisualPlan; frame: 
     locale: plan.locale ?? "en-US", evidence: plan.evidence,
   }) : undefined, [chapter, plan.manifest.fps, plan.locale, plan.evidence]);
   const isPayoffHidden = state.intent === "general-payoff" && state.visibleItems === 0;
-  const scriptPhrase = isPayoffHidden || payoffLocked ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, diagramState.visibleItems);
+  const scriptPhrase = isPayoffHidden || payoffLocked ? "" : visibleScriptPhrase(slot.line || slot.phrase, state.visual.items, diagramState.visibleItems, [state.visual.headline, state.visual.subhead]);
   const scriptLine = scriptPhrase ? fitSvgText(scriptPhrase, { maxWidthPx: 800, preferredSize: 28, minSize: 18, maxLines: 2 }) : undefined;
   const heading = fitSvgText(state.visual.headline, { maxWidthPx: 760, preferredSize: 72, minSize: 35, maxLines: 3 });
   const sub = fitSvgText(state.visual.subhead, { maxWidthPx: 750, preferredSize: 32, minSize: 22, maxLines: 4 });

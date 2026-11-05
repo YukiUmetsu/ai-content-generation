@@ -7,6 +7,7 @@ import { DEFAULT_FPS, STORYBOARD_KIND, STORYBOARD_SCHEMA_VERSION,
   "@/features/storyboard-planner/model/types";
 import { validateStoryboard } from "@/features/storyboard-planner/model/validate";
 import {scriptSectionRole,scriptAnswerIndex,scriptStoryboardClaimRefs} from "../../scripts/video-production/script-contract.mjs";
+import {audienceCopy} from "../../scripts/video-production/audience-copy.mjs";
 import { estimatedNarrationSeconds, type ScriptDraft, type ScriptEvidence, type ScriptRole } from "./script-review-model";
 
 const ROLES:Record<ScriptRole,NarrativeRole>={
@@ -37,16 +38,18 @@ export function scriptToStoryboard(script:ScriptDraft,evidence:readonly ScriptEv
     const questionId="script-central-question";
     const isFirst=index===0,isLast=index===answerIndex;
     const readingSeconds=estimatedNarrationSeconds(section.text,script.input.locale);
+    // The heading and purpose are outline notes. The viewer reads what the scene says unless an author wrote a title.
+    const copy=audienceCopy(section.text,{authoredHeadline:section.heading,fallbackSupport:script.input.viewerQuestion});
     return {
       id:`script-beat-${section.id}`,role:index===0?"hook":ROLES[scriptSectionRole(section)],
-      objective:section.purpose,narration:section.text,onScreenText:section.heading,
+      objective:section.purpose,narration:section.text,onScreenText:copy.headline,
       visualIntent:INTENTS[scriptSectionRole(section)],
       visualObjective:`Design a meaningful visual change that teaches: ${section.purpose}`,
       semanticObjects:[subjectId],focusTarget:subjectId,
       durationFrames:Math.max(90,Math.ceil(readingSeconds*DEFAULT_FPS.num/DEFAULT_FPS.den)),
       claimRefs:refsForSection(section),
       namedEvents:[...(isFirst?["script-question-opens"]:[]),...(isLast?["script-answer-reveals"]:[])],
-      staticFallback:`${section.heading}: ${section.purpose}`,
+      staticFallback:`${copy.headline} — ${copy.support}`,
       ...(isFirst?{opensQuestion:questionId}:{}),
       ...(isLast?{answersQuestion:questionId}:{}),
     };
