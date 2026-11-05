@@ -1198,7 +1198,7 @@ A landscape scene with no picture of its own is directed from its narration. Kum
 - **Staging:** `STORY_STAGING` in `story-director.mjs` sets how many objects share the stage and when a long phrase needs a second change.
 - **Timing:** phrases are placed by text length, then moved to real pauses found in the narration audio. If the pause scan fails, the report says `estimated`.
 - **Stage continuity:** objects and values carry into the next scene. A scene with its own picture resets the stage.
-- **Sound:** `STORY_CUES` in `story-sound.mjs` gives each operation a synthesized cue, a gain and a priority. Change the table to rebalance them.
+- **Sound:** `STORY_CUES` in `story-sound.mjs` gives each operation a synthesized cue, a gain and a priority. Cues closer than 0.16 s give way to the stronger one. All of them are mixed into one track, so a long film has no cue limit. Change the table to rebalance them.
 
 `pnpm build` also builds `dist-shot/story-entry.mjs`, which checks each story before capture. `pnpm video:reference` reports the longest still stretch from the plan and from the finished MP4. Pass `objectStories: false` to `produceVideo` to turn stories off.
 
