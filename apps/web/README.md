@@ -116,6 +116,34 @@ For user-installed **local TTS**, change the job voice to `provider: "local"`, a
 
 Each release is atomically exposed only after a finished MP4 has been probed for FPS, dimensions, frame count, duration drift, loudness and required story payoff. The release also contains up to four **raster-checked, SHA-verified review stills** (opening, middle, shortly after payoff, end); they are saved separately from bounded render batches and checked again when resuming. The render manifest records the hashed compiled scene, per-beat narration hashes and provider revisions, and SHA-256 hashes of the delivered media. A changed JS/CSS/font build invalidates render-segment reuse; scene typography has a deterministic fit pass and a real-browser text-bounds check. These stills help triage but are **not** a substitute for watching the film. Ctrl-C/SIGTERM requests graceful cancellation and staging cleanup; failed captures preserve per-beat caches and hashed render segments for safe resumption, without overwriting any prior `release/`. Every successful run still reports `commercialReady: false` and requires normal-speed audio/video inspection plus explicit commercial-asset/voice licensing review before any publication.
 
+### Reference render: compare one change against the last
+
+`pnpm video:reference` renders a fixed script through the same script → plan → job → MP4 path the Studio uses. Run it before and after a change to the visual pipeline and compare the two outputs.
+
+```sh
+pnpm build
+pnpm video:reference -- --fixture fixtures/reference/invoice-receipt-gap.json \
+  --out ~/Movies/ContentGen/Reference/<a-new-folder-name>
+```
+
+It writes three things into the output folder:
+
+- `release/video.mp4`, the narrated draft.
+- `contact-sheet.png`, one frame from each scene.
+- `reference-report.json`, every piece of text each scene shows, plus the scene quality findings.
+
+Options:
+
+| Option | Effect |
+|---|---|
+| `--voice-engine say\|espeak-ng\|flite` | Pick the draft voice. By default the first installed engine is used. |
+| `--voice <name>` | A voice name for that engine. |
+| `--voice-endpoint <origin> --voice-revision <id>` | Use your own loopback TTS bridge instead of the draft voice. |
+| `--use-model` | Let the configured local model plan scene layouts. The default uses sentence rules, so the same input gives the same film. |
+| `--chromium <path>` | The browser to capture frames with. |
+
+The draft voice is an operating-system speech command served on a loopback port for the length of the run. It needs no model, network or provider account. Both the voice and the render are **test-only: never publish them**. A reference fixture is a `contentgen-reference-production` JSON file holding a saved script with its evidence and sources; add another file to `fixtures/reference/` to compare a different script. To add a speech engine, add one entry to `DRAFT_VOICE_ENGINES` in `scripts/video-production/draft-voice-server.mjs`.
+
 ### Narration adapters (opt-in, currently offline-tested only)
 
 - **Fish Audio:** supply `FISH_AUDIO_API_KEY` at runtime, an authorized voice-reference ID, locale, and explicit model. The adapter uses `POST https://api.fish.audio/v1/tts`, a versioned request with `model: s2.1-pro-free` for evaluation, and checks WAV bytes. No API call occurs without `--allow-network` and voice/text-transmission consent. The standalone adapter accepts paid models with explicit approval, but the multi-beat production CLI blocks them until reliable budget metering exists. Availability and commercial licensing of any free model or voice must be independently verified before release; no real Fish request has been made during this foundation implementation.
