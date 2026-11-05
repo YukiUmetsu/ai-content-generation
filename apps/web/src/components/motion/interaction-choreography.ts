@@ -247,7 +247,11 @@ export function compileInteraction(spec: InteractionSpec): InteractionCompilatio
         const root = roots.get(actor.id)!, before = previousRoots.get(actor.id)!;
         // Between gestures a raised hand rides on the walking actor.
         let target = hand.get(key) ?? restOf(actor, effector);
-        target = add(target, subtract(root.position, before.position));
+        const carried = subtract(root.position, before.position);
+        target = add(target, carried);
+        // A move in progress started from the actor, so its start point travels with the actor too.
+        const origin = hand.get(`${key}#from`);
+        if (origin) hand.set(`${key}#from`, add(origin, carried));
         let weight = influence.get(key) ?? 0;
         const op = spec.ops.find(item => "effector" in item && item.actor === actor.id && item.effector === name &&
           frame >= item.startFrame && frame <= opEnd(item));
