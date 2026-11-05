@@ -507,7 +507,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       artifactLedger:{kind:"final-mux",artifacts:{video:artifactHashes.video,captions:artifactHashes.captions,
         master:artifactHashes.master,coverStill:artifactHashes.coverStill}} });
     const versions = deps.toolVersions ?? await toolVersions();
-    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability, visualCoverage });
+    const qa = buildQaReport({ job, timeline, audio, render: { ...render, reviewStills: publishedStills }, mp4, artifacts: artifactHashes, toolVersions: versions, reviewStatus: "not-reviewed", captionReadability, visualCoverage, stories: stories.report });
     const qaBytes = JSON.stringify(qa, null, 2);
     const manifestPath = join(working, "render-manifest.json");
     const narration = speech.map((beat) => ({

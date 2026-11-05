@@ -9,6 +9,7 @@ import { compileApprovedScriptDirector } from "./approved-script-director.mjs";
 import { compileLiveVisualPreview } from "./live-visual-preview.mjs";
 import { STORY_CUES, mixCueTrack, storyCues, thinCues } from "./story-sound.mjs";
 import { parseStoryProposal, storyPrompt } from "./story-model.mjs";
+import { storyPacing } from "./report.mjs";
 
 const vocabulary = JSON.parse(await readFile(new URL("./story-vocabulary.json", import.meta.url), "utf8"));
 const fixture = JSON.parse(await readFile(new URL("../../fixtures/reference/invoice-receipt-gap.json", import.meta.url), "utf8"));
@@ -302,4 +303,13 @@ test("a model that fails or does not compile leaves the scene to the rules, and 
   assert.equal(invalid.report[0].directorFindings[0].code, "proposal-invalid");
   const off = await applyObjectStories(plan(), { useModel: false }, { vocabulary, check, detectPauses: async () => [], complete: async () => { throw Error("must not run"); } });
   assert.deepEqual(off.report[0].directorFindings, []);
+});
+
+test("the QA report records how each scene was directed and how long it sits still", () => {
+  const report = storyPacing([{ chapterId: "a", director: "rules", timing: "measured-pauses", phrases: 3, warnings: [], pacing: { longestStillSeconds: 1.5, changesPerMinute: 40 } },
+    { chapterId: "b", director: "model", timing: "estimated", phrases: 2, warnings: ["still-stretch"], pacing: { longestStillSeconds: 2.9, changesPerMinute: 20 } }]);
+  assert.equal(report.longestStillSeconds, 2.9);
+  assert.equal(report.basis, "declared-story-plan");
+  assert.deepEqual(report.scenes[1].warnings, ["still-stretch"]);
+  assert.equal(storyPacing([{ chapterId: "c", pacing: null }]).scenes[0].longestStillSeconds, null);
 });
