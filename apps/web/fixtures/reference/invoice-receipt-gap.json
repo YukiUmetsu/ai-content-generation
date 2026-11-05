@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "kind": "contentgen-reference-production",
+  "note": "Illustrative reference script for render comparisons. The amounts are invented for the example and no claim here is sourced. Never publish a render of this fixture.",
+  "productionId": "production-0000000000000000000000a1",
+  "evidence": [],
+  "sources": [],
+  "script": {
+    "version": 1,
+    "status": "draft",
+    "approvedAt": null,
+    "updatedAt": "2026-11-05T00:00:00.000Z",
+    "input": {
+      "productionId": "production-0000000000000000000000a1",
+      "platform": "youtube",
+      "title": "Why your invoice and your receipt disagree",
+      "viewerQuestion": "How can the books balance when an invoice and its receipt show different totals?",
+      "audience": "Freelancers and small business owners who keep their own books",
+      "locale": "en"
+    },
+    "pending": {},
+    "sections": [
+      {
+        "id": "hook",
+        "heading": "Opening hook",
+        "purpose": "Show a specific audience problem, immediate visual promise and central question.",
+        "text": "The invoice says one hundred twenty dollars. The receipt says one hundred. Both are in your books, and your books still balance. So where did the twenty dollars go?",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "context",
+        "heading": "Why it matters",
+        "purpose": "Establish relatable stakes, baseline and scope without repeating the hook.",
+        "text": "A ledger only checks that the numbers add up. It does not check that each number matches the paper behind it. That is why a clean balance can hide a wrong entry for months.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "mechanism",
+        "heading": "How it works",
+        "purpose": "Explain the causal mechanism with sourced examples, not a generic list.",
+        "text": "Here is how the gap opens. The invoice is entered when the bill arrives. The payment is entered later, from the bank feed. Nothing forces anyone to put the two documents side by side, so a short payment or a duplicate charge passes through.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "practical",
+        "heading": "What changes the outcome",
+        "purpose": "Compare options, sensitivity or useful next steps with limitations.",
+        "text": "The fix is a habit, not a tool. Attach the receipt to the invoice on the day you pay. Then compare the two totals before you close the month. A mismatch found the same week takes minutes to resolve.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "closing",
+        "heading": "Answer and takeaway",
+        "purpose": "Resolve the opening question and make the caveats explicit.",
+        "text": "So the twenty dollars was never missing from the ledger. It was missing from the paper trail. Keep each number next to its document, and a balanced book becomes a correct one.",
+        "claimRefs": [],
+        "sourceRefs": []
+      }
+    ]
+  }
+}
