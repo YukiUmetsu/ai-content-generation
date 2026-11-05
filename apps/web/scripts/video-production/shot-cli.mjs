@@ -12,7 +12,7 @@ import { muxVideo } from "./produce.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
 import { composeShotFilm } from "./shot-compose.mjs";
 
-const { values } = parseArgs({ options: { fixture: { type: "string" }, root: { type: "string" }, voice: { type: "boolean", default: false }, model: { type: "string" }, chromium: { type: "string" },
+const { values } = parseArgs({ options: { fixture: { type: "string" }, root: { type: "string" }, voice: { type: "boolean", default: false }, "plan-only": { type: "boolean", default: false }, model: { type: "string" }, chromium: { type: "string" },
   profile: { type: "string", default: "draft" }, output: { type: "string" }, width: { type: "string", default: "1920" }, height: { type: "string", default: "1080" } } });
 const read = async path => JSON.parse(await readFile(path, "utf8"));
 const fixture = resolve(values.fixture), root = resolve(values.root);
@@ -58,6 +58,12 @@ if (spoken) {
 console.log(JSON.stringify({ windows, lipSource }));
 const started = Date.now();
 const look = await read(join(fixture, "look.json"));
+if (values["plan-only"]) {
+  const planned = await renderPerformanceShot({ root, intent, cast, grips, speechWindows: windows, lipSync, shotId: "shot", profile: values.profile,
+    width: Number(values.width), height: Number(values.height), look, planOnly: true });
+  console.log(JSON.stringify({ planned: planned.specPath, contacts: planned.contacts }));
+  process.exit(0);
+}
 const finished = await access(join(resolve(values.output), "shot-manifest.json")).then(() => true, () => false);
 const result = finished ? { manifest: await read(join(resolve(values.output), "shot-manifest.json")) }
   : await renderPerformanceShot({ root, intent, cast, grips, speechWindows: windows, lipSync, shotId: "shot", profile: values.profile,

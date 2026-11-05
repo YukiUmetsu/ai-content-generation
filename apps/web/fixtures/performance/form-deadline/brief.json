@@ -46,14 +46,14 @@
    "start": [
     -0.155,
     0,
-    0.1
+    0.12
    ],
    "yaw": 0.3,
    "seed": 3,
    "clear": [
     -0.3,
     0,
-    0.1
+    0.12
    ],
    "maxViewAngle": 30
   }
@@ -92,19 +92,19 @@
     "effector": "hand.right",
     "grip": "left",
     "offset": [
-     -0.012,
-     0.018,
-     0
+     -0.008,
+     0.016,
+     0.012
     ]
    },
    "lay": {
     "to": [
-     -0.05,
+     -0.04,
      0,
-     0.12
+     0.113
     ],
     "toYaw": -0.05,
-    "releaseHeight": 0.03
+    "releaseHeight": 0.035
    },
    "material": "paper",
    "bendable": true

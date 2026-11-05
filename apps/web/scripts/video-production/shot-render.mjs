@@ -41,7 +41,7 @@ async function runTool({ python, env }, args, { signal, onEvent } = {}) {
 }
 
 export async function renderPerformanceShot({ root, intent, cast, grips, speechWindows, shotId, width = 1920, height = 1080,
-  profile = "draft", look, output, signal, onEvent, saveBlend = true, lipSync },
+  profile = "draft", look, output, signal, onEvent, saveBlend = true, lipSync, planOnly = false },
 { tool = kumikiBlenderTool(), bakeEntry = fileURLToPath(new URL("../../dist-shot/bake-entry.mjs", import.meta.url)) } = {}) {
   const definitions = {}, rigs = {};
   for (const actor of cast) {
@@ -57,6 +57,8 @@ export async function renderPerformanceShot({ root, intent, cast, grips, speechW
   await writeFile(specPath, JSON.stringify({ schema_version: 1, shot_id: shotId, set: "set.json", bake: `${shotId}.bake.json`,
     actors: cast.map(actor => ({ id: actor.id, pack: actor.pack, profile: actor.profile })),
     render: { profile, width, height }, ...(look ? { look } : {}) }));
+  // Plan only: the bake and spec are on disk for single-frame previews, and nothing renders.
+  if (planOnly) return { output: null, contacts: JSON.parse(await readFile(bakePath, "utf8")).contacts, manifest: null, specPath };
   await runTool(tool, ["build-shot", "--spec", resolve(specPath), "--output", resolve(output), ...(saveBlend ? [] : ["--no-blend"])], { signal, onEvent });
   const { contacts } = JSON.parse(await readFile(bakePath, "utf8"));
   return { output, contacts, manifest: JSON.parse(await readFile(join(output, "shot-manifest.json"), "utf8")) };
