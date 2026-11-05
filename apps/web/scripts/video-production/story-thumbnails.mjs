@@ -2,6 +2,7 @@
  * Every word and number comes from the film. Nothing is invented, and no performance is predicted.
  */
 const MAX_HEADLINE_WORDS = 7;
+const DURATION = /\b(?:minutes?|hours?|days?|weeks?|months?|years?)\b/iu;
 /** The side-panel recipes have a narrow text box. */
 const MAX_NARROW_WORDS = 5;
 const shorten = (text) => {
@@ -56,8 +57,10 @@ export function storyThumbnailConcepts(plan, { title }) {
     const pair = bestHeadline(facts.pairs);
     add({ id: "story-contradiction", label: "The comparison", recipe: "comparison", headline: shorten(pair.caption), primaryArt: pair.a.art, secondaryArt: pair.b.art });
   }
-  const value = facts.values[0];
-  if (value) add({ id: "story-fact", label: "The headline fact", recipe: "hero-fact", headline: shorten(title), ...(value.text ? { cue: value.text } : {}), primaryArt: value.object.art });
+  // A money or percent figure belongs to the object it sits beside. A duration next to the title
+  // would read as a claim about the title, so it is never used as a cue.
+  const value = facts.values.find(item => item.text && !DURATION.test(item.text)) ?? facts.values[0];
+  if (value) add({ id: "story-fact", label: "The headline fact", recipe: "hero-fact", headline: shorten(title), ...(value.text && !DURATION.test(value.text) ? { cue: value.text } : {}), primaryArt: value.object.art });
   else if (facts.heroes[0]) add({ id: "story-fact", label: "The headline fact", recipe: "hero-fact", headline: shorten(title), primaryArt: facts.heroes[0].art });
   // A concept must say something the other two do not.
   const fresh = (items) => items.filter(item => item.object?.art && !seen.has(shorten(item.caption).toLocaleLowerCase()));

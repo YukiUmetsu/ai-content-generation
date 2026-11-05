@@ -259,6 +259,9 @@ function placeCaption(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: Obj
   return null;
 }
 
+/** Frames a leaving object takes to clear the stage. */
+const clearFramesFor = (transitionFrames: number) => Math.max(1, Math.round(transitionFrames * .5));
+
 const opTargets = (op: ObjectStoryOp): string[] => {
   if (op.kind === "connect" || op.kind === "disconnect" || op.kind === "transfer") return [op.from, op.to];
   if (op.kind === "absorb") return [op.object, op.into];
@@ -347,7 +350,9 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
       // A kept caption is placed again when the stage moves, without replaying its reveal.
       const text: ObjectStoryCaption = beat.caption ?? { text: captionText ?? "", emphasis: caption?.emphasis };
       const kept: CaptionPlan | null = text.text === captionText ? caption : null;
-      caption = placeCaption(spec, beat, text, rects, kept?.startFrame ?? beat.startFrame, options);
+      // New words wait for leaving objects to clear, so they never land on something fading out.
+      const leaving = [...previous.keys()].some(id => !rects.has(id));
+      caption = placeCaption(spec, beat, text, rects, kept?.startFrame ?? beat.startFrame + (leaving ? clearFramesFor(transitionFrames) : 0), options);
       captionText = text.text;
       if (!caption) error("caption-no-room", `The caption of beat "${beat.id}" does not fit beside its objects. Shorten it or use fewer objects.`, beat.id);
     }
@@ -515,7 +520,7 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
 
   const objects: ObjectStoryObjectFrame[] = [];
   const someoneLeaves = [...current.from.keys()].some(id => !current.rects.has(id));
-  const clearFrames = Math.max(1, Math.round(plan.transitionFrames * .5));
+  const clearFrames = clearFramesFor(plan.transitionFrames);
   for (const id of visible) {
     const object = plan.objects.get(id)!;
     let rect = rectNow(id)!;
