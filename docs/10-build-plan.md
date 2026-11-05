@@ -27,7 +27,7 @@
 | V09 | One action: Discover → Idea → Script → Scene plan → Render → Publish Kit as one Jobs DAG that stops only for consent | content-gen | A draft produced from one action, with every stop recorded in Jobs |
 | V10 | Portrait: re-author shorts after landscape is good (see P01–P03) | all three | Destination-specific portrait render |
 
-**Done:** V01 and V02 (2026-11-05). `pnpm video:reference` renders the reference script, and scenes show only what they say or what an author wrote for the screen. V03 is in progress: object story scenes render from rules and appear in the Studio preview, and a model proposer is still to come. V06 sound is partly done: every story change has a synthesized cue. V07 is done for films with enough objects.
+**Done:** V01 and V02 (2026-11-05). `pnpm video:reference` renders the reference script, and scenes show only what they say or what an author wrote for the screen. V03 is in progress: object story scenes render from rules for any subject and appear in the Studio preview. A model proposer is built and tested with fake replies, but has not run against a real model. V06 sound is partly done: every story change has a synthesized cue. V07 is done for films with enough objects.
 
 **Pacing rule (2026-11-05):** faceless films need a meaningful change on every spoken phrase. Measure it: the reference report gives the longest declared and the longest measured still stretch. The working budget is 2.5 seconds.
 

@@ -99,7 +99,7 @@ export async function renderReference(options, deps = {}) {
     const { job, shotMap, warnings } = compileReferenceJob(fixture, { endpoint });
     const produced = await (deps.produceVideo ?? produceVideo)(job, {
       out, provider: "local", providerRevision: options.voiceRevision ?? draftVoice.engineVersion, localEndpoint: endpoint,
-      localVoiceAuthorized: true, allowTestAssets: true, onProgress: deps.onProgress,
+      localVoiceAuthorized: true, allowTestAssets: true, storyModel: options.useModel === true, onProgress: deps.onProgress,
       browserExecutable: options.browserExecutable ?? await (deps.findChromium ?? findChromium)(),
     }, options.useModel ? {} : { planSceneLayouts: rulesOnlyLayouts });
     const release = join(out, "release");

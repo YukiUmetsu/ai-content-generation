@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "kind": "contentgen-reference-production",
+  "note": "Illustrative reference script for render comparisons, chosen because few of its subjects have an illustration. The figures are invented for the example and no claim here is sourced. Never publish a render of this fixture.",
+  "productionId": "production-0000000000000000000000b2",
+  "evidence": [],
+  "sources": [],
+  "script": {
+    "version": 1,
+    "status": "draft",
+    "approvedAt": null,
+    "updatedAt": "2026-11-05T00:00:00.000Z",
+    "input": {
+      "productionId": "production-0000000000000000000000b2",
+      "platform": "youtube",
+      "title": "Why coffee makes you crash",
+      "viewerQuestion": "If caffeine wakes you up, why do you feel so tired a few hours later?",
+      "audience": "People who rely on coffee to get through the afternoon",
+      "locale": "en"
+    },
+    "pending": {},
+    "sections": [
+      {
+        "id": "hook",
+        "heading": "Opening hook",
+        "purpose": "Show a specific audience problem, immediate visual promise and central question.",
+        "text": "You drink a coffee at nine and feel sharp. By one o'clock you can barely keep your eyes open. The coffee did not give you energy. So what did it actually do?",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "context",
+        "heading": "Why it matters",
+        "purpose": "Establish relatable stakes, baseline and scope without repeating the hook.",
+        "text": "All morning your brain builds up a chemical called adenosine. The more of it you have, the sleepier you feel. Think of it as pressure that keeps rising until you sleep.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "mechanism",
+        "heading": "How it works",
+        "purpose": "Explain the causal mechanism with sourced examples, not a generic list.",
+        "text": "Caffeine looks enough like adenosine to sit in the same receptors. It blocks the signal, but it does not remove the chemical. The pressure keeps building behind the block.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "practical",
+        "heading": "What changes the outcome",
+        "purpose": "Compare options, sensitivity or useful next steps with limitations.",
+        "text": "When the caffeine wears off, everything that was waiting arrives at once. That is the crash. Waiting ninety minutes after you wake up lets the first wave clear, and a short walk helps more than a second cup.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "closing",
+        "heading": "Answer and takeaway",
+        "purpose": "Resolve the opening question and make the caveats explicit.",
+        "text": "So coffee never gave you energy. It borrowed time from later in the day. Use it for that, and plan for the moment the loan comes due.",
+        "claimRefs": [],
+        "sourceRefs": []
+      }
+    ]
+  }
+}

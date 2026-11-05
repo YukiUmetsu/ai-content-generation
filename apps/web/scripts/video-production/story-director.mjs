@@ -2,7 +2,7 @@
  * Rules run with no model and give the same film for the same words.
  * The stage carries across scenes, so a video is one continuous set of objects, not a slide per section.
  */
-import { captionFor, compileVocabulary, deniedTerm, formatAmount, mentionedObjects, phraseKeyword, phraseSignals, spokenAmounts } from "./story-language.mjs";
+import { captionFor, compileVocabulary, deniedTerm, formatAmount, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts } from "./story-language.mjs";
 
 /** Tunable staging. Change these numbers, not the director. */
 export const STORY_STAGING = Object.freeze({
@@ -14,6 +14,8 @@ export const STORY_STAGING = Object.freeze({
   countShare: .6,
   /** Frames an entering object needs before an operation can use it. */
   settleSeconds: .45,
+  /** How far a meter moves when the words say something rises or falls. */
+  levelStep: .3,
 });
 
 const slug = (value) => String(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "idea";
@@ -49,7 +51,7 @@ function arrange(previous, wanted, keepPrevious, maxOnStage, between = false) {
 
 /** Words that still lean on what is already on stage. */
 const continues = (text, signals, hasValues, saysAmount) => signals.both || signals.contrast || signals.question || (hasValues && saysAmount) ||
-  /^[\p{Ll}]/u.test(text) || (hasValues && /\b(?:it|they|them|this|that|these|those)\b/iu.test(text));
+  /^[\p{Ll}]/u.test(text) || /^(?:it|they|this|these|those)\b/iu.test(text) || (hasValues && /\b(?:it|they|them|this|that|these|those)\b/iu.test(text));
 
 function valueTarget(mentioned, stage, order) {
   const named = mentioned.find(id => order.includes(id));
@@ -90,27 +92,49 @@ function phraseOps({ facts, frames, frameRate, stage, order, previous, entered, 
       add({ kind: "set-value", object: target, value: amount.unit?.fraction ? amount.value / 100 : amount.value }, 0, (room * staging.countShare) / frameRate);
     }
   }
+  // "Keeps rising" shows on a meter: a direction, with no invented figure.
+  if ((signals.rising || signals.falling) && focus && !amount) {
+    // "The pressure keeps rising" meters its subject. "Your brain builds up a chemical" meters its object.
+    const present = mentioned.filter(onStage);
+    const subject = (facts.transitive ? present.at(-1) : present[0]) ?? focus;
+    const object = stage.objects.get(subject);
+    const from = object.level ?? (signals.rising ? .2 : .8);
+    const to = Math.round(Math.max(.05, Math.min(1, from + (signals.rising ? staging.levelStep : -staging.levelStep * 1.5))) * 100) / 100;
+    object.level = to;
+    object.levelFrom ??= from;
+    add({ kind: "level", object: subject, to }, 0, (room * .8) / frameRate);
+  }
   // New objects join the ones already on stage when the words link them.
   if (entered.length && previous.length) {
     const sources = (signals.both ? previous : previous.slice(-1)).filter(onStage);
-    if (signals.both || signals.sequence || signals.cause) for (const [index, from] of sources.entries()) add({ kind: "connect", from, to: entered[0] }, index * .14, .6);
-  } else if (!entered.length && order.length >= 2 && mentioned.length >= 2 && signals.sequence) {
+    if (signals.moving && sources.length) add({ kind: "transfer", from: sources[sources.length - 1], to: entered[0] }, .1, .8);
+    else if (signals.both || signals.sequence || signals.cause) for (const [index, from] of sources.entries()) add({ kind: "connect", from, to: entered[0] }, index * .14, .6);
+  } else if (!entered.length && order.length >= 2 && mentioned.length >= 2 && (signals.sequence || signals.moving)) {
     add({ kind: "transfer", from: mentioned[0], to: mentioned[1] }, 0, .8);
   } else if (!entered.length && signals.both && order.length >= 2) {
     add({ kind: "connect", from: order[0], to: order[1] }, 0, .6);
   }
   // Questions, problems and fixes end on a verdict the viewer can read at a glance.
   // "Never missing" denies a problem, so it is good news.
-  const deniedProblem = signals.negation && signals.problem;
+  const deniedProblem = signals.deniedProblem;
   const pointed = denied && !deniedProblem && onStage(denied) ? denied : null;
   const target = pointed ?? focus;
-  const verdict = signals.question ? "question" : pointed ? "cross" : deniedProblem ? "check" : signals.problem || signals.negation ? "cross" : signals.resolved ? "check" : null;
+  const verdict = deniedProblem ? "check" : signals.question ? "question" : pointed ? "cross" : signals.problem || signals.negation ? "cross" : signals.resolved ? "check" : null;
   if (verdict && target) add({ kind: "mark", object: target, mark: verdict }, ops.length ? .6 : .35, .4);
   if (!ops.length && focus) add({ kind: "highlight", object: focus }, .15, .7);
-  // A long phrase needs a second change, tied to something else it names.
-  if (frames / frameRate > staging.secondChangeSeconds && ops.length < 2 && focus) {
-    const other = mentioned.find(id => id !== focus && onStage(id)) ?? order.find(id => id !== focus);
-    add({ kind: "highlight", object: other ?? focus }, .62, .6);
+  // No stretch of a phrase goes unchanged for long: each gap gets a look at something the words name.
+  const limit = Math.round(staging.secondChangeSeconds * frameRate);
+  const looks = [...new Set([...mentioned.filter(onStage), ...order])];
+  for (let pass = 0, look = 0; pass < 6 && focus; pass++) {
+    const spans = ops.map(op => [op.atFrame, op.atFrame + op.durationFrames]).sort((a, b) => a[0] - b[0]);
+    let cursor = 0, gapStart = -1, gapSize = 0;
+    for (const [start, end] of [...spans, [frames, frames]]) {
+      if (start - cursor > gapSize) { gapSize = start - cursor; gapStart = cursor; }
+      cursor = Math.max(cursor, end);
+    }
+    if (gapSize <= limit) break;
+    const atFrame = gapStart + Math.floor(Math.min(gapSize / 2, limit * .8));
+    ops.push({ kind: "highlight", object: looks[look++ % looks.length], atFrame, durationFrames: Math.max(1, Math.min(frames - atFrame, Math.round(.6 * frameRate))) });
   }
   return ops;
 }
@@ -126,58 +150,65 @@ function readPhrase(window, compiled, stage, locale) {
 }
 
 /** Everything an object must declare to appear in a scene spec. */
-function declare(stage, id, valuesAtStart, locale) {
+function declare(stage, id, valuesAtStart, levelsAtStart, locale) {
   const object = stage.objects.get(id);
   const value = object.value ?? null;
-  return { id, ...(object.label ? { label: object.label } : {}), ...(object.art ? { art: object.art } : {}),
+  const startLevel = levelsAtStart.get(id);
+  return { id, ...(object.label ? { label: object.label } : {}), ...(object.art ? { art: object.art } : {}), ...(startLevel === undefined ? {} : { level: startLevel }),
     ...(value ? { value: { format: value.unit?.format ?? { kind: "number", precision: 0 }, language: locale,
       ...(valuesAtStart.has(id) ? { initial: valuesAtStart.get(id), shownFromStart: true } : {}) } } : {}) };
 }
 
 /** Direct one scene, continuing the stage from the previous scene.
  * @param {{id:string,fps:{num:number,den:number},width:number,height:number,frames:number,phrases:{text:string,startFrame:number,endFrame:number}[],locale?:string}} scene
- * @param {{vocabulary:object,stage?:object,staging?:typeof STORY_STAGING}} context
+ * @param {{vocabulary:object,stage?:object,staging?:typeof STORY_STAGING,proposal?:object[]|null}} context
  * @returns {{spec:object,stage:object}}
  */
-export function directSceneStory(scene, { vocabulary, stage = newStage(), staging = STORY_STAGING }) {
+export function directSceneStory(scene, { vocabulary, stage = newStage(), staging = STORY_STAGING, proposal = null }) {
   const locale = scene.locale ?? "en";
   const compiled = compileVocabulary(vocabulary, locale);
   const frameRate = scene.fps.num / scene.fps.den;
   const carriedOrder = [...stage.order];
   const valuesAtStart = new Map(carriedOrder.filter(id => stage.objects.get(id)?.value).map(id => [id, stage.objects.get(id).value.amount]));
+  const levelsAtStart = new Map(carriedOrder.filter(id => stage.objects.get(id)?.level !== undefined).map(id => [id, stage.objects.get(id).level]));
   const beats = [];
   let order = carriedOrder, firstFacts = null;
-  for (const window of scene.phrases) {
-    const facts = readPhrase(window, compiled, stage, locale);
+  for (const [phraseIndex, window] of scene.phrases.entries()) {
+    const proposed = proposal?.[phraseIndex];
+    const read = readPhrase(window, compiled, stage, locale);
+    // A checked model proposal replaces what the rules read. Amounts still come from the words.
+    const facts = proposed ? { ...read, objects: proposed.objects, deniedEntry: null, signals: { ...Object.fromEntries(Object.keys(read.signals).map(key => [key, false])), ...proposed.signals } } : read;
     firstFacts ??= facts;
     let mentioned = facts.objects.map(entry => castObject(stage, entry, locale));
-    // A word stands in for a picture only on an empty stage. Otherwise the objects already there react.
-    if (!mentioned.length && !order.length) {
-      const label = phraseKeyword(window.text, locale);
+    // An idea with no picture becomes a word, so the stage still follows the narration.
+    if (!proposed && !mentioned.length && !facts.amounts.length) {
+      const taken = order.map(id => stage.objects.get(id)?.label?.toLocaleLowerCase());
+      const concept = phraseConcepts(window.text).find(label => !taken.includes(label.toLocaleLowerCase()));
+      const label = concept ?? (order.length ? null : phraseKeyword(window.text, locale));
       if (label) mentioned = [castObject(stage, { label }, locale)];
     }
     const previous = order;
     const denied = facts.deniedEntry ? castObject(stage, facts.deniedEntry, locale) : null;
     const hasValues = previous.some(id => stage.objects.get(id)?.value);
-    order = arrange(previous, mentioned, continues(window.text, facts.signals, hasValues, facts.amounts.length > 0), staging.maxOnStage, facts.signals.both);
+    order = proposed ? [...mentioned] : arrange(previous, mentioned, continues(window.text, facts.signals, hasValues, facts.amounts.length > 0), staging.maxOnStage, facts.signals.both);
     // A question about an amount brings the two values together, so the gap between them can be measured.
     const valuedNow = order.filter(id => stage.objects.get(id)?.value);
     if (facts.signals.question && facts.amounts.length && valuedNow.length >= 2) order = valuedNow.slice(0, 2);
     if (!order.length) throw Error(`Scene ${scene.id} has nothing to show for "${window.text}".`);
     const entered = order.filter(id => !previous.includes(id));
     const frames = window.endFrame - window.startFrame;
-    const ops = phraseOps({ facts: { ...facts, mentioned, denied }, frames, frameRate, stage, order, previous, entered, staging });
+    const ops = phraseOps({ facts: { ...facts, mentioned, denied, transitive: /\b(?:builds? up|fills?|raises?|adds?|produces?|makes?)\b/iu.test(window.text) }, frames, frameRate, stage, order, previous, entered, staging });
     const onlySome = mentioned.length === 1 && order.length > 1 && !entered.length;
     beats.push({ id: `${scene.id}-${beats.length + 1}`, startFrame: window.startFrame, endFrame: window.endFrame,
       arrangement: { kind: arrangementKind(order.length, facts.signals), objects: [...order] },
       ops: ops.map(({ atFrame, ...op }) => ({ ...op, atFrame: window.startFrame + atFrame })),
-      caption: { text: captionFor(window.text, facts.amounts), ...(facts.amounts.length ? { emphasis: facts.amounts.map(item => item.text) } : {}) },
+      caption: { text: proposed?.caption ?? captionFor(window.text, facts.amounts), ...(facts.amounts.length ? { emphasis: facts.amounts.map(item => item.text) } : {}) },
       ...(onlySome ? { focus: mentioned[0] } : {}) });
     stage.order = order;
   }
   const used = new Set([...carriedOrder, ...beats.flatMap(beat => beat.arrangement.objects)]);
   const spec = { schemaVersion: 1, id: scene.id, fps: scene.fps, durationFrames: scene.frames, width: scene.width, height: scene.height, language: locale,
-    objects: [...used].map(id => declare(stage, id, valuesAtStart, locale)), beats,
+    objects: [...used].map(id => declare(stage, id, valuesAtStart, levelsAtStart, locale)), beats,
     ...(carriedOrder.length ? { carried: { kind: arrangementKind(carriedOrder.length), objects: carriedOrder } } : {}) };
   return { spec, stage };
 }

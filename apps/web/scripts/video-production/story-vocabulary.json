@@ -230,7 +230,6 @@
    "label": "Coins",
    "terms": [
     "coins",
-    "change",
     "pennies"
    ]
   },
@@ -264,7 +263,6 @@
    "art": "finance:safe",
    "label": "Safe",
    "terms": [
-    "safe",
     "secure storage"
    ]
   },
@@ -297,7 +295,6 @@
    "art": "finance:storefront",
    "label": "Storefront",
    "terms": [
-    "store",
     "shop",
     "storefront"
    ]
@@ -324,7 +321,6 @@
    "terms": [
     "job",
     "career",
-    "work",
     "briefcase",
     "freelancer",
     "freelancers"
@@ -353,10 +349,7 @@
    "art": "finance:growth",
    "label": "Growth",
    "terms": [
-    "growth",
-    "grow",
-    "grows",
-    "increase"
+    "growth"
    ]
   },
   {
@@ -364,9 +357,7 @@
    "label": "Profit",
    "terms": [
     "profit",
-    "profits",
-    "gain",
-    "gains"
+    "profits"
    ]
   },
   {
@@ -424,7 +415,6 @@
    "art": "finance:transfer",
    "label": "Money transfer",
    "terms": [
-    "transfer",
     "transfers",
     "wire",
     "money transfer"
@@ -594,8 +584,7 @@
    "art": "business:presentation",
    "label": "Presentation",
    "terms": [
-    "presentation",
-    "pitch"
+    "presentation"
    ]
   },
   {
@@ -676,7 +665,6 @@
     "idea",
     "ideas",
     "insight",
-    "fix",
     "solution"
    ],
    "termsJa": [
@@ -918,6 +906,943 @@
    "label": "Version branch",
    "terms": [
     "version branch"
+   ]
+  },
+  {
+   "art": "icon:Brain",
+   "label": "Brain",
+   "terms": [
+    "brain",
+    "brains",
+    "mind",
+    "thinking",
+    "memory"
+   ]
+  },
+  {
+   "art": "icon:Heart",
+   "label": "Heart",
+   "terms": [
+    "heart",
+    "hearts",
+    "love"
+   ]
+  },
+  {
+   "art": "icon:HeartPulse",
+   "label": "Heartbeat",
+   "terms": [
+    "heartbeat",
+    "pulse",
+    "blood pressure"
+   ]
+  },
+  {
+   "art": "icon:Eye",
+   "label": "Eye",
+   "terms": [
+    "eye",
+    "eyes",
+    "vision",
+    "sight"
+   ]
+  },
+  {
+   "art": "icon:Ear",
+   "label": "Ear",
+   "terms": [
+    "ear",
+    "ears",
+    "hearing"
+   ]
+  },
+  {
+   "art": "icon:Bone",
+   "label": "Bone",
+   "terms": [
+    "bone",
+    "bones",
+    "skeleton"
+   ]
+  },
+  {
+   "art": "icon:Activity",
+   "label": "Signal",
+   "terms": [
+    "signal",
+    "signals",
+    "nerve",
+    "nerves",
+    "activity"
+   ]
+  },
+  {
+   "art": "icon:Pill",
+   "label": "Pill",
+   "terms": [
+    "pill",
+    "pills",
+    "medicine",
+    "medication",
+    "drug",
+    "drugs",
+    "supplement",
+    "supplements"
+   ]
+  },
+  {
+   "art": "icon:Syringe",
+   "label": "Vaccine",
+   "terms": [
+    "vaccine",
+    "vaccines",
+    "injection"
+   ]
+  },
+  {
+   "art": "icon:Stethoscope",
+   "label": "Doctor",
+   "terms": [
+    "doctor",
+    "doctors",
+    "nurse",
+    "checkup"
+   ]
+  },
+  {
+   "art": "icon:Hospital",
+   "label": "Hospital",
+   "terms": [
+    "hospital",
+    "hospitals",
+    "clinic"
+   ]
+  },
+  {
+   "art": "icon:Dna",
+   "label": "Dna",
+   "terms": [
+    "dna",
+    "gene",
+    "genes",
+    "genetics"
+   ]
+  },
+  {
+   "art": "icon:Microscope",
+   "label": "Cell",
+   "terms": [
+    "cell",
+    "cells",
+    "bacteria",
+    "microbe",
+    "microbes",
+    "virus",
+    "viruses"
+   ]
+  },
+  {
+   "art": "icon:FlaskConical",
+   "label": "Chemical",
+   "terms": [
+    "chemical",
+    "chemicals",
+    "compound",
+    "molecule",
+    "molecules",
+    "adenosine",
+    "hormone",
+    "hormones",
+    "enzyme",
+    "enzymes",
+    "protein",
+    "proteins"
+   ]
+  },
+  {
+   "art": "icon:Atom",
+   "label": "Atom",
+   "terms": [
+    "atom",
+    "atoms",
+    "electron",
+    "electrons",
+    "physics"
+   ]
+  },
+  {
+   "art": "icon:Dumbbell",
+   "label": "Exercise",
+   "terms": [
+    "exercise",
+    "workout",
+    "gym",
+    "muscle",
+    "muscles",
+    "strength"
+   ]
+  },
+  {
+   "art": "icon:Footprints",
+   "label": "Walk",
+   "terms": [
+    "walk",
+    "walks",
+    "walking",
+    "steps taken",
+    "hike"
+   ]
+  },
+  {
+   "art": "icon:Bed",
+   "label": "Bed",
+   "terms": [
+    "bed",
+    "beds",
+    "sleep",
+    "sleeping",
+    "nap",
+    "naps"
+   ]
+  },
+  {
+   "art": "icon:Moon",
+   "label": "Night",
+   "terms": [
+    "night",
+    "nights",
+    "evening",
+    "moon",
+    "bedtime"
+   ]
+  },
+  {
+   "art": "icon:Sun",
+   "label": "Sun",
+   "terms": [
+    "sun",
+    "morning",
+    "daylight",
+    "sunlight",
+    "sunshine",
+    "noon"
+   ]
+  },
+  {
+   "art": "icon:FaceSlightlySmiling",
+   "label": "Happiness",
+   "terms": [
+    "happiness",
+    "mood",
+    "joy"
+   ]
+  },
+  {
+   "art": "icon:FaceSlightlyFrowning",
+   "label": "Stress",
+   "terms": [
+    "stress",
+    "anxiety",
+    "sadness",
+    "worry"
+   ]
+  },
+  {
+   "art": "icon:BatteryLow",
+   "label": "Tired",
+   "terms": [
+    "tired",
+    "tiredness",
+    "fatigue",
+    "crash",
+    "exhaustion"
+   ]
+  },
+  {
+   "art": "icon:BatteryFull",
+   "label": "Energy",
+   "terms": [
+    "energy",
+    "alertness",
+    "stamina"
+   ]
+  },
+  {
+   "art": "icon:Zap",
+   "label": "Electricity",
+   "terms": [
+    "electricity",
+    "spark",
+    "voltage",
+    "boost"
+   ]
+  },
+  {
+   "art": "icon:Coffee",
+   "label": "Coffee",
+   "terms": [
+    "coffee",
+    "coffees",
+    "caffeine",
+    "espresso",
+    "cup",
+    "cups",
+    "latte",
+    "tea"
+   ]
+  },
+  {
+   "art": "icon:Apple",
+   "label": "Apple",
+   "terms": [
+    "apple",
+    "apples",
+    "fruit",
+    "food",
+    "diet",
+    "nutrition"
+   ]
+  },
+  {
+   "art": "icon:Carrot",
+   "label": "Carrot",
+   "terms": [
+    "carrot",
+    "vegetable",
+    "vegetables"
+   ]
+  },
+  {
+   "art": "icon:Egg",
+   "label": "Egg",
+   "terms": [
+    "egg",
+    "eggs"
+   ]
+  },
+  {
+   "art": "icon:Fish",
+   "label": "Fish",
+   "terms": [
+    "fish",
+    "seafood"
+   ]
+  },
+  {
+   "art": "icon:Pizza",
+   "label": "Pizza",
+   "terms": [
+    "pizza",
+    "fast food",
+    "junk food"
+   ]
+  },
+  {
+   "art": "icon:Beer",
+   "label": "Beer",
+   "terms": [
+    "beer",
+    "alcohol"
+   ]
+  },
+  {
+   "art": "icon:Wine",
+   "label": "Wine",
+   "terms": [
+    "wine"
+   ]
+  },
+  {
+   "art": "icon:Salad",
+   "label": "Salad",
+   "terms": [
+    "salad"
+   ]
+  },
+  {
+   "art": "icon:Utensils",
+   "label": "Meal",
+   "terms": [
+    "meal",
+    "meals",
+    "dinner",
+    "lunch",
+    "breakfast",
+    "restaurant"
+   ]
+  },
+  {
+   "art": "icon:CupSoda",
+   "label": "Soda",
+   "terms": [
+    "soda",
+    "sugar"
+   ]
+  },
+  {
+   "art": "icon:Droplet",
+   "label": "Water",
+   "terms": [
+    "water",
+    "droplet",
+    "hydration",
+    "liquid"
+   ]
+  },
+  {
+   "art": "icon:Clock",
+   "label": "Clock",
+   "terms": [
+    "clock",
+    "clocks",
+    "hour",
+    "hours",
+    "minute",
+    "minutes",
+    "time zone",
+    "schedule"
+   ]
+  },
+  {
+   "art": "icon:AlarmClock",
+   "label": "Alarm",
+   "terms": [
+    "alarm",
+    "alarms",
+    "wake-up",
+    "wake up"
+   ]
+  },
+  {
+   "art": "icon:Hourglass",
+   "label": "Time",
+   "terms": [
+    "time",
+    "waiting",
+    "delay",
+    "delays",
+    "patience",
+    "duration"
+   ]
+  },
+  {
+   "art": "icon:Calendar",
+   "label": "Calendar",
+   "terms": [
+    "calendar",
+    "date",
+    "dates",
+    "week",
+    "weeks",
+    "month",
+    "months",
+    "year",
+    "years"
+   ]
+  },
+  {
+   "art": "icon:Gauge",
+   "label": "Pressure",
+   "terms": [
+    "pressure",
+    "speed",
+    "intensity"
+   ]
+  },
+  {
+   "art": "icon:TrendingUp",
+   "label": "Rise",
+   "terms": [
+    "inflation"
+   ]
+  },
+  {
+   "art": "icon:TrendingDown",
+   "label": "Decline",
+   "terms": [
+    "recession"
+   ]
+  },
+  {
+   "art": "icon:Scale",
+   "label": "Balance",
+   "terms": [
+    "law",
+    "laws",
+    "justice",
+    "fairness",
+    "weight"
+   ]
+  },
+  {
+   "art": "icon:Ruler",
+   "label": "Size",
+   "terms": [
+    "size",
+    "length",
+    "measurement"
+   ]
+  },
+  {
+   "art": "icon:Thermometer",
+   "label": "Temperature",
+   "terms": [
+    "temperature",
+    "heat",
+    "fever"
+   ]
+  },
+  {
+   "art": "icon:Wind",
+   "label": "Wind",
+   "terms": [
+    "wind",
+    "air",
+    "breath",
+    "breathing"
+   ]
+  },
+  {
+   "art": "icon:WavesHorizontal",
+   "label": "Wave",
+   "terms": [
+    "wave",
+    "waves",
+    "ocean",
+    "sea",
+    "tide",
+    "tides",
+    "river"
+   ]
+  },
+  {
+   "art": "icon:Flame",
+   "label": "Fire",
+   "terms": [
+    "fire",
+    "flame",
+    "flames",
+    "burn",
+    "calories"
+   ]
+  },
+  {
+   "art": "icon:Leaf",
+   "label": "Plant",
+   "terms": [
+    "plant",
+    "plants",
+    "leaf",
+    "leaves",
+    "nature"
+   ]
+  },
+  {
+   "art": "icon:TreePine",
+   "label": "Tree",
+   "terms": [
+    "tree",
+    "trees",
+    "forest",
+    "forests"
+   ]
+  },
+  {
+   "art": "icon:Mountain",
+   "label": "Mountain",
+   "terms": [
+    "mountain",
+    "mountains",
+    "hill"
+   ]
+  },
+  {
+   "art": "icon:Globe",
+   "label": "World",
+   "terms": [
+    "world",
+    "planet",
+    "earth",
+    "global",
+    "country",
+    "countries"
+   ]
+  },
+  {
+   "art": "icon:Map",
+   "label": "Map",
+   "terms": [
+    "map",
+    "maps",
+    "route",
+    "routes"
+   ]
+  },
+  {
+   "art": "icon:Cloud",
+   "label": "Clouds",
+   "terms": [
+    "clouds",
+    "weather"
+   ]
+  },
+  {
+   "art": "icon:CloudRain",
+   "label": "Rain",
+   "terms": [
+    "rain",
+    "storm",
+    "storms",
+    "flood"
+   ]
+  },
+  {
+   "art": "icon:Snowflake",
+   "label": "Snow",
+   "terms": [
+    "snow",
+    "ice",
+    "winter"
+   ]
+  },
+  {
+   "art": "icon:Telescope",
+   "label": "Telescope",
+   "terms": [
+    "telescope",
+    "star",
+    "stars",
+    "galaxy",
+    "space"
+   ]
+  },
+  {
+   "art": "icon:Rocket",
+   "label": "Rocket",
+   "terms": [
+    "rocket",
+    "launch",
+    "satellite"
+   ]
+  },
+  {
+   "art": "icon:Building",
+   "label": "City",
+   "terms": [
+    "city",
+    "cities",
+    "buildings",
+    "office",
+    "offices"
+   ]
+  },
+  {
+   "art": "icon:School",
+   "label": "School",
+   "terms": [
+    "school",
+    "schools",
+    "university",
+    "college",
+    "classroom"
+   ]
+  },
+  {
+   "art": "icon:Landmark",
+   "label": "Government",
+   "terms": [
+    "government",
+    "governments",
+    "bank of",
+    "congress",
+    "parliament",
+    "court",
+    "courts"
+   ]
+  },
+  {
+   "art": "icon:Bird",
+   "label": "Bird",
+   "terms": [
+    "bird",
+    "birds"
+   ]
+  },
+  {
+   "art": "icon:Dog",
+   "label": "Dog",
+   "terms": [
+    "dog",
+    "dogs",
+    "pet",
+    "pets"
+   ]
+  },
+  {
+   "art": "icon:Cat",
+   "label": "Cat",
+   "terms": [
+    "cat",
+    "cats"
+   ]
+  },
+  {
+   "art": "icon:Baby",
+   "label": "Baby",
+   "terms": [
+    "baby",
+    "babies",
+    "child",
+    "children",
+    "kid",
+    "kids"
+   ]
+  },
+  {
+   "art": "icon:User",
+   "label": "Person",
+   "terms": [
+    "person",
+    "user",
+    "users",
+    "customer service"
+   ]
+  },
+  {
+   "art": "icon:Users",
+   "label": "Group",
+   "terms": [
+    "group",
+    "groups",
+    "community",
+    "crowd",
+    "friends",
+    "family"
+   ]
+  },
+  {
+   "art": "icon:GraduationCap",
+   "label": "Student",
+   "terms": [
+    "student",
+    "students",
+    "teacher",
+    "teachers",
+    "education",
+    "degree"
+   ]
+  },
+  {
+   "art": "icon:Car",
+   "label": "Car",
+   "terms": [
+    "car",
+    "cars",
+    "driver",
+    "drivers",
+    "traffic"
+   ]
+  },
+  {
+   "art": "icon:Plane",
+   "label": "Plane",
+   "terms": [
+    "plane",
+    "planes",
+    "flight",
+    "flights",
+    "airline",
+    "airlines"
+   ]
+  },
+  {
+   "art": "icon:TrainFront",
+   "label": "Train",
+   "terms": [
+    "train",
+    "trains",
+    "subway"
+   ]
+  },
+  {
+   "art": "icon:Ship",
+   "label": "Ship",
+   "terms": [
+    "ship",
+    "ships",
+    "cargo"
+   ]
+  },
+  {
+   "art": "icon:Bike",
+   "label": "Bike",
+   "terms": [
+    "bike",
+    "bikes",
+    "bicycle"
+   ]
+  },
+  {
+   "art": "icon:Fuel",
+   "label": "Fuel",
+   "terms": [
+    "fuel",
+    "gas",
+    "oil"
+   ]
+  },
+  {
+   "art": "icon:Lightbulb",
+   "label": "Light",
+   "terms": [
+    "bulb"
+   ]
+  },
+  {
+   "art": "icon:BookOpen",
+   "label": "Book",
+   "terms": [
+    "books about",
+    "reading",
+    "study",
+    "studies",
+    "research"
+   ]
+  },
+  {
+   "art": "icon:FileText",
+   "label": "Document",
+   "terms": [
+    "document",
+    "documents",
+    "paper",
+    "report",
+    "reports"
+   ]
+  },
+  {
+   "art": "icon:Lock",
+   "label": "Block",
+   "terms": [
+    "block",
+    "blocks",
+    "barrier",
+    "blocked"
+   ]
+  },
+  {
+   "art": "icon:ShieldCheck",
+   "label": "Protection",
+   "terms": [
+    "protection",
+    "safety",
+    "defense"
+   ]
+  },
+  {
+   "art": "icon:Link",
+   "label": "Link",
+   "terms": [
+    "connection",
+    "chain"
+   ]
+  },
+  {
+   "art": "icon:Gift",
+   "label": "Gift",
+   "terms": [
+    "reward",
+    "rewards",
+    "bonus"
+   ]
+  },
+  {
+   "art": "icon:Trophy",
+   "label": "Win",
+   "terms": [
+    "winner",
+    "prize"
+   ]
+  },
+  {
+   "art": "icon:Mic",
+   "label": "Voice",
+   "terms": [
+    "voice",
+    "speech",
+    "microphone"
+   ]
+  },
+  {
+   "art": "icon:ListMusic",
+   "label": "Music",
+   "terms": [
+    "music",
+    "song",
+    "songs"
+   ]
+  },
+  {
+   "art": "icon:Camera",
+   "label": "Photo",
+   "terms": [
+    "photo",
+    "photos",
+    "camera"
+   ]
+  },
+  {
+   "art": "icon:Tv",
+   "label": "Television",
+   "terms": [
+    "television",
+    "tv",
+    "screen",
+    "screens"
+   ]
+  },
+  {
+   "art": "icon:Gamepad2",
+   "label": "Game",
+   "terms": [
+    "game",
+    "games",
+    "gaming"
+   ]
+  },
+  {
+   "art": "icon:ShoppingCart",
+   "label": "Shopping",
+   "terms": [
+    "shopping",
+    "groceries",
+    "cart"
+   ]
+  },
+  {
+   "art": "icon:Handshake",
+   "label": "Deal",
+   "terms": [
+    "deal",
+    "deals"
+   ]
+  },
+  {
+   "art": "icon:Newspaper",
+   "label": "News",
+   "terms": [
+    "news",
+    "newspaper"
+   ]
+  },
+  {
+   "art": "icon:Vote",
+   "label": "Vote",
+   "terms": [
+    "vote",
+    "votes",
+    "election",
+    "elections"
    ]
   }
  ]

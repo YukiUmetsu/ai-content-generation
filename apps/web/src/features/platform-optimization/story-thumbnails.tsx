@@ -2,17 +2,12 @@
  * Illustrations become SVG images, so every layer stays editable and nothing is fetched.
  */
 import { renderToStaticMarkup } from "react-dom/server";
-import { FinanceObject2D } from "@/components/domains/finance-object-2d";
-import { BusinessObject2D } from "@/components/domains/business-object-2d";
-import { TechnologyObject2D } from "@/components/domains/technology-object-2d";
-import type { FinanceObjectKind } from "@/components/domains/finance-object-model";
-import type { BusinessObjectKind } from "@/components/domains/business-object-model";
-import type { TechnologyObjectKind } from "@/components/domains/technology-object-model";
 import type { FontAsset, ImageAsset } from "@/components/media/document";
 import { documentToSvg } from "@/components/media/svg-export";
 import { composeThumbnail } from "@/components/media/thumbnail-composition";
 import type { ThumbnailRecipeId } from "@/components/media/thumbnail-composition";
 import { inspectThumbnail } from "@/components/media/thumbnail-preflight";
+import { StoryArt } from "../../video-export/story-art";
 
 export interface StoryThumbnailConcept {
   id: string;
@@ -28,12 +23,7 @@ const FONT: FontAsset = { id: "display", family: "Geist Variable", weight: 800, 
 const SIZE = 640;
 
 function artMarkup(name: string) {
-  const [family, kind] = name.split(":");
-  const props = { width: SIZE, height: SIZE, showTitle: false, reducedMotion: true } as const;
-  if (family === "finance") return renderToStaticMarkup(<FinanceObject2D spec={{ id: kind, kind: kind as FinanceObjectKind }} {...props} />);
-  if (family === "business") return renderToStaticMarkup(<BusinessObject2D spec={{ id: kind, kind: kind as BusinessObjectKind }} {...props} />);
-  if (family === "technology") return renderToStaticMarkup(<TechnologyObject2D spec={{ id: kind, kind: kind as TechnologyObjectKind }} {...props} />);
-  throw new Error(`Unknown thumbnail art "${name}".`);
+  return renderToStaticMarkup(<StoryArt name={name} width={SIZE} height={SIZE} />);
 }
 
 function asset(id: string, art: string, alt: string): ImageAsset {

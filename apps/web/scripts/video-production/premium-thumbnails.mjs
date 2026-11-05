@@ -261,14 +261,20 @@ async function persistConcept(directory,name,source,png,sourceSha256,sha256){
 }
 
 export async function generateProductionThumbnails(job, { outputDir,cacheDir,reuseCacheDir,sceneJobs,
-  ffmpeg = "ffmpeg", signal, browserExecutable, concepts = [],
+  ffmpeg = "ffmpeg", signal, browserExecutable, concepts = [], onWarning,
   compose = loadKumikiComposer, composeStory = loadStoryComposer, convert } = {}) {
   if (!outputDir) throw Error("Thumbnails need an owned production output directory.");
   if (signal?.aborted) throw signal.reason ?? Error("Thumbnail generation cancelled.");
   const copy = thumbnailCopy(job);
-  // A film with three story concepts shows its own subject. Otherwise the script-only covers are used.
-  const artworks = concepts.length === 3 ? (await composeStory())(concepts) : (await compose())(copy.title, copy.sections, "youtube-landscape", undefined,
-    "youtube", "draft", undefined, copy.headlines);
+  // A film with three story concepts shows its own subject. Otherwise the script-only covers are used,
+  // and a concept that fails preflight never costs the finished film its thumbnails.
+  let artworks = null;
+  if (concepts.length === 3) {
+    try { artworks = (await composeStory())(concepts); }
+    catch (error) { await onWarning?.(`Story thumbnails were not usable: ${error.message}`); }
+  }
+  artworks ??= (await compose())(copy.title, copy.sections, "youtube-landscape", undefined, "youtube", "draft", undefined, copy.headlines);
+  const usedStory = artworks.some(art => concepts.some(concept => concept.id === art.id));
   if (!Array.isArray(artworks) || artworks.length !== 3 ||
     new Set(artworks.map(art => art.id)).size !== 3) {
     throw Error("Kumiki did not produce three distinct thumbnail compositions.");
@@ -317,7 +323,7 @@ export async function generateProductionThumbnails(job, { outputDir,cacheDir,reu
       const digest=hash(bytes);
       if(cacheDir&&!cached)await persistConcept(cacheDir,name,source,bytes,sourceSha256,digest);
       if(attempt)await sceneJobs.completeScene(attempt,{sha256:digest});
-      outputs[index] = { id: name, label: art.label, headline: concepts[index]?.headline ?? copy.headlines[index],
+      outputs[index] = { id: name, label: art.label, headline: usedStory ? concepts[index].headline : copy.headlines[index],
         file: `${name}.png`, source: `${name}.svg`, sha256: digest,
         sourceSha256, width: 1280, height: 720 };
     }catch(error){

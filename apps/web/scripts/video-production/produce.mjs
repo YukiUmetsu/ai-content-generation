@@ -389,7 +389,7 @@ export async function produceVideo(candidate, options, deps = {}) {
     });
     plan = performance.plan;
     await options.onProgress?.({ phase: "scene-stories", message: "Directing what changes on screen for each spoken phrase…" });
-    const stories = await (deps.applyObjectStories ?? applyObjectStories)(plan, { speech, ffmpeg: options.ffmpeg, signal: options.signal, enabled: options.objectStories !== false });
+    const stories = await (deps.applyObjectStories ?? applyObjectStories)(plan, { speech, ffmpeg: options.ffmpeg, signal: options.signal, enabled: options.objectStories !== false, useModel: options.storyModel !== false });
     plan = stories.plan;
     const performanceSounds = await performanceSfx(performance.sounds, plan, join(out, ".render", "performance-shots", "sounds"));
     const storySound = await storyCueTrack(stories.cues ?? [], { fps: plan.manifest.fps, totalSamples: timeline.totalSamples, dir: join(out, ".render", "story-sound") });
@@ -466,6 +466,7 @@ export async function produceVideo(candidate, options, deps = {}) {
         segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))}});
     const thumbnails=await (deps.generateThumbnails??generateProductionThumbnails)(job,{
       concepts:storyThumbnailConcepts(plan,{title:job.topic.title}),
+      onWarning:message=>options.onProgress?.({phase:"thumbnails",message}),
       outputDir:working,cacheDir:join(out,".render","thumbnails"),
       reuseCacheDir:options.reuseSpeechCacheFrom?
         join(options.reuseSpeechCacheFrom,".render","thumbnails"):undefined,
