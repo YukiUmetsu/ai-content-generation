@@ -1,7 +1,7 @@
 {
   "$comment": "Pinned Kumiki-UI source registry. Bump `commit` deliberately, then run `pnpm kumiki:update` and review the diff. Never edit vendored files in src/components or src/styles/kumiki directly.",
   "repository": "https://github.com/YukiUmetsu/kumiki-ui",
-  "commit": "3bd7b8fb728fe0da3959171603b5efe7f1ee567e",
+  "commit": "d3a5b1843dc58059c5d08affaa71de20d3ebca1b",
   "manifest": "registry.json",
   "items": [
     "button",
@@ -37,7 +37,9 @@
     "object-story",
     "domain-finance-objects-2d",
     "domain-business-objects-2d",
-    "domain-technology-objects-2d"
+    "domain-technology-objects-2d",
+    "thumbnail-composition",
+    "thumbnail-preflight"
   ],
   "styles": [
     "src/styles/tokens.css",

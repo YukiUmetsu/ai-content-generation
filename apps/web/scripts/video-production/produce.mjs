@@ -29,6 +29,7 @@ import { buildQaReport } from "./report.mjs";
 import { prepareApprovedSceneMedia } from "./render-scene-media.mjs";
 import { prepareAutomaticCommonsMedia } from "./automatic-commons-assets.mjs";
 import { generateProductionThumbnails } from "./premium-thumbnails.mjs";
+import { storyThumbnailConcepts } from "./story-thumbnails.mjs";
 import { mediaToolFailureReason } from "./media-tool-error.mjs";
 
 const run = promisify(execFile);
@@ -464,6 +465,7 @@ export async function produceVideo(candidate, options, deps = {}) {
       artifactLedger:{kind:"scene-render",planHash,buildHash:preflight.buildHash,
         segments:render.segmentHashes.map(({sha256,startFrame,frameCount})=>({sha256,startFrame,frameCount}))}});
     const thumbnails=await (deps.generateThumbnails??generateProductionThumbnails)(job,{
+      concepts:storyThumbnailConcepts(plan,{title:job.topic.title}),
       outputDir:working,cacheDir:join(out,".render","thumbnails"),
       reuseCacheDir:options.reuseSpeechCacheFrom?
         join(options.reuseSpeechCacheFrom,".render","thumbnails"):undefined,
