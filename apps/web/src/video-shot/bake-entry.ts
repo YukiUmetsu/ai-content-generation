@@ -17,6 +17,7 @@ export interface ShotBakeRequest {
   camera: CameraSequenceSpec;
   targets?: CameraTarget[];
   lights?: Record<string, LightKey[]>;
+  viewAngleExempt?: { startFrame: number; endFrame: number }[];
 }
 
 export function bakeRequest(request: ShotBakeRequest) {

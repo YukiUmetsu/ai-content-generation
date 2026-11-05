@@ -34,6 +34,12 @@ test("a drawing fade on an actor reaches the bake", () => {
   const [actor] = compile({ cast: [{ ...base().cast[0], variantFadeFrames: 4 }] }).actors;
   assert.equal(actor.variantFadeFrames, 4);
 });
+test("the view limit and the camera-move exemption reach the bake", () => {
+  const request = compile({ cast: [{ ...base().cast[0], maxViewAngle: 30 }],
+    shots: [base().shots[0], { id: "r", kind: "push-in", subjects: ["a"], from: { frame: 60 }, transition: { kind: "continuous", durationFrames: 20 }, camera: { position: [0, .4, .3] } }] });
+  assert.equal(request.actors[0].maxViewAngle, 30);
+  assert.deepEqual(request.viewAngleExempt, [{ startFrame: 60, endFrame: 80 }]);
+});
 test("spoken lines fall back to the labelled approximate cycle without mouth data", () => {
   const speech = compile().actors[0].cues.filter(cue => cue.kind === "speech");
   assert.deepEqual(speech.map(cue => [cue.startFrame, cue.endFrame, cue.precision]), [[10, 40, "approximate"]]);

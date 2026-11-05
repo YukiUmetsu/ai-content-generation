@@ -61,6 +61,14 @@ test("an actor who stays put lays an object down during the line about it", () =
   const frames = resolveActionFrames(ruleDirector(still), { speechWindows });
   assert.equal(frames["invoice-laid"].startFrame, speechWindows.a.startFrame + 6);
 });
+test("actors with a clear mark step out before a reveal, the last to lay an object after laying it", () => {
+  const marked = brief({ cast: [{ ...brief().cast[0], clear: [-.3, 0, .1] }, { ...brief().cast[1], clear: [.25, 0, .04] }] });
+  const intent = ruleDirector(marked), frames = resolveActionFrames(intent, { speechWindows });
+  assert.equal(frames["pip-clears"].startFrame, frames["receipt-laid"].endFrame - 10, "leaves as the camera starts to move");
+  assert.equal(frames["quill-clears"].startFrame, frames["receipt-laid"].endFrame + 2);
+  assert.deepEqual(validatePerformanceIntent(started(intent), context(intent)).findings, []);
+  assert.equal(ruleDirector(brief()).actions.some(action => action.id.endsWith("-clears")), false);
+});
 test("listeners look at whoever is speaking", () => {
   const listening = ruleDirector(brief()).actions.filter(action => action.verb === "look-at");
   assert.deepEqual(listening.map(action => [action.actor, action.target.actor]), [["quill", "pip"], ["pip", "quill"], ["quill", "pip"]]);

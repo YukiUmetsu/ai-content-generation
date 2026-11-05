@@ -114,6 +114,8 @@ export function compilePerformance({ intent, rigs, definitions, grips, speechWin
   const held = new Set();
   const ops = compileOps(intent, frames, held);
   const cues = compileCues(intent, frames, speechWindows, lipSync);
+  const camera = compileCamera(intent, width, height, speechWindows, frames);
+  const starts = camera.shots.reduce((list, shot, index) => [...list, index ? list[index - 1] + camera.shots[index - 1].durationFrames : 0], []);
   const interaction = {
     schemaVersion: 1, durationFrames: intent.durationFrames, fps: intent.fps, timing: intent.timing ?? "natural",
     ...(intent.maxHeadTurn === undefined ? {} : { maxHeadTurn: intent.maxHeadTurn }),
@@ -128,8 +130,12 @@ export function compilePerformance({ intent, rigs, definitions, grips, speechWin
       instance: { instanceId: actor.id, characterId: definitions[actor.id].characterId, revision: definitions[actor.id].revision, seed: actor.seed ?? 11 },
       cues: cues.get(actor.id), headPart: actor.headPart ?? "head",
       limbs: Object.fromEntries(Object.entries(rigs[actor.id].effectors).map(([name, hand]) => [name, hand.part])),
-      ...(actor.gait ? { gait: actor.gait } : {}), ...(actor.variantFadeFrames === undefined ? {} : { variantFadeFrames: actor.variantFadeFrames }) })),
-    camera: compileCamera(intent, width, height, speechWindows, frames),
+      ...(actor.gait ? { gait: actor.gait } : {}), ...(actor.variantFadeFrames === undefined ? {} : { variantFadeFrames: actor.variantFadeFrames }),
+      ...(actor.maxViewAngle === undefined ? {} : { maxViewAngle: actor.maxViewAngle }) })),
+    camera,
+    // A continuous camera move may sweep past an actor. Holds may not.
+    viewAngleExempt: camera.shots.flatMap((shot, index) => shot.transition?.kind === "continuous"
+      ? [{ startFrame: starts[index], endFrame: starts[index] + (shot.transition.durationFrames ?? 0) }] : []),
     targets: (intent.subjects ?? []).map(subject => ({ id: subject.id, frames: [{ frame: 0, bounds: subject.bounds }] })),
     lights: compileLights(intent, frames, speechWindows),
   };

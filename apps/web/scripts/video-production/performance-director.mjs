@@ -7,6 +7,8 @@ import { TIMING_PRESETS, validatePerformanceIntent } from "./performance-intent.
 import { localChatEndpoint } from "./topic-generator.mjs";
 
 const LEAD_FRAMES = 18;
+/** The reveal camera starts this many frames relative to the last object landing. */
+const REVEAL_LEAD = -10;
 
 function objectOf(item, heldInStart) {
   const { id, pitch, yaw, holder, position, bendable } = item;
@@ -39,6 +41,14 @@ export function ruleDirector(brief) {
     if (actor.mark) actions.push({ id: `${actor.id}-enters`, actor: actor.id, verb: "enter", to: actor.mark, at: { frame: 0 }, durationFrames: actor.entryFrames ?? 52 });
   let last = null;
   for (const item of brief.objects) last = stageObject(item, brief, actions, null);
+  // An insert that looks down on the objects needs the actors out of frame: flat art has one view.
+  if (brief.shots.reveal && last) for (const actor of brief.cast) {
+    if (!actor.clear) continue;
+    const laidLast = brief.objects.at(-1)?.holder.actor === actor.id;
+    actions.push({ id: `${actor.id}-clears`, actor: actor.id, verb: "enter", to: actor.clear,
+      // Others leave as the camera starts to move, so nobody walks off in a still wide shot.
+      at: { after: last, offsetFrames: laidLast ? 2 : REVEAL_LEAD }, durationFrames: actor.clearFrames ?? 26 });
+  }
   for (const line of brief.lines) {
     actions.push({ id: `${line.id}-spoken`, actor: line.actor, verb: "speak", line: line.id, at: { speech: line.id } });
     if (line.gesture || line.expression)
@@ -54,7 +64,7 @@ export function ruleDirector(brief) {
   const subjects = [];
   if (reveal) {
     subjects.push(...reveal.subjects.filter(() => reveal.bounds).map(id => ({ id, bounds: reveal.bounds })));
-    shots.push({ id: "reveal", kind: "push-in", subjects: reveal.subjects, purpose: brief.visualChange, from: { after: last, offsetFrames: -10 },
+    shots.push({ id: "reveal", kind: "push-in", subjects: reveal.subjects, purpose: brief.visualChange, from: { after: last, offsetFrames: REVEAL_LEAD },
       transition: { kind: "continuous", durationFrames: reveal.moveFrames ?? 40, allowPartialFraming: true }, camera: reveal.camera });
   }
   const light = [];
@@ -65,8 +75,9 @@ export function ruleDirector(brief) {
     version: 1, objective: brief.objective, visualChange: brief.visualChange, claimIds: brief.claimIds ?? [],
     durationFrames: brief.durationFrames, fps: brief.fps, timing: brief.timing ?? "natural",
     ...(brief.maxHeadTurn === undefined ? {} : { maxHeadTurn: brief.maxHeadTurn }),
-    cast: brief.cast.map(({ id, start, yaw, gait, seed, headPart, variantFadeFrames }) => ({ id, position: start, yaw, ...(gait ? { gait } : {}),
-      ...(seed === undefined ? {} : { seed }), ...(headPart ? { headPart } : {}), ...(variantFadeFrames === undefined ? {} : { variantFadeFrames }) })),
+    cast: brief.cast.map(({ id, start, yaw, gait, seed, headPart, variantFadeFrames, maxViewAngle }) => ({ id, position: start, yaw, ...(gait ? { gait } : {}),
+      ...(seed === undefined ? {} : { seed }), ...(headPart ? { headPart } : {}), ...(variantFadeFrames === undefined ? {} : { variantFadeFrames }),
+      ...(maxViewAngle === undefined ? {} : { maxViewAngle }) })),
     objects: brief.objects.map(item => objectOf(item, true)),
     materials: Object.fromEntries(brief.objects.filter(item => item.material).map(item => [item.id, item.material])),
     ...(brief.accentFrame === undefined ? {} : { accentFrame: brief.accentFrame }), ...(brief.label ? { label: brief.label } : {}),

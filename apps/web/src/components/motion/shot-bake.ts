@@ -7,6 +7,7 @@
  */
 import { evaluateCharacter } from "../character/evaluate";
 import type { CharacterCue, CharacterDefinition, CharacterInstance, CharacterPartState } from "../character/definition";
+import { createCameraProjector, projectCameraBounds } from "./camera-spatial";
 import { createCameraTargetRegistry } from "./camera-targets";
 import { evaluateCameraPose3D } from "./camera-pose-3d";
 import { compileCinematicCamera } from "./cinematic-camera-director";
@@ -54,6 +55,11 @@ export interface ShotBakeActor {
   gait?: ShotGait;
   /** Frames to blend a changed drawing in, for parts the rig does not already crossfade. 0 keeps hard cuts. */
   variantFadeFrames?: number;
+  /**
+   * Largest angle, degrees, between the camera and the actor's facing while the actor is in frame.
+   * Flat art has one view. Past this angle its layers read as detached cards, so the bake fails.
+   */
+  maxViewAngle?: number;
 }
 export interface LightKey { frame: number; level: number }
 export interface ShotBakeInput {
@@ -66,6 +72,8 @@ export interface ShotBakeInput {
   /** Extra camera subjects, for example a printed number on a page. */
   targets?: readonly CameraTarget[];
   lights?: Record<string, readonly LightKey[]>;
+  /** End-exclusive frame ranges where a camera move may pass an actor at any angle. */
+  viewAngleExempt?: readonly { startFrame: number; endFrame: number }[];
 }
 export type ShotBakeDiagnostic = { severity: "error"; code: string; message: string } | CameraDiagnostic;
 export type ShotBakeResult = { ok: true; bake: ShotBakeV1; diagnostics: ShotBakeDiagnostic[] } | { ok: false; diagnostics: ShotBakeDiagnostic[] };
@@ -100,6 +108,9 @@ function quaternion(yaw: number, pitch: number): readonly [number, number, numbe
   const cy = Math.cos(yaw / 2), sy = Math.sin(yaw / 2), cp = Math.cos(pitch / 2), sp = Math.sin(pitch / 2);
   return [cy * sp, sy * cp, -sy * sp, cy * cp];
 }
+
+/** Share of the frame an actor must cover before its view angle matters. */
+const VISIBLE_AREA = .004;
 
 /** Fade legs in and out with speed, so a stopping actor stands, it does not freeze mid-step. */
 const GAIT_FULL_SPEED = .002;
@@ -176,6 +187,10 @@ export function bakeShot(input: ShotBakeInput): ShotBakeResult {
       [name, Array.from({ length: frames }, (_, frame) => lightLevel(keys, frame))])),
     contacts: [...interaction.contacts],
   };
+  const projector = createCameraProjector();
+  const aspect = input.width / input.height;
+  const exempt = (frame: number) => (input.viewAngleExempt ?? []).some(range => frame >= range.startFrame && frame < range.endFrame);
+  const steepest = new Map<string, { frame: number; angle: number }>();
   const travelled = new Map(input.actors.map(actor => [actor.id, 0]));
   const fades = new Map(input.actors.map(actor => [actor.id, new Map<string, { from: string; start: number }>()]));
   for (let frame = 0; frame < frames; frame++) {
@@ -198,6 +213,21 @@ export function bakeShot(input: ShotBakeInput): ShotBakeResult {
       const placed = state.actors[actor.id];
       channel.root.position.push(placed.position);
       channel.root.yaw.push(placed.yaw);
+      if (actor.maxViewAngle !== undefined && !exempt(frame)) {
+        const half = interaction.spec.actors.find(item => item.id === actor.id)!.height / 2;
+        const center: Vec3 = [placed.position[0], placed.position[1] + half, placed.position[2]];
+        const seen = projectCameraBounds(pose, box(center, [half * .6, half, half * .4]), aspect, projector);
+        const inFrame = Math.max(0, Math.min(seen.rect.x + seen.rect.width, 1) - Math.max(seen.rect.x, 0)) *
+          Math.max(0, Math.min(seen.rect.y + seen.rect.height, 1) - Math.max(seen.rect.y, 0));
+        if (inFrame > VISIBLE_AREA && seen.depth[1] > pose.near) {
+          const toCamera: Vec3 = [pose.position[0] - center[0], pose.position[1] - center[1], pose.position[2] - center[2]];
+          const distance = Math.hypot(...toCamera) || 1;
+          // An actor at yaw 0 faces +Z.
+          const cosine = (toCamera[0] * Math.sin(placed.yaw) + toCamera[2] * Math.cos(placed.yaw)) / distance;
+          const angle = Math.acos(Math.min(1, Math.max(-1, cosine))) * 180 / Math.PI;
+          if (angle > actor.maxViewAngle && angle > (steepest.get(actor.id)?.angle ?? 0)) steepest.set(actor.id, { frame, angle });
+        }
+      }
       const evaluated = evaluateCharacter(actor.definition, actor.instance, actor.cues, frame);
       const parts: Record<string, BakedPartState> = {};
       for (const [partId, part] of Object.entries(evaluated.parts)) {
@@ -233,6 +263,9 @@ export function bakeShot(input: ShotBakeInput): ShotBakeResult {
       }
     }
   }
+  if (steepest.size) return { ok: false, diagnostics: [...steepest].map(([id, worst]) => ({ severity: "error" as const, code: "actor-view-angle",
+    message: `Actor ${id} is in frame at ${worst.angle.toFixed(0)} degrees from its facing at frame ${worst.frame}. ` +
+      `Its art allows ${input.actors.find(actor => actor.id === id)!.maxViewAngle}. Move the actor out of frame or change the shot.` })) };
   return { ok: true, bake, diagnostics: compiled.diagnostics };
 }
 
