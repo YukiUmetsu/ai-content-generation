@@ -49,9 +49,15 @@ function StageObject({ object, height, renderObject }: { object: ObjectStoryObje
 
 function Connections({ state, width, height }: { state: ObjectStoryFrame; width: number; height: number }) {
   const stroke = Math.max(3, height * .005);
+  const arrow = height * .018;
   return <svg aria-hidden="true" viewBox={`0 0 ${width} ${height}`} style={{ position: "absolute", inset: 0, width, height, overflow: "visible" }}>
     {state.links.map(link => <g key={link.id} opacity={link.opacity}>
       <path d={`M ${link.from.x} ${link.from.y} Q ${(link.from.x + link.to.x) / 2} ${Math.min(link.from.y, link.to.y) - link.bow} ${link.to.x} ${link.to.y}`} pathLength={1} strokeDasharray={`${link.progress} 1`} fill="none" stroke={ACCENT} strokeWidth={stroke} strokeLinecap="round" />
+      {link.progress >= 1 && (() => {
+        const dx = link.to.x - link.from.x, dy = link.bow ? link.to.y - (Math.min(link.from.y, link.to.y) - link.bow) : link.to.y - link.from.y;
+        const angle = (Math.atan2(link.bow ? dy : dy, link.bow ? dx / 2 : dx) * 180) / Math.PI;
+        return <polygon data-km-story-arrow="" points={`0,0 ${-arrow * 1.6},${-arrow} ${-arrow * 1.6},${arrow}`} fill={ACCENT} transform={`translate(${link.to.x} ${link.to.y}) rotate(${angle})`} />;
+      })()}
       {link.label && link.progress > .6 && <text x={(link.from.x + link.to.x) / 2} y={(link.from.y + link.to.y) / 2 - height * .02} textAnchor="middle" fill={INK} fontWeight={650} fontSize={height * .028} opacity={(link.progress - .6) / .4}>{link.label}</text>}
     </g>)}
     {state.gaps.map(gap => {
@@ -60,7 +66,7 @@ function Connections({ state, width, height }: { state: ObjectStoryFrame; width:
         <line x1={middle.x - half} y1={middle.y} x2={middle.x + half} y2={middle.y} />
         <line x1={middle.x - half} y1={middle.y - tick} x2={middle.x - half} y2={middle.y + tick} />
         <line x1={middle.x + half} y1={middle.y - tick} x2={middle.x + half} y2={middle.y + tick} />
-        <text x={middle.x} y={middle.y - tick * 1.6} textAnchor="middle" stroke="none" fill={WARM} fontWeight={800} fontSize={height * .05} opacity={gap.progress}>{gap.label}</text>
+        <text x={middle.x} y={middle.y - tick * 1.6} textAnchor="middle" stroke="none" fill={WARM} fontWeight={800} fontSize={height * .075} opacity={gap.progress}>{gap.label}</text>
       </g>;
     })}
   </svg>;

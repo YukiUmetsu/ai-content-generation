@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { detectPauses, phraseWindows, speechPhrases } from "./speech-phrases.mjs";
 import { directSceneStory, newStoryStage } from "./story-director.mjs";
+import { storyCues, thinCues } from "./story-sound.mjs";
 
 const vocabularyPath = new URL("./story-vocabulary.json", import.meta.url);
 const checkerPath = fileURLToPath(new URL("../../dist-shot/story-entry.mjs", import.meta.url));
@@ -29,7 +30,7 @@ export function sceneNeedsStory(chapter) {
 /**
  * @param {object} plan general explainer plan
  * @param {{speech:object[],ffmpeg?:string,signal?:AbortSignal,enabled?:boolean}} options
- * @returns {Promise<{plan:object,report:object[]}>}
+ * @returns {Promise<{plan:object,report:object[],sounds?:object[]}>}
  */
 export async function applyObjectStories(plan, { speech = [], ffmpeg, signal, enabled = true } = {}, deps = {}) {
   // Portrait layouts are authored separately and do not draw stories yet.
@@ -60,5 +61,7 @@ export async function applyObjectStories(plan, { speech = [], ffmpeg, signal, en
       warnings: verdict.diagnostics.filter(item => item.severity === "warning").map(item => item.code) });
     chapters.push({ ...chapter, visual: { ...chapter.visual, story: directed.spec } });
   }
-  return { plan: { ...plan, chapters }, report };
+  const cues = chapters.filter(chapter => chapter.visual?.story).flatMap(chapter => storyCues(chapter.visual.story).map(cue => ({ ...cue, chapterId: chapter.id, absolute: chapter.startFrame + cue.frame })));
+  const sounds = thinCues(cues, { fps }).map(({ absolute: _absolute, frame: _frame, priority: _priority, ...cue }) => cue);
+  return { plan: { ...plan, chapters }, report, sounds };
 }

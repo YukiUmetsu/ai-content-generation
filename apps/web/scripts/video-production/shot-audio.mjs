@@ -61,6 +61,15 @@ const RECIPES = Object.freeze({
   "paper-land": "anoisesrc=c=pink:d=0.22:a=0.7:s=11,highpass=f=420,lowpass=f=5200,afade=t=out:d=0.2:curve=exp[a];sine=f=110:d=0.09,volume=0.5,afade=t=out:d=0.09[b];[a][b]amix=inputs=2:normalize=0",
   "paper-lift": "anoisesrc=c=pink:d=0.42:a=0.45:s=23,bandpass=f=2600:w=2600,tremolo=f=31:d=0.85,afade=t=in:d=0.06,afade=t=out:st=0.14:d=0.28",
   "room-tone": "anoisesrc=c=brown:d=6:a=0.5:s=7,lowpass=f=340,highpass=f=40,volume=0.5",
+  "story-pop": "sine=f=520:d=0.09,asetrate=48000*1.2,aresample=48000,afade=t=out:d=0.08:curve=exp,volume=0.7",
+  "story-tick": "sine=f=1400:d=0.04,afade=t=out:d=0.035:curve=exp,volume=0.5",
+  "story-draw": "anoisesrc=c=pink:d=0.3:a=0.5:s=5,bandpass=f=1800:w=1400,afade=t=in:d=0.1,afade=t=out:st=0.12:d=0.18",
+  "story-whoosh": "anoisesrc=c=pink:d=0.45:a=0.7:s=9,bandpass=f=900:w=900,afade=t=in:d=0.18:curve=exp,afade=t=out:st=0.2:d=0.25:curve=exp",
+  "story-measure": "sine=f=660:d=0.1,volume=0.5,afade=t=out:d=0.1[a];sine=f=880:d=0.14,volume=0.4,adelay=90|90,afade=t=out:st=0.1:d=0.14[b];[a][b]amix=inputs=2:normalize=0",
+  "story-glow": "sine=f=740:d=0.3,volume=0.3,afade=t=in:d=0.04,afade=t=out:st=0.06:d=0.24:curve=exp",
+  "story-check": "sine=f=659.25:d=0.12,volume=0.5,afade=t=out:d=0.12[a];sine=f=987.77:d=0.28,volume=0.45,adelay=80|80,afade=t=out:st=0.1:d=0.26:curve=exp[b];[a][b]amix=inputs=2:normalize=0",
+  "story-cross": "sine=f=196:d=0.22,volume=0.7,afade=t=out:d=0.2:curve=exp[a];sine=f=155.56:d=0.26,volume=0.5,adelay=50|50,afade=t=out:st=0.06:d=0.24:curve=exp[b];[a][b]amix=inputs=2:normalize=0",
+  "story-question": "sine=f=523.25:d=0.12,volume=0.45,afade=t=out:d=0.12[a];sine=f=783.99:d=0.2,volume=0.4,adelay=100|100,afade=t=out:st=0.1:d=0.2:curve=exp[b];[a][b]amix=inputs=2:normalize=0",
   "reveal-accent": "sine=f=146.83:d=2.2,volume=0.42[a];sine=f=220:d=2.2,volume=0.26[b];[a][b]amix=inputs=2:normalize=0,afade=t=in:d=0.05,afade=t=out:st=0.15:d=2.05:curve=exp",
 });
 

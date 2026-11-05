@@ -159,6 +159,8 @@ export async function planExplainerLayouts(plan, {
   const chapters = [];
   for (const chapter of plan.chapters) {
     if (signal?.aborted) throw Error("Layout planning cancelled.");
+    // A directed object story has its own beats, so it needs no layout schedule.
+    if (chapter.visual?.story) { chapters.push(chapter); continue; }
     try {
       const directed = await layoutsForChapter(chapter, plan.manifest.fps, {
         endpoint, model: settings.model, transport, signal, inference,

@@ -134,7 +134,7 @@ async function performanceSfx(sounds, plan, dir) {
     const chapter = plan.chapters.find(item => item.id === sound.chapterId);
     const id = `${sound.chapterId}-${sound.id}`;
     events[id] = frameToSample(chapter.startFrame, plan.manifest.fps) + sound.sample;
-    sfx.push({ id, eventId: id, assetPath: await makeSound(sound.sound, dir), licenseStatus: "verified", gainDb: sound.sound === "paper-land" ? -9 : -16 });
+    sfx.push({ id, eventId: id, assetPath: await makeSound(sound.sound, dir), licenseStatus: "verified", gainDb: sound.gainDb ?? (sound.sound === "paper-land" ? -9 : -16) });
   }
   return { sfx, events };
 }
@@ -371,13 +371,13 @@ export async function produceVideo(candidate, options, deps = {}) {
       signal: options.signal, onProgress: options.onProgress,
     });
     plan = performance.plan;
-    const performanceSounds = await performanceSfx(performance.sounds, plan, join(out, ".render", "performance-shots", "sounds"));
-    timeline = { ...timeline, eventSamples: { ...timeline.eventSamples, ...performanceSounds.events } };
-    await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
-    plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
     await options.onProgress?.({ phase: "scene-stories", message: "Directing what changes on screen for each spoken phrase…" });
     const stories = await (deps.applyObjectStories ?? applyObjectStories)(plan, { speech, ffmpeg: options.ffmpeg, signal: options.signal, enabled: options.objectStories !== false });
     plan = stories.plan;
+    const performanceSounds = await performanceSfx([...performance.sounds, ...(stories.sounds ?? [])], plan, join(out, ".render", "performance-shots", "sounds"));
+    timeline = { ...timeline, eventSamples: { ...timeline.eventSamples, ...performanceSounds.events } };
+    await options.onProgress?.({ phase: "scene-layouts", message: "Choosing objects, an action, and the on-screen line for each spoken section…" });
+    plan = await (deps.planSceneLayouts ?? planExplainerLayouts)(plan, { signal: options.signal });
     const frames = plan.manifest.durationFrames;
     const reviewFrames = selectSceneReviewFrames(plan);
     const sourcePlan = JSON.stringify(plan);
