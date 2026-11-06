@@ -2,11 +2,12 @@
  * Rules run with no model and give the same film for the same words.
  * The stage carries across scenes, so a video is one continuous set of objects, not a slide per section.
  */
-import { captionFor, compileVocabulary, deniedTerm, formatAmount, labelNamesMotion, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts } from "./story-language.mjs";
+import { captionFor, compileVocabulary, deniedTerm, formatAmount, labelNamesMotion, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts, spokenFlow, spokenTime, wordBefore } from "./story-language.mjs";
+import { STORY_CUES } from "./story-sound.mjs";
 
 /** How long each motion plays. Change a number here to retime it. */
 export const STORY_MOTION_SECONDS = Object.freeze({ walk: 1.4, spin: 1, shake: .8, explode: 1.1, pop: .7, print: 1.5, stamp: .7, split: 1, vanish: .8, melt: 1.3, burn: 1.4,
-  inflate: .9, deflate: 1.1, pulse: 1.2, wobble: 1, slide: .9, rain: 1.4, stack: 1.3, flip: .8 });
+  inflate: .9, deflate: 1.1, pulse: 1.2, wobble: 1, slide: .9, rain: 1.4, stack: 1.3, flip: .8, burst: .9, doze: 1.8 });
 /** These end with the object gone, so it leaves the stage afterwards. */
 const FINAL_MOTIONS = new Set(["explode", "pop", "vanish"]);
 
@@ -26,22 +27,81 @@ export const STORY_STAGING = Object.freeze({
   beatsBetweenBreaks: 3,
   /** Longest caption for a full-frame statement. */
   statementWords: 14,
+  /** An object seen for less than this reads as a glitch, so the stage holds instead. */
+  minObjectSeconds: 1.4,
+  /** How long a clock's hands take to reach a spoken time. */
+  clockSeconds: 1.4,
 });
+
+/** The art that a spoken time puts on stage. Kumiki draws its hands. */
+const CLOCK_ART = "icon:Clock";
 
 const slug = (value) => String(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/gu, "").slice(0, 40) || "idea";
 const arrangementKind = (count) => (count <= 1 ? "solo" : count === 2 ? "pair" : "row");
 const artIdOf = (entry) => entry.art.split(":")[1];
 
-function newStage() { return { order: [], held: [], objects: new Map(), unit: undefined, sinceBreak: Infinity }; }
+function newStage() { return { order: [], held: [], objects: new Map(), unit: undefined, sinceBreak: Infinity, time: null, links: new Set(), flows: new Map() }; }
+
+const objectId = (entry) => (entry.art ? artIdOf(entry) : `word-${slug(entry.label)}`);
 
 /** Add a vocabulary object or a word to the stage's cast. */
 function castObject(stage, entry, locale) {
-  const id = entry.art ? artIdOf(entry) : `word-${slug(entry.label)}`;
+  const id = objectId(entry);
   // The label is the word the narrator used: "Books", not the art's catalogue name.
   const spoken = entry.term ? entry.term.charAt(0).toLocaleUpperCase() + entry.term.slice(1) : entry.label;
-  if (!stage.objects.has(id)) stage.objects.set(id, { id, label: spoken, ...(entry.art ? { art: entry.art } : {}), value: null });
+  if (!stage.objects.has(id)) stage.objects.set(id, { id, label: spoken, ...(entry.art ? { art: entry.art } : {}), ...(entry.wordShape ? { wordShape: entry.wordShape } : {}), ...(entry.motion ? { motion: entry.motion } : {}), value: null });
   else if (entry.term) stage.objects.get(id).label = spoken;
   return id;
+}
+
+/** Put the clock on stage. Its hands start from the last time the words gave, otherwise a few hours back. */
+function castClock(stage, time, locale) {
+  const id = castObject(stage, { art: CLOCK_ART, label: time.label }, locale), object = stage.objects.get(id);
+  object.label = time.label;
+  if (!object.clock) {
+    const { hour, minute } = stage.time ?? { hour: (time.hour + 21) % 24, minute: time.minute };
+    object.clock = object.clockStart = { hour, minute };
+  }
+  return id;
+}
+
+/** The model can pick a stand-in, such as a press for "the bank prints". The narrator's subject still belongs on stage.
+ * So does anything spoken that has its own motion, such as a burst word.
+ */
+function withSpokenSubject(proposed, spoken, text, maxOnStage) {
+  const verbAt = wordIndex(text, proposed.verb);
+  const same = (a, b) => (a.art ?? a.label) === (b.art ?? b.label);
+  const subject = spoken.find(entry => entry.motion) ?? (verbAt > 0 ? spoken.find(entry => entry.start < verbAt) : null);
+  if (!subject || proposed.objects.some(entry => same(entry, subject))) return proposed.objects;
+  const standIn = proposed.objects.find(entry => !spoken.some(other => same(other, entry)));
+  return [subject, ...proposed.objects.filter(entry => entry !== standIn)].slice(0, maxOnStage);
+}
+
+/** Where a word starts in a phrase. The ending can differ, as "printed" does from "prints". */
+function wordIndex(text, word) {
+  return word ? text.toLocaleLowerCase().indexOf(word.toLocaleLowerCase().slice(0, Math.max(3, word.length - 3))) : -1;
+}
+
+const opObjects = (op) => [op.object, op.from, op.to, op.a, op.b, op.into].filter(Boolean);
+
+/** An object that would flash past leaves the stage as it was. Objects that do something are exempt. */
+function holdBriefArrivals(beats, carried, frameRate, minSeconds) {
+  for (const [index, beat] of beats.entries()) {
+    const before = index ? beats[index - 1].arrangement.objects : carried;
+    if (!before.length) continue;
+    const brief = beat.arrangement.objects.filter(id => {
+      if (before.includes(id)) return false;
+      const gone = beats.slice(index).find(later => !later.arrangement.objects.includes(id));
+      return gone && (gone.startFrame - beat.startFrame) / frameRate < minSeconds;
+    });
+    const looks = new Set(["highlight", "mark"]);
+    if (!brief.length || beat.ops.some(op => !looks.has(op.kind) && opObjects(op).some(id => brief.includes(id)))) continue;
+    const left = beat.arrangement.objects.filter(id => !brief.includes(id)), objects = left.length ? left : [...before];
+    beat.arrangement = { kind: arrangementKind(objects.length), objects };
+    beat.ops = beat.ops.filter(op => !opObjects(op).some(id => brief.includes(id)));
+    if (brief.includes(beat.focus)) delete beat.focus;
+    if (!beat.ops.length) beat.ops = [{ kind: "highlight", object: objects[0], atFrame: beat.startFrame, durationFrames: Math.max(1, Math.min(beat.endFrame - beat.startFrame, Math.round(.6 * frameRate))) }];
+  }
 }
 
 /** The stage for a phrase. Objects it names lead. Earlier ones stay only while the words still need them. */
@@ -73,13 +133,34 @@ function valueTarget(mentioned, stage, order) {
  * @returns {object[]} operations with frames relative to the phrase
  */
 function phraseOps({ facts, frames, frameRate, stage, order, previous, entered, staging }) {
-  const { mentioned, amounts, signals, denied } = facts;
+  const { mentioned, amounts, signals, denied, verb, text, flow, clock, time } = facts;
   const settle = entered.length ? Math.min(Math.round(staging.settleSeconds * frameRate), Math.floor(frames * .4)) : 0;
   const room = Math.max(1, frames - settle);
   const ops = [];
-  const add = (op, share = 0, durationSeconds = .67) => {
-    const atFrame = settle + Math.floor(room * share);
+  const add = (op, share = 0, durationSeconds = .67, at = null) => {
+    const atFrame = at ?? settle + Math.floor(room * share);
     ops.push({ ...op, atFrame, durationFrames: Math.max(1, Math.min(frames - atFrame, Math.round(durationSeconds * frameRate))) });
+  };
+  // A motion lands on its spoken word: `hit` is the share of the motion before the moment it strikes.
+  const onWord = (word, seconds, hit = 0) => {
+    const index = wordIndex(text, word);
+    if (index < 0) return null;
+    const length = Math.round(seconds * frameRate), spoken = Math.floor(frames * index / text.length);
+    return Math.max(settle, Math.min(spoken - Math.round(length * hit), frames - length));
+  };
+  // Arrows follow the words and keep that direction later. A pair linked once stays linked.
+  const directed = (a, b) => {
+    const key = [a, b].sort().join("|");
+    const said = flow.source === b || flow.destination === a ? [b, a] : flow.source === a || flow.destination === b ? [a, b] : stage.flows.get(key) ?? [a, b];
+    stage.flows.set(key, said);
+    return said;
+  };
+  const link = (a, b, share) => {
+    const key = [a, b].sort().join("|");
+    if (stage.links.has(key)) return;
+    stage.links.add(key);
+    const [from, to] = directed(a, b);
+    add({ kind: "connect", from, to }, share, .6);
   };
   const onStage = (id) => order.includes(id);
   const focus = mentioned.find(onStage) ?? entered[0] ?? order[order.length - 1];
@@ -104,43 +185,71 @@ function phraseOps({ facts, frames, frameRate, stage, order, previous, entered, 
   }
   // A verb the viewer can picture gets that motion, not a generic highlight.
   // The mover is the object named by the verb, otherwise the phrase's subject.
+  let graphed = null;
   const motionTarget = mentioned.find(id => onStage(id) && labelNamesMotion(stage.objects.get(id)?.label, signals.motion)) ?? mentioned.find(onStage) ?? focus;
   const shape = signals.shape ?? (signals.rising ? "rise" : signals.falling ? "fall" : null);
   if (signals.motion && motionTarget) {
     const seconds = STORY_MOTION_SECONDS[signals.motion] ?? .8;
     // A walker who has just arrived walks in from the edge, so the motion starts with the beat.
     if (signals.motion === "walk" && entered.includes(motionTarget)) ops.push({ kind: "act", object: motionTarget, motion: "walk", atFrame: 0, durationFrames: Math.min(frames, Math.round(seconds * frameRate)) });
-    else add({ kind: "act", object: motionTarget, motion: signals.motion }, 0, seconds);
+    else {
+      const emits = signals.motion === "print" ? order.find(id => id !== motionTarget) : undefined;
+      add({ kind: "act", object: motionTarget, motion: signals.motion, ...(emits ? { emits } : {}) }, 0, seconds, onWord(verb, seconds, STORY_CUES[signals.motion]?.offset));
+    }
   }
   // A graph shows what happened and "builds up" fills a meter. Neither invents a figure.
   else if (shape && focus && !amount) {
     // "The pressure keeps rising" follows its subject. "Your brain builds up a chemical" follows its object.
-    const present = mentioned.filter(onStage);
-    const subject = (facts.transitive ? present.at(-1) : present[0]) ?? focus;
+    // The subject is the nearest name before the verb: "one morning the stock market crashes" is about the market.
+    const present = mentioned.filter(onStage), verbAt = wordIndex(text, verb);
+    const before = present.filter(id => { const at = wordIndex(text, stage.objects.get(id)?.label); return at >= 0 && at < verbAt; });
+    const subject = (facts.transitive ? present.at(-1) : before.at(-1) ?? present[0]) ?? focus;
     const object = stage.objects.get(subject);
-    if ((signals.accumulating || object.level !== undefined) && (shape === "rise" || shape === "fall")) {
+    // Something with its own motion shows the words itself, and a graph would replace it.
+    graphed = object.motion ? null : subject;
+    if (object.motion) { /* its own motion runs below */ }
+    else if ((signals.accumulating || object.level !== undefined) && (shape === "rise" || shape === "fall")) {
       const from = object.level ?? (shape === "rise" ? .2 : .8);
       const to = Math.round(Math.max(.05, Math.min(1, from + (shape === "rise" ? staging.levelStep : -staging.levelStep * 1.5))) * 100) / 100;
       object.level = to;
       object.levelFrom ??= from;
       add({ kind: "level", object: subject, to }, 0, (room * .8) / frameRate);
-    } else add({ kind: "trend", object: subject, shape }, 0, Math.min((room * .9) / frameRate, shape === "crash" ? 2.6 : 3));
+    } else {
+      const seconds = Math.min((room * .9) / frameRate, shape === "crash" ? 2.6 : 3);
+      add({ kind: "trend", object: subject, shape }, 0, seconds, onWord(verb, seconds, STORY_CUES[`trend-${shape}`]?.land?.at));
+    }
+  }
+  if (clock) add({ kind: "set-time", object: clock, hour: time.hour, minute: time.minute }, 0, staging.clockSeconds, onWord(time.spoken, staging.clockSeconds));
+  // Some objects say what they do as they arrive: a burst word on its word, a sleepy person dozing.
+  for (const id of entered) {
+    const object = stage.objects.get(id), motion = object?.motion;
+    if (!motion || ops.some(op => (op.kind === "act" || op.kind === "trend") && op.object === id)) continue;
+    const seconds = STORY_MOTION_SECONDS[motion] ?? .8;
+    add({ kind: "act", object: id, motion }, 0, seconds, onWord(object.label, seconds));
   }
   // New objects join the ones already on stage when the words link them.
   if (entered.length && previous.length) {
     const sources = (signals.both ? previous : previous.slice(-1)).filter(onStage);
-    if (signals.moving && sources.length) add({ kind: "transfer", from: sources[sources.length - 1], to: entered[0] }, .1, .8);
-    else if (signals.both || signals.sequence || signals.cause) for (const [index, from] of sources.entries()) add({ kind: "connect", from, to: entered[0] }, index * .14, .6);
+    if (signals.moving && sources.length) {
+      const [from, to] = directed(sources[sources.length - 1], entered[0]);
+      add({ kind: "transfer", from, to }, .1, .8);
+    } else if (signals.both || signals.sequence || signals.cause) for (const [index, from] of sources.entries()) link(from, entered[0], index * .14);
   } else if (!entered.length && order.length >= 2 && mentioned.length >= 2 && (signals.sequence || signals.moving)) {
-    add({ kind: "transfer", from: mentioned[0], to: mentioned[1] }, 0, .8);
+    const [from, to] = directed(mentioned[0], mentioned[1]);
+    // Something moving is a token in flight. "Attach this to that" is a lasting link.
+    if (signals.moving || !(flow.source || flow.destination)) add({ kind: "transfer", from, to }, 0, .8);
+    else link(from, to, 0);
   } else if (!entered.length && signals.both && order.length >= 2) {
-    add({ kind: "connect", from: order[0], to: order[1] }, 0, .6);
+    link(order[0], order[1], 0);
   }
+  // Words that say where something goes draw that link, even when nothing else moves.
+  const [first, second] = mentioned.filter(onStage);
+  if (second && (flow.source || flow.destination) && !ops.some(op => op.kind === "connect" || op.kind === "transfer")) link(first, second, .2);
   // Questions, problems and fixes end on a verdict the viewer can read at a glance.
   // "Never missing" denies a problem, so it is good news.
   const deniedProblem = signals.deniedProblem;
   const pointed = denied && !deniedProblem && onStage(denied) ? denied : null;
-  const target = pointed ?? focus;
+  const target = pointed ?? graphed ?? focus;
   const verdict = deniedProblem ? "check" : signals.question ? "question" : pointed ? "cross" : signals.problem || signals.negation ? "cross" : signals.resolved ? "check" : null;
   if (verdict && target) add({ kind: "mark", object: target, mark: verdict }, ops.length ? .6 : .35, .4);
   if (!ops.length && focus) add({ kind: "highlight", object: focus }, .15, .7);
@@ -168,7 +277,8 @@ function readPhrase(window, compiled, stage, locale) {
   if (amounts[0]?.unit && !amounts[0].unit.suffix) stage.unit = amounts[0].unit;
   // Money words name the amount, not an object on stage.
   const things = objects.filter(entry => (!amounts.length || !/^(?:dollars?|cash|money)$/iu.test(entry.term)) && !amounts.some(amount => entry.start >= amount.start && entry.start < amount.end));
-  return { objects: things, signals, amounts, deniedEntry: deniedTerm(window.text, compiled) };
+  const flow = spokenFlow(window.text, objects, locale);
+  return { objects: things, signals, amounts, deniedEntry: deniedTerm(window.text, compiled), flow: { source: flow.source && objectId(flow.source), destination: flow.destination && objectId(flow.destination) } };
 }
 
 /** Everything an object must declare to appear in a scene spec. */
@@ -177,6 +287,7 @@ function declare(stage, id, valuesAtStart, levelsAtStart, locale) {
   const value = object.value ?? null;
   const startLevel = levelsAtStart.get(id);
   return { id, ...(object.label ? { label: object.label } : {}), ...(object.art ? { art: object.art } : {}), ...(startLevel === undefined ? {} : { level: startLevel }),
+    ...(object.clockStart ? { clock: object.clockStart } : {}), ...(object.wordShape ? { wordShape: object.wordShape } : {}),
     ...(value ? { value: { format: value.unit?.format ?? { kind: "number", precision: 0 }, language: locale,
       ...(valuesAtStart.has(id) ? { initial: valuesAtStart.get(id), shownFromStart: true } : {}) } } : {}) };
 }
@@ -193,6 +304,9 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
   const carriedOrder = [...stage.order];
   const valuesAtStart = new Map(carriedOrder.filter(id => stage.objects.get(id)?.value).map(id => [id, stage.objects.get(id).value.amount]));
   const levelsAtStart = new Map(carriedOrder.filter(id => stage.objects.get(id)?.level !== undefined).map(id => [id, stage.objects.get(id).level]));
+  // A link lasts for its scene, so each scene starts with none.
+  stage.links = new Set();
+  for (const object of stage.objects.values()) if (object.clock) object.clockStart = object.clock;
   const beats = [];
   let order = carriedOrder, firstFacts = null;
   for (const [phraseIndex, window] of scene.phrases.entries()) {
@@ -204,7 +318,7 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
     // `look` says nothing physical happens, so the rules keep their verdicts but not their motions.
     const quiet = { motion: null, shape: null, rising: false, falling: false, moving: false, accumulating: false };
     const proposedSignals = proposed?.signals ? { ...Object.fromEntries(Object.keys(read.signals).map(key => [key, false])), ...proposed.signals } : proposed?.signals === null ? { ...read.signals, ...quiet } : read.signals;
-    const facts = proposed ? { ...read, objects: proposed.objects, deniedEntry: null, signals: proposedSignals } : read;
+    const facts = proposed ? { ...read, objects: withSpokenSubject(proposed, read.objects, window.text, staging.maxOnStage), deniedEntry: null, signals: proposedSignals } : read;
     firstFacts ??= facts;
     const finalLine = scene.final && phraseIndex === scene.phrases.length - 1;
     const breakDue = finalLine || stage.sinceBreak >= staging.beatsBetweenBreaks;
@@ -230,11 +344,16 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
     }
     stage.sinceBreak += 1;
     let mentioned = facts.objects.map(entry => castObject(stage, entry, locale));
+    const time = spokenTime(window.text, locale);
+    const clock = time?.explicit ? castClock(stage, time, locale) : null;
+    if (clock && !mentioned.includes(clock)) mentioned = [clock, ...mentioned].slice(0, staging.maxOnStage);
+    if (time) stage.time = { hour: time.hour, minute: time.minute };
     // An idea with no picture becomes a word, so the stage still follows the narration.
     if (!proposed && !mentioned.length && !facts.amounts.length) {
       const taken = (order.length ? order : stage.held).map(id => stage.objects.get(id)?.label?.toLocaleLowerCase());
       const concept = phraseConcepts(window.text).find(label => !taken.includes(label.toLocaleLowerCase()));
-      const label = concept ?? (order.length || stage.held.length ? null : phraseKeyword(window.text, locale));
+      const acted = facts.signals.motion || facts.signals.shape || facts.signals.rising || facts.signals.falling ? wordBefore(window.text, wordIndex(window.text, read.signals.word)) : null;
+      const label = concept ?? acted ?? (order.length || stage.held.length ? null : phraseKeyword(window.text, locale));
       if (label) mentioned = [castObject(stage, { label }, locale)];
     }
     // After a break the earlier objects can come back, but they are not on stage yet.
@@ -256,7 +375,9 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
     }
     const entered = order.filter(id => !onStageBefore.includes(id));
     const frames = window.endFrame - window.startFrame;
-    const ops = phraseOps({ facts: { ...facts, mentioned, denied, transitive: /\b(?:builds? up|fills?|raises?|adds?|produces?|makes?)\b/iu.test(window.text) }, frames, frameRate, stage, order, previous: onStageBefore, entered, staging });
+    const ops = phraseOps({ facts: { ...facts, mentioned, denied, transitive: /\b(?:builds? up|fills?|raises?|adds?|produces?|makes?)\b/iu.test(window.text),
+      verb: proposed?.verb ?? read.signals.word, text: window.text, clock, time }, frames, frameRate, stage, order, previous: onStageBefore, entered, staging });
+    if (clock) stage.objects.get(clock).clock = { hour: time.hour, minute: time.minute };
     const onlySome = mentioned.length === 1 && order.length > 1 && !entered.length;
     beats.push({ id: `${scene.id}-${beats.length + 1}`, startFrame: window.startFrame, endFrame: window.endFrame,
       arrangement: { kind: arrangementKind(order.length, facts.signals), objects: [...order] },
@@ -267,6 +388,7 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
     if (gone.size) order = order.filter(id => !gone.has(id));
     stage.order = order;
   }
+  holdBriefArrivals(beats, carriedOrder, frameRate, staging.minObjectSeconds);
   const used = new Set([...carriedOrder, ...beats.flatMap(beat => beat.arrangement.objects)]);
   const spec = { schemaVersion: 1, id: scene.id, fps: scene.fps, durationFrames: scene.frames, width: scene.width, height: scene.height, language: locale,
     objects: [...used].map(id => declare(stage, id, valuesAtStart, levelsAtStart, locale)), beats,

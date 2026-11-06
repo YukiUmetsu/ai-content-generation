@@ -9,6 +9,7 @@ import { frameToSample } from "./shot-audio.mjs";
  */
 export const STORY_CUES = Object.freeze({
   enter: { sound: "story-pop", gainDb: -21, priority: 2 },
+  "set-time": { sound: "story-tick", gainDb: -21, priority: 3, everySeconds: .12, land: { sound: "story-land", gainDb: -16, priority: 5 } },
   "set-value": { sound: "story-tick", gainDb: -24, priority: 2, land: { sound: "story-land", gainDb: -15, priority: 5 } },
   level: { sound: "story-rise", gainDb: -22, priority: 3 },
   "trend-rise": { sound: "story-rise", gainDb: -18, priority: 4, land: { sound: "story-land", gainDb: -16, priority: 5 } },
@@ -38,7 +39,10 @@ export const STORY_CUES = Object.freeze({
   lift: { sound: "story-lift", gainDb: -19, priority: 4 },
   walk: { sound: "story-step", gainDb: -21, priority: 3, everySeconds: .42 },
   explode: { sound: "story-explode", gainDb: -12, priority: 7, offset: .2 },
-  pop: { sound: "story-popping", gainDb: -14, priority: 6, offset: .42 },
+  pop: { sound: "story-popping", gainDb: -11, priority: 7, offset: .42 },
+  // `entrance` means the cue is the object's arrival, so it gets no separate entry cue.
+  burst: { sound: "story-explode", gainDb: -13, priority: 7, entrance: true },
+  doze: { sound: "story-fall", gainDb: -25, priority: 2 },
   print: { sound: "story-print", gainDb: -18, priority: 4 },
   stamp: { sound: "story-thud", gainDb: -13, priority: 6, offset: .28 },
   split: { sound: "story-tear", gainDb: -17, priority: 4, offset: .1 },
@@ -69,7 +73,8 @@ export function storyCues(spec, { finale = false, table = STORY_CUES } = {}) {
   const frameRate = spec.fps.num / spec.fps.den;
   let onStage = new Set(spec.carried?.objects ?? []);
   for (const beat of spec.beats) {
-    const arrived = beat.arrangement.objects.filter(id => !onStage.has(id));
+    const announced = new Set((beat.ops ?? []).filter(op => table[cueKey(op)]?.entrance).map(op => op.object));
+    const arrived = beat.arrangement.objects.filter(id => !onStage.has(id) && !announced.has(id));
     const closing = finale && beat === spec.beats[spec.beats.length - 1] && beat.arrangement.kind === "statement";
     if (beat.arrangement.kind === "statement") add(closing ? table.finale : table.statement, beat.startFrame, `${beat.id}-statement`);
     else if (arrived.length) add(table.enter, beat.startFrame, `${beat.id}-enter`);
@@ -80,10 +85,8 @@ export function storyCues(spec, { finale = false, table = STORY_CUES } = {}) {
       if (cue.everySeconds) {
         const step = Math.max(1, Math.round(cue.everySeconds * frameRate));
         for (let frame = start, count = 0; frame < end; frame += step, count++) add(cue, frame, `${beat.id}-${index}-${count}`);
-        return;
-      }
       // `offset` starts a cue at the moment a motion hits, not when it begins.
-      add(cue, start + Math.round((cue.offset ?? 0) * (end - start)), `${beat.id}-${index}`);
+      } else add(cue, start + Math.round((cue.offset ?? 0) * (end - start)), `${beat.id}-${index}`);
       if (cue.land && end > start) add(cue.land, Math.min(start + Math.round((cue.land.at ?? 1) * (end - start)), beat.endFrame - 1), `${beat.id}-${index}-land`);
     });
   }

@@ -1148,15 +1148,18 @@
    ]
   },
   {
-   "art": "icon:BatteryLow",
+   "art": "business:sleepy-person",
    "label": "Tired",
    "terms": [
     "tired",
     "tiredness",
     "fatigue",
-    "crash",
-    "exhaustion"
-   ]
+    "exhaustion",
+    "sleepy",
+    "drowsy",
+    "sleepier"
+   ],
+   "motion": "doze"
   },
   {
    "art": "icon:BatteryFull",
@@ -1843,6 +1846,22 @@
     "votes",
     "election",
     "elections"
+   ]
+  },
+  {
+   "label": "Boom",
+   "wordShape": "burst",
+   "motion": "burst",
+   "terms": [
+    "boom",
+    "bang",
+    "kaboom",
+    "pow",
+    "blast"
+   ],
+   "termsJa": [
+    "ドカン",
+    "バーン"
    ]
   }
  ]

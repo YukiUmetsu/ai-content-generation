@@ -76,6 +76,55 @@ export const STORY_TREND_WORDS = Object.freeze({
   ja: [["crash", /暴落|崩壊/u], ["recover", /回復/u], ["spike", /急騰/u], ["plateau", /頭打ち/u]],
 });
 
+/** Which way a link runs, per language. The word beside an object says whether it gives or receives. */
+const DETERMINER = "(?:(?:the|a|an|your|our|their|its|my|this|that|these|those)\\s+)?";
+export const STORY_FLOW_WORDS = Object.freeze({
+  en: { sourceBefore: new RegExp(`\\b(?:from|out of|off)\\s+${DETERMINER}$`, "iu"), destinationBefore: new RegExp(`\\b(?:to|into|onto|toward|towards)\\s+${DETERMINER}$`, "iu") },
+  ja: { sourceAfter: /^(?:から|より)/u, destinationAfter: /^(?:に|へ)/u },
+});
+
+/** The objects a phrase names as the start and the end of a link: "attach the receipt to the invoice" ends at the invoice. */
+export function spokenFlow(phrase, objects, locale = "en") {
+  const text = flatten(phrase), words = STORY_FLOW_WORDS[language(locale)];
+  const named = (before, after) => objects.find(({ start, term }) => before?.test(text.slice(0, start)) || after?.test(text.slice(start + term.length))) ?? null;
+  return { source: named(words.sourceBefore, words.sourceAfter), destination: named(words.destinationBefore, words.destinationAfter) };
+}
+
+const HOUR_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12 };
+const HOUR = `(?:${Object.keys(HOUR_WORDS).join("|")}|\\d{1,2})`;
+const hourOf = (word) => HOUR_WORDS[word.toLocaleLowerCase()] ?? Number(word);
+const padded = (minute) => String(minute).padStart(2, "0");
+
+/** A time of day the words state. `explicit` means the time is plainly the point, as in "one o'clock".
+ * "At nine" is only explicit enough to set where a later clock starts from.
+ * @returns {{hour:number,minute:number,explicit:boolean,spoken:string,label:string}|null}
+ */
+export function spokenTime(phrase, locale = "en") {
+  const text = flatten(phrase);
+  if (language(locale) === "ja") {
+    const match = /(午前|午後)?(\d{1,2})時(?:(\d{1,2})分)?/u.exec(text);
+    if (!match) return null;
+    const hour = Number(match[2]) + (match[1] === "午後" && Number(match[2]) < 12 ? 12 : 0), minute = Number(match[3] ?? 0);
+    return hour > 23 || minute > 59 ? null : { hour, minute, explicit: true, spoken: match[0], label: match[0] };
+  }
+  const named = /\b(noon|midday|midnight)\b/iu.exec(text);
+  if (named) return { hour: /midnight/iu.test(named[1]) ? 0 : 12, minute: 0, explicit: true, spoken: named[0], label: named[1].charAt(0).toLocaleUpperCase() + named[1].slice(1) };
+  const meridiem = /\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b/iu.exec(text);
+  if (meridiem) {
+    const shown = Number(meridiem[1]), minute = Number(meridiem[2] ?? 0), after = meridiem[3].toLocaleLowerCase() === "p";
+    if (shown < 1 || shown > 12 || minute > 59) return null;
+    return { hour: (shown % 12) + (after ? 12 : 0), minute, explicit: true, spoken: meridiem[0], label: `${shown}${minute ? `:${padded(minute)}` : ""} ${after ? "PM" : "AM"}` };
+  }
+  const clock = new RegExp(`\\b(${HOUR})\\s+o['’]clock\\b`, "iu").exec(text);
+  if (clock && hourOf(clock[1]) >= 1 && hourOf(clock[1]) <= 12) return { hour: hourOf(clock[1]), minute: 0, explicit: true, spoken: clock[0], label: `${hourOf(clock[1])} o'clock` };
+  const digital = /\b(\d{1,2}):(\d{2})\b/u.exec(text);
+  if (digital && Number(digital[1]) < 24 && Number(digital[2]) < 60) return { hour: Number(digital[1]), minute: Number(digital[2]), explicit: true, spoken: digital[0], label: digital[0] };
+  // A bare number is a time only after a time word and with nothing measured after it.
+  const bare = new RegExp(`\\b(?:at|by|until|around|before|after)\\s+(${HOUR})(?=\\s*(?:$|[.,;!?]|and\\b|or\\b|then\\b|in the\\b))`, "iu").exec(text);
+  if (bare && hourOf(bare[1]) >= 1 && hourOf(bare[1]) <= 12) return { hour: hourOf(bare[1]), minute: 0, explicit: false, spoken: bare[1], label: `${hourOf(bare[1])} o'clock` };
+  return null;
+}
+
 /** Does this label name the motion itself, as "Walk" names walking? */
 export function labelNamesMotion(label, motion, locale = "en") {
   return STORY_MOTIONS[language(locale)].find(([name]) => name === motion)?.[1].test(label ?? "") ?? false;
@@ -162,9 +211,9 @@ export function formatAmount(value, unit) {
 export function phraseSignals(phrase, locale = "en") {
   const table = STORY_SIGNALS[language(locale)];
   const text = flatten(phrase);
-  const motion = STORY_MOTIONS[language(locale)].find(([, pattern]) => pattern.test(text))?.[0] ?? null;
-  const shape = STORY_TREND_WORDS[language(locale)].find(([, pattern]) => pattern.test(text))?.[0] ?? null;
-  return { question: /[?？]\s*$/u.test(text), motion, shape, ...Object.fromEntries(Object.entries(table).map(([name, pattern]) => [name, pattern.test(text)])) };
+  const motion = STORY_MOTIONS[language(locale)].find(([, pattern]) => pattern.test(text)) ?? null;
+  const shape = STORY_TREND_WORDS[language(locale)].find(([, pattern]) => pattern.test(text)) ?? null;
+  return { question: /[?？]\s*$/u.test(text), motion: motion?.[0] ?? null, shape: shape?.[0] ?? null, word: (motion?.[1] ?? shape?.[1] ?? table.rising ?? null)?.exec(text)?.[0] ?? table.falling?.exec(text)?.[0] ?? null, ...Object.fromEntries(Object.entries(table).map(([name, pattern]) => [name, pattern.test(text)])) };
 }
 
 /** Generic nouns that name no idea a viewer could picture. */
@@ -190,6 +239,15 @@ export function phraseConcepts(phrase) {
     add(match.index, STOP.has(second) || /(?:s|ing|ed)$/u.test(second) && !/ss$/u.test(second) ? words.slice(0, 1) : words);
   }
   return found.sort((a, b) => a.index - b.index).map(item => item.label);
+}
+
+/** The word just before a verb, which is usually what the verb is about: "prices" in "prices climb". */
+export function wordBefore(phrase, index) {
+  const words = [...flatten(phrase).slice(0, index).matchAll(/[\p{L}][\p{L}'’-]*/gu)].map(match => match[0]);
+  const word = words.at(-1);
+  // "It finally pops" is about what is on stage, so an adverb names nothing new.
+  if (!word || word.length < 3 || /ly$/iu.test(word) || STOP.has(word.toLocaleLowerCase()) || VAGUE.has(word.toLocaleLowerCase())) return null;
+  return word.charAt(0).toLocaleUpperCase() + word.slice(1);
 }
 
 /** The word or two a phrase is about, for an idea with no picture. */

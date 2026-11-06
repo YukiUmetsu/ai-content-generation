@@ -9,6 +9,7 @@ import type { DomainObjectSpec, ResolvedDomainObject } from "./domain-object-mod
 export const BUSINESS_OBJECTS=[
   {kind:"org-chart",title:"Org chart",archetype:"hierarchy"},
   {kind:"team",title:"Team",archetype:"people"},
+  {kind:"sleepy-person",title:"Sleepy person",archetype:"people"},
   {kind:"meeting",title:"Meeting",archetype:"people"},
   {kind:"presentation",title:"Presentation",archetype:"board"},
   {kind:"kpi-dashboard",title:"KPI dashboard",archetype:"board"},

@@ -166,7 +166,7 @@ export function parseStoryProposal(raw, { phrases, vocabulary, locale = "en" }) 
     const quoted = String(beat.verb ?? "").trim().toLocaleLowerCase();
     const subjects = !(beat.action in SHAPES) ? unique : unique.filter(({ term, label }) => { const name = String(term ?? label).toLocaleLowerCase(); return !(quoted.startsWith(name) && quoted.length - name.length <= 3); });
     const action = beat.action === "explode" && QUANTITY_WORD.test(phrase) ? "rise" : beat.action;
-    beats.push({ objects: subjects.length ? subjects : unique, signals: known ? ACTION_SIGNALS[action] : undefined, ...(caption ? { caption } : {}) });
+    beats.push({ objects: subjects.length ? subjects : unique, ...(quoted ? { verb: quoted } : {}), signals: known ? ACTION_SIGNALS[action] : undefined, ...(caption ? { caption } : {}) });
   }
   return { beats, findings };
 }

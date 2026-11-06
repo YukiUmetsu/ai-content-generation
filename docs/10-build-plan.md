@@ -30,7 +30,7 @@
 **Status (2026-11-05):**
 
 - **Done:** V01, V02, V03, V04, V07 (for films with enough objects). The local model directs scenes through Magnitude, with rules as the fallback.
-- **Partly done:** V06 has 24 verb motions chosen by meaning, six graph shapes, a cue for every change and landing cues, but no music bed and no authored transitions between sections. V08 records pacing in `qa-report.json` but does not re-plan a weak scene.
+- **Partly done:** V06 has 26 verb motions chosen by meaning, six graph shapes, clocks for spoken times, a cue for every change and landing cues, but no music bed and no authored transitions between sections. V08 records pacing in `qa-report.json` but does not re-plan a weak scene.
 - **Next:** V09, a full run from the Studio button, now that a local model works.
 - **3D rule (V05, set by the user 2026-11-05):** only when it is actually worth it. A shot needs a physical action on objects that teaches something a 2D story cannot. It is not a default, a decoration or a per-section quota.
 - **Waiting:** portrait (V10) follows the landscape verdict.
