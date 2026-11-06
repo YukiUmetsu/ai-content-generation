@@ -8,9 +8,9 @@ import { spokenSentences } from "./audience-copy.mjs";
 
 const exec = promisify(execFile);
 /** A sentence this long is split at a clause when it can be. */
-const LONG_SENTENCE = 62;
+const LONG_SENTENCE = 46;
 const MIN_PHRASE = 14;
-const CLAUSE = /(?:[,;:、，；：]\s*)|(?:\s+(?=(?:and|but|so|because|which|while|then|or)\s))/iu;
+const CLAUSE = /(?:[,;:、，；：]\s*)|(?:\s+(?=(?:and|but|so|because|which|while|then|or|until)\s))/iu;
 
 /** Split narration into phrases short enough for one visible change each. */
 export function speechPhrases(narration) {

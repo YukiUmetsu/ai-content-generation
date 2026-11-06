@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "contentgen-reference-production",
+  "note": "Illustrative reference script that exercises vivid action words. It tells an invented story and no claim here is sourced. Never publish a render of this fixture.",
+  "productionId": "production-0000000000000000000000c3",
+  "evidence": [],
+  "sources": [],
+  "script": {
+    "version": 1,
+    "status": "draft",
+    "approvedAt": null,
+    "updatedAt": "2026-11-05T00:00:00.000Z",
+    "input": {
+      "productionId": "production-0000000000000000000000c3",
+      "platform": "youtube",
+      "title": "How a boom turns into a bust",
+      "viewerQuestion": "Why do markets keep rising right up until they collapse?",
+      "audience": "People curious about how markets behave",
+      "locale": "en"
+    },
+    "pending": {},
+    "sections": [
+      {
+        "id": "hook",
+        "heading": "Opening hook",
+        "purpose": "Show a specific audience problem, immediate visual promise and central question.",
+        "text": "Every boom starts the same way. Prices climb, and everyone feels clever. Then one morning the stock market crashes. So why does it keep happening?",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "context",
+        "heading": "Why it matters",
+        "purpose": "Establish relatable stakes, baseline and scope without repeating the hook.",
+        "text": "First, the bank prints more money. Cheap loans pour in from every direction. Unpaid bills pile up on the desk, and nobody looks at them.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "mechanism",
+        "heading": "How it works",
+        "purpose": "Explain the causal mechanism with sourced examples, not a generic list.",
+        "text": "The housing bubble inflates until it finally pops. Confidence shakes. Savings melt away, and the profit vanishes overnight.",
+        "claimRefs": [],
+        "sourceRefs": []
+      },
+      {
+        "id": "closing",
+        "heading": "Answer and takeaway",
+        "purpose": "Resolve the opening question and make the caveats explicit.",
+        "text": "Slowly, the market recovers. The regulator stamps its approval on new rules, and the company splits into two smaller businesses. The next boom is already on its way.",
+        "claimRefs": [],
+        "sourceRefs": []
+      }
+    ]
+  }
+}
