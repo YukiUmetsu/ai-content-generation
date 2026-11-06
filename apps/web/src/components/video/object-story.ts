@@ -13,7 +13,7 @@ import { compileAnimatedMetric, evaluateAnimatedMetric } from "../visual/animate
 import type { AnimatedMetricPlan, MetricFormatSpec } from "../visual/animated-metric";
 import { planExplainerLayout } from "../visual/explainer-layout";
 import type { MeasureText } from "../media/text-layout";
-import { OBJECT_STORY_MOTIONS, OBJECT_STORY_TREND_SHAPES, STILL_MOTION, motionFrame, motionReach, motionSeed, trendFrame, walkTrail } from "./object-story-motions";
+import { OBJECT_STORY_ENTRANCE_MOTIONS, OBJECT_STORY_MOTIONS, OBJECT_STORY_TREND_SHAPES, STILL_MOTION, motionFrame, motionReach, motionSeed, trendFrame, walkTrail } from "./object-story-motions";
 import type { MotionContext, MotionReach, ObjectStoryMotion, ObjectStoryMotionFrame, ObjectStoryTrendShape, StoryTrendFrame } from "./object-story-motions";
 
 /** `statement` clears the stage so the caption fills the frame. `figure` makes one object's value the subject. */
@@ -22,7 +22,7 @@ export type ObjectStoryArrangementKind = (typeof OBJECT_STORY_ARRANGEMENTS)[numb
 export const OBJECT_STORY_MARKS = ["check", "cross", "question", "warning"] as const;
 export type ObjectStoryMark = (typeof OBJECT_STORY_MARKS)[number];
 
-export { OBJECT_STORY_MOTIONS, OBJECT_STORY_FINAL_MOTIONS, OBJECT_STORY_TREND_SHAPES, motionReach } from "./object-story-motions";
+export { OBJECT_STORY_MOTIONS, OBJECT_STORY_FINAL_MOTIONS, OBJECT_STORY_ENTRANCE_MOTIONS, OBJECT_STORY_TREND_SHAPES, motionReach } from "./object-story-motions";
 export type { ObjectStoryMotion, ObjectStoryMotionFrame, ObjectStoryTrendShape } from "./object-story-motions";
 export interface ObjectStoryValue {
   format: MetricFormatSpec;
@@ -42,7 +42,12 @@ export interface ObjectStoryObject {
   value?: ObjectStoryValue;
   /** Starting fill of a level meter, 0 to 1, for a level carried in from the previous scene. */
   level?: number;
+  /** Draw the object as an analog clock showing this time. Hours are 0 to 23. */
+  clock?: { hour: number; minute: number };
+  /** The outline of a word with no art. `burst` is a spiked star for a word that hits. @default "card" */
+  wordShape?: ObjectStoryWordShape;
 }
+export type ObjectStoryWordShape = "card" | "burst";
 export interface ObjectStoryArrangement {
   kind: ObjectStoryArrangementKind;
   /** Everything on stage during this beat, in reading order. An object left out exits. */
@@ -58,10 +63,13 @@ export type ObjectStoryOp = OpTiming & (
   | { kind: "set-value"; object: string; value: number }
   /** Fill a meter on an object, 0 to 1. For how much of something there is when no figure is known. */
   | { kind: "level"; object: string; to: number }
-  /** The object rides a graph for this beat. The shape shows what happened, not measured data. */
+  /** A graph takes the object's place for this beat. The shape shows what happened, not measured data. */
   | { kind: "trend"; object: string; shape: ObjectStoryTrendShape }
-  /** The object performs a motion. A walk that starts its beat arrives from the nearest side. */
-  | { kind: "act"; object: string; motion: ObjectStoryMotion }
+  /** The object performs a motion. A walk that starts its beat arrives from the nearest side.
+   * `emits` names the object that a `print` turns out, in place of plain pages. */
+  | { kind: "act"; object: string; motion: ObjectStoryMotion; emits?: string }
+  /** Sweep a clock's hands forward to this time. */
+  | { kind: "set-time"; object: string; hour: number; minute: number }
   | { kind: "connect"; from: string; to: string; label?: string }
   | { kind: "disconnect"; from: string; to: string }
   | { kind: "transfer"; from: string; to: string; label?: string }
@@ -107,7 +115,7 @@ export interface ObjectStorySpec {
 }
 export interface ObjectStoryDiagnostic {
   code: "invalid-spec" | "unknown-object" | "unknown-arrangement" | "empty-arrangement" | "figure-needs-value" | "beat-order" | "beat-gap" | "op-outside-beat" | "object-not-on-stage" |
-    "value-not-declared" | "level-out-of-range" | "unknown-motion" | "no-link" | "beat-without-change" | "caption-no-room" | "too-many-objects" | "still-stretch";
+    "value-not-declared" | "clock-not-declared" | "time-out-of-range" | "level-out-of-range" | "unknown-motion" | "no-link" | "beat-without-change" | "caption-no-room" | "too-many-objects" | "still-stretch";
   severity: "error" | "warning";
   message: string;
   beatId?: string;
@@ -332,6 +340,9 @@ const opTargets = (op: ObjectStoryOp): string[] => {
   return [op.object];
 };
 const linkKey = (from: string, to: string) => `${from}→${to}`;
+/** Minutes around a 12-hour dial. */
+const DIAL_MINUTES = 720;
+const dialMinutes = ({ hour, minute }: { hour: number; minute: number }) => (hour % 12) * 60 + minute;
 
 /** Validate a story and resolve every frame-dependent decision once. */
 export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOptions): ObjectStoryCompilation {
@@ -397,6 +408,11 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
       }
       if (op.kind === "trend" && !OBJECT_STORY_TREND_SHAPES.includes(op.shape)) { error("unknown-motion", `Beat "${beat.id}" asks for an unknown graph shape.`, beat.id); continue; }
       if (op.kind === "act" && !OBJECT_STORY_MOTIONS.includes(op.motion)) { error("unknown-motion", `Beat "${beat.id}" asks for an unknown motion.`, beat.id); continue; }
+      if (op.kind === "act" && op.emits && !known(op.emits, beat.id)) continue;
+      if (op.kind === "set-time") {
+        if (!objects.get(op.object)?.clock) { error("clock-not-declared", `Object "${op.object}" has no clock, so beat "${beat.id}" cannot set a time.`, beat.id); continue; }
+        if (!Number.isInteger(op.hour) || op.hour < 0 || op.hour > 23 || !Number.isInteger(op.minute) || op.minute < 0 || op.minute > 59) { error("time-out-of-range", `A time in beat "${beat.id}" must be a real time of day.`, beat.id); continue; }
+      }
       if (op.kind === "level" && !(op.to >= 0 && op.to <= 1)) { error("level-out-of-range", `A level in beat "${beat.id}" must be between 0 and 1.`, beat.id); continue; }
       if (op.kind === "connect") links.add(linkKey(op.from, op.to));
       if (op.kind === "disconnect" && !links.delete(linkKey(op.from, op.to))) { error("no-link", `Beat "${beat.id}" disconnects a link that does not exist.`, beat.id); continue; }
@@ -457,6 +473,11 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
 }
 
 export interface ObjectStoryObjectFrame {
+  /** Minutes the clock's hands have reached. Past 720 means the hands went round again. */
+  clockMinutes?: number;
+  wordShape?: ObjectStoryWordShape;
+  /** What a printing object turns out at this moment. */
+  emits?: ObjectStoryObject;
   id: string;
   rect: Rect;
   opacity: number;
@@ -546,14 +567,23 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
 
   const scales = new Map<string, number>(), motions = new Map<string, ObjectStoryMotionFrame>();
   const trails = new Map<string, ObjectStoryObjectFrame["trail"]>(), trends = new Map<string, NonNullable<ObjectStoryObjectFrame["trend"]>>();
-  const levels = new Map<string, number>();
-  for (const object of plan.spec.objects) if (object.level !== undefined) levels.set(object.id, object.level);
+  const levels = new Map<string, number>(), clocks = new Map<string, number>(), emits = new Map<string, ObjectStoryObject>(), hidden = new Set<string>();
+  for (const object of plan.spec.objects) {
+    if (object.level !== undefined) levels.set(object.id, object.level);
+    if (object.clock) clocks.set(object.id, dialMinutes(object.clock));
+  }
+  for (const { op, startFrame } of current.ops) if (op.kind === "act" && OBJECT_STORY_ENTRANCE_MOTIONS.includes(op.motion) && startFrame > at) hidden.add(op.object);
   // Links, marks and levels persist across beats, so replay the operations up to this frame.
   for (let i = 0; i <= index; i++) for (const item of plan.beats[i].ops) {
     if (item.startFrame > at) continue;
     const { op } = item;
     const t = eased(item.startFrame, item.endFrame);
     if (op.kind === "level") levels.set(op.object, lerp(levels.get(op.object) ?? 0, op.to, t));
+    if (op.kind === "set-time") {
+      // Hands only go forward, so a later time on the next day still sweeps the short way round.
+      const from = clocks.get(op.object) ?? 0, ahead = (dialMinutes(op) - (from % DIAL_MINUTES) + DIAL_MINUTES) % DIAL_MINUTES;
+      clocks.set(op.object, from + ahead * t);
+    }
     if (op.kind === "act" && (op.motion === "grow" || op.motion === "shrink")) scales.set(op.object, lerp(scales.get(op.object) ?? 1, op.motion === "grow" ? 1.16 : .62, t));
     if (op.kind === "act" && i === index && op.motion !== "grow" && op.motion !== "shrink" && current.rects.has(op.object)) {
       const progress = settled ? 1 : clamp01((at - item.startFrame) / Math.max(1, item.endFrame - item.startFrame));
@@ -561,8 +591,12 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
       const arrives = item.startFrame === beat.startFrame, side = rect.x + rect.width / 2 >= plan.spec.width / 2 ? 1 : -1;
       if (progress < 1 || !arrives || op.motion !== "walk") motions.set(op.object, motionFrame(op.motion, progress, { rect, seconds, arrives, side, seed: motionSeed(op.object) }));
       if (op.motion === "walk" && !settled) trails.set(op.object, walkTrail(rect, progress, { seconds, arrives, side }));
+      const emitted = op.emits ? plan.objects.get(op.emits) : undefined;
+      if (emitted) emits.set(op.object, emitted);
     }
     if (op.kind === "trend" && i === index && current.rects.has(op.object)) trends.set(op.object, trendFrame(op.shape, settled ? 1 : clamp01((at - item.startFrame) / Math.max(1, item.endFrame - item.startFrame))));
+    // An object leaving after its graph fades out as that graph, so its picture does not flash back.
+    if (op.kind === "trend" && i === index - 1 && !current.rects.has(op.object) && current.from.has(op.object)) trends.set(op.object, trendFrame(op.shape, 1));
     if (op.kind === "mark" && visible.has(op.object) && (i === index || op.persist)) marks.set(op.object, { kind: op.mark, progress: eased(item.startFrame, item.endFrame, "ease-out-back") });
     // A link lasts while both of its objects stay on stage.
     if (op.kind === "connect" && current.rects.has(op.from) && current.rects.has(op.to)) {
@@ -604,6 +638,7 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
   const someoneLeaves = [...current.from.keys()].some(id => !current.rects.has(id));
   const clearFrames = clearFramesFor(plan.transitionFrames);
   for (const id of visible) {
+    if (hidden.has(id)) continue;
     const object = plan.objects.get(id)!;
     let rect = rectNow(id)!;
     let opacity = 1;
@@ -627,7 +662,8 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
       motion: { ...(motions.get(id) ?? STILL_MOTION), scale: (motions.get(id)?.scale ?? 1) * (scales.get(id) ?? 1) }, trail: trails.get(id) ?? [], ...(trends.has(id) ? { trend: trends.get(id)! } : {}),
       ...(object.label ? { label: object.label } : {}), ...(object.art ? { art: object.art } : {}),
       ...(metric && at >= metric.shownFrom ? { value: { text: evaluateAnimatedMetric(metric.plan, at).display, progress: eased(metric.shownFrom, metric.shownFrom + plan.transitionFrames, "ease-out-back") } } : {}),
-      ...(levels.has(id) ? { level: levels.get(id)! } : {}),
+      ...(levels.has(id) ? { level: levels.get(id)! } : {}), ...(clocks.has(id) ? { clockMinutes: clocks.get(id)! } : {}),
+      ...(object.wordShape ? { wordShape: object.wordShape } : {}), ...(emits.has(id) ? { emits: emits.get(id)! } : {}),
       ...(marks.has(id) ? { mark: marks.get(id)! } : {}) });
   }
 

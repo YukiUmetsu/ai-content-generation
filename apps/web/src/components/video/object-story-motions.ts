@@ -6,17 +6,20 @@ import { evaluateEasing } from "../motion/easing";
 import type { Rect, Vec2 } from "../motion/types";
 
 export const OBJECT_STORY_MOTIONS = ["walk", "hop", "shake", "spin", "grow", "shrink", "drop", "lift", "explode", "pop", "print", "stamp", "split", "vanish",
-  "melt", "burn", "inflate", "deflate", "pulse", "wobble", "slide", "rain", "stack", "flip"] as const;
+  "melt", "burn", "inflate", "deflate", "pulse", "wobble", "slide", "rain", "stack", "flip", "burst", "doze"] as const;
 export type ObjectStoryMotion = (typeof OBJECT_STORY_MOTIONS)[number];
 /** Motions that end with the object gone. A director should drop it from the next beat. */
 export const OBJECT_STORY_FINAL_MOTIONS: readonly ObjectStoryMotion[] = ["explode", "pop", "vanish"];
 
+/** Motions that bring the object on. It stays hidden until the motion starts, so it can land on its spoken word. */
+export const OBJECT_STORY_ENTRANCE_MOTIONS: readonly ObjectStoryMotion[] = ["burst"];
+
 export const OBJECT_STORY_TREND_SHAPES = ["rise", "fall", "crash", "recover", "spike", "plateau"] as const;
 export type ObjectStoryTrendShape = (typeof OBJECT_STORY_TREND_SHAPES)[number];
 
-export interface StoryParticle { x: number; y: number; size: number; opacity: number; rotate: number; tone: "accent" | "warm" | "danger" | "ink"; shape: "dot" | "shard" | "flame" | "drop" }
+export interface StoryParticle { x: number; y: number; size: number; opacity: number; rotate: number; tone: "accent" | "warm" | "danger" | "ink"; shape: "dot" | "shard" | "flame" | "drop" | "z" }
 export interface StoryCopy { x: number; y: number; scale: number; rotate: number; opacity: number; clip?: "left" | "right" }
-export interface StorySheet { x: number; y: number; width: number; height: number; opacity: number }
+export interface StorySheet { x: number; y: number; width: number; height: number; fullWidth: number; opacity: number }
 export interface ObjectStoryMotionFrame {
   x: number; y: number; rotate: number; scale: number; scaleX: number; scaleY: number; opacity: number;
   origin: "center" | "bottom";
@@ -82,7 +85,7 @@ export function motionFrame(motion: ObjectStoryMotion, t: number, { rect, second
       // Pages feed out of the object's side, toward the middle of the stage, so they cover neither its label nor the caption.
       const sheets = [0, 1, 2].map(index => {
         const feed = evaluateEasing("ease-out-cubic", span(t, index * .22, index * .22 + .42)), width = size * .46 * feed;
-        return { x: -side * (size * .48 + width / 2 + index * size * .04), y: -size * .3 + index * size * .06, width, height: size * .6, opacity: feed > 0 ? 1 : 0 };
+        return { x: -side * (size * .48 + width / 2 + index * size * .04), y: -size * .3 + index * size * .06, width, height: size * .6, fullWidth: size * .46, opacity: feed > 0 ? 1 : 0 };
       });
       return frame({ sheets, y: Math.sin(t * 60) * (1 - t) * size * .006 });
     }
@@ -115,6 +118,12 @@ export function motionFrame(motion: ObjectStoryMotion, t: number, { rect, second
       return { x: (index % 2 ? 1 : -1) * size * .03, y: -(index + 1) * size * .13 - (1 - land) * size * .5, scale: .94, rotate: (index % 2 ? 1 : -1) * 2, opacity: land > 0 ? 1 : 0 };
     }) });
     case "flip": return frame({ scaleX: Math.cos(evaluateEasing("ease-in-out-cubic", t) * Math.PI * 2) });
+    case "burst": {
+      const arrive = evaluateEasing("ease-out-back", span(t, 0, .4)), after = span(t, .08, 1);
+      return frame({ scale: Math.max(.02, arrive), rotate: (1 - arrive) * -18, particles: burst(after, size, 16, seed, 1.1, "shard", .2), rings: [{ radius: size * (.35 + after * .75), opacity: (1 - after) * .85 }], impact: decay(0, .24) * .75 });
+    }
+    case "doze": return frame({ rotate: Math.sin(span(t, 0, 1) * Math.PI * 3) ** 2 * 7, origin: "bottom",
+      particles: [0, 1, 2].map(index => { const rise = (t * 1.5 + index * .33) % 1; return { x: size * (.3 + rise * .16), y: -size * (.2 + rise * .3), size: size * (.08 + rise * .06), opacity: t > index * .12 ? Math.sin(rise * Math.PI) : 0, rotate: rise * 12, tone: "accent" as const, shape: "z" as const }; }) });
   }
 }
 

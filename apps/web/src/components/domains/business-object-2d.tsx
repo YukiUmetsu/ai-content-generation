@@ -77,6 +77,18 @@ const ART:Record<BusinessObjectKind,Draw>={
     <Person cx={170} y={48} s={1.42} tone="accent2" partIndex={1}/>
     <Person cx={120} y={54} s={1.8} tone="accent" partIndex={2}/>
   </g>,
+  "sleepy-person":c=><g>
+    <Shadow cx={120} cy={152} rx={66}/>
+    <Shape d="M 62 150 V 130 Q 62 100 120 100 Q 178 100 178 130 V 150 Z" tone="accent"/>
+    <Part name="head" pivot={[120,102]}><g transform="rotate(9 120 102)">
+      <Orb cx={120} cy={62} r={40} tone="surface"/>
+      <Stroke d="M 93 58 Q 102 66 111 58 M 129 58 Q 138 66 147 58" w={3}/>
+      <Stroke d="M 95 71 Q 102 75 109 71 M 131 71 Q 138 75 145 71" w={1.6} opacity={.45}/>
+      <ellipse cx={120} cy={83} rx={8} ry={6} fill={c.tokens.ink}/>
+    </g></Part>
+    <Glyph x={178} y={46} size={30} fill={c.color("accent")}>Z</Glyph>
+    <Glyph x={200} y={26} size={20} fill={c.color("accent")}>Z</Glyph>
+  </g>,
   "meeting":c=><g>
     <Shadow cx={120} cy={152} rx={98}/>
     <Person cx={66} y={62} s={1.2} tone="deep"/>

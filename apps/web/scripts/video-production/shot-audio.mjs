@@ -74,7 +74,7 @@ const RECIPES = Object.freeze({
   "story-finale": "sine=f=261.63:d=1.8,volume=0.36,afade=t=in:d=0.02,afade=t=out:st=0.2:d=1.6:curve=exp[a];sine=f=392:d=1.8,volume=0.3,adelay=70|70,afade=t=out:st=0.25:d=1.6:curve=exp[b];sine=f=523.25:d=1.8,volume=0.3,adelay=140|140,afade=t=out:st=0.3:d=1.6:curve=exp[c];sine=f=783.99:d=1.8,volume=0.22,adelay=210|210,afade=t=out:st=0.35:d=1.6:curve=exp[d];[a][b][c][d]amix=inputs=4:normalize=0",
   "story-crash": "sine=f=70:d=0.5,volume=0.9,afade=t=out:d=0.46:curve=exp[a];anoisesrc=c=pink:d=0.4:a=0.7:s=29,lowpass=f=1800,afade=t=out:d=0.38:curve=exp[b];[a][b]amix=inputs=2:normalize=0",
   "story-explode": "sine=f=58:d=0.8,volume=1,afade=t=out:d=0.76:curve=exp[a];anoisesrc=c=brown:d=0.7:a=0.9:s=31,lowpass=f=2400,afade=t=out:d=0.66:curve=exp[b];[a][b]amix=inputs=2:normalize=0",
-  "story-popping": "aevalsrc=0.8*sin(2*PI*(900*t-3000*t*t)):s=48000:d=0.06,afade=t=out:d=0.05:curve=exp[a];anoisesrc=c=white:d=0.03:a=0.5:s=37[b];[a][b]amix=inputs=2:normalize=0",
+  "story-popping": "aevalsrc=0.95*sin(2*PI*(33.3*(1-exp(-45*t))+150*t)):s=48000:d=0.16,afade=t=out:d=0.15:curve=exp[a];anoisesrc=c=white:d=0.02:a=0.35:s=37,highpass=f=1800[b];[a][b]amix=inputs=2:normalize=0",
   "story-print": "anoisesrc=c=pink:d=1.3:a=0.6:s=41,bandpass=f=2200:w=1400,tremolo=f=19:d=0.95,afade=t=in:d=0.04,afade=t=out:st=1.05:d=0.25",
   "story-tear": "anoisesrc=c=white:d=0.45:a=0.5:s=43,bandpass=f=3200:w=2400,tremolo=f=38:d=0.8,afade=t=in:d=0.03,afade=t=out:st=0.25:d=0.2",
   "story-vanish": "aevalsrc=0.35*sin(2*PI*(900*t+900*t*t)):s=48000:d=0.6,afade=t=in:d=0.04,afade=t=out:st=0.15:d=0.45:curve=exp",

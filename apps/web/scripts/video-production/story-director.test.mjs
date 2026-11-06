@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { captionFor, compileVocabulary, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts } from "./story-language.mjs";
+import { captionFor, compileVocabulary, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts, spokenFlow, spokenTime } from "./story-language.mjs";
 import { directSceneStory, newStoryStage } from "./story-director.mjs";
 import { detectPauses, phraseWindows, speechPhrases } from "./speech-phrases.mjs";
 import { applyObjectStories, sceneNeedsStory } from "./story-scenes.mjs";
@@ -460,4 +460,91 @@ test("time amounts are read, but an expression like one day is not", () => {
 test("a statement sounds like a change of scene", () => {
   const cues = storyCues({ fps, beats: [{ id: "a", startFrame: 0, endFrame: 30, arrangement: { kind: "statement", objects: [] }, ops: [] }] });
   assert.deepEqual(cues.map(cue => cue.sound), ["story-whoosh"]);
+});
+
+test("the words say when a time is meant", () => {
+  assert.deepEqual(spokenTime("By one o'clock you can barely keep your eyes open."), { hour: 1, minute: 0, explicit: true, spoken: "one o'clock", label: "1 o'clock" });
+  assert.equal(spokenTime("You drink a coffee at nine and feel sharp.").explicit, false);
+  assert.equal(spokenTime("It closes at 5:30 pm.").hour, 17);
+  assert.equal(spokenTime("It closes at 12 am.").hour, 0);
+  assert.equal(spokenTime("See you at noon.").label, "Noon");
+  assert.equal(spokenTime("午後3時に閉まる", "ja").hour, 15);
+  for (const phrase of ["Interest rose by nine percent.", "A family of four at home.", "One in ten people."]) assert.equal(spokenTime(phrase), null, phrase);
+});
+
+test("a spoken time moves a clock from the last time the words gave", () => {
+  const { spec } = direct("You drink a coffee at nine and feel sharp. By one o'clock you can barely keep your eyes open.");
+  const clock = spec.objects.find(item => item.clock);
+  assert.deepEqual(clock.clock, { hour: 9, minute: 0 });
+  assert.equal(clock.label, "1 o'clock");
+  assert.ok(spec.beats.flatMap(beat => beat.ops).some(op => op.kind === "set-time" && op.hour === 1 && op.object === clock.id));
+});
+
+test("links run the way the words say", () => {
+  const flow = (text) => { const compiled = compileVocabulary(vocabulary); const found = spokenFlow(text, mentionedObjects(text, compiled)); return [found.source?.term ?? null, found.destination?.term ?? null]; };
+  assert.deepEqual(flow("Attach the receipt to the invoice."), [null, "invoice"]);
+  assert.deepEqual(flow("The payment is entered from the bank feed."), ["bank feed", null]);
+  const { spec } = direct("The invoice and the receipt are here. Put the receipt next to the invoice. Both stay side by side.");
+  const links = spec.beats.flatMap(beat => beat.ops).filter(op => op.kind === "connect");
+  assert.deepEqual(links.map(op => [op.from, op.to]), [["receipt", "invoice"]], "one link, and it is not drawn twice");
+});
+
+test("a burst word lands on its spoken word, and a motion on its verb", () => {
+  const boom = direct("Every boom starts the same way.").spec;
+  const object = boom.objects.find(item => item.id === "word-boom"), op = boom.beats[0].ops.find(item => item.kind === "act");
+  assert.equal(object.wordShape, "burst");
+  assert.equal(op.motion, "burst");
+  assert.ok(op.atFrame > 0, "it is not there from the start");
+  const phrases = windows("And then, after all that time, the bubble pops.");
+  const { spec } = directSceneStory({ id: "s", fps, width: 1920, height: 1080, frames: 90, phrases }, { vocabulary });
+  const pop = spec.beats[0].ops.find(item => item.kind === "act");
+  assert.equal(pop.motion, "pop");
+  const hit = pop.atFrame + pop.durationFrames * .42;
+  assert.ok(hit > 65, `the hit lands near the end of the phrase, not at ${hit}`);
+});
+
+test("the spoken subject stays on stage and prints what the words say", () => {
+  const phrases = windows("The bank prints more money.");
+  const proposal = parseStoryProposal(reply({ show: ["currency printing press", "banknote"], action: "print", verb: "prints" }), { phrases, vocabulary }).beats;
+  const { spec } = directSceneStory({ id: "s", fps, width: 1920, height: 1080, frames: 120, phrases }, { vocabulary, proposal });
+  assert.equal(spec.beats[0].arrangement.objects[0], "bank");
+  assert.ok(!spec.beats[0].arrangement.objects.includes("money-printing-press"));
+  const print = spec.beats[0].ops.find(item => item.kind === "act");
+  assert.deepEqual([print.object, print.motion, print.emits], ["bank", "print", spec.beats[0].arrangement.objects[1]]);
+});
+
+test("an object does not flash past", () => {
+  const phrases = [{ text: "Coffee borrowed time.", startFrame: 0, endFrame: 90 }, { text: "Use it for that,", startFrame: 90, endFrame: 120 }, { text: "So plan ahead?", startFrame: 120, endFrame: 200 }];
+  const proposal = [{ objects: [{ art: "icon:Coffee", label: "Coffee", term: "coffee" }], signals: undefined }, { objects: [{ art: "finance:loan", label: "Loan", term: "loan" }], signals: { motion: null } }, null];
+  const { spec } = directSceneStory({ id: "s", fps, width: 1920, height: 1080, frames: 200, phrases, final: true }, { vocabulary, proposal });
+  assert.ok(!spec.beats.flatMap(beat => beat.arrangement.objects).includes("loan"));
+  assert.deepEqual(spec.beats[1].arrangement.objects, spec.beats[0].arrangement.objects);
+  assert.ok(spec.beats[1].ops.length);
+});
+
+test("a graph follows the subject of its verb", () => {
+  const crash = direct("One morning the stock market crashes.").spec;
+  assert.equal(crash.beats[0].ops.find(op => op.kind === "trend").object, "stock");
+  assert.equal(crash.beats[0].ops.find(op => op.kind === "mark").object, "stock", "the verdict lands on what fell");
+  const pops = direct("The housing bubble inflates. Until it finally pops.").spec;
+  assert.equal(pops.beats[1].ops.find(op => op.kind === "act").motion, "pop");
+  assert.ok(!pops.objects.some(item => item.label === "Finally"));
+  const prices = direct("Every boom starts here. Prices climb.").spec;
+  const climb = prices.beats[1].ops.find(op => op.kind === "trend");
+  assert.equal(prices.objects.find(item => item.id === climb.object).label, "Prices");
+});
+
+test("a sleepy person dozes and is never replaced by a graph", () => {
+  const { spec } = direct("The more you have, the sleepier you feel.");
+  const person = spec.objects.find(item => item.art === "business:sleepy-person");
+  const ops = spec.beats.flatMap(beat => beat.ops).filter(op => op.object === person.id);
+  assert.ok(ops.some(op => op.kind === "act" && op.motion === "doze"));
+  assert.ok(!ops.some(op => op.kind === "trend"));
+});
+
+test("words that say where something goes draw the link on a quiet beat", () => {
+  const phrases = windows("The receipt and the invoice are here.", "Attach the receipt to the invoice on the day you pay.");
+  const proposal = parseStoryProposal(reply({ show: ["receipt", "invoice"], action: "look" }, { show: ["receipt", "invoice"], action: "look" }), { phrases, vocabulary }).beats;
+  const { spec } = directSceneStory({ id: "s", fps, width: 1920, height: 1080, frames: 180, phrases }, { vocabulary, proposal });
+  assert.deepEqual(spec.beats.flatMap(beat => beat.ops).filter(op => op.kind === "connect").map(op => [op.from, op.to]), [["receipt", "invoice"]]);
 });

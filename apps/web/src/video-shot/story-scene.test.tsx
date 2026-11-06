@@ -34,9 +34,11 @@ function directed() {
 describe("object story scenes", () => {
   it("every vocabulary art names an object Kumiki can draw", () => {
     const known = new Set([...FINANCE_OBJECTS.map(item => `finance:${item.kind}`), ...BUSINESS_OBJECTS.map(item => `business:${item.kind}`), ...TECHNOLOGY_OBJECTS.map(item => `technology:${item.kind}`)]);
-    for (const entry of vocabulary.objects) {
-      const [family, name] = entry.art.split(":");
-      expect(family === "icon" ? Object.hasOwn(icons, name) : known.has(entry.art), entry.art).toBe(true);
+    // A burst word has no art. Kumiki draws its star.
+    for (const { art } of vocabulary.objects as { art?: string }[]) {
+      if (!art) continue;
+      const [family, name] = art.split(":");
+      expect(family === "icon" ? Object.hasOwn(icons, name) : known.has(art), art).toBe(true);
     }
   });
 
