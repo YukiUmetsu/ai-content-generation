@@ -23,25 +23,65 @@ const MARKS: Record<ObjectStoryMark, { glyph: string; color: string }> = {
 
 /** A word as the object, for ideas with no picture. Used when no `renderObject` is given or it returns null. */
 export function ObjectStoryWord({ text, width, height }: { text: string; width: number; height: number }) {
-  const fit = Math.min(height * .3, (width * .86) / Math.max(1, Math.max(...text.split(/\s+/u).map(word => word.length)) * .56));
+  // Heavy letters such as m and w run wide, so the estimate has to hold for them too.
+  const fit = Math.min(height * .3, (width * .86) / Math.max(1, Math.max(...text.split(/\s+/u).map(word => word.length)) * .68));
   return <div data-km-story-word="" style={{ width, height, boxSizing: "border-box", padding: "7%", borderRadius: width * .07, display: "grid", placeItems: "center", textAlign: "center",
     background: "var(--km-shot-subject-surface, #1a2e42)", color: INK, fontWeight: 750, fontSize: fit, lineHeight: 1.08 }}>{text}</div>;
 }
 
+function TrendGraph({ trend, width, height, rider, riderSize, stroke }: { trend: NonNullable<ObjectStoryObjectFrame["trend"]>; width: number; height: number; rider: ReactNode; riderSize: number; stroke: number }) {
+  const at = (point: { x: number; y: number }) => `${point.x * width},${point.y * height}`;
+  const line = trend.points.map(at).join(" ");
+  const first = trend.points[0], last = trend.head, turn = Math.min(trend.turn, trend.points.length - 1);
+  const up = "var(--km-shot-positive, #4cc38a)", down = "var(--km-shot-negative, #ef6b6b)";
+  const falling = trend.points.length - 1 > trend.turn;
+  return <div data-km-story-trend={trend.shape} style={{ position: "absolute", inset: 0 }}>
+    <svg aria-hidden="true" width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
+      <path d={`M ${width * .06} ${height * .04} V ${height * .94} H ${width * .96}`} fill="none" stroke="var(--km-shot-track, rgba(255,255,255,.3))" strokeWidth={stroke * .7} strokeLinecap="round" />
+      <polygon points={`${first.x * width},${height * .94} ${line} ${last.x * width},${height * .94}`} fill={falling ? down : up} opacity={.16} />
+      {turn > 0 && <polyline points={trend.points.slice(0, turn + 1).map(at).join(" ")} fill="none" stroke={up} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" />}
+      {falling && <polyline points={trend.points.slice(turn).map(at).join(" ")} fill="none" stroke={down} strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" />}
+    </svg>
+    <div style={{ position: "absolute", left: last.x * width - riderSize / 2, top: last.y * height - riderSize / 2, width: riderSize, height: riderSize }}>{rider}</div>
+  </div>;
+}
+
+const TONES: Record<string, string> = { accent: ACCENT, warm: WARM, danger: "var(--km-shot-negative, #ef6b6b)", ink: INK };
+
+/** What a motion throws off: copies of the object, printed pages, particles and rings. */
+function MotionEffects({ object, width, height, art, label }: { object: ObjectStoryObjectFrame; width: number; height: number; art: ReactNode; label: string }) {
+  const { copies, sheets, particles, rings } = object.motion;
+  const cx = width / 2, cy = height / 2;
+  return <>
+    {sheets.map((sheet, index) => <div key={`sheet-${index}`} data-km-story-sheet="" style={{ position: "absolute", left: cx + sheet.x - sheet.width / 2, top: cy + sheet.y, width: sheet.width, height: sheet.height, opacity: sheet.opacity, overflow: "hidden", borderRadius: width * .012, background: "var(--km-shot-paper, #f2f5f7)", boxShadow: "0 8px 22px rgba(0,0,0,.35)" }}>
+      {[.14, .3, .46, .62, .78].map(row => <span key={row} style={{ position: "absolute", left: "12%", right: row === .78 ? "46%" : "12%", top: `${row * sheet.width * 1.1}px`, height: Math.max(2, width * .012), borderRadius: 3, background: "var(--km-shot-paper-ink, #8fa3b1)" }} />)}
+    </div>)}
+    {copies.map((copy, index) => <div key={`copy-${index}`} data-km-story-copy="" style={{ position: "absolute", left: 0, top: 0, width, height, opacity: copy.opacity, transform: `translate(${copy.x}px, ${copy.y}px) rotate(${copy.rotate}deg) scale(${copy.scale})`,
+      clipPath: copy.clip === "left" ? "inset(0 50% 0 0)" : copy.clip === "right" ? "inset(0 0 0 50%)" : undefined }}>{art ?? <ObjectStoryWord text={label} width={width} height={height} />}</div>)}
+    {rings.map((ring, index) => <span key={`ring-${index}`} aria-hidden="true" style={{ position: "absolute", left: cx - ring.radius, top: cy - ring.radius, width: ring.radius * 2, height: ring.radius * 2, borderRadius: "50%", border: `${Math.max(2, width * .012)}px solid ${WARM}`, opacity: ring.opacity }} />)}
+    {particles.map((particle, index) => <span key={`particle-${index}`} aria-hidden="true" data-km-story-particle={particle.shape} style={{ position: "absolute", left: cx + particle.x - particle.size / 2, top: cy + particle.y - particle.size / 2, width: particle.size, height: particle.shape === "flame" || particle.shape === "drop" ? particle.size * 1.5 : particle.size,
+      opacity: particle.opacity, background: TONES[particle.tone], transform: `rotate(${particle.rotate}deg)`, borderRadius: particle.shape === "shard" ? "12%" : particle.shape === "dot" ? "50%" : "50% 50% 50% 50% / 62% 62% 38% 38%", clipPath: particle.shape === "shard" ? "polygon(50% 0, 100% 100%, 0 80%)" : undefined }} />)}
+  </>;
+}
+
 function StageObject({ object, height, renderObject }: { object: ObjectStoryObjectFrame; height: number; renderObject: ObjectStoryProps["renderObject"] }) {
-  const { rect, opacity, dimmed, pulse, label, value, mark, level, figure } = object;
+  const { rect, opacity, dimmed, pulse, label, value, mark, level, figure, motion, trend } = object;
   if (figure && value) return <div data-km-story-object={object.id} data-km-story-figure="" style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: height * .02 }}>
     <span data-km-story-value="" style={{ color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .24, rect.height * .5), lineHeight: 1, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", transform: `scale(${(1 + pulse * .06) * value.progress})` }}>{value.text}</span>
     {label && <p style={{ margin: 0, color: INK, fontWeight: 650, fontSize: height * .05, lineHeight: 1.2 }}>{label}</p>}
   </div>;
   const labelSize = Math.max(height * .034, Math.min(rect.width * .1, height * .04));
-  const art = renderObject?.(object, { width: rect.width, height: rect.height - (label ? labelSize * 1.5 : 0) }) ?? null;
+  const boxHeight = rect.height - (label ? labelSize * 1.5 : 0);
+  // On a graph the object shrinks and rides the line, so the climb is what you see.
+  const riderSize = Math.min(rect.width, boxHeight) * .34;
+  const art = renderObject?.(object, trend ? { width: riderSize, height: riderSize } : { width: rect.width, height: boxHeight }) ?? null;
   // A word object already says its label, so it takes the label's room too.
   const showLabel = Boolean(label && art !== null);
   const artHeight = rect.height - (showLabel ? labelSize * 1.5 : 0);
   return <div data-km-story-object={object.id} style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity: dimmed ? opacity * .42 : opacity }}>
-    <div style={{ position: "absolute", left: 0, top: 0, width: rect.width, height: artHeight, transform: `scale(${1 + pulse * .09})`, filter: pulse > .01 ? `drop-shadow(0 0 ${pulse * height * .03}px ${ACCENT})` : undefined }}>
-      {art ?? <ObjectStoryWord text={label ?? object.id} width={rect.width} height={artHeight} />}
+    <div style={{ position: "absolute", left: 0, top: 0, width: rect.width, height: artHeight, opacity: motion.opacity, transformOrigin: motion.origin === "bottom" ? "50% 100%" : "50% 50%", transform: `translate(${motion.x}px, ${motion.y}px) rotate(${motion.rotate}deg) scale(${motion.scale * motion.scaleX * (1 + pulse * .09)}, ${motion.scale * motion.scaleY * (1 + pulse * .09)})`, filter: pulse > .01 ? `drop-shadow(0 0 ${pulse * height * .03}px ${ACCENT})` : undefined }}>
+      {trend ? <TrendGraph trend={trend} width={rect.width} height={artHeight} rider={art ?? <ObjectStoryWord text={label ?? object.id} width={riderSize} height={riderSize} />} riderSize={riderSize} stroke={height * .007} />
+        : art ?? <ObjectStoryWord text={label ?? object.id} width={rect.width} height={artHeight} />}
       {level !== undefined && <div data-km-story-level={level.toFixed(3)} aria-hidden="true" style={{ position: "absolute", left: "12%", right: "12%", bottom: "-1%", height: height * .022, borderRadius: height * .011, overflow: "hidden", background: "var(--km-shot-track, rgba(255,255,255,.14))" }}>
         <div style={{ width: `${level * 100}%`, height: "100%", borderRadius: "inherit", background: WARM }} />
       </div>}
@@ -50,6 +90,7 @@ function StageObject({ object, height, renderObject }: { object: ObjectStoryObje
       {value && <span data-km-story-value="" style={{ position: "absolute", left: "50%", bottom: "4%", transform: `translateX(-50%) scale(${value.progress})`, padding: `${height * .008}px ${height * .018}px`, borderRadius: height * .014, whiteSpace: "nowrap",
         background: SURFACE, color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .17, height * .066), fontVariantNumeric: "tabular-nums", boxShadow: "0 6px 24px rgba(0,0,0,.35)" }}>{value.text}</span>}
     </div>
+    <MotionEffects object={object} width={rect.width} height={artHeight} art={art} label={label ?? object.id} />
     {showLabel && <p style={{ position: "absolute", left: 0, right: 0, bottom: 0, margin: 0, textAlign: "center", color: INK, fontWeight: 650, fontSize: labelSize, lineHeight: 1.2 }}>{label}</p>}
   </div>;
 }
@@ -90,13 +131,14 @@ export function createStoryTextMeasure(): MeasureText {
 export const ObjectStory = forwardRef<HTMLDivElement, ObjectStoryProps>(function ObjectStory({ plan, frame, renderObject, settled, style, ...props }, ref) {
   const { width, height } = plan.spec;
   const state = evaluateObjectStory(plan, frame, { settled });
-  const { scale, origin } = state.camera;
+  const { scale, origin, shake } = state.camera;
   const { caption } = state;
   return <div {...props} ref={ref} data-km-object-story={plan.spec.id} data-km-story-beat={state.beatId}
     style={{ position: "relative", width, height, overflow: "hidden", color: INK, fontFamily: "var(--km-shot-font, var(--km-font-body, system-ui, sans-serif))", ...style }}>
     <div aria-hidden="true" style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at ${origin.x}px ${origin.y}px, var(--km-shot-glow, #1d3a52) 0%, ${SURFACE} 62%)` }} />
-    <div style={{ position: "absolute", inset: 0, transformOrigin: `${origin.x}px ${origin.y}px`, transform: `scale(${scale})` }}>
+    <div style={{ position: "absolute", inset: 0, transformOrigin: `${origin.x}px ${origin.y}px`, transform: `translate(${shake.x}px, ${shake.y}px) scale(${scale})` }}>
       <Connections state={state} width={width} height={height} />
+      {state.objects.flatMap(object => object.trail.map((step, index) => <span key={`${object.id}-${index}`} data-km-story-step="" style={{ position: "absolute", left: step.x, top: step.y, width: height * .02, height: height * .03, borderRadius: "50%", transform: "translate(-50%,-50%)", background: ACCENT, opacity: step.opacity }} />))}
       {state.objects.map(object => <StageObject key={object.id} object={object} height={height} renderObject={renderObject} />)}
       {state.tokens.map(token => <span key={token.id} data-km-story-token="" style={{ position: "absolute", left: token.at.x, top: token.at.y, transform: "translate(-50%,-50%)", opacity: token.opacity, padding: `${height * .008}px ${height * .016}px`, borderRadius: height * .03,
         background: WARM, color: SURFACE, fontWeight: 800, fontSize: height * .03, whiteSpace: "nowrap", minWidth: height * .03, minHeight: height * .03 }}>{token.label}</span>)}

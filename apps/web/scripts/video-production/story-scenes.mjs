@@ -5,8 +5,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { detectPauses, phraseWindows, speechPhrases } from "./speech-phrases.mjs";
 import { directSceneStory, newStoryStage } from "./story-director.mjs";
-import { proposeSceneStory } from "./story-model.mjs";
-import { localModelComplete } from "./performance-director.mjs";
+import { proposeSceneStory, storyModelComplete } from "./story-model.mjs";
 import { resolveModelForTask } from "./model-profiles.mjs";
 import { storyCues, thinCues } from "./story-sound.mjs";
 
@@ -33,10 +32,10 @@ export function sceneNeedsStory(chapter) {
 const scenePhrases = (chapter, fps, timing) => phraseWindows({ phrases: speechPhrases(chapter.narration), frames: chapter.endFrame - chapter.startFrame, fps, ...timing });
 
 /** The configured local model, or null. Absent or broken settings mean rules. */
-async function configuredModel(readModel) {
+async function configuredModel(readModel, signal) {
   try {
     const settings = await readModel();
-    return settings?.model && settings?.endpoint ? localModelComplete(`${settings.endpoint}#${settings.model}`) : null;
+    return settings?.model && settings?.endpoint ? storyModelComplete(settings, { signal }) : null;
   } catch { return null; }
 }
 
@@ -84,7 +83,7 @@ export async function applyObjectStories(plan, { speech = [], ffmpeg, signal, en
     timings.set(chapter.id, { pauses, ...(measured?.samples ? { spokenSeconds: measured.samples / (measured.sampleRate ?? 48000) } : {}) });
   }
   // One request per scene, in order. A failed reply leaves that scene to the rules, and the report says so.
-  const complete = useModel ? deps.complete ?? await configuredModel(deps.readModel ?? (() => resolveModelForTask("script"))) : null;
+  const complete = useModel ? deps.complete ?? await configuredModel(deps.readModel ?? (() => resolveModelForTask("story")), signal) : null;
   const proposals = new Map(), direction = new Map();
   for (const chapter of plan.chapters.filter(sceneNeedsStory)) {
     if (!complete) break;
@@ -106,7 +105,7 @@ export async function applyObjectStories(plan, { speech = [], ffmpeg, signal, en
     if (!verdict.ok) throw Error(`The story for scene ${chapter.id} is invalid: ${verdict.diagnostics.filter(item => item.severity === "error").map(item => item.message).join(" ")}`);
     report.push({ chapterId: chapter.id, phrases: spec.beats.length, director: proposals.has(chapter.id) ? "model" : "rules", directorFindings: direction.get(chapter.id) ?? [], timing: timingLabel.get(chapter.id), pausesFound: timings.get(chapter.id).pauses.length, pacing: verdict.pacing,
       warnings: verdict.diagnostics.filter(item => item.severity === "warning").map(item => item.code) });
-    cues.push(...storyCues(spec).map(cue => ({ ...cue, chapterId: chapter.id, absolute: chapter.startFrame + cue.frame })));
+    cues.push(...storyCues(spec, { finale: chapter === directed.chapters.filter(item => item.visual?.story).at(-1) }).map(cue => ({ ...cue, chapterId: chapter.id, absolute: chapter.startFrame + cue.frame })));
   }
   return { plan: directed, report, cues: thinCues(cues, { fps: plan.manifest.fps }) };
 }

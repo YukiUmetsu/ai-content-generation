@@ -13,6 +13,8 @@ import { compileAnimatedMetric, evaluateAnimatedMetric } from "../visual/animate
 import type { AnimatedMetricPlan, MetricFormatSpec } from "../visual/animated-metric";
 import { planExplainerLayout } from "../visual/explainer-layout";
 import type { MeasureText } from "../media/text-layout";
+import { OBJECT_STORY_MOTIONS, OBJECT_STORY_TREND_SHAPES, STILL_MOTION, motionFrame, motionReach, motionSeed, trendFrame, walkTrail } from "./object-story-motions";
+import type { MotionContext, MotionReach, ObjectStoryMotion, ObjectStoryMotionFrame, ObjectStoryTrendShape, StoryTrendFrame } from "./object-story-motions";
 
 /** `statement` clears the stage so the caption fills the frame. `figure` makes one object's value the subject. */
 export const OBJECT_STORY_ARRANGEMENTS = ["solo", "pair", "row", "stack", "ring", "statement", "figure"] as const;
@@ -20,6 +22,8 @@ export type ObjectStoryArrangementKind = (typeof OBJECT_STORY_ARRANGEMENTS)[numb
 export const OBJECT_STORY_MARKS = ["check", "cross", "question", "warning"] as const;
 export type ObjectStoryMark = (typeof OBJECT_STORY_MARKS)[number];
 
+export { OBJECT_STORY_MOTIONS, OBJECT_STORY_FINAL_MOTIONS, OBJECT_STORY_TREND_SHAPES, motionReach } from "./object-story-motions";
+export type { ObjectStoryMotion, ObjectStoryMotionFrame, ObjectStoryTrendShape } from "./object-story-motions";
 export interface ObjectStoryValue {
   format: MetricFormatSpec;
   /** Counts start here. @default 0 */
@@ -54,6 +58,10 @@ export type ObjectStoryOp = OpTiming & (
   | { kind: "set-value"; object: string; value: number }
   /** Fill a meter on an object, 0 to 1. For how much of something there is when no figure is known. */
   | { kind: "level"; object: string; to: number }
+  /** The object rides a graph for this beat. The shape shows what happened, not measured data. */
+  | { kind: "trend"; object: string; shape: ObjectStoryTrendShape }
+  /** The object performs a motion. A walk that starts its beat arrives from the nearest side. */
+  | { kind: "act"; object: string; motion: ObjectStoryMotion }
   | { kind: "connect"; from: string; to: string; label?: string }
   | { kind: "disconnect"; from: string; to: string }
   | { kind: "transfer"; from: string; to: string; label?: string }
@@ -99,7 +107,7 @@ export interface ObjectStorySpec {
 }
 export interface ObjectStoryDiagnostic {
   code: "invalid-spec" | "unknown-object" | "unknown-arrangement" | "empty-arrangement" | "figure-needs-value" | "beat-order" | "beat-gap" | "op-outside-beat" | "object-not-on-stage" |
-    "value-not-declared" | "level-out-of-range" | "no-link" | "beat-without-change" | "caption-no-room" | "too-many-objects" | "still-stretch";
+    "value-not-declared" | "level-out-of-range" | "unknown-motion" | "no-link" | "beat-without-change" | "caption-no-room" | "too-many-objects" | "still-stretch";
   severity: "error" | "warning";
   message: string;
   beatId?: string;
@@ -237,8 +245,63 @@ function placeStatement(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: O
   return null;
 }
 
+/** The `act` operations of a beat, with what each motion needs to know about its object. */
+function beatMotions(beat: ObjectStoryBeat, rects: ReadonlyMap<string, Rect>, width: number) {
+  return (beat.ops ?? []).flatMap(op => {
+    const rect = op.kind === "act" && OBJECT_STORY_MOTIONS.includes(op.motion) ? rects.get(op.object) : undefined;
+    if (op.kind !== "act" || !rect) return [];
+    const context: MotionContext = { rect, seconds: 1, arrives: (op.atFrame ?? beat.startFrame) === beat.startFrame, side: rect.x + rect.width / 2 >= width / 2 ? 1 : -1, seed: motionSeed(op.object) };
+    return [{ id: op.object, motion: op.motion, context }];
+  });
+}
+
+/** How much of one axis a resting motion needs: the scale that fits, and which end of the object stays put. */
+function fitAxis(start: number, length: number, before: number, after: number, limit: number, margin: number) {
+  const overBefore = before > 0 ? before + margin - start : 0, overAfter = after > 0 ? start + length + after + margin - limit : 0;
+  if (overBefore <= 0 && overAfter <= 0) return { scale: 1, anchor: .5 };
+  if (overBefore > 0 && overAfter > 0) return { scale: (limit - margin * 2) / (length + before + after), anchor: .5 };
+  return overBefore > 0 ? { scale: (start + length - margin) / (length + before), anchor: 1 } : { scale: (limit - margin - start) / (length + after), anchor: 0 };
+}
+
+/** A motion that ends past the frame edge would be cut off, so its object makes room first.
+ * It shrinks toward the side with no overflow, which leaves the rest of the stage where it was.
+ */
+function roomForMotions(beat: ObjectStoryBeat, rects: Map<string, Rect>, width: number, height: number) {
+  const margin = Math.min(width, height) * .03;
+  // The band under a stage belongs to the caption, so a motion comes to rest above it.
+  const { area } = stageFor(beat.arrangement.kind, width >= height), floor = (area.y + area.height) * height;
+  for (const { id, motion, context } of beatMotions(beat, rects, width)) {
+    const { rect } = context, rest = motionReach(motion, context, [1]);
+    const across = fitAxis(rect.x, rect.width, rest.left, rest.right, width, margin), down = fitAxis(rect.y, rect.height, rest.top, rest.bottom, Math.max(floor, rect.y + rect.height), margin);
+    const scale = Math.min(across.scale, down.scale);
+    if (scale >= 1) continue;
+    const fitted = { width: rect.width * scale, height: rect.height * scale };
+    rects.set(id, { ...fitted, x: rect.x + (rect.width - fitted.width) * across.anchor, y: rect.y + (rect.height - fitted.height) * down.anchor });
+  }
+  return rects;
+}
+
+/** Where each object's motion takes it during a beat. */
+function reachOfBeat(beat: ObjectStoryBeat, rects: ReadonlyMap<string, Rect>, width: number, height: number) {
+  const reached = new Map<string, Rect>();
+  for (const { id, motion, context } of beatMotions(beat, rects, width)) {
+    const r: MotionReach = motionReach(motion, context), seen = reached.get(id) ?? context.rect;
+    const left = Math.max(0, Math.min(seen.x, context.rect.x - r.left)), top = Math.max(0, Math.min(seen.y, context.rect.y - r.top));
+    const right = Math.min(width, Math.max(seen.x + seen.width, context.rect.x + context.rect.width + r.right)), bottom = Math.min(height, Math.max(seen.y + seen.height, context.rect.y + context.rect.height + r.bottom));
+    reached.set(id, { x: left, y: top, width: right - left, height: bottom - top });
+  }
+  return reached;
+}
+
 function placeCaption(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: ObjectStoryCaption, rects: ReadonlyMap<string, Rect>, startFrame: number, options: ObjectStoryOptions): CaptionPlan | null {
   if (beat.arrangement.kind === "statement") return placeStatement(spec, beat, caption, startFrame, options);
+  const reached = reachOfBeat(beat, rects, spec.width, spec.height);
+  // Words keep clear of where a motion goes, not only of where it starts. A stage too full for that gets the plain fit.
+  if (reached.size) return fitCaption(spec, beat, caption, new Map([...rects, ...reached]), startFrame, options) ?? fitCaption(spec, beat, caption, rects, startFrame, options);
+  return fitCaption(spec, beat, caption, rects, startFrame, options);
+}
+
+function fitCaption(spec: ObjectStorySpec, beat: ObjectStoryBeat, caption: ObjectStoryCaption, rects: ReadonlyMap<string, Rect>, startFrame: number, options: ObjectStoryOptions): CaptionPlan | null {
   const { width, height } = spec;
   const short = Math.min(width, height), largest = Math.round(short * (options.captionScale ?? .066));
   const subjects = [...rects].map(([id, r]) => ({ id, region: { x: r.x / width, y: r.y / height, width: r.width / width, height: r.height / height } }));
@@ -312,7 +375,7 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
   let caption: CaptionPlan | null = null, captionText: string | null = null;
   for (const beat of spec.beats) {
     if (!checkArrangement(beat.arrangement, beat.id)) continue;
-    const rects = layOut(beat.arrangement, spec.width, spec.height);
+    const rects = roomForMotions(beat, layOut(beat.arrangement, spec.width, spec.height), spec.width, spec.height);
     const moved = [...rects].some(([id, rect]) => { const before = previous.get(id); return !before || Math.abs(before.x - rect.x) + Math.abs(before.y - rect.y) + Math.abs(before.width - rect.width) > 1; }) ||
       [...previous.keys()].some(id => !rects.has(id));
     const span = beat.endFrame - beat.startFrame;
@@ -332,6 +395,8 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
         if (!objects.get(op.object)?.value) { error("value-not-declared", `Object "${op.object}" has no value format, so beat "${beat.id}" cannot set one.`, beat.id); continue; }
         valueOps.set(op.object, [...(valueOps.get(op.object) ?? []), { value: op.value, startFrame, endFrame }]);
       }
+      if (op.kind === "trend" && !OBJECT_STORY_TREND_SHAPES.includes(op.shape)) { error("unknown-motion", `Beat "${beat.id}" asks for an unknown graph shape.`, beat.id); continue; }
+      if (op.kind === "act" && !OBJECT_STORY_MOTIONS.includes(op.motion)) { error("unknown-motion", `Beat "${beat.id}" asks for an unknown motion.`, beat.id); continue; }
       if (op.kind === "level" && !(op.to >= 0 && op.to <= 1)) { error("level-out-of-range", `A level in beat "${beat.id}" must be between 0 and 1.`, beat.id); continue; }
       if (op.kind === "connect") links.add(linkKey(op.from, op.to));
       if (op.kind === "disconnect" && !links.delete(linkKey(op.from, op.to))) { error("no-link", `Beat "${beat.id}" disconnects a link that does not exist.`, beat.id); continue; }
@@ -346,7 +411,7 @@ export function compileObjectStory(spec: ObjectStorySpec, options: ObjectStoryOp
       error("object-not-on-stage", `Beat "${beat.id}" focuses on "${beat.focus}", which is not on stage.`, beat.id);
 
     if (beat.caption === null) { caption = null; captionText = null; }
-    else if ((beat.caption && beat.caption.text !== captionText) || (caption && moved)) {
+    else if ((beat.caption && beat.caption.text !== captionText) || (caption && (moved || reachOfBeat(beat, rects, spec.width, spec.height).size))) {
       // A kept caption is placed again when the stage moves, without replaying its reveal.
       const text: ObjectStoryCaption = beat.caption ?? { text: captionText ?? "", emphasis: caption?.emphasis };
       const kept: CaptionPlan | null = text.text === captionText ? caption : null;
@@ -406,6 +471,12 @@ export interface ObjectStoryObjectFrame {
   value?: { text: string; progress: number };
   /** Meter fill from 0 to 1. Absent until the object has a level. */
   level?: number;
+  /** Offsets and scale from a motion, in pixels and degrees. */
+  motion: ObjectStoryMotionFrame;
+  /** Footprints left behind, in stage pixels. */
+  trail: readonly { x: number; y: number; opacity: number }[];
+  /** A graph this object is riding. Points are 0 to 1 inside the object's box. */
+  trend?: StoryTrendFrame;
   mark?: { kind: ObjectStoryMark; progress: number };
 }
 /** `bow` lifts the line over objects standing between its ends, in pixels. */
@@ -418,7 +489,7 @@ export interface ObjectStoryFrame {
   frame: number;
   beatId: string;
   beatIndex: number;
-  camera: { scale: number; origin: Vec2 };
+  camera: { scale: number; origin: Vec2; shake: Vec2 };
   objects: readonly ObjectStoryObjectFrame[];
   links: readonly ObjectStoryLinkFrame[];
   tokens: readonly ObjectStoryTokenFrame[];
@@ -473,6 +544,8 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
   const pulse = (id: string, value: number) => pulses.set(id, Math.max(pulses.get(id) ?? 0, value));
   const neighbours = (a: string, b: string) => Math.abs(beat.arrangement.objects.indexOf(a) - beat.arrangement.objects.indexOf(b)) === 1;
 
+  const scales = new Map<string, number>(), motions = new Map<string, ObjectStoryMotionFrame>();
+  const trails = new Map<string, ObjectStoryObjectFrame["trail"]>(), trends = new Map<string, NonNullable<ObjectStoryObjectFrame["trend"]>>();
   const levels = new Map<string, number>();
   for (const object of plan.spec.objects) if (object.level !== undefined) levels.set(object.id, object.level);
   // Links, marks and levels persist across beats, so replay the operations up to this frame.
@@ -481,6 +554,15 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
     const { op } = item;
     const t = eased(item.startFrame, item.endFrame);
     if (op.kind === "level") levels.set(op.object, lerp(levels.get(op.object) ?? 0, op.to, t));
+    if (op.kind === "act" && (op.motion === "grow" || op.motion === "shrink")) scales.set(op.object, lerp(scales.get(op.object) ?? 1, op.motion === "grow" ? 1.16 : .62, t));
+    if (op.kind === "act" && i === index && op.motion !== "grow" && op.motion !== "shrink" && current.rects.has(op.object)) {
+      const progress = settled ? 1 : clamp01((at - item.startFrame) / Math.max(1, item.endFrame - item.startFrame));
+      const rect = current.rects.get(op.object)!, seconds = (item.endFrame - item.startFrame) * plan.spec.fps.den / plan.spec.fps.num;
+      const arrives = item.startFrame === beat.startFrame, side = rect.x + rect.width / 2 >= plan.spec.width / 2 ? 1 : -1;
+      if (progress < 1 || !arrives || op.motion !== "walk") motions.set(op.object, motionFrame(op.motion, progress, { rect, seconds, arrives, side, seed: motionSeed(op.object) }));
+      if (op.motion === "walk" && !settled) trails.set(op.object, walkTrail(rect, progress, { seconds, arrives, side }));
+    }
+    if (op.kind === "trend" && i === index && current.rects.has(op.object)) trends.set(op.object, trendFrame(op.shape, settled ? 1 : clamp01((at - item.startFrame) / Math.max(1, item.endFrame - item.startFrame))));
     if (op.kind === "mark" && visible.has(op.object) && (i === index || op.persist)) marks.set(op.object, { kind: op.mark, progress: eased(item.startFrame, item.endFrame, "ease-out-back") });
     // A link lasts while both of its objects stay on stage.
     if (op.kind === "connect" && current.rects.has(op.from) && current.rects.has(op.to)) {
@@ -542,6 +624,7 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
     if (opacity <= 0) continue;
     const metric = plan.metrics.get(id);
     objects.push({ id, rect, opacity, dimmed: Boolean(beat.focus && beat.focus !== id), pulse: pulses.get(id) ?? 0, figure: beat.arrangement.kind === "figure" && inNow,
+      motion: { ...(motions.get(id) ?? STILL_MOTION), scale: (motions.get(id)?.scale ?? 1) * (scales.get(id) ?? 1) }, trail: trails.get(id) ?? [], ...(trends.has(id) ? { trend: trends.get(id)! } : {}),
       ...(object.label ? { label: object.label } : {}), ...(object.art ? { art: object.art } : {}),
       ...(metric && at >= metric.shownFrom ? { value: { text: evaluateAnimatedMetric(metric.plan, at).display, progress: eased(metric.shownFrom, metric.shownFrom + plan.transitionFrames, "ease-out-back") } } : {}),
       ...(levels.has(id) ? { level: levels.get(id)! } : {}),
@@ -562,7 +645,10 @@ export function evaluateObjectStory(plan: ObjectStoryPlan, frame: number, { sett
   }
   const push = settled ? 0 : clamp01((at - beat.startFrame) / Math.max(1, beat.endFrame - beat.startFrame)) * .02;
   const previousCamera = index > 0 ? plan.beats[index - 1].camera : current.camera;
+  // Impacts shake the stage, so a crash or an explosion is felt as well as seen.
+  const impact = settled ? 0 : Math.max(0, ...objects.map(object => Math.max(object.motion.impact, object.trend?.impact ?? 0)));
+  const shake = { x: Math.sin(at * 2.4) * impact * plan.spec.height * .014, y: Math.cos(at * 3.1) * impact * plan.spec.height * .014 };
   return { frame: at, beatId: beat.id, beatIndex: index, objects, links: [...links.values()], tokens, gaps, caption,
-    camera: { scale: lerp(previousCamera.scale, current.camera.scale, arrival) + (current.camera.scale > 1 ? push : 0),
+    camera: { shake, scale: lerp(previousCamera.scale, current.camera.scale, arrival) + (current.camera.scale > 1 ? push : 0),
       origin: { x: lerp(previousCamera.origin.x, current.camera.origin.x, arrival), y: lerp(previousCamera.origin.y, current.camera.origin.y, arrival) } } };
 }

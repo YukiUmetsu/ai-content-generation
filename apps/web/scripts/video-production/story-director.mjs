@@ -2,7 +2,13 @@
  * Rules run with no model and give the same film for the same words.
  * The stage carries across scenes, so a video is one continuous set of objects, not a slide per section.
  */
-import { captionFor, compileVocabulary, deniedTerm, formatAmount, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts } from "./story-language.mjs";
+import { captionFor, compileVocabulary, deniedTerm, formatAmount, labelNamesMotion, mentionedObjects, phraseConcepts, phraseKeyword, phraseSignals, spokenAmounts } from "./story-language.mjs";
+
+/** How long each motion plays. Change a number here to retime it. */
+export const STORY_MOTION_SECONDS = Object.freeze({ walk: 1.4, spin: 1, shake: .8, explode: 1.1, pop: .7, print: 1.5, stamp: .7, split: 1, vanish: .8, melt: 1.3, burn: 1.4,
+  inflate: .9, deflate: 1.1, pulse: 1.2, wobble: 1, slide: .9, rain: 1.4, stack: 1.3, flip: .8 });
+/** These end with the object gone, so it leaves the stage afterwards. */
+const FINAL_MOTIONS = new Set(["explode", "pop", "vanish"]);
 
 /** Tunable staging. Change these numbers, not the director. */
 export const STORY_STAGING = Object.freeze({
@@ -96,17 +102,29 @@ function phraseOps({ facts, frames, frameRate, stage, order, previous, entered, 
       add({ kind: "set-value", object: target, value: amount.unit?.fraction ? amount.value / 100 : amount.value }, 0, (room * staging.countShare) / frameRate);
     }
   }
-  // "Keeps rising" shows on a meter: a direction, with no invented figure.
-  if ((signals.rising || signals.falling) && focus && !amount) {
-    // "The pressure keeps rising" meters its subject. "Your brain builds up a chemical" meters its object.
+  // A verb the viewer can picture gets that motion, not a generic highlight.
+  // The mover is the object named by the verb, otherwise the phrase's subject.
+  const motionTarget = mentioned.find(id => onStage(id) && labelNamesMotion(stage.objects.get(id)?.label, signals.motion)) ?? mentioned.find(onStage) ?? focus;
+  const shape = signals.shape ?? (signals.rising ? "rise" : signals.falling ? "fall" : null);
+  if (signals.motion && motionTarget) {
+    const seconds = STORY_MOTION_SECONDS[signals.motion] ?? .8;
+    // A walker who has just arrived walks in from the edge, so the motion starts with the beat.
+    if (signals.motion === "walk" && entered.includes(motionTarget)) ops.push({ kind: "act", object: motionTarget, motion: "walk", atFrame: 0, durationFrames: Math.min(frames, Math.round(seconds * frameRate)) });
+    else add({ kind: "act", object: motionTarget, motion: signals.motion }, 0, seconds);
+  }
+  // A graph shows what happened and "builds up" fills a meter. Neither invents a figure.
+  else if (shape && focus && !amount) {
+    // "The pressure keeps rising" follows its subject. "Your brain builds up a chemical" follows its object.
     const present = mentioned.filter(onStage);
     const subject = (facts.transitive ? present.at(-1) : present[0]) ?? focus;
     const object = stage.objects.get(subject);
-    const from = object.level ?? (signals.rising ? .2 : .8);
-    const to = Math.round(Math.max(.05, Math.min(1, from + (signals.rising ? staging.levelStep : -staging.levelStep * 1.5))) * 100) / 100;
-    object.level = to;
-    object.levelFrom ??= from;
-    add({ kind: "level", object: subject, to }, 0, (room * .8) / frameRate);
+    if ((signals.accumulating || object.level !== undefined) && (shape === "rise" || shape === "fall")) {
+      const from = object.level ?? (shape === "rise" ? .2 : .8);
+      const to = Math.round(Math.max(.05, Math.min(1, from + (shape === "rise" ? staging.levelStep : -staging.levelStep * 1.5))) * 100) / 100;
+      object.level = to;
+      object.levelFrom ??= from;
+      add({ kind: "level", object: subject, to }, 0, (room * .8) / frameRate);
+    } else add({ kind: "trend", object: subject, shape }, 0, Math.min((room * .9) / frameRate, shape === "crash" ? 2.6 : 3));
   }
   // New objects join the ones already on stage when the words link them.
   if (entered.length && previous.length) {
@@ -178,17 +196,22 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
   const beats = [];
   let order = carriedOrder, firstFacts = null;
   for (const [phraseIndex, window] of scene.phrases.entries()) {
-    const proposed = proposal?.[phraseIndex];
     const read = readPhrase(window, compiled, stage, locale);
+    // Amounts are facts, so counts and measured gaps stay with the rules.
+    const proposed = read.amounts.length ? null : proposal?.[phraseIndex];
     // A checked model proposal replaces what the rules read. Amounts still come from the words.
-    const facts = proposed ? { ...read, objects: proposed.objects, deniedEntry: null, signals: { ...Object.fromEntries(Object.keys(read.signals).map(key => [key, false])), ...proposed.signals } } : read;
+    // The model decides what a word means here: "runs a business" is not a run.
+    // `look` says nothing physical happens, so the rules keep their verdicts but not their motions.
+    const quiet = { motion: null, shape: null, rising: false, falling: false, moving: false, accumulating: false };
+    const proposedSignals = proposed?.signals ? { ...Object.fromEntries(Object.keys(read.signals).map(key => [key, false])), ...proposed.signals } : proposed?.signals === null ? { ...read.signals, ...quiet } : read.signals;
+    const facts = proposed ? { ...read, objects: proposed.objects, deniedEntry: null, signals: proposedSignals } : read;
     firstFacts ??= facts;
     const finalLine = scene.final && phraseIndex === scene.phrases.length - 1;
-    const breakDue = !proposed && (finalLine || stage.sinceBreak >= staging.beatsBetweenBreaks);
+    const breakDue = finalLine || stage.sinceBreak >= staging.beatsBetweenBreaks;
     const beatId = `${scene.id}-${beats.length + 1}`;
     const clearStage = () => { stage.held = order.length ? order : stage.held; order = []; stage.order = []; stage.sinceBreak = 0; };
     // A question or the film's last line fills the frame. A statement is an event, so it stays rare.
-    if (breakDue && (finalLine || (facts.signals.question && !facts.amounts.length && !facts.objects.length))) {
+    if (breakDue && (finalLine || (facts.signals.question && !facts.amounts.length && (proposed || !facts.objects.length)))) {
       beats.push({ id: beatId, startFrame: window.startFrame, endFrame: window.endFrame, arrangement: { kind: "statement", objects: [] }, ops: [],
         caption: { text: captionFor(window.text, facts.amounts, staging.statementWords), ...(facts.amounts.length ? { emphasis: facts.amounts.map(item => item.text) } : {}) } });
       clearStage();
@@ -240,6 +263,8 @@ export function directSceneStory(scene, { vocabulary, stage = newStage(), stagin
       ops: ops.map(({ atFrame, ...op }) => ({ ...op, atFrame: window.startFrame + atFrame })),
       caption: { text: proposed?.caption ?? captionFor(window.text, facts.amounts), ...(facts.amounts.length ? { emphasis: facts.amounts.map(item => item.text) } : {}) },
       ...(onlySome ? { focus: mentioned[0] } : {}) });
+    const gone = new Set(ops.filter(op => op.kind === "act" && FINAL_MOTIONS.has(op.motion)).map(op => op.object));
+    if (gone.size) order = order.filter(id => !gone.has(id));
     stage.order = order;
   }
   const used = new Set([...carriedOrder, ...beats.flatMap(beat => beat.arrangement.objects)]);
