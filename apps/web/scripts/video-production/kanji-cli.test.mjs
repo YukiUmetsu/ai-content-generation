@@ -280,6 +280,10 @@ test("a script line with no moment in the picture, or a highlight the card canno
     const steps = (extra) => ({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "q", say: "{name.kana}", at: "start" }, extra] });
     const run = (script) => produceKanjiShort({ char: "一", config: readKanjiConfig(config({ music, narration: { script } }), join(dir, "config.json")), out: join(dir, "out"),
       browserExecutable: "/bin/chrome", apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps);
+    // A theme typo is refused, not ignored (the card itself would ignore it).
+    await assert.rejects(produceKanjiShort({ char: "一", config: readKanjiConfig(config({ music, card: { theme: { accnt: "#000000" } } }), join(dir, "config.json")),
+      out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps),
+      /card\.theme: accnt is not a theme key/u);
     // 一 has one stroke but three words: word 2 has no review stroke to start on.
     await assert.rejects(run(steps({ id: "w-{n}", forEach: "words", say: "{item.speech}", at: "review.strokes" })), /needs the anchor review\.strokes for item 2/u);
     // The card highlights words, not strokes.

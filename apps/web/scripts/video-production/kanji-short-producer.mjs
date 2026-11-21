@@ -124,7 +124,9 @@ export async function produceKanjiShort(request, deps = {}) {
   const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
   const preset = presets.find(p => p.id === config.destination);
   if (!preset || !planner.KANJI_SHORT_PRESETS.includes(preset.id)) fail(`the destination must be one of ${planner.KANJI_SHORT_PRESETS.join(", ")}`);
-  if (card.theme !== undefined) planner.kanjiCardTheme?.(card.theme);
+  // Every theme problem, unknown keys included (the card itself ignores keys it does not have, so a typo would go unseen).
+  const themeIssues = card.theme === undefined ? [] : planner.kanjiCardThemeIssues(card.theme);
+  if (themeIssues.length) fail(`card.theme: ${themeIssues.join("; ")}`);
   const script = await kanjiNarrationScript(config);
   const datasetBytes = await readFile(config.dataset);
   const { entries, problems } = readKanjiDataset(JSON.parse(datasetBytes.toString("utf8")));
