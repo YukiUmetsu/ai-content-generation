@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   KANJI_SHORT_PACING, SAMPLE_RATE, chooseMusicWindow, kanjiShortContent, kanjiShortLines, placeNarration, planKanjiIntro, planKanjiShort,
-  readKanjiDataset, readingKana, readingRomaji, speechBounds, toFrameGrid, trimSpeech,
+  readKanjiDataset, readingKana, readingPairs, readingRomaji, speechBounds, toFrameGrid, trimSpeech,
 } from "./kanji-short.mjs";
 
 const word = (w, ruby, romaji, meaning, reading = "on") => ({ word: w, ruby, romaji, meaning, reading });
@@ -31,6 +31,8 @@ test("useful words never include the bare kanji, and the kanji is named by its o
   assert.deepEqual(mizu.words.map(w => w.word), ["水道", "水泳", "下水"]);
   assert.deepEqual(mizu.name, { romaji: "mizu", kana: "みず" });
   assert.deepEqual(mizu.readings, { on: ["スイ"], kun: ["みず"] });
+  const gakuLines = kanjiShortLines(kanjiShortContent(GAKU, { speech: { 学校: "がっこう" } }));
+  assert.deepEqual(gakuLines.filter(l => l.role === "word").map(l => [l.text, l.caption]), [["がっこう。", "学校"], ["きょう。", "今日"]]);
   const gaku = kanjiShortContent(GAKU, { speech: { 学校: "がっこう" } });
   assert.deepEqual(gaku.name, { romaji: "gaku", kana: "がく" });                     // katakana on'yomi typed as hiragana
   assert.deepEqual(gaku.wordSpeech, ["がっこう", "きょう"]);                         // override, then irregular reading from kana
@@ -46,6 +48,7 @@ test("the voice gets the name in kana, the captions in romaji, and the lines fol
   assert.deepEqual(lines.map(l => l.id), ["question", "onyomi", "kunyomi", "word-1", "word-2", "word-3"]);
   assert.equal(lines[1].text, "おんよみ、スイ。");
   assert.deepEqual(lines.filter(l => l.role === "word").map(l => l.word), [0, 1, 2]);
+  assert.deepEqual(lines.filter(l => l.role === "word").map(l => l.caption), ["水道", "水泳", "下水"]);   // captions show the word as written
   const noKun = kanjiShortLines(kanjiShortContent({ ...MIZU, card: { ...MIZU.card, kunyomi: undefined } }));
   assert.ok(!noKun.some(l => l.id === "kunyomi"));
   assert.throws(() => kanjiShortLines(kanjiShortContent(MIZU), { question: "No name here" }), /\{name\}/u);
@@ -56,6 +59,10 @@ test("parses card readings with several kana, okurigana marks and macrons", () =
   assert.deepEqual(readingKana("-bi (-び)"), ["び"]);
   assert.deepEqual(readingRomaji("DŌ (ドウ), TŌ (トウ)"), ["dō", "tō"]);
   assert.deepEqual(readingKana(undefined), []);
+  // Kana and romaji come from the same reading: a reading without kana is left out of both.
+  assert.deepEqual(readingPairs("ON, SUI (スイ)"), [{ romaji: "sui", kana: "スイ" }]);
+  const { problems } = readKanjiDataset({ kanji: [MIZU, MIZU] });
+  assert.match(problems[0], /second row/u);
 });
 
 /** Silence, a 200 Hz tone, silence. */

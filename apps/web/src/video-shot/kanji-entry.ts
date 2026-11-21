@@ -10,6 +10,8 @@ import { kanjiCardWriting } from "@/components/video/shodo/shodo-kanji-card-plan
 import type { KanjiCardWritingOptions } from "@/components/video/shodo/shodo-kanji-card-plan";
 
 export { SHODO_KANJIVG_BASE, SHODO_KANJIVG_CREDIT, SHODO_KANJIVG_RELEASE, kanjiVgFileName };
+// The export page's own plan check, so production refuses a plan the page would refuse, before any network call.
+export { KANJI_SHORT_PRESETS, KANJI_WORD_LIMITS, readKanjiStudyPlan } from "@/video-export/kanji-plan";
 
 /** The glyph for one character from KanjiVG SVG text the caller has already fetched and checked. */
 export async function glyphFromKanjiVg(char: string, svg: string): Promise<ShodoGlyph> {

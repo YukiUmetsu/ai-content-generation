@@ -37,22 +37,29 @@ export function readKanjiDataset(json) {
       if (word?.reading !== undefined && !["on", "kun", "irregular"].includes(word.reading)) bad.push(`words[${i}].reading`);
     });
     if (bad.length) { problems.push(`${at} (${char}): ${bad.join(", ")} has the wrong type`); return; }
+    if (entries.has(char)) { problems.push(`${at} (${char}): a second row for this kanji; the first one is used`); return; }
     entries.set(char, { char, jlpt: jlpt ?? null, card: { meanings: card.meanings, onyomi: card.onyomi, kunyomi: card.kunyomi }, words });
   });
   return { entries, problems };
 }
 
-/** Kana inside parentheses of a card reading text: "NICHI (ニチ), JITSU (ジツ)" → ["ニチ", "ジツ"]. Okurigana marks are dropped. */
-export function readingKana(cardText) {
+/**
+ * The readings of a card reading text as romaji–kana pairs: "NICHI (ニチ), JITSU (ジツ)" →
+ * [{ romaji: "nichi", kana: "ニチ" }, …]. A reading without kana in parentheses is left out, so the
+ * spoken name and its romaji always come from the same reading. Okurigana marks are dropped.
+ */
+export function readingPairs(cardText) {
   if (typeof cardText !== "string") return [];
-  return [...cardText.matchAll(/\(([^)]+)\)/gu)].map(m => m[1].replace(/[-.]/gu, "").trim()).filter(Boolean);
+  return cardText.split(",").flatMap(part => {
+    const m = /^\s*([^()]*?)\s*\(([^)]+)\)\s*$/u.exec(part);
+    const romaji = m?.[1].replace(/[-.]/gu, "").trim().toLowerCase(), kana = m?.[2].replace(/[-.]/gu, "").trim();
+    return romaji && kana ? [{ romaji, kana }] : [];
+  });
 }
-
+/** Kana of a card reading text: "NICHI (ニチ), JITSU (ジツ)" → ["ニチ", "ジツ"]. */
+export const readingKana = (cardText) => readingPairs(cardText).map(p => p.kana);
 /** Romaji of a card reading text: "NICHI (ニチ), JITSU (ジツ)" → ["nichi", "jitsu"]. */
-export function readingRomaji(cardText) {
-  if (typeof cardText !== "string") return [];
-  return cardText.split(",").map(part => part.replace(/\([^)]*\)/gu, "").replace(/[-.]/gu, "").trim().toLowerCase()).filter(Boolean);
-}
+export const readingRomaji = (cardText) => readingPairs(cardText).map(p => p.romaji);
 
 const toHiragana = (kana) => kana.replace(/[ァ-ヶ]/gu, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 /** Plain ASCII romaji for an English sentence: macrons become plain vowels (dō → do). */
@@ -72,11 +79,9 @@ export function kanjiShortContent(entry, { maxWords = 3, speech = {} } = {}) {
   const words = entry.words.filter(word => word.word !== entry.char).slice(0, maxWords);
   if (!words.length) fail(`${entry.char} has no useful word other than itself`);
   const own = entry.words.find(word => word.word === entry.char);
-  const on = readingKana(entry.card.onyomi), kun = readingKana(entry.card.kunyomi);
-  const onRomaji = readingRomaji(entry.card.onyomi), kunRomaji = readingRomaji(entry.card.kunyomi);
-  const name = own ? { romaji: own.romaji, kana: own.ruby }
-    : on.length ? { romaji: onRomaji[0], kana: on[0] }
-    : kun.length ? { romaji: kunRomaji[0], kana: kun[0] } : null;
+  const onPairs = readingPairs(entry.card.onyomi), kunPairs = readingPairs(entry.card.kunyomi);
+  const on = onPairs.map(p => p.kana), kun = kunPairs.map(p => p.kana);
+  const name = own ? { romaji: own.romaji, kana: own.ruby } : onPairs[0] ?? kunPairs[0] ?? null;
   if (!name || !plainRomaji(name.romaji)) fail(`${entry.char} has no reading to name it by`);
   return {
     char: entry.char, jlpt: entry.jlpt, meanings: entry.card.meanings, onyomi: entry.card.onyomi, kunyomi: entry.card.kunyomi,
@@ -103,7 +108,8 @@ export function kanjiShortLines(content, { question = "Do you know how to write 
   const say = (id, role, text, extra = {}) => lines.push({ id, role, text, caption: text, ...extra });
   if (content.readings.on.length) say("onyomi", "reading", `${labels.on}、${content.readings.on.join("、")}。`);
   if (content.readings.kun.length) say("kunyomi", "reading", `${labels.kun}、${content.readings.kun.map(toHiragana).join("、")}。`);
-  content.wordSpeech.forEach((speech, i) => say(`word-${i + 1}`, "word", `${speech}。`, { word: i }));
+  // A word's caption is the word as written, also when the voice reads it from kana or an override.
+  content.wordSpeech.forEach((speech, i) => lines.push({ id: `word-${i + 1}`, role: "word", text: `${speech}。`, caption: content.words[i].word, word: i }));
   return lines;
 }
 

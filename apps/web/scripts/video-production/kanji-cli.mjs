@@ -64,8 +64,23 @@ export function readKanjiConfig(json, configPath) {
   if (music.startSeconds !== undefined && !(Number.isFinite(music.startSeconds) && music.startSeconds >= 0)) fail("config: music.startSeconds must be a number of seconds");
   if (music.belowVoiceDb !== undefined && !(music.belowVoiceDb >= 6 && music.belowVoiceDb <= 30)) fail("config: music.belowVoiceDb must be 6 to 30");
   const timing = json.timing ?? {};
-  for (const [key, min, max] of [["write", 3, 20], ["review", 3, 20], ["wordGap", .3, 3], ["tail", .5, 5], ["readingGap", .2, 2], ["wordLead", 0, 2]])
-    if (timing[key] !== undefined && !(Number.isFinite(timing[key]) && timing[key] >= min && timing[key] <= max)) fail(`config: timing.${key} must be ${min} to ${max} seconds`);
+  const ranges = { write: [3, 20], review: [3, 20], wordGap: [.3, 3], tail: [.5, 5], readingGap: [.2, 2], wordLead: [0, 2], questionStart: [0, 2], introTail: [0, 2] };
+  for (const key of Object.keys(timing)) {
+    if (!Object.hasOwn(ranges, key)) fail(`config: timing.${key} is not a setting (${Object.keys(ranges).join(", ")})`);
+    const [min, max] = ranges[key];
+    if (!(Number.isFinite(timing[key]) && timing[key] >= min && timing[key] <= max)) fail(`config: timing.${key} must be ${min} to ${max} seconds`);
+  }
+  const narration = json.narration ?? {};
+  const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
+  for (const key of Object.keys(narration)) if (!["question", "questionLocale", "labels", "speech"].includes(key)) fail(`config: narration.${key} is not a setting`);
+  if (narration.question !== undefined && !(isText(narration.question, 160) && narration.question.split("{name}").length === 2))
+    fail("config: narration.question must contain {name} exactly once");
+  if (narration.questionLocale !== undefined && !["en", "ja"].includes(narration.questionLocale)) fail("config: narration.questionLocale must be en or ja");
+  if (narration.labels !== undefined && !(narration.labels && isText(narration.labels.on, 20) && isText(narration.labels.kun, 20)))
+    fail("config: narration.labels needs both on and kun, for example { \"on\": \"おんよみ\", \"kun\": \"くんよみ\" }");
+  if (narration.speech !== undefined && !(narration.speech && typeof narration.speech === "object" && !Array.isArray(narration.speech) &&
+    Object.entries(narration.speech).every(([word, text]) => isText(word, 40) && isText(text, 40))))
+    fail("config: narration.speech maps a word to the text the voice reads, for example { \"水泳\": \"すいえい\" }");
   const card = json.card ?? {};
   if (card.density !== undefined && !["regular", "compact"].includes(card.density)) fail("config: card.density must be regular or compact");
   if (card.heading !== undefined && !(typeof card.heading === "string" && card.heading.length <= 30)) fail("config: card.heading must be at most 30 characters");
@@ -73,7 +88,7 @@ export function readKanjiConfig(json, configPath) {
   return {
     dataset: path(json.dataset, "dataset"), outputRoot: path(json.outputRoot, "outputRoot"),
     cacheDir: json.cacheDir ? path(json.cacheDir, "cacheDir") : join(dirname(configPath), "cache"),
-    destination, voice, music: { ...music, path: path(music.path, "music.path") }, narration: json.narration ?? {}, timing, card, credits: json.credits ?? [],
+    destination, voice, music: { ...music, path: path(music.path, "music.path") }, narration, timing, card, credits: json.credits ?? [],
   };
 }
 

@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, nextOutputDir, parseKanjiArgs, readKanjiConfig } from "./kanji-cli.mjs";
-import { kanjiVgSvg, produceKanjiShort } from "./kanji-short-producer.mjs";
+import { kanjiCaptions, kanjiVgSvg, produceKanjiShort } from "./kanji-short-producer.mjs";
 
 const VOICE = "984831ae0346415685b109090be3e798";
 const config = (overrides = {}) => ({
@@ -42,6 +42,12 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ destination: "youtube" }), "/c.json"), /1080 × 1920 short/u);
   assert.throws(() => readKanjiConfig(config({ timing: { write: 1 } }), "/c.json"), /timing\.write/u);
   assert.throws(() => readKanjiConfig({ ...config(), schemaVersion: 2 }, "/c.json"), /schemaVersion/u);
+  assert.throws(() => readKanjiConfig(config({ timing: { questionStart: -1 } }), "/c.json"), /timing\.questionStart/u);
+  assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { question: "How about {name} and {name}?" } }), "/c.json"), /exactly once/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { questionLocale: "fr" } }), "/c.json"), /en or ja/u);
 });
 
 test("gives each run of a kanji a new version folder, so a release is never overwritten", async () => {
@@ -95,12 +101,15 @@ test("the producer stops before any network or render work when a consent, the k
     const touched = [];
     const deps = {
       fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
-      loadKanjiPlanner: async () => ({}), kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
+      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts", "instagram-reels", "tiktok"] }),
+      kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
     };
     const base = { char: "水", config: read, out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789" };
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true }, deps), /--transmit-text/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true, apiKey: "" }, deps), /FISH_AUDIO_API_KEY/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /music file changed/u);
+    // A destination the export page would refuse stops here too.
+    await assert.rejects(produceKanjiShort({ ...base, config: { ...read, destination: "facebook-reels" }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /destination must be one of youtube-shorts/u);
     await mkdir(join(dir, "out", "release"), { recursive: true });
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /already exists/u);
     assert.deepEqual(touched, []);
@@ -128,3 +137,36 @@ test("KanjiVG stroke data comes from the cache when its hash still matches, and 
     await assert.rejects(kanjiVgSvg("水", { planner, cacheDir: join(dir, "x"), allowNetwork: true, fetchImpl: async () => new Response("nope", { status: 404 }) }), /HTTP 404/u);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("music shorter than a short stops production before KanjiVG or Fish", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-music-"));
+  try {
+    // Two seconds of 48 kHz mono silence: far too short.
+    const pcm = Buffer.alloc(2 * 48000 * 2);
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0); header.writeUInt32LE(36 + pcm.length, 4); header.write("WAVE", 8); header.write("fmt ", 12);
+    header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(48000, 24);
+    header.writeUInt32LE(96000, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write("data", 36); header.writeUInt32LE(pcm.length, 40);
+    const bytes = Buffer.concat([header, pcm]);
+    await writeFile(join(dir, "bed.wav"), bytes);
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
+    const read = readKanjiConfig(config({ music: { ...config().music, sha256: createHash("sha256").update(bytes).digest("hex") } }), join(dir, "config.json"));
+    const touched = [];
+    const deps = {
+      fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
+      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts"] }),
+      kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
+    };
+    await assert.rejects(produceKanjiShort({ char: "水", config: read, out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789",
+      allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /needs at least 30 s/u);
+    assert.deepEqual(touched, []);
+    await assert.rejects(readFile(join(dir, "out", ".render", "music-source.wav")), /ENOENT/u);   // scratch removed
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("captions run from each spoken line's start to its end, with the written word", () => {
+  const srt = kanjiCaptions([{ id: "question", caption: "Do you know how to write the kanji mizu?" }, { id: "word-1", caption: "水道" }],
+    { question: .35, "word-1": 15.193 }, { question: 2.531, "word-1": .56 });
+  assert.equal(srt, "1\n00:00:00,350 --> 00:00:03,081\nDo you know how to write the kanji mizu?\n\n2\n00:00:15,193 --> 00:00:15,953\n水道\n");
+});
+

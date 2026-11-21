@@ -237,10 +237,19 @@ export interface KanjiCardGeometry {
 
 const NO_INSET: KanjiCardSafeInset = { left: 0, right: 0, top: 0, bottom: 0 };
 
-/** The safe bands, each limited to 0..0.4 of the frame; a value that is not a number counts as 0. */
+/** Largest share of the frame that two opposite bands may cover together, so the writing panel keeps room. */
+export const KANJI_CARD_MAX_BANDS = .45;
+
+/**
+ * The safe bands, each limited to 0..0.4 of the frame (a value that is not a number counts as 0).
+ * Opposite bands together cover at most 0.45 of the frame; larger pairs shrink in proportion.
+ */
 export function kanjiCardSafeInset(inset: Partial<KanjiCardSafeInset> | undefined): KanjiCardSafeInset {
   const band = (v: number | undefined) => typeof v === "number" && Number.isFinite(v) ? Math.min(.4, Math.max(0, v)) : 0;
-  return { left: band(inset?.left), right: band(inset?.right), top: band(inset?.top), bottom: band(inset?.bottom) };
+  const pair = (a: number, b: number) => { const k = a + b > KANJI_CARD_MAX_BANDS ? KANJI_CARD_MAX_BANDS / (a + b) : 1; return [a * k, b * k]; };
+  const [left, right] = pair(band(inset?.left), band(inset?.right));
+  const [top, bottom] = pair(band(inset?.top), band(inset?.bottom));
+  return { left, right, top, bottom };
 }
 
 /**
@@ -249,8 +258,9 @@ export function kanjiCardSafeInset(inset: Partial<KanjiCardSafeInset> | undefine
  * The compact 9:16 card is shorter, so the paper is taller.
  */
 export function kanjiCardGeometry(
-  layout: KanjiCardLayout, withCard: boolean, inset: KanjiCardSafeInset = NO_INSET, withLabel = true, density: KanjiCardDensity = "regular",
+  layout: KanjiCardLayout, withCard: boolean, bands: Partial<KanjiCardSafeInset> = NO_INSET, withLabel = true, density: KanjiCardDensity = "regular",
 ): KanjiCardGeometry {
+  const inset = kanjiCardSafeInset(bands);
   const portrait = layout === "portrait", type = kanjiCardType(layout, density);
   const used: KanjiCardDensity = portrait ? density : "regular";
   const width = portrait ? 720 : 1280, height = portrait ? 1280 : 720;
@@ -352,10 +362,10 @@ export interface KanjiCardWritingOptions {
   layout?: KanjiCardLayout;
   density?: KanjiCardDensity;
   safeInset?: Partial<KanjiCardSafeInset>;
-  /** Whether the reading card shows (see `kanjiCardHasCard`). Default: true. */
-  withCard?: boolean;
-  /** Whether the label shows. Default: true. */
-  withLabel?: boolean;
+  /** The card's text: the reading card shows only when some of it shows (see `kanjiCardHasCard`). */
+  content?: KanjiCardContent;
+  /** Parts to show, as on the card. `label: false` hides the label. */
+  sections?: Partial<Record<KanjiCardSection, boolean>>;
   timing?: KanjiCardTiming;
   ink?: KanjiCardInk;
   speed?: number;
@@ -364,12 +374,14 @@ export interface KanjiCardWritingOptions {
 
 /**
  * Everything the card plans for one character: the layout, the brush plan, the phases and the
- * stroke times. `ShodoKanjiCard` draws exactly this, so a host can time a voice-over to the
- * strokes before it renders anything.
+ * stroke times. Given the same glyph and the same layout, density, bands, content, sections,
+ * timing, ink, speed and vermilion strokes as `ShodoKanjiCard`, it is exactly what the card draws,
+ * so a host can time a voice-over to the strokes before it renders anything.
  */
 export function kanjiCardWriting(glyph: ShodoGlyph, options: KanjiCardWritingOptions = {}) {
-  const withLabel = options.withLabel ?? true;
-  const geometry = kanjiCardGeometry(options.layout ?? "landscape", options.withCard ?? true, kanjiCardSafeInset(options.safeInset), withLabel, options.density ?? "regular");
+  const withLabel = options.sections?.label !== false;
+  const withCard = kanjiCardHasCard({ ...options.content, vermilionStrokes: undefined }, options.sections);
+  const geometry = kanjiCardGeometry(options.layout ?? "landscape", withCard, options.safeInset, withLabel, options.density ?? "regular");
   const plan = planKanjiCardWriting(glyph, geometry, {
     vermilion: options.vermilionStrokes, withLabel, seconds: kanjiCardPace(options.timing), ink: options.ink, speed: options.speed,
   });
@@ -406,11 +418,24 @@ const CONVERT_GLOW = .5, GROW = .22, FADE_OUT = .35, PUSH_FROM = .93;
  * - The reading is typed one kana every 0.16 s so that it is complete just before `convertAt`.
  * - At `convertAt` the reading turns into the character, which grows to its full size and holds.
  */
-export function kanjiCardTypedAt(char: string, intro: KanjiCardIntro | undefined, introLength: number, time: number): KanjiCardTypedState {
+export function kanjiCardTypedAt(
+  char: string, intro: KanjiCardIntro | undefined, introLength: number, time: number, options: { reducedMotion?: boolean } = {},
+): KanjiCardTypedState {
   const none: KanjiCardTypedState = { text: "", composing: false, converted: 0, grow: 1, scale: 1, caret: false, opacity: 0 };
   if (!(introLength > 0) || time < 0 || time > introLength + FADE_OUT) return none;
   const kana = [...(intro?.reading ?? "").trim()];
-  const convertAt = Math.min(introLength, Math.max(0, intro?.convertAt !== undefined && Number.isFinite(intro.convertAt) ? intro.convertAt : introLength * .6));
+  // The conversion finishes inside the intro, so the character never first appears over the brush.
+  const latest = Math.max(0, introLength - GROW - .1);
+  const convertAt = Math.min(latest, Math.max(0, intro?.convertAt !== undefined && Number.isFinite(intro.convertAt) ? intro.convertAt : introLength * .6));
+  if (options.reducedMotion) {
+    // Reduced motion: the same words at the same times, without typing, caret, growth, push-in or bump.
+    // The reading shows until the conversion; the highlights only fade.
+    const opacity = time <= introLength ? 1 : 1 - smoothstep((time - introLength) / FADE_OUT);
+    if (time < convertAt && kana.length) return { ...none, text: kana.join(""), composing: true, opacity };
+    const e = intro?.emphasizeAt !== undefined && Number.isFinite(intro.emphasizeAt) ? time - intro.emphasizeAt : -1;
+    const emphasis = e < 0 ? 0 : e < .1 ? smoothstep(e / .1) : 1 - smoothstep((e - .1) / .5);
+    return { ...none, text: char, opacity, converted: emphasis * .8 };
+  }
   const typeStart = Math.max(0, convertAt - .12 - kana.length * KANJI_TYPE_STEP);
   const opacity = time <= introLength ? 1 : 1 - smoothstep((time - introLength) / FADE_OUT);
   // The caret blinks twice a second; it stays on while text is being typed.

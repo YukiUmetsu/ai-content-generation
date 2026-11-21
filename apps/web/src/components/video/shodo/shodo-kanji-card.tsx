@@ -11,7 +11,7 @@ import { kenteiSheet } from "./shodo-paper";
 import { ShodoCanvas } from "./shodo-react";
 import { shodoRgb } from "./shodo-style";
 import {
-  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardPhaseAt, kanjiCardType, kanjiCardTypedAt, kanjiCardWriting,
+  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardType, kanjiCardTypedAt, kanjiCardWriting,
   spreadWordHighlights, wordHighlightAt,
 } from "./shodo-kanji-card-plan";
 import type {
@@ -260,13 +260,16 @@ export function ShodoKanjiCard({
   const show = { label: true, meanings: true, readings: true, jlpt: true, words: true, ...sections };
   const content: KanjiCardContent = { meanings, onyomi, kunyomi, jlpt, words };
   const withCard = kanjiCardHasCard(content, show);
-  const insetKey = ["left", "right", "top", "bottom"].map(k => safeInset?.[k as keyof KanjiCardSafeInset] ?? 0).join(",");
+  // The bands the layout really uses (clamped), also reported in data-km-safe-inset.
+  const bands = kanjiCardSafeInset(safeInset);
+  const insetKey = [bands.left, bands.right, bands.top, bands.bottom].join(",");
   const vermilion = vermilionStrokes ?? [];
   const vermilionKey = vermilion.join(",");
-  const timingKey = JSON.stringify([timing?.intro, timing?.write, timing?.review, timing?.info]);
+  // String() keeps Infinity and NaN apart from a missing value (JSON would turn both into null).
+  const timingKey = [timing?.intro, timing?.write, timing?.review, timing?.info].map(String).join(",");
   // Inputs are compared by value, so a host that passes new objects with the same values keeps the plan.
   const writing = useMemo(() => kanjiCardWriting(glyph, {
-    layout, density, safeInset, withCard, withLabel: show.label, timing, ink, speed,
+    layout, density, safeInset: bands, content, sections: show, timing, ink, speed,
     vermilionStrokes: vermilionKey ? vermilionKey.split(",").map(Number) : [],
   }), [glyph, layout, density, insetKey, withCard, show.label, timingKey, ink, speed, vermilionKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const { geometry: g, plan, timeline, strokes, inkBox } = writing;
@@ -296,17 +299,17 @@ export function ShodoKanjiCard({
   const highlight = wordHighlightAt(cues, frame / fps, { count: wordCount });
   // The typed intro: the reading in kana, then the character at the size the brush will write it.
   const introLength = (timeline.intro[1] - timeline.intro[0]) / fps;
-  const typed = kanjiCardTypedAt(char, reduce ? undefined : intro, introLength, position / fps);
+  const typed = kanjiCardTypedAt(char, intro, introLength, position / fps, { reducedMotion: reduce });
   const [ix0, iy0, ix1, iy1] = inkBox;
   // A font's ink fills about 0.9 of its em, so the typed character is a little smaller than the brush's.
   const kanjiSize = Math.max(ix1 - ix0, iy1 - iy0);
   const kana = Math.max(1, [...(intro?.reading ?? "")].length);
   const kanaSize = Math.min(kanjiSize * .42, g.writing.width * .8 / kana);
-  const typedSize = typed.composing ? kanaSize : (kanaSize + (kanjiSize - kanaSize) * (reduce ? 1 : typed.grow)) * (reduce ? 1 : typed.scale);
+  const typedSize = typed.composing ? kanaSize : (kanaSize + (kanjiSize - kanaSize) * typed.grow) * typed.scale;
   return <div {...rest} data-km-kanji-card={layout} data-km-kanji-phase={at.phase} data-km-ink-box={inkBox.map(v => v.toFixed(1)).join(" ")}
     data-km-design={`${g.width}x${g.height}`} data-km-kanji-frame={frame} data-km-safe-inset={insetKey} data-km-stroke-times={JSON.stringify(strokes)}
     data-km-word-highlight={highlight.word === null ? "" : `${highlight.word} ${highlight.strength.toFixed(3)}`}
-    data-km-timeline={[timeline.write[0], timeline.review[0], timeline.info[0], timeline.frames].join(" ")} style={{
+    data-km-timeline={[timeline.review[0], timeline.info[0], timeline.frames].join(" ")} data-km-write-start={timeline.write[0]} style={{
       position: "relative", width: "100%", overflow: "hidden", containerType: "inline-size", ...style,
     }}>
     <ShodoCanvas plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
