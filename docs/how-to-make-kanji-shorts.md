@@ -5,7 +5,7 @@
 ## What one short does
 
 1. **Intro.** The voice asks "Do you know how to write the kanji mizu?". On screen the reading is typed (みず) and converts to the typed kanji (水) at once. The typed kanji pushes in slowly and pulses when its name is spoken.
-2. **Write.** The brush comes in from the right edge, writes the kanji and leaves the frame after the last stroke, so the finished kanji holds with nothing on it. The voice reads the on'yomi as the brush lands for the first stroke, then the kun'yomi.
+2. **Write.** The brush comes in from outside the frame (from the right with the default brush), writes the kanji and leaves the frame after the last stroke, so the finished kanji holds with nothing on it. The voice reads the on'yomi as the brush lands for the first stroke, then the kun'yomi.
 3. **Review.** The brush comes in again and writes it with vermilion stroke-order numbers, then leaves. Only music plays.
 4. **Words.** As the review writing ends, the voice reads each useful word and its tile is highlighted until the next one starts.
 

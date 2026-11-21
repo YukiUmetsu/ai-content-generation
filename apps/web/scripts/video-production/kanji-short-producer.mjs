@@ -20,7 +20,7 @@ import { chooseMusicWindow, decodeMono, int16Wav, prepareMusicBed } from "./musi
 import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -129,8 +129,8 @@ export async function produceKanjiShort(request, deps = {}) {
   if (!preset || !planner.KANJI_SHORT_PRESETS.includes(preset.id)) fail(`the destination must be one of ${planner.KANJI_SHORT_PRESETS.join(", ")}`);
   // The card would shrink a pair of opposite bands over 0.45 of the frame without a word; say so instead.
   const safeInset = kanjiCardInset(preset.safeInset, card.safeInset);
-  for (const [a, b] of [["top", "bottom"], ["left", "right"]]) if (safeInset[a] + safeInset[b] > .45 + 1e-9)
-    fail(`card.safeInset: ${a} and ${b} together cover ${+(safeInset[a] + safeInset[b]).toFixed(3)} of the frame; the card allows at most 0.45`);
+  const insetProblem = kanjiCardInsetProblem(safeInset);
+  if (insetProblem) fail(`card.safeInset: ${insetProblem}`);
   // Every theme problem, unknown keys included (the card itself ignores keys it does not have, so a typo would go unseen).
   const themeIssues = card.theme === undefined ? [] : planner.kanjiCardThemeIssues(card.theme);
   if (themeIssues.length) fail(`card.theme: ${themeIssues.join("; ")}`);

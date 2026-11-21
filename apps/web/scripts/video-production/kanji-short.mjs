@@ -108,6 +108,13 @@ export const KANJI_SHORT_PACING = Object.freeze({ write: 6.6, review: 6.6, intro
 export const KANJI_SHORT_CARD_INSET = Object.freeze({ bottom: 0 });
 export const kanjiCardInset = (presetInset, override = {}) => ({ ...presetInset, ...KANJI_SHORT_CARD_INSET, ...override });
 
+/** Why the card's bands cannot be used as they are, or null: the card would shrink opposite bands that cover more than 0.45 of the frame together. */
+export function kanjiCardInsetProblem(inset) {
+  for (const [a, b] of [["top", "bottom"], ["left", "right"]])
+    if (inset[a] + inset[b] > .45 + 1e-9) return `${a} and ${b} together cover ${+(inset[a] + inset[b]).toFixed(3)} of the frame; the card allows at most 0.45`;
+  return null;
+}
+
 /**
  * The fields an anchored-narration script can use for one kanji:
  * `char`, `name.kana`, `name.romaji`, `meanings`, `jlpt`, `onyomi` and `kunyomi` (kana, joined with

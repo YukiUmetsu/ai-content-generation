@@ -14,7 +14,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { expandNarrationScript } from "./anchored-narration.mjs";
-import { kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
+import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
@@ -104,6 +104,9 @@ export function readKanjiConfig(json, configPath) {
   if (card.safeInset !== undefined && !(isObject(card.safeInset) && Object.entries(card.safeInset).every(([k, v]) =>
     ["left", "right", "top", "bottom"].includes(k) && Number.isFinite(v) && v >= 0 && v <= .4)))
     fail("config: card.safeInset sets left, right, top or bottom to a share of the frame from 0 to 0.4");
+  // Over the destination's bands, as the producer uses them, so a dry run catches it too.
+  const insetProblem = kanjiCardInsetProblem(kanjiCardInset(presets.find(p => p.id === destination).safeInset, card.safeInset));
+  if (insetProblem) fail(`config: card.safeInset: ${insetProblem}`);
   if (card.density !== undefined && !["regular", "compact"].includes(card.density)) fail("config: card.density must be regular or compact");
   if (card.heading !== undefined && !(typeof card.heading === "string" && card.heading.length <= 30)) fail("config: card.heading must be at most 30 characters");
   const labelKeys = ["onyomi", "kunyomi", "words", "jlpt", "heading", "cardName", "writingName"];
