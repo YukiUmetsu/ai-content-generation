@@ -2,13 +2,16 @@
 import { evaluateTimeline, outputKey } from "./timeline";
 import { isEasingSpec } from "./easing";
 import { resolveWorldTransforms } from "./matrix";
-import { morphShapes, validateMorph } from "./morph";
+import { contourIsClosed, morphShapes, validateMorph } from "./morph";
+import type { PathContour } from "./morph";
+import { AdvancedShapeMorph } from "./advanced-morph";
+import type { MorphComponentFrame, MorphShapeInput } from "./advanced-morph";
 import { evaluateMask } from "./masks";
 import type { MaskSpecLocal } from "./masks";
 import { createSharedElement, evaluateSharedElement } from "./shared-element";
 import { copyVisualData, paintVisualElement, prepareVisualScene, requireVisual, sceneLayers } from "./visual-transformation-scene";
 import type { AffineMatrix, AnimationTrack, ColorValue, Diagnostic, EasingSpec, MotionValue } from "./types";
-import type { CompiledVisualTransformation, PreparedVisualElement, TransformationLane, TransformationOptions, VisualLayer, VisualMapping, VisualScene, VisualTransformationProgram, VisualTransformationSample, VisualTransformationSpec } from "./visual-transformation-types";
+import type { CompiledVisualTransformation, PreparedVisualElement, TransformationLane, TransformationOptions, VisualContent, VisualLayer, VisualMapping, VisualScene, VisualTransformationProgram, VisualTransformationSample, VisualTransformationSpec } from "./visual-transformation-types";
 
 export * from "./visual-transformation-types";
 
@@ -18,7 +21,8 @@ const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b
 const clamp = (v: number) => Math.max(0, Math.min(1, v));
 function warning(message: string, code = "transformation-fallback"): Diagnostic { return { code, severity: "warning", message }; }
 function validateOptions(options: TransformationOptions) {
-  requireVisual(options.strategy === undefined || ["auto", "geometric-morph", "shared-element", "mask-reveal", "particle-handoff", "crossfade"].includes(options.strategy), "Unknown strategy; choose a supported transformation strategy.");
+  requireVisual(options.strategy === undefined || ["auto", "geometric-morph", "topology-morph", "shared-element", "mask-reveal", "particle-handoff", "crossfade"].includes(options.strategy), "Unknown strategy; choose a supported transformation strategy.");
+  requireVisual(options.morph === undefined || typeof options.morph === "object" && options.morph !== null && !("easing" in options.morph), "Topology morph options must be an object without easing; the mapping easing shapes the handoff.");
   requireVisual(options.fallback === undefined || ["crossfade", "mask-reveal"].includes(options.fallback), "Fallback must be crossfade or mask-reveal.");
   requireVisual(options.easing === undefined || isEasingSpec(options.easing), "Invalid easing; use an MG1 named easing, finite cubic bezier or steps specification.");
 }
@@ -30,9 +34,18 @@ function selectStrategy(from: PreparedVisualElement | undefined, to: PreparedVis
   const same = equal(from.content, to.content);
   const shapes = from.content.kind === "shape" && to.content.kind === "shape";
   const compatible = shapes && validateMorph(from.content.kind === "shape" ? from.content.shape : { contours: [] }, to.content.kind === "shape" ? to.content.shape : { contours: [] }).length === 0;
+  // Auto morphs filled, closed contours only; open or stroked SVG paths keep the declared fallback.
+  const closedShapes = shapes && closedShape(from.content) && closedShape(to.content);
+  const morphable = morphableContent(from.content) && morphableContent(to.content);
   const requested = options.strategy ?? "auto";
-  if (requested === "auto") return { selected: compatible ? "geometric-morph" : same ? "shared-element" : fallback, reason: compatible ? "Compatible contour topology with authored point correspondence." : same ? "The visual representation is unchanged." : "Representation or topology changed; use the declared fallback.", fixedPose: false };
+  if (requested === "auto") {
+    if (compatible) return { selected: "geometric-morph", reason: "Compatible contour topology with authored point correspondence.", fixedPose: false };
+    if (same) return { selected: "shared-element", reason: "The visual representation is unchanged.", fixedPose: false };
+    if (closedShapes) return { selected: "topology-morph", reason: "Contour topology differs; AdvancedShapeMorph plans parts, holes and correspondence.", fixedPose: false };
+    return { selected: fallback, reason: "Representation or topology changed; use the declared fallback.", fixedPose: false };
+  }
   if (requested === "geometric-morph" && !compatible) return { selected: fallback, reason: "Geometric morph requires matching contour topology, winding and finite nondegenerate paths.", fixedPose: false };
+  if (requested === "topology-morph" && !morphable) return { selected: fallback, reason: "Topology morph requires closed shape contours or SVG path data on both sides.", fixedPose: false };
   if (requested === "shared-element" && !same) return { selected: fallback, reason: "Shared-element requires identical representations; changed text or opaque path strings cannot be interpolated.", fixedPose: false };
   if (requested === "particle-handoff" && !shapes) return { selected: fallback, reason: "Particle transport requires authored contour shapes on both sides.", fixedPose: false };
   return { selected: requested, reason: `Explicit ${requested} strategy.`, fixedPose: false };
@@ -87,14 +100,15 @@ export function compileVisualTransformation(input: VisualTransformationSpec): Co
       const to = toById.get(pair.to)!;
       const multiple = mapping.kind === "many-to-one" || mapping.kind === "one-to-many";
       const requested = options.strategy ?? "auto";
-      const useCardinalityFallback = multiple && ["auto", "shared-element", "geometric-morph"].includes(requested);
+      // A split or merge mapping paints one endpoint per lane; author one multi-part element to morph its parts.
+      const useCardinalityFallback = multiple && ["auto", "shared-element", "geometric-morph", "topology-morph"].includes(requested);
       const decision = selectStrategy(from, to, useCardinalityFallback ? { ...options, strategy: options.fallback ?? "crossfade" } : options);
       const reason = useCardinalityFallback ? "Split/merge correspondence uses the declared representation fallback; each endpoint paints once." : decision.reason;
       decisions.push({ mappingId: `${mapping.id}:${index}`, requested, selected: decision.selected, reason });
-      if (decision.selected !== requested && requested !== "auto" || decision.reason.includes("require") || requested === "auto" && !["geometric-morph", "shared-element"].includes(decision.selected)) diagnostics.push(warning(`${mapping.id}: ${reason}`));
+      if (decision.selected !== requested && requested !== "auto" || decision.reason.includes("require") || requested === "auto" && !["geometric-morph", "topology-morph", "shared-element"].includes(decision.selected)) diagnostics.push(warning(`${mapping.id}: ${reason}`));
       const particles = { count: 48, seed: 1, radius: 2, arc: 35, ...options.particles };
       requireVisual(Number.isInteger(particles.count) && particles.count >= 1 && particles.count <= 256 && Number.isInteger(particles.seed) && Number.isFinite(particles.radius) && particles.radius > 0 && Number.isFinite(particles.arc), `Mapping '${mapping.id}' needs 1–256 particles, integer seed and positive radius.`);
-      lanes.push({ id: `mapping:${mapping.id}:${index}`, semanticId: pair.semanticId, from, to, strategy: decision.selected, fixedPose: decision.fixedPose, sourceWeight: mapping.kind === "one-to-many" && index > 0 ? 0 : 1, targetWeight: mapping.kind === "many-to-one" && index > 0 ? 0 : 1, particles });
+      lanes.push({ id: `mapping:${mapping.id}:${index}`, semanticId: pair.semanticId, from, to, strategy: decision.selected, fixedPose: decision.fixedPose, sourceWeight: mapping.kind === "one-to-many" && index > 0 ? 0 : 1, targetWeight: mapping.kind === "many-to-one" && index > 0 ? 0 : 1, particles, ...(options.morph ? { morph: copyVisualData(options.morph) } : {}) });
       laneEasings.set(`mapping:${mapping.id}:${index}`, options.easing ?? "ease-in-out");
     });
   }
@@ -154,7 +168,47 @@ export function compileVisualTransformation(input: VisualTransformationSpec): Co
     addTrack(lane, "strokeWidth", "number", from?.strokeWidth ?? to!.strokeWidth, to?.strokeWidth ?? from!.strokeWidth);
     if (from && to) lane.shared = createSharedElement({ semanticId: lane.semanticId, from: { transform: from.world, opacity: from.opacity, range: { startFrame: 0, endFrame: range.endFrame } }, to: { transform: to.world, opacity: to.opacity, range: { startFrame: range.startFrame, endFrame: spec.durationFrames } }, handoff: range });
   }
+  // Plan topology morphs once, after every strategy downgrade above, so their warnings reach the compiled record.
+  for (const lane of lanes) if (lane.strategy === "topology-morph") {
+    for (const diagnostic of topologyMorph(lane).diagnostics) diagnostics.push({ ...diagnostic, message: `${lane.id}: ${diagnostic.message}` });
+  }
   return { spec, lanes, decisions, diagnostics, timeline: { schemaVersion: 1, id: spec.id, fps: spec.fps, durationFrames: spec.durationFrames, nodes: tracks.map(track => ({ kind: "track", id: track.id, track })) } };
+}
+
+function closedContour(contour: PathContour): boolean {
+  return contourIsClosed(contour) && (contour.holes ?? []).every(closedContour);
+}
+function closedShape(content: VisualContent): boolean {
+  return content.kind === "shape" && content.shape.contours.every(closedContour);
+}
+function morphableContent(content: VisualContent): boolean {
+  return closedShape(content) || content.kind === "svg-path";
+}
+function morphInput(content: VisualContent): MorphShapeInput {
+  return content.kind === "shape" ? content.shape : content.kind === "svg-path" ? content.d : [];
+}
+
+/**
+ * One planned morph per lane. Lanes are the cache key, so the compiled record stays plain data and a cloned
+ * record plans again on first use. Progress arrives already eased, so the morph itself is linear.
+ */
+const topologyMorphs = new WeakMap<TransformationLane, AdvancedShapeMorph>();
+function topologyMorph(lane: TransformationLane): AdvancedShapeMorph {
+  let morph = topologyMorphs.get(lane);
+  if (!morph) {
+    morph = new AdvancedShapeMorph(morphInput(lane.from!.content), morphInput(lane.to!.content), { ...lane.morph, easing: "linear" });
+    topologyMorphs.set(lane, morph);
+  }
+  return morph;
+}
+
+function componentContours(components: readonly MorphComponentFrame[]): PathContour[] {
+  const ring = (buffer: Float32Array): PathContour => {
+    const points = [];
+    for (let i = 0; i < buffer.length; i += 2) points.push({ x: buffer[i], y: buffer[i + 1] });
+    return { points, closed: true };
+  };
+  return components.map(component => ({ ...ring(component.outer), holes: component.holes.map(ring) }));
 }
 
 /** Analytic seed: no random generator, simulation, wall-clock, or previous frame. */
@@ -233,18 +287,36 @@ export function evaluateVisualTransformation(compiled: CompiledVisualTransformat
       const destination = lane.to!.clipChain[index];
       return clip.space === "world" || lanes.some(l => l.from?.id === clip.ownerId && l.to?.id === destination.ownerId && !l.fixedPose);
     });
-    if ((lane.strategy === "shared-element" || lane.strategy === "geometric-morph") && lane.from && lane.to) {
+    if ((lane.strategy === "shared-element" || lane.strategy === "geometric-morph" || lane.strategy === "topology-morph") && lane.from && lane.to) {
       const singleRepresentation = sameClips && !paintOrderChanged;
       const a = paint("from", singleRepresentation ? 1 : 1 - t, true);
       const b = singleRepresentation ? undefined : paint("to", t, true);
+      const fading: VisualLayer[] = [];
       if (lane.strategy === "geometric-morph" && lane.from.content.kind === "shape" && lane.to.content.kind === "shape") {
         const geometry = morphShapes(lane.from.content.shape, lane.to.content.shape, t);
         const content = { ...lane.from.content, shape: { contours: geometry.contours } };
         if (a) a.content = content;
         if (b) b.content = content;
+      } else if (lane.strategy === "topology-morph") {
+        const frame = topologyMorph(lane).update(t);
+        const bounds = lane.from.content.bounds;
+        const shapeOf = (components: readonly MorphComponentFrame[]) => ({ kind: "shape" as const, bounds, fillRule: "nonzero" as const, shape: { contours: componentContours(components) } });
+        const content = shapeOf(frame.components.filter(component => component.opacity >= 0.999));
+        if (a) a.content = content;
+        if (b) b.content = content;
+        // A cross-dissolve part fades on its own layer, directly above its lane's layer.
+        frame.components.forEach((component, index) => {
+          if (component.opacity >= 0.999 || component.opacity <= 0.001) return;
+          for (const layer of [a, b]) if (layer) {
+            const part: VisualLayer = { ...layer, id: `${layer.id}:part:${index}`, content: shapeOf([component]), opacity: layer.opacity * component.opacity, clips: [...layer.clips] };
+            drawOrder.set(part, drawOrder.get(layer)!);
+            fading.push(part);
+          }
+        });
       }
       if (a) layers.push(a);
       if (b) layers.push(b);
+      layers.push(...fading);
     } else if (lane.strategy === "particle-handoff" && lane.from && lane.to) {
       const a = paint("from", lane.sourceWeight * Math.max(0, 1 - t * 4));
       const b = paint("to", lane.targetWeight * Math.max(0, (t - 0.75) * 4));
@@ -324,7 +396,7 @@ export function retargetVisualTransformation(program: VisualTransformationProgra
   }
   const endFrame = request.frame + request.durationFrames;
   const durationFrames = Math.max(program.durationFrames, endFrame + 1);
-  const compiled = compileVisualTransformation({ schemaVersion: 1, id: `retarget-${request.frame}`, fps: program.fps, durationFrames, range: { startFrame: request.frame, endFrame }, from, to: request.to, mappings, strategy: request.strategy, fallback: request.fallback, easing: request.easing, particles: request.particles });
+  const compiled = compileVisualTransformation({ schemaVersion: 1, id: `retarget-${request.frame}`, fps: program.fps, durationFrames, range: { startFrame: request.frame, endFrame }, from, to: request.to, mappings, strategy: request.strategy, fallback: request.fallback, easing: request.easing, particles: request.particles, morph: request.morph });
   return { ...program, durationFrames, segments: [...program.segments.filter(s => s.startFrame < request.frame), { startFrame: request.frame, transformation: compiled }] };
 }
 

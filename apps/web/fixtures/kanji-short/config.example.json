@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "dataset": "kanji-data/jlpt-n5-n3.json",
+  "outputRoot": "/Users/YOU/Movies/ContentGen/kanji-shorts",
+  "destination": "youtube-shorts",
+  "voice": { "voiceId": "YOUR_FISH_VOICE_ID", "modelId": "s2.1-pro-free", "pace": "slow", "licenseStatus": "unknown" },
+  "music": {
+    "path": "music/your-reviewed-bed.wav",
+    "sha256": "SHA-256 OF THE REVIEWED MUSIC FILE",
+    "title": "Title of the recording and the excerpt used",
+    "source": "https://example.org/where-it-came-from",
+    "license": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)",
+    "attribution": "Optional credit line for the description"
+  },
+  "narration": {
+    "question": "Do you know how to write the kanji {name}?",
+    "questionLocale": "en",
+    "labels": { "on": "おんよみ", "kun": "くんよみ" },
+    "speech": {}
+  },
+  "timing": { "write": 6.5, "review": 6.5, "wordGap": 1, "tail": 1.4 },
+  "card": { "heading": "Kanji study", "density": "compact" },
+  "credits": [
+    "Credit line required by your kanji data's licence (KanjiVG is credited automatically)."
+  ]
+}

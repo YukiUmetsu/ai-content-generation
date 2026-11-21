@@ -18,6 +18,7 @@
     "fixtures:creative": "node scripts/serve-fixtures.mjs",
     "video:produce": "node scripts/video-production/cli.mjs",
     "video:try": "node scripts/video-production/try.mjs",
+    "video:kanji": "node scripts/video-production/kanji-cli.mjs",
     "video:topic": "node scripts/video-production/topic-cli.mjs",
     "video:studio": "node scripts/video-production/studio-server.mjs",
     "test:video:headless": "node --test scripts/video-production/*.test.mjs scripts/director-studio-vite.test.mjs scripts/director-production-vite.test.mjs scripts/research-readiness.test.mjs scripts/research-model-vite.test.mjs",

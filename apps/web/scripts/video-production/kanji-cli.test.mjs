@@ -1,0 +1,130 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { main, nextOutputDir, parseKanjiArgs, readKanjiConfig } from "./kanji-cli.mjs";
+import { kanjiVgSvg, produceKanjiShort } from "./kanji-short-producer.mjs";
+
+const VOICE = "984831ae0346415685b109090be3e798";
+const config = (overrides = {}) => ({
+  schemaVersion: 1, dataset: "data.json", outputRoot: "out", destination: "youtube-shorts",
+  voice: { voiceId: VOICE }, music: { path: "bed.wav", sha256: "a".repeat(64), title: "Bed", source: "https://example.org/bed", license: "CC0 1.0" },
+  ...overrides,
+});
+const MIZU = {
+  char: "水", jlpt: "N5", card: { meanings: "WATER", onyomi: "SUI (スイ)", kunyomi: "mizu (みず)", jlpt: "N5" },
+  words: [{ word: "水", ruby: "みず", romaji: "mizu", meaning: "water", reading: "kun" }, { word: "水道", ruby: "すいどう", romaji: "suidō", meaning: "water supply", reading: "on" }],
+};
+
+test("reads kanji from the arguments, one or many per argument, and refuses anything else", () => {
+  const args = parseKanjiArgs(["--", "水火", "木", "水", "--allow-network", "--dry-run"]);
+  assert.deepEqual(args.chars, ["水", "火", "木"]);
+  assert.equal(args.allowNetwork, true);
+  assert.equal(args.dryRun, true);
+  assert.equal(args.voiceReferenceConsent, false);
+  assert.throws(() => parseKanjiArgs([]), /at least one kanji/u);
+  assert.throws(() => parseKanjiArgs(["mizu"]), /must be a kanji/u);
+  assert.throws(() => parseKanjiArgs(["水", "--fast"]), /Unknown option/u);
+  assert.throws(() => parseKanjiArgs(["水", "--config"]), /needs a path/u);
+});
+
+test("reads the local config, resolving relative paths against its folder", () => {
+  const read = readKanjiConfig(config(), "/home/me/kanji/config.json");
+  assert.equal(read.dataset, "/home/me/kanji/data.json");
+  assert.equal(read.music.path, "/home/me/kanji/bed.wav");
+  assert.equal(read.cacheDir, "/home/me/kanji/cache");
+  assert.throws(() => readKanjiConfig(config({ voice: { voiceId: "x" } }), "/c.json"), /Fish voice ID/u);
+  assert.throws(() => readKanjiConfig(config({ voice: { voiceId: VOICE, modelId: "s2-pro" } }), "/c.json"), /only the free Fish model/u);
+  assert.throws(() => readKanjiConfig(config({ music: { ...config().music, sha256: "nope" } }), "/c.json"), /music\.sha256/u);
+  assert.throws(() => readKanjiConfig(config({ music: { ...config().music, license: "" } }), "/c.json"), /music\.license/u);
+  assert.throws(() => readKanjiConfig(config({ destination: "youtube" }), "/c.json"), /1080 × 1920 short/u);
+  assert.throws(() => readKanjiConfig(config({ timing: { write: 1 } }), "/c.json"), /timing\.write/u);
+  assert.throws(() => readKanjiConfig({ ...config(), schemaVersion: 2 }, "/c.json"), /schemaVersion/u);
+});
+
+test("gives each run of a kanji a new version folder, so a release is never overwritten", async () => {
+  const root = await mkdtemp(join(tmpdir(), "kanji-out-"));
+  try {
+    assert.equal(await nextOutputDir(root, "水"), join(root, "水-6c34", "v1"));
+    await mkdir(join(root, "水-6c34", "v1"), { recursive: true });
+    await mkdir(join(root, "水-6c34", "v3"), { recursive: true });
+    assert.equal(await nextOutputDir(root, "水"), join(root, "水-6c34", "v4"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a dry run shows what each short says, with no network, key or browser", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-dry-"));
+  try {
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
+    await writeFile(join(dir, "config.json"), JSON.stringify(config()));
+    const lines = [];
+    const fail = () => { throw Error("must not be called in a dry run"); };
+    await main(["水", "火", "--dry-run", "--config", join(dir, "config.json")], {}, { log: line => lines.push(line), providerKey: fail, findBrowser: fail, produce: fail });
+    assert.match(lines[0], /^水 {2}WATER · JLPT N5 · typed みず → 水/u);
+    assert.ok(lines.some(line => line.includes("Do you know how to write the kanji みず?") && line.includes("[caption: Do you know how to write the kanji mizu?]")));
+    assert.ok(lines.some(line => line.includes("words") && line.includes("水道") && !line.includes("水 (みず")));
+    assert.ok(lines.includes("火: not in the kanji data"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("passes the consents through to the producer and makes the kanji one after another", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-run-"));
+  try {
+    await writeFile(join(dir, "config.json"), JSON.stringify(config({ outputRoot: join(dir, "out") })));
+    const calls = [];
+    const qa = { video: { seconds: 20 }, audio: { integratedLufs: -16 }, pacing: { longestStillSeconds: 1.3 }, pronunciation: "not machine-checked" };
+    await main(["水火", "--allow-network", "--voice-consent", "--transmit-text", "--config", join(dir, "config.json")], {}, {
+      log: () => {}, providerKey: async () => "key-0123456789", findBrowser: async () => "/bin/chrome",
+      produce: async (request) => { calls.push(request); return { videoPath: join(request.out, "release", "video.mp4"), qa }; },
+    });
+    assert.deepEqual(calls.map(c => c.char), ["水", "火"]);
+    assert.ok(calls.every(c => c.allowNetwork && c.voiceReferenceConsent && c.textTransmissionApproved && c.apiKey === "key-0123456789"));
+    assert.equal(calls[0].out, join(dir, "out", "水-6c34", "v1"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the producer stops before any network or render work when a consent, the key or the reviewed music is missing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-gate-"));
+  try {
+    const bed = join(dir, "bed.wav");
+    await writeFile(bed, "reviewed bytes");
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
+    const read = readKanjiConfig(config({ music: { ...config().music, sha256: createHash("sha256").update("other bytes").digest("hex") } }), join(dir, "config.json"));
+    const touched = [];
+    const deps = {
+      fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
+      loadKanjiPlanner: async () => ({}), kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
+    };
+    const base = { char: "水", config: read, out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789" };
+    await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true }, deps), /--transmit-text/u);
+    await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true, apiKey: "" }, deps), /FISH_AUDIO_API_KEY/u);
+    await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /music file changed/u);
+    await mkdir(join(dir, "out", "release"), { recursive: true });
+    await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /already exists/u);
+    assert.deepEqual(touched, []);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("KanjiVG stroke data comes from the cache when its hash still matches, and needs --allow-network otherwise", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-kvg-"));
+  const planner = { kanjiVgFileName: () => "06c34.svg", SHODO_KANJIVG_RELEASE: "r1", SHODO_KANJIVG_BASE: "https://example.org/kanji/" };
+  try {
+    await assert.rejects(kanjiVgSvg("水", { planner, cacheDir: dir, allowNetwork: false }), /needs --allow-network/u);
+    let fetched = 0;
+    const fetchImpl = async (url) => { fetched++; assert.equal(url, "https://example.org/kanji/06c34.svg"); return new Response("<svg>水</svg>"); };
+    const first = await kanjiVgSvg("水", { planner, cacheDir: dir, allowNetwork: true, fetchImpl });
+    assert.equal(first.cached, false);
+    const second = await kanjiVgSvg("水", { planner, cacheDir: dir, allowNetwork: false, fetchImpl });
+    assert.equal(second.cached, true);
+    assert.equal(second.sha256, first.sha256);
+    assert.equal(fetched, 1);
+    // A changed cache file is not trusted: it is fetched again.
+    await writeFile(join(dir, "kanjivg", "r1", "06c34.svg"), "<svg>tampered</svg>");
+    await kanjiVgSvg("水", { planner, cacheDir: dir, allowNetwork: true, fetchImpl });
+    assert.equal(fetched, 2);
+    assert.equal(await readFile(join(dir, "kanjivg", "r1", "06c34.svg"), "utf8"), "<svg>水</svg>");
+    await assert.rejects(kanjiVgSvg("水", { planner, cacheDir: join(dir, "x"), allowNetwork: true, fetchImpl: async () => new Response("nope", { status: 404 }) }), /HTTP 404/u);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

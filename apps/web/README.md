@@ -44,6 +44,10 @@ to fetch or edit that route yourself.
 
 The headless command now connects automatic Fish Audio or local-loopback narration to sample-accurate scene timing, SFX, a Kumiki frame-export scene, bounded browser capture, FFmpeg encoding/muxing, and a measured QA report. **This is an automated *draft*, not a published or commercially approved video.** The example House Math jobs are hypothetical and test-only; neither a live Fish API request nor real browser playback has been verified by CI.
 
+### Kanji study shorts
+
+`pnpm video:kanji -- 水 火 --allow-network --voice-consent --transmit-text` makes one 9:16 kanji study short per kanji with Kumiki's `shodo-kanji-card`, Fish narration timed to the brush strokes and a ducked music bed. Settings live in `data/kanji-shorts/config.json` (example: `fixtures/kanji-short/config.example.json`); `--dry-run` shows what each short says without any network request. See [how to make kanji shorts](../../docs/how-to-make-kanji-shorts.md).
+
 ### Easiest way to try it on your Mac
 
 With Node >=22.12, pnpm, FFmpeg/FFprobe and an already-installed Chrome/Chromium-compatible browser:

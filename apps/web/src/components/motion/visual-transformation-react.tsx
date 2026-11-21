@@ -30,7 +30,7 @@ function contourPath(contour: PathContour): string {
 }
 export function VisualGeometry({ layer }: { layer: VisualLayer }) {
   const content = layer.content;
-  if (content.kind === "shape") return <path d={content.shape.contours.map(contourPath).join("")} fillRule="evenodd" />;
+  if (content.kind === "shape") return <path d={content.shape.contours.map(contourPath).join("")} fillRule={content.fillRule ?? "evenodd"} />;
   if (content.kind === "svg-path") return <path d={content.d} fillRule="evenodd" />;
   const { x, y, width } = content.bounds;
   const fontSize = content.fontSize ?? 24;
