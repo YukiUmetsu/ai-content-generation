@@ -20,7 +20,7 @@ import { chooseMusicWindow, decodeMono, int16Wav, prepareMusicBed } from "./musi
 import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -119,11 +119,18 @@ export async function produceKanjiShort(request, deps = {}) {
   // Everything that can fail locally fails before any text is sent to Fish.
   progress("preflight", "Checking the built export page, the browser, the kanji planner and the narration script…");
   const distRoot = request.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
-  const buildHash = await (deps.fingerprintBuiltStage ?? fingerprintBuiltStage)(distRoot);
+  const buildHash = await (deps.fingerprintBuiltStage ?? fingerprintBuiltStage)(distRoot).catch(error => {
+    if (error?.code === "ENOENT") fail("the export page is not built. Run pnpm build, then start again.");
+    throw error;
+  });
   await (deps.probeBrowserExecutable ?? probeBrowserExecutable)(request.browserExecutable);
   const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
   const preset = presets.find(p => p.id === config.destination);
   if (!preset || !planner.KANJI_SHORT_PRESETS.includes(preset.id)) fail(`the destination must be one of ${planner.KANJI_SHORT_PRESETS.join(", ")}`);
+  // The card would shrink a pair of opposite bands over 0.45 of the frame without a word; say so instead.
+  const safeInset = kanjiCardInset(preset.safeInset, card.safeInset);
+  const insetProblem = kanjiCardInsetProblem(safeInset);
+  if (insetProblem) fail(`card.safeInset: ${insetProblem}`);
   // Every theme problem, unknown keys included (the card itself ignores keys it does not have, so a typo would go unseen).
   const themeIssues = card.theme === undefined ? [] : planner.kanjiCardThemeIssues(card.theme);
   if (themeIssues.length) fail(`card.theme: ${themeIssues.join("; ")}`);
@@ -162,7 +169,7 @@ export async function produceKanjiShort(request, deps = {}) {
     const kanjivg = await (deps.kanjiVgSvg ?? kanjiVgSvg)(char, { planner, cacheDir, allowNetwork: request.allowNetwork, signal: request.signal });
     const glyph = await planner.glyphFromKanjiVg(char, kanjivg.svg);
     const cardText = { meanings: content.meanings, onyomi: content.onyomi, kunyomi: content.kunyomi, jlpt: content.jlpt, words: content.words };
-    const cardOptions = { layout: "portrait", density: card.density ?? "compact", safeInset: preset.safeInset, content: cardText, sections: {},
+    const cardOptions = { layout: "portrait", density: card.density ?? "compact", safeInset, content: cardText, sections: {},
       ...(card.brushStyle ? { brushStyle: card.brushStyle } : {}) };
     const lines = expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration?.labels, strokeCount: glyph.strokes.length }));
     if (!lines.length) fail("the narration script has no line for this kanji");
@@ -171,7 +178,7 @@ export async function produceKanjiShort(request, deps = {}) {
       manifest: { schemaVersion: 1, id: `kanji-short-${char.codePointAt(0).toString(16)}`, durationFrames: ["intro", "write", "review", "info"].reduce((sum, k) => sum + Math.round(timing[k] * KANJI_FPS), 0),
         width: preset.width, height: preset.height, fps: { num: KANJI_FPS, den: 1 }, preset: preset.id },
       card: {
-        char, glyph, layout: "portrait", density: cardOptions.density, heading: card.heading ?? "Kanji study", safeInset: preset.safeInset, timing,
+        char, glyph, layout: "portrait", density: cardOptions.density, heading: card.heading ?? "Kanji study", safeInset, timing,
         ...(intro ? { intro } : {}), ...cardText, wordHighlights, strokeNumbers: card.strokeNumbers ?? true, reducedMotion: false,
         ...(card.labels ? { labels: card.labels } : {}), ...(card.theme ? { theme: card.theme } : {}), ...(card.brushStyle ? { brushStyle: card.brushStyle } : {}),
       },

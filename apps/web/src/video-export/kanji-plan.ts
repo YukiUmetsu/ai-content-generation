@@ -57,3 +57,9 @@ export function sameStrokes(drawn: unknown, planned: KanjiStudyVisualPlan["strok
     Array.isArray(a) && a.length === b.length && a.every((p, i) => ms(p[0]) === ms(b[i][0]) && ms(p[1]) === ms(b[i][1]));
   return !!d && pass(d.write, planned.write) && pass(d.review, planned.review);
 }
+
+/** True when the card draws on canvases and every one of them (the page and the brush) is ready. */
+export function shodoCanvasesReady(root: ParentNode | null): boolean {
+  const canvases = root ? [...root.querySelectorAll<HTMLElement>("[data-km-shodo]")] : [];
+  return canvases.length > 0 && canvases.every(canvas => canvas.dataset.kmShodoReady === "true");
+}

@@ -61,6 +61,10 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ card: { labels: { title: "X" } } }), "/c.json"), /card\.labels/u);
   assert.throws(() => readKanjiConfig(config({ card: { typeStep: 2 } }), "/c.json"), /card\.typeStep/u);
   assert.throws(() => readKanjiConfig(config({ card: { brushStyle: [] } }), "/c.json"), /card\.brushStyle/u);
+  assert.deepEqual(readKanjiConfig(config({ card: { safeInset: { bottom: .19 } } }), "/c.json").card.safeInset, { bottom: .19 });
+  assert.throws(() => readKanjiConfig(config({ card: { safeInset: { bottom: .5 } } }), "/c.json"), /card\.safeInset/u);
+  assert.throws(() => readKanjiConfig(config({ card: { safeInset: { botom: .1 } } }), "/c.json"), /card\.safeInset/u);
+  assert.throws(() => readKanjiConfig(config({ card: { safeInset: { top: .3, bottom: .3 } } }), "/c.json"), /top and bottom together cover 0\.6 of the frame/u);   // a dry run catches it too
 });
 
 test("gives each run of a kanji a new version folder, so a release is never overwritten", async () => {
@@ -122,8 +126,13 @@ test("the producer stops before any network or render work when a consent, the k
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true }, deps), /--transmit-text/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true, apiKey: "" }, deps), /FISH_AUDIO_API_KEY/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /music file changed/u);
+    // Opposite bands the card would shrink stop here too, with the numbers.
+    await assert.rejects(produceKanjiShort({ ...base, config: { ...read, card: { safeInset: { top: .3, bottom: .3 } } }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /top and bottom together cover 0\.6 of the frame/u);
     // A destination the export page would refuse stops here too.
     await assert.rejects(produceKanjiShort({ ...base, config: { ...read, destination: "facebook-reels" }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /destination must be one of youtube-shorts/u);
+    // An unbuilt export page names the fix instead of a raw file error.
+    const unbuilt = { ...deps, fingerprintBuiltStage: async () => { throw Object.assign(new Error("ENOENT: no such file or directory, realpath 'dist'"), { code: "ENOENT" }); } };
+    await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, unbuilt), /export page is not built\. Run pnpm build/u);
     await mkdir(join(dir, "out", "release"), { recursive: true });
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /already exists/u);
     assert.deepEqual(touched, []);

@@ -823,6 +823,9 @@ function bounds(samples: readonly ShodoContact[]): [number, number, number, numb
   return [x0, y0, x1, y1];
 }
 
+/** Height of the brush tip above the paper at its rest pose, as a share of the first item's size. */
+export const SHODO_REST_HEIGHT = .16;
+
 /** Plan the whole writing: strokes, air moves between them and ink dips. */
 export function planShodoWriting(input: ShodoWritingInput): ShodoPlan {
   const { items, style } = input;
@@ -841,7 +844,7 @@ export function planShodoWriting(input: ShodoWritingInput): ShodoPlan {
   const tuftL = style.brush.diameter * style.hand.width * first.size / 1000 * style.brush.length;
   const strokes: ShodoPlannedStroke[] = [];
   const air: ShodoAirMove[] = [];
-  const restZ = first.size * .16;
+  const restZ = first.size * SHODO_REST_HEIGHT;
   let color = style.ink.color;
   const airMove = (to: V, approach: V, dip: boolean, z0 = 0, z1 = 0, nextColor = color, lift = 1) => {
     const dist = Math.hypot(to[0] - pos[0], to[1] - pos[1]);

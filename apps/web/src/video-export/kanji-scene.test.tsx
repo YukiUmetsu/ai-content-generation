@@ -2,11 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { SHODO_GLYPHS } from "@/components/video/shodo/shodo-glyphs";
 import { kanjiCardWriting } from "@/components/video/shodo/shodo-kanji-card-plan";
-import { readKanjiStudyPlan, sameStrokes } from "./kanji-plan";
+import { readKanjiStudyPlan, sameStrokes, shodoCanvasesReady } from "./kanji-plan";
 import type { KanjiStudyVisualPlan } from "./kanji-plan";
 import { KanjiStudyExport } from "./kanji-scene";
 
-const SHORTS = { left: .08, right: .12, top: .09, bottom: .19 };
+// The short's default: the destination's side and top bands, and no bottom band (the card runs to its margin).
+const SHORTS = { left: .08, right: .12, top: .09, bottom: 0 };
 const TIMING = { intro: 2, write: 3, review: 3, info: 2 };
 const TEXT = { meanings: "THREE", onyomi: "SAN (サン)", kunyomi: "mi (み)", jlpt: "N5" as const, words: [{ word: "三月", ruby: "さんがつ", romaji: "sangatsu", meaning: "March" }] };
 // What the producer timed the narration to: Kumiki's planning in Node, from the same glyph and card text.
@@ -55,5 +56,18 @@ describe("kanji study export plan", () => {
     expect(card?.dataset.kmKanjiFrame).toBe("0");
     expect(card?.dataset.kmKanjiPhase).toBe("intro");
     expect(container.querySelector("[data-km-video-capture]")?.getAttribute("data-output-width")).toBe("1080");
+    // The card draws the page and the brush on two canvases: a frame waits until both are ready,
+    // and the export stage until both have drawn it (data-km-shodo-drawn).
+    expect([...container.querySelectorAll<HTMLElement>("[data-km-shodo]")].map(c => c.dataset.kmShodoLayer)).toEqual(["page", "brush"]);
+  });
+
+  it("is ready only when every canvas of the card is ready", () => {
+    const root = document.createElement("div");
+    expect(shodoCanvasesReady(root)).toBe(false);                                    // no canvas yet
+    root.innerHTML = '<canvas data-km-shodo data-km-shodo-ready="true"></canvas><canvas data-km-shodo data-km-shodo-ready="false"></canvas>';
+    expect(shodoCanvasesReady(root)).toBe(false);                                    // the brush layer is still loading
+    root.querySelectorAll("canvas")[1].dataset.kmShodoReady = "true";
+    expect(shodoCanvasesReady(root)).toBe(true);
+    expect(shodoCanvasesReady(null)).toBe(false);
   });
 });

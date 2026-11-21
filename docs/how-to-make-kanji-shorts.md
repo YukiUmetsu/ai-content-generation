@@ -5,11 +5,15 @@
 ## What one short does
 
 1. **Intro.** The voice asks "Do you know how to write the kanji mizu?". On screen the reading is typed (みず) and converts to the typed kanji (水) at once. The typed kanji pushes in slowly and pulses when its name is spoken.
-2. **Write.** The brush writes the kanji. The voice reads the on'yomi as the brush lands for the first stroke, then the kun'yomi.
-3. **Review.** The brush writes it again with vermilion stroke-order numbers. Only music plays.
+2. **Write.** The brush comes in from outside the frame (from the right with the default brush), writes the kanji and leaves the frame after the last stroke, so the finished kanji holds with nothing on it. The voice reads the on'yomi as the brush lands for the first stroke, then the kun'yomi.
+3. **Review.** The brush comes in again and writes it with vermilion stroke-order numbers, then leaves. Only music plays.
 4. **Words.** As the review writing ends, the voice reads each useful word and its tile is highlighted until the next one starts.
 
-The reading card stays above the platform's caption band. In 9:16 the bottom 19 % shows a dark felt mat, where white platform captions stay readable.
+The paper fills the frame. The kanji is centred in its practice box with room above and below; the reading card lies under it with a margin all round and runs down to near the bottom edge, so there is no empty band. The card is as tall as its own text needs, so a kanji with short readings and words gets a bigger character. The brush is drawn above the card.
+
+**Platform overlays.** By default the card uses the bottom of the frame, where YouTube, TikTok and Reels lay the title and channel name over the video, and where uploaded captions (`captions.srt`) appear. To keep the card above them, set `card.safeInset` to `{ "bottom": 0.19 }`; the kanji is then smaller. Opposite bands together may cover at most 0.45 of the frame.
+
+The card's height is estimated from its text with the default labels and fonts. Custom `card.labels` or `card.theme` fonts that are much wider make the card's text shrink a little to fit.
 
 ### The narration is a script (data)
 
@@ -46,6 +50,7 @@ The voice-over is an **anchored-narration script** (`scripts/video-production/an
 - `brushStyle`: Kumiki brush, ink, paper and hand settings
 - `typeStep`: typing pace
 - `strokeNumbers`
+- `safeInset`: bands of the frame the card keeps clear, over the destination's (`left`, `right`, `top`, `bottom`, each 0 to 0.4). The default is the destination's side and top bands with no bottom band.
 
 All are passed to Kumiki's `shodo-kanji-card` and checked before any network request.
 

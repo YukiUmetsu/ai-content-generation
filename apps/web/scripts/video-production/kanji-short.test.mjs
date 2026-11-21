@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -40,6 +40,13 @@ test("useful words never include the bare kanji, and the kanji is named by its o
   assert.deepEqual(gaku.wordSpeech, ["がっこう", "きょう"]);                         // override, then irregular reading from kana
   assert.deepEqual(gaku.readings.kun, ["まなぶ"]);                                     // okurigana dot dropped
   assert.throws(() => kanjiShortContent({ ...MIZU, words: [MIZU.words[0]] }), /no useful word other than itself/u);
+});
+
+test("the card fills down to its margin unless a config keeps the platform's caption band clear", () => {
+  const shorts = { left: .08, right: .12, top: .09, bottom: .19 };
+  assert.deepEqual(kanjiCardInset(shorts), { left: .08, right: .12, top: .09, bottom: 0 });
+  assert.deepEqual(kanjiCardInset(shorts, { bottom: .19 }), shorts);
+  assert.deepEqual(kanjiCardInset(shorts, { right: 0 }), { left: .08, right: 0, top: .09, bottom: 0 });
 });
 
 test("parses card readings as romaji–kana pairs, so the name and its romaji come from one reading", () => {

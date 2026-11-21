@@ -4,20 +4,20 @@
 import { useRef, useState } from "react";
 import { VideoExportStage } from "@/components/video/video-export-stage";
 import { ShodoKanjiCard } from "@/components/video/shodo/shodo-kanji-card";
-import { sameStrokes } from "./kanji-plan";
+import { sameStrokes, shodoCanvasesReady } from "./kanji-plan";
 import type { KanjiStudyVisualPlan } from "./kanji-plan";
 
 const nextPaint = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
 /**
- * A frame is ready when the card shows it, the brush canvas is ready and no card text is cut.
+ * A frame is ready when the card shows it, its canvases are ready and no card text is cut.
  * It fails when the card plans other strokes than the ones the narration was timed to.
  */
 async function prepareKanjiFrame(root: HTMLElement | null, target: number, plan: KanjiStudyVisualPlan) {
   const start = performance.now();
   for (;;) {
     const card = root?.querySelector<HTMLElement>("[data-km-kanji-card]");
-    if (card?.dataset.kmKanjiFrame === String(target) && root?.querySelector("[data-km-shodo-ready=true]")) break;
+    if (card?.dataset.kmKanjiFrame === String(target) && shodoCanvasesReady(root)) break;
     if (performance.now() - start > 15000) throw new Error(`The kanji card did not reach frame ${target}.`);
     await nextPaint();
   }

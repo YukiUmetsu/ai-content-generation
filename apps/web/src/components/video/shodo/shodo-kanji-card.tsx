@@ -3,6 +3,8 @@
  * vermilion stroke-order numbers, then holds a reading card with the useful words. An optional
  * intro types the character first. Frame-addressed: the host gives the glyph and the frame, so a
  * video export can seek in any order. Planning lives in `shodo-kanji-card-plan.ts`.
+ * The brush is drawn on its own canvas above the reading card: it is held over everything on
+ * the desk, and comes in from outside the frame and leaves it after each pass.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes, RefObject } from "react";
@@ -12,7 +14,7 @@ import { ShodoCanvas } from "./shodo-react";
 import { shodoRgb } from "./shodo-style";
 import type { DeepPartial, ShodoStyle } from "./shodo-style";
 import {
-  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardLabelText, kanjiCardLabels, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections,
+  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardColumns, kanjiCardHasCard, kanjiCardTileRoom, kanjiCardWordSize, kanjiCardLabelText, kanjiCardLabels, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections,
   kanjiCardTheme, kanjiCardType, kanjiCardTypedAt, kanjiCardWriting,
   spreadWordHighlights, wordHighlightAt,
 } from "./shodo-kanji-card-plan";
@@ -20,8 +22,6 @@ import type {
   KanjiCardContent, KanjiCardDensity, KanjiCardInk, KanjiCardIntro, KanjiCardLabels, KanjiCardLayout, KanjiCardPhase, KanjiCardSafeInset,
   KanjiCardSection, KanjiCardTheme, KanjiCardTiming, KanjiWordHighlight, KanjiWordHighlightState,
 } from "./shodo-kanji-card-plan";
-
-const KANJI_CARD_COLUMNS = (n: number) => n <= 3 ? n : n === 4 ? 2 : 3;
 
 /** Mix two #RRGGBB colours, t = 0..1. */
 function mixHex(a: string, b: string, t: number): string {
@@ -87,6 +87,11 @@ export interface ShodoKanjiInfoCardProps extends KanjiCardContent, Omit<HTMLAttr
   theme?: Partial<KanjiCardTheme>;
   /** The card's fixed words (`DEFAULT_KANJI_CARD_LABELS` for any not given). */
   labels?: Partial<KanjiCardLabels>;
+  /**
+   * Width of the card's text, design px. In 9:16 it sizes the words to their tiles: a word wider
+   * than its tile makes every tile's word smaller (`kanjiCardWordSize`). Default: unknown, words at full size.
+   */
+  textWidth?: number;
 }
 
 /**
@@ -95,7 +100,7 @@ export interface ShodoKanjiInfoCardProps extends KanjiCardContent, Omit<HTMLAttr
  */
 export function ShodoKanjiInfoCard({
   char, meanings, onyomi, kunyomi, jlpt, words, layout = "landscape", density = "regular", sections, reveal = 1, highlight, reducedMotion = false,
-  theme, labels, style, vermilionStrokes: _vermilion, ...rest
+  theme, labels, textWidth, style, vermilionStrokes: _vermilion, ...rest
 }: ShodoKanjiInfoCardProps) {
   void _vermilion;
   const th = kanjiCardTheme(theme);
@@ -104,14 +109,17 @@ export function ShodoKanjiInfoCard({
   const wide = layout === "portrait";
   const compact = wide && density === "compact";
   const t = kanjiCardType(layout, density), W = wide ? 720 : 1280;
+  // Compact: each reading on one line, the term before its value.
+  const readingRow: CSSProperties | undefined = compact ? { display: "flex", alignItems: "baseline", gap: ".45em" } : undefined;
   const cq = (px: number) => `${(px / W * 100).toFixed(3)}cqw`;
   const fs = (px: number) => `calc(${cq(px)} * var(--km-fit, 1))`;
   const show = kanjiCardSections(sections);
   const level = show.jlpt && jlpt && KANJI_CARD_JLPT_LEVELS.includes(jlpt) ? jlpt : null;
   const readings = show.readings && (onyomi || kunyomi);
   const list = show.words && words?.length ? words : null;
+  const wordSize = wide && list && textWidth ? kanjiCardWordSize(list, kanjiCardTileRoom(textWidth, list.length, t), t) : t.word;
   // The fit is measured again when anything that changes the text's size changes, labels and fonts included.
-  useFitHeight(ref, [char, meanings, onyomi, kunyomi, level, layout, density, JSON.stringify(list), JSON.stringify(show), JSON.stringify(words_), JSON.stringify(th)].join("|"));
+  useFitHeight(ref, [char, meanings, onyomi, kunyomi, level, layout, density, wordSize, JSON.stringify(list), JSON.stringify(show), JSON.stringify(words_), JSON.stringify(th)].join("|"));
   const term: CSSProperties = { font: `700 ${fs(t.reading * .84)}/1.3 ${th.display}`, letterSpacing: ".06em", color: th.muted };
   // Word highlight: a light vermilion tint and ring, a small lift and scale (transforms only,
   // so nothing around it moves), and the other words dimmed a little. Fade only with reduced motion.
@@ -145,8 +153,8 @@ export function ShodoKanjiInfoCard({
       </div> : null}
       {readings || level && !compact ? <div style={{ opacity: reveal, display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: `${fs(t.gap * .5)} ${fs(t.gap)}` }}>
         {readings && wide ? <dl style={{ margin: 0, display: "flex", flexWrap: "wrap", columnGap: fs(t.gap * 1.6), rowGap: fs(t.gap * .4), font: `600 ${fs(t.reading)}/1.3 ${th.body}` }}>
-          {onyomi ? <div><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></div> : null}
-          {kunyomi ? <div><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></div> : null}
+          {onyomi ? <div style={readingRow}><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></div> : null}
+          {kunyomi ? <div style={readingRow}><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></div> : null}
         </dl> : readings ? <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto auto", justifyContent: "start", alignItems: "baseline", columnGap: ".7em", rowGap: ".2em", font: `600 ${fs(t.reading)}/1.3 ${th.body}` }}>
           {onyomi ? <><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></> : null}
           {kunyomi ? <><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></> : null}
@@ -154,20 +162,20 @@ export function ShodoKanjiInfoCard({
         {compact ? null : badge}
       </div> : null}
       {list ? <>
-        <div style={{ opacity: reveal, font: `700 ${fs(t.title)}/1 ${th.display}`, marginTop: fs(t.gap * .3), letterSpacing: wide ? ".04em" : undefined }}>{words_.words}</div>
+        <div style={{ opacity: reveal, font: `700 ${fs(t.title)}/1 ${th.display}`, marginTop: fs(t.section), letterSpacing: wide ? ".04em" : undefined }}>{words_.words}</div>
         {wide ? <ul role="list" style={{
           margin: 0, padding: 0, listStyle: "none", display: "grid", gap: fs(t.gap * (compact ? .7 : .55)),
-          gridTemplateColumns: `repeat(${KANJI_CARD_COLUMNS(list.length)}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${kanjiCardColumns(list.length)}, minmax(0, 1fr))`,
         }}>
           {list.map((w, i) => {
             const s = i === active ? S : 0;
             return <li key={i} aria-current={s >= .5 ? "true" : undefined} data-km-word-highlight={s > 0 ? s.toFixed(3) : undefined} style={{
               display: "grid", justifyItems: "center", alignContent: "start", textAlign: "center", minWidth: 0,
-              background: mixHex(th.tile, th.tileHighlight, s), borderRadius: fs(14), padding: `${fs(t.gap * .7)} ${fs(t.gap * .45)} ${fs(t.gap * .8)}`,
+              background: mixHex(th.tile, th.tileHighlight, s), borderRadius: fs(14), padding: `${fs(t.tilePad[0])} ${fs(t.gap * .45)} ${fs(t.tilePad[1])}`,
               opacity: wordOpacity(i), position: "relative", zIndex: s > 0 ? 1 : 0, boxShadow: ring(s, 2.5), transformOrigin: "50% 60%",
               transform: s > 0 && !reducedMotion ? `translateY(${cq(-6 * s)}) scale(${(1 + .045 * s).toFixed(4)})` : undefined,
             }}>
-              <ruby lang="ja" style={{ font: `600 ${fs(t.word)}/1.08 ${th.serif}` }}>{w.word}<rt style={{ font: `600 ${fs(t.ruby)}/1.2 ${th.body}`, letterSpacing: ".04em", color: th.muted }}>{w.ruby}</rt></ruby>
+              <ruby lang="ja" style={{ font: `600 ${fs(wordSize)}/1.08 ${th.serif}` }}>{w.word}<rt style={{ font: `600 ${fs(t.ruby)}/1.2 ${th.body}`, letterSpacing: ".04em", color: th.muted }}>{w.ruby}</rt></ruby>
               <span style={{ marginTop: fs(t.gap * .35), font: `600 ${fs(t.gloss)}/1.25 ${th.body}`, color: mixHex(th.muted, th.accent, s), overflowWrap: "anywhere" }}>{w.romaji}</span>
               <span style={{ font: `500 ${fs(t.gloss)}/1.25 ${th.body}`, overflowWrap: "anywhere" }}>{w.meaning}</span>
             </li>;
@@ -237,9 +245,9 @@ export interface ShodoKanjiCardProps extends KanjiCardContent, Omit<HTMLAttribut
    */
   reducedMotion?: boolean;
   /**
-   * Keep the label, the ink of the character and the text of the card out of these bands, for
-   * example under the buttons and the caption of a phone short. The paper and the card panel
-   * still fill the frame. Default: none.
+   * Keep the label, the ink of the character, the stroke numbers and the text of the card out of
+   * these bands, for example under the buttons and the caption of a phone short. The paper still
+   * fills the frame; in 9:16 the card ends above the bottom band. Default: none.
    */
   safeInset?: Partial<KanjiCardSafeInset>;
   /**
@@ -283,12 +291,14 @@ export function ShodoKanjiCard({
   const timingKey = [timing?.intro, timing?.write, timing?.review, timing?.info].map(String).join(",");
   // Inputs are compared by value, so a host that passes new objects with the same values keeps the plan.
   const brushKey = JSON.stringify(brushStyle ?? {});
+  // The compact card's height follows its text, so the text is part of the plan.
+  const textKey = JSON.stringify([meanings, onyomi, kunyomi, jlpt, words, show]);
   const writing = useMemo(() => kanjiCardWriting(glyph, {
     layout, density, safeInset: bands, content, sections: show, timing, ink, speed, brushStyle,
     vermilionStrokes: vermilionKey ? vermilionKey.split(",").map(Number) : [],
-  }), [glyph, layout, density, insetKey, withCard, show.label, timingKey, ink, speed, vermilionKey, brushKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [glyph, layout, density, insetKey, withCard, show.label, timingKey, ink, speed, vermilionKey, brushKey, textKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const { geometry: g, plan, timeline, strokes, inkBox } = writing;
-  const sheet = useMemo(() => kenteiSheet(g.paper.width, g.paper.height, 1, 1), [g]);
+  const sheet = useMemo(() => kenteiSheet(g.paper.width, g.paper.height, 1, 1, g.cell ?? undefined), [g]);
   const last = timeline.frames - 1;
   const fps = KANJI_CARD_FPS;
   // The canvas follows the exact position, so a live preview can move at the screen's refresh rate.
@@ -327,9 +337,9 @@ export function ShodoKanjiCard({
     data-km-timeline={[timeline.review[0], timeline.info[0], timeline.frames].join(" ")} data-km-write-start={timeline.write[0]} style={{
       position: "relative", width: "100%", overflow: "hidden", containerType: "inline-size", ...style,
     }}>
-    <ShodoCanvas plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
-      underlay={g.band ? "felt" : "none"} orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={kanjiCardLabelText(cardLabels.writingName, { char })} guideColor={guide === "numbers" ? th.accent : th.guide}
-      guideSize={guide === "numbers" ? Math.max(12, plan.brush.diameter * .42, g.type.number) : undefined} pixelRatio={pixelRatio} />
+    <ShodoCanvas layer="page" plan={plan} frame={canvasFrame} fps={canvasFps} stamp={position} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
+      underlay="none" orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={kanjiCardLabelText(cardLabels.writingName, { char })} guideColor={guide === "numbers" ? th.accent : th.guide}
+      guideSize={guide === "numbers" ? Math.max(12, plan.brush.diameter * .42, g.type.number) : undefined} guideBounds={g.guides} pixelRatio={pixelRatio} />
     {typed.opacity > 0 ? <div data-km-kanji-typed={typed.composing ? "composing" : typed.text ? "converted" : "caret"} aria-hidden="true" style={{
       position: "absolute", left: pct((ix0 + ix1) / 2, g.width), top: pct((iy0 + iy1) / 2, g.height), transform: "translate(-50%, -50%)",
       display: "flex", alignItems: "center", whiteSpace: "nowrap", opacity: typed.opacity, color: th.ink,
@@ -349,10 +359,16 @@ export function ShodoKanjiCard({
       // The character keeps lang="ja", so it is drawn with Japanese glyph shapes in any heading.
       ? <span key={i} lang="ja">{char}</span> : kanjiCardLabelText(part, { heading, char }))}</div> : null}
     {g.card ? <ShodoKanjiInfoCard char={char} layout={layout} density={density} sections={show} reveal={reveal} theme={theme} labels={labels}
+      textWidth={g.card.width - g.cardPad[1] - g.cardPad[3]}
       highlight={highlight} reducedMotion={reduce}
       meanings={meanings} onyomi={onyomi} kunyomi={kunyomi} jlpt={jlpt} words={words} style={{
         position: "absolute", left: pct(g.card.x, g.width), top: pct(g.card.y, g.height), width: pct(g.card.width, g.width), height: pct(g.card.height, g.height),
-        padding: g.cardPad.map(cq).join(" "), boxShadow: portrait ? "0 -6px 18px rgba(0,0,0,.12)" : "-6px 0 18px rgba(0,0,0,.12)",
+        // With no gap above the card, the practice box ends on its top edge: square top corners hide the box's line there.
+        padding: g.cardPad.map(cq).join(" "), borderRadius: !g.cardRadius ? undefined : g.type.cardGap > 0 ? cq(g.cardRadius) : `0 0 ${cq(g.cardRadius)} ${cq(g.cardRadius)}`,
+        // A card lying on the paper casts a soft shadow all round; a panel only along its edge.
+        boxShadow: g.cardRadius ? `0 ${cq(4)} ${cq(18)} rgba(40,30,20,.16), 0 ${cq(1)} ${cq(3)} rgba(40,30,20,.12)` : portrait ? "0 -6px 18px rgba(0,0,0,.12)" : "-6px 0 18px rgba(0,0,0,.12)",
       }} /> : null}
+    <ShodoCanvas layer="brush" plan={plan} frame={canvasFrame} fps={canvasFps} stamp={position} width={g.width} height={g.height} paper={g.paper} pixelRatio={pixelRatio}
+      style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }} />
   </div>;
 }

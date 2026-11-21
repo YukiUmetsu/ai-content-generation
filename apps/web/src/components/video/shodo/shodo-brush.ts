@@ -217,6 +217,43 @@ export function shodoFerruleHeight(pose: ShodoBrushPose, brush: ShodoBrush, D: n
   return tuftGeometry(pose, brush, D).ferrule[2];
 }
 
+/**
+ * How far past a frame edge the tip of a brush held still in the air must be, design px, for the
+ * whole brush and its cast shadow to lie outside the frame. `out` is the unit direction out of
+ * the frame on the paper (for example [1, 0] past the right edge); `lean` is the handle lean
+ * vector in degrees (as `shodoRestLean`); `z` the tip's height above the paper, or a range
+ * [lowest, highest] when the brush may hold anywhere in it; `D` the brush diameter.
+ * - The handle may lean back into the frame, so the clearance grows with the lean toward it.
+ * - The flyaway hairs near the collar stand out up to 0.42 of the tuft's length.
+ * - The top-down camera only moves points away from the frame centre, so it is left out.
+ */
+export function shodoBrushClearance(
+  out: readonly [number, number], lean: readonly [number, number], z: number | readonly [number, number], brush: ShodoBrush, D: number,
+  look: ShodoBrushLook = DEFAULT_BRUSH_LOOK,
+): number {
+  const axis = handleAxis({ leanX: lean[0], leanY: lean[1] } as ShodoBrushPose);
+  const L = lightVector(look);
+  const Lt = D * brush.length, reach = Lt * (1 + brush.handleLength);
+  // Widest part (tuft belly, collar, handle), and the softest shadow edge: three times its largest
+  // blur (a CSS blur radius is one standard deviation, up to 15.6 px in drawShodoBrushShadow).
+  const radius = D * .7, blur = 48;
+  // Along the axis from the tip: [distance, half-width]. Inward reach is linear in the distance, so
+  // the ends of each part bound it; the flyaways stand out of the quarter of the tuft at the collar.
+  const parts: [number, number][] = [[0, radius], [reach, radius], [Lt * .75, radius + Lt * .42], [Lt, radius + Lt * .42]];
+  const heights = typeof z === "number" ? [z] : [z[0], z[1]];
+  let back = 0;
+  for (const h of heights) for (const [s, r] of parts) {
+    const p: V3 = add([0, 0, Math.max(0, h)], mul(axis, s));
+    back = Math.max(back, -(p[0] * out[0] + p[1] * out[1]) + r);
+    // The cast shadow has no flyaways.
+    if (look.shadow > 0 && r === radius) {
+      const shadow: V2 = [p[0] - p[2] * L[0] / L[2], p[1] - p[2] * L[1] / L[2]];
+      back = Math.max(back, -(shadow[0] * out[0] + shadow[1] * out[1]) + radius + blur);
+    }
+  }
+  return back;
+}
+
 /** Draw the cast shadow of the brush on the paper (call before drawing the brush). */
 export function drawShodoBrushShadow(
   ctx: CanvasRenderingContext2D, cam: ShodoCamera, pose: ShodoBrushPose, brush: ShodoBrush, D: number, look: ShodoBrushLook,
