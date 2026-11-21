@@ -67,6 +67,12 @@ export interface ShodoCanvasProps extends Omit<CanvasHTMLAttributes<HTMLCanvasEl
   layer?: "all" | "page" | "brush";
   /** Where the stroke-order guide may place numbers, design px. Default: the paper. */
   guideBounds?: ShodoRect;
+  /**
+   * What the host asked to see, for example its own video frame when `frame` is a frame within a
+   * pass that repeats. The canvas reports it in `data-km-shodo-frame` and, once drawn, in
+   * `data-km-shodo-drawn`, which an export waits for. Default: `frame`.
+   */
+  stamp?: string | number;
 }
 
 function feltTile(seed: number): HTMLCanvasElement | null {
@@ -92,8 +98,9 @@ function feltTile(seed: number): HTMLCanvasElement | null {
 export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(function ShodoCanvas({
   plan, frame, fps = 30, width, height, paper, sheet = null, underlay = "felt", paperweight = "wood", motionBlur = true,
   showBrush = true, brushLook, cameraHeight, inkScale = 2, pixelRatio, orderGuide = "none", guideStrokes, guideColor, guideSize,
-  reducedMotion = false, label, layer = "all", guideBounds, style, ...props
+  reducedMotion = false, label, layer = "all", guideBounds, stamp, style, ...props
 }, ref) {
+  const mark = String(stamp ?? frame);
   // The brush layer has no paper or ink, so it builds neither.
   const page = layer !== "brush";
   const guideInk = guideColor ?? (orderGuide === "numbers" ? "#B3301A" : "#D8432A");
@@ -179,7 +186,10 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
 
   useEffect(() => {
     const canvas = canvasRef.current, ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx || page && (!paperCanvas || !inkCanvas || !surface)) return;
+    if (!canvas) return;
+    // Without a 2D context nothing can be drawn: say so, so an export fails at once with the reason.
+    if (!ctx) { canvas.dataset.kmShodoStatus = "error"; return; }
+    if (page && (!paperCanvas || !inkCanvas || !surface)) return;
     const seconds = reducedMotion ? plan.duration : Math.max(0, frame) / fps;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -239,15 +249,15 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
         } else drawAt(ctx, pose);
       } else drawAt(ctx, pose);
     }
-    // An export waits for this mark: the canvas has drawn the frame it was given.
-    canvas.dataset.kmShodoDrawn = String(frame);
+    // An export waits for this mark: the canvas has drawn what it was asked for.
+    canvas.dataset.kmShodoDrawn = mark;
   }, [frame, fps, plan, surface, paperCanvas, inkCanvas, background, weight, width, height, paper, dpr, showBrush, look, textures, blurLayers, motionBlur,
-    cameraHeight, orderGuide, guideStrokes, guideInk, numbers, reducedMotion, page, layer]);
+    cameraHeight, orderGuide, guideStrokes, guideInk, numbers, reducedMotion, page, layer, mark]);
 
   // The brush alone is decoration: the page canvas carries the description.
   const a11y = page ? { role: "img", "aria-label": label ?? "Brush calligraphy being written" } : { "aria-hidden": true };
   return <canvas {...props} ref={canvasRef} {...a11y}
-    data-km-shodo="" data-km-shodo-layer={layer} data-km-shodo-frame={frame} data-km-shodo-ready={textures || !page ? "true" : "false"}
+    data-km-shodo="" data-km-shodo-layer={layer} data-km-shodo-frame={mark} data-km-shodo-ready={textures || !page ? "true" : "false"}
     width={Math.round(width * dpr)} height={Math.round(height * dpr)}
     style={{ width: "100%", height: "auto", aspectRatio: `${width} / ${height}`, display: "block", ...style }} />;
 });

@@ -11,7 +11,9 @@
 
 The paper fills the frame. The kanji is centred in its practice box with room above and below; the reading card lies under it with a margin all round and runs down to near the bottom edge, so there is no empty band. The card is as tall as its own text needs, so a kanji with short readings and words gets a bigger character. The brush is drawn above the card.
 
-**Platform overlays.** By default the card uses the bottom of the frame, where YouTube, TikTok and Reels lay the title and channel name over the video. To keep the card above them, set `card.safeInset` to `{ "bottom": 0.19 }`; the kanji is then smaller.
+**Platform overlays.** By default the card uses the bottom of the frame, where YouTube, TikTok and Reels lay the title and channel name over the video, and where uploaded captions (`captions.srt`) appear. To keep the card above them, set `card.safeInset` to `{ "bottom": 0.19 }`; the kanji is then smaller. Opposite bands together may cover at most 0.45 of the frame.
+
+The card's height is estimated from its text with the default labels and fonts. Custom `card.labels` or `card.theme` fonts that are much wider make the card's text shrink a little to fit.
 
 ### The narration is a script (data)
 

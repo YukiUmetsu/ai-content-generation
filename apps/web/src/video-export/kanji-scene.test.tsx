@@ -6,7 +6,8 @@ import { readKanjiStudyPlan, sameStrokes, shodoCanvasesReady } from "./kanji-pla
 import type { KanjiStudyVisualPlan } from "./kanji-plan";
 import { KanjiStudyExport } from "./kanji-scene";
 
-const SHORTS = { left: .08, right: .12, top: .09, bottom: .19 };
+// The short's default: the destination's side and top bands, and no bottom band (the card runs to its margin).
+const SHORTS = { left: .08, right: .12, top: .09, bottom: 0 };
 const TIMING = { intro: 2, write: 3, review: 3, info: 2 };
 const TEXT = { meanings: "THREE", onyomi: "SAN (サン)", kunyomi: "mi (み)", jlpt: "N5" as const, words: [{ word: "三月", ruby: "さんがつ", romaji: "sangatsu", meaning: "March" }] };
 // What the producer timed the narration to: Kumiki's planning in Node, from the same glyph and card text.

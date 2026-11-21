@@ -448,6 +448,8 @@ const NO_INSET: KanjiCardSafeInset = { left: 0, right: 0, top: 0, bottom: 0 };
 
 /** Margin between the 9:16 card or practice box and the frame edges, design px. */
 export const KANJI_CARD_MARGIN = 24;
+/** Smallest share of the height between the label and the bottom that the compact 9:16 practice box keeps. */
+export const KANJI_CARD_MIN_BOX = .45;
 
 /** Largest share of the frame that two opposite bands may cover together, so the writing panel keeps room. */
 export const KANJI_CARD_MAX_BANDS = .45;
@@ -472,6 +474,9 @@ export function kanjiCardSafeInset(inset: Partial<KanjiCardSafeInset> | undefine
  *   box spans the paper between the label and the card (`type.cardGap` above the card), and the
  *   character is centred in it, `type.inkPad` from its top and bottom, clear of the wider side band.
  * - 16:9: the paper is the left panel and the card the right one.
+ * Pass `text` (the card's content and sections) for the compact card, whose height follows its
+ * text, as `kanjiCardWriting` does; without it the compact card reserves `type.text`. A host that
+ * wants the layout the card draws reads `kanjiCardWriting(...).geometry`.
  */
 export function kanjiCardGeometry(
   layout: KanjiCardLayout, withCard: boolean, bands: Partial<KanjiCardSafeInset> = NO_INSET, withLabel = true, density: KanjiCardDensity = "regular",
@@ -491,10 +496,15 @@ export function kanjiCardGeometry(
     const cardPad = [padY, Math.max(padX, R - M), padY, Math.max(padX, L - M)] as const;
     // Nothing is drawn below the bottom band or the margin: it is plain paper.
     const floor = height - Math.max(B, M);
-    // The compact card reserves the height its own text needs (see kanjiCardTextHeight); the others a fixed height.
-    const textHeight = density === "compact" && text ? Math.min(type.text * 1.6, kanjiCardTextHeight(text.content, text.sections, width - 2 * M - cardPad[1] - cardPad[3], type)) : type.text;
-    const cardTop = floor - cardPad[0] - textHeight - cardPad[2];
     const top = withLabel ? label.y + type.label * 1.5 : Math.max(T, M);
+    // The compact card reserves the height its own text needs (see kanjiCardTextHeight), but the
+    // practice box keeps at least KANJI_CARD_MIN_BOX of the height between the label and the
+    // floor: longer text shrinks to fit the card instead. The other densities reserve a fixed height.
+    const room = floor - top - cardPad[0] - cardPad[2] - type.cardGap - (floor - top) * KANJI_CARD_MIN_BOX;
+    const textHeight = density === "compact" && text
+      ? Math.max(0, Math.min(type.text * 1.6, room, kanjiCardTextHeight(text.content, text.sections, width - 2 * M - cardPad[1] - cardPad[3], type)))
+      : type.text;
+    const cardTop = floor - cardPad[0] - textHeight - cardPad[2];
     const bottom = withCard ? cardTop - type.cardGap : floor;
     const side = Math.max(L, R, M);
     // The air above and below the character gives way first when the box is short.
@@ -536,21 +546,30 @@ export function kanjiInkBox(plan: Pick<ShodoPlan, "strokes">): [number, number, 
 
 /**
  * Where the brush rests before and after a pass and where it dips for an ink change, design px:
- * just outside the frame, on the side away from the reading card (right of a 9:16 frame, below a
- * 16:9 one). So the brush comes in from outside, leaves the frame after the last stroke and never
- * crosses the card for ink. Far enough out that no part of the brush or its shadow shows, at the
- * rest height or down at the inkstone (see `shodoBrushClearance`).
+ * just outside the frame, past an edge away from the reading card (9:16: right, left or top; 16:9:
+ * bottom, left or top), so the brush comes in from outside, leaves the frame after the last stroke
+ * and never crosses the card for ink. Of those edges, the one that the handle leans away from
+ * needs the brush least far out; ties go to the writer's side (right in 9:16, bottom in 16:9). Far
+ * enough out that no part of the brush or its shadow shows, at the rest height or down at the
+ * inkstone (see `shodoBrushClearance`).
  */
 export function kanjiCardBrushStations(g: KanjiCardGeometry, style: ShodoStyle, size: number): { rest: [number, number]; inkstone: [number, number] } {
   const D = style.brush.diameter * style.hand.width * size / 1000;
   const lean = shodoRestLean(style), heights = [0, size * SHODO_REST_HEIGHT] as const;
   const w = g.writing;
-  if (g.height > g.width) {
-    const x = g.width + shodoBrushClearance([1, 0], lean, heights, style.brush, D);
-    return { rest: [x, w.y + w.height * .7], inkstone: [x, w.y + w.height * .35] };
-  }
-  const y = g.height + shodoBrushClearance([0, 1], lean, heights, style.brush, D);
-  return { rest: [w.x + w.width * .7, y], inkstone: [w.x + w.width * .35, y] };
+  const edges = (g.height > g.width ? ["right", "left", "top"] : ["bottom", "left", "top"]) as readonly ("right" | "left" | "top" | "bottom")[];
+  const OUT = { right: [1, 0], left: [-1, 0], top: [0, -1], bottom: [0, 1] } as const;
+  const clear = edges.map(edge => ({ edge, by: shodoBrushClearance(OUT[edge], lean, heights, style.brush, D) }));
+  const best = clear.reduce((a, b) => b.by < a.by - 1e-9 ? b : a);
+  const along = (k: number): [number, number] => {
+    switch (best.edge) {
+      case "right": return [g.width + best.by, w.y + w.height * k];
+      case "left": return [-best.by, w.y + w.height * k];
+      case "top": return [w.x + w.width * k, -best.by];
+      default: return [w.x + w.width * k, g.height + best.by];
+    }
+  };
+  return { rest: along(.7), inkstone: along(.35) };
 }
 
 /**

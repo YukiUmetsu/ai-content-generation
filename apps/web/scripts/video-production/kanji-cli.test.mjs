@@ -125,6 +125,8 @@ test("the producer stops before any network or render work when a consent, the k
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true }, deps), /--transmit-text/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true, apiKey: "" }, deps), /FISH_AUDIO_API_KEY/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /music file changed/u);
+    // Opposite bands the card would shrink stop here too, with the numbers.
+    await assert.rejects(produceKanjiShort({ ...base, config: { ...read, card: { safeInset: { top: .3, bottom: .3 } } }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /top and bottom together cover 0\.6 of the frame/u);
     // A destination the export page would refuse stops here too.
     await assert.rejects(produceKanjiShort({ ...base, config: { ...read, destination: "facebook-reels" }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /destination must be one of youtube-shorts/u);
     // An unbuilt export page names the fix instead of a raw file error.

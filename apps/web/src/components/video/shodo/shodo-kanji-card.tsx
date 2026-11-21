@@ -337,7 +337,7 @@ export function ShodoKanjiCard({
     data-km-timeline={[timeline.review[0], timeline.info[0], timeline.frames].join(" ")} data-km-write-start={timeline.write[0]} style={{
       position: "relative", width: "100%", overflow: "hidden", containerType: "inline-size", ...style,
     }}>
-    <ShodoCanvas layer="page" plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
+    <ShodoCanvas layer="page" plan={plan} frame={canvasFrame} fps={canvasFps} stamp={position} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
       underlay="none" orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={kanjiCardLabelText(cardLabels.writingName, { char })} guideColor={guide === "numbers" ? th.accent : th.guide}
       guideSize={guide === "numbers" ? Math.max(12, plan.brush.diameter * .42, g.type.number) : undefined} guideBounds={g.guides} pixelRatio={pixelRatio} />
     {typed.opacity > 0 ? <div data-km-kanji-typed={typed.composing ? "composing" : typed.text ? "converted" : "caret"} aria-hidden="true" style={{
@@ -363,11 +363,12 @@ export function ShodoKanjiCard({
       highlight={highlight} reducedMotion={reduce}
       meanings={meanings} onyomi={onyomi} kunyomi={kunyomi} jlpt={jlpt} words={words} style={{
         position: "absolute", left: pct(g.card.x, g.width), top: pct(g.card.y, g.height), width: pct(g.card.width, g.width), height: pct(g.card.height, g.height),
-        padding: g.cardPad.map(cq).join(" "), borderRadius: g.cardRadius ? cq(g.cardRadius) : undefined,
+        // With no gap above the card, the practice box ends on its top edge: square top corners hide the box's line there.
+        padding: g.cardPad.map(cq).join(" "), borderRadius: !g.cardRadius ? undefined : g.type.cardGap > 0 ? cq(g.cardRadius) : `0 0 ${cq(g.cardRadius)} ${cq(g.cardRadius)}`,
         // A card lying on the paper casts a soft shadow all round; a panel only along its edge.
         boxShadow: g.cardRadius ? `0 ${cq(4)} ${cq(18)} rgba(40,30,20,.16), 0 ${cq(1)} ${cq(3)} rgba(40,30,20,.12)` : portrait ? "0 -6px 18px rgba(0,0,0,.12)" : "-6px 0 18px rgba(0,0,0,.12)",
       }} /> : null}
-    <ShodoCanvas layer="brush" plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} pixelRatio={pixelRatio}
+    <ShodoCanvas layer="brush" plan={plan} frame={canvasFrame} fps={canvasFps} stamp={position} width={g.width} height={g.height} paper={g.paper} pixelRatio={pixelRatio}
       style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }} />
   </div>;
 }

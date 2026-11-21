@@ -87,7 +87,7 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
     [...root.querySelectorAll<HTMLElement>("[data-km-shader-fx-frame]")].some(el=>el.dataset.kmShaderFxStatus!=="error"&&
       el.dataset.kmShaderFxDrawn!==el.dataset.kmShaderFxFrame)||
     // A calligraphy canvas has drawn its frame once its drawn mark matches it.
-    [...root.querySelectorAll<HTMLElement>("[data-km-shodo]")].some(el=>el.dataset.kmShodoDrawn!==el.dataset.kmShodoFrame)||
+    [...root.querySelectorAll<HTMLElement>("[data-km-shodo]")].some(el=>el.dataset.kmShodoStatus!=="error"&&el.dataset.kmShodoDrawn!==el.dataset.kmShodoFrame)||
     // A FiberStage has drawn this frame only once its drawn mark matches the frame it was asked for.
     [...root.querySelectorAll<HTMLElement>("[data-km-fiber-frame]")].some(el=>el.dataset.kmFiberStatus!=="error"&&
       el.dataset.kmFiberDrawn!==el.dataset.kmFiberFrame)||
@@ -100,6 +100,7 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
   const brokenFx=root.querySelector<HTMLElement>("[data-km-shader-fx-status=error]");
   if(brokenFx)throw new Error("Shader effect \""+brokenFx.dataset.kmShaderFxId+"\" failed at frame "+frame+".");
   if(root.querySelector("[data-km-fiber-status=error]"))throw new Error("A 3D scene failed at frame "+frame+".");
+  if(root.querySelector("[data-km-shodo-status=error]"))throw new Error("A calligraphy canvas has no 2D context at frame "+frame+".");
   if(root.querySelector("[data-km-explainer-fallback], [data-km-camera-viewport-3d] [role=alert], [data-km-hero-viewer] [role=alert]"))
     throw new Error("Video frame has layout or 3D rendering errors.");
   const stage=root.querySelector<HTMLElement>("[data-km-explainer-stage]");

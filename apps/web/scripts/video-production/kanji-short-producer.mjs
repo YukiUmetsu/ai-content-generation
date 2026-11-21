@@ -127,6 +127,10 @@ export async function produceKanjiShort(request, deps = {}) {
   const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
   const preset = presets.find(p => p.id === config.destination);
   if (!preset || !planner.KANJI_SHORT_PRESETS.includes(preset.id)) fail(`the destination must be one of ${planner.KANJI_SHORT_PRESETS.join(", ")}`);
+  // The card would shrink a pair of opposite bands over 0.45 of the frame without a word; say so instead.
+  const safeInset = kanjiCardInset(preset.safeInset, card.safeInset);
+  for (const [a, b] of [["top", "bottom"], ["left", "right"]]) if (safeInset[a] + safeInset[b] > .45 + 1e-9)
+    fail(`card.safeInset: ${a} and ${b} together cover ${+(safeInset[a] + safeInset[b]).toFixed(3)} of the frame; the card allows at most 0.45`);
   // Every theme problem, unknown keys included (the card itself ignores keys it does not have, so a typo would go unseen).
   const themeIssues = card.theme === undefined ? [] : planner.kanjiCardThemeIssues(card.theme);
   if (themeIssues.length) fail(`card.theme: ${themeIssues.join("; ")}`);
@@ -165,7 +169,6 @@ export async function produceKanjiShort(request, deps = {}) {
     const kanjivg = await (deps.kanjiVgSvg ?? kanjiVgSvg)(char, { planner, cacheDir, allowNetwork: request.allowNetwork, signal: request.signal });
     const glyph = await planner.glyphFromKanjiVg(char, kanjivg.svg);
     const cardText = { meanings: content.meanings, onyomi: content.onyomi, kunyomi: content.kunyomi, jlpt: content.jlpt, words: content.words };
-    const safeInset = kanjiCardInset(preset.safeInset, card.safeInset);
     const cardOptions = { layout: "portrait", density: card.density ?? "compact", safeInset, content: cardText, sections: {},
       ...(card.brushStyle ? { brushStyle: card.brushStyle } : {}) };
     const lines = expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration?.labels, strokeCount: glyph.strokes.length }));
