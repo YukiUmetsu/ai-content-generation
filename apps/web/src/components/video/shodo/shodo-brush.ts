@@ -234,8 +234,9 @@ export function shodoBrushClearance(
   const axis = handleAxis({ leanX: lean[0], leanY: lean[1] } as ShodoBrushPose);
   const L = lightVector(look);
   const Lt = D * brush.length, reach = Lt * (1 + brush.handleLength);
-  // Widest part (tuft belly, collar, handle), and the softest shadow edge: its blur and half its width.
-  const radius = D * .7, blur = 16;
+  // Widest part (tuft belly, collar, handle), and the softest shadow edge: three times its largest
+  // blur (a CSS blur radius is one standard deviation, up to 15.6 px in drawShodoBrushShadow).
+  const radius = D * .7, blur = 48;
   // Along the axis from the tip: [distance, half-width]. Inward reach is linear in the distance, so
   // the ends of each part bound it; the flyaways stand out of the quarter of the tuft at the collar.
   const parts: [number, number][] = [[0, radius], [reach, radius], [Lt * .75, radius + Lt * .42], [Lt, radius + Lt * .42]];
