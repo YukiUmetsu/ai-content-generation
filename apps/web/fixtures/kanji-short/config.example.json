@@ -30,8 +30,8 @@
     "speech": {}
   },
   "timing": {
-    "write": 6.8,
-    "review": 6.8,
+    "write": 6.6,
+    "review": 6.6,
     "introTail": 0.45,
     "tail": 1.4
   },

@@ -301,7 +301,7 @@ export function parseWordHighlights(text: string): KanjiWordHighlight[] {
   return out;
 }
 
-/** Text sizes of the card, design px. */
+/** Text sizes and spacing of the card, design px. */
 export interface KanjiCardType {
   label: number; pad: readonly [number, number]; gap: number; head: number; headKanji: number;
   reading: number; badge: number; title: number; word: number; ruby: number; gloss: number;
@@ -309,16 +309,105 @@ export interface KanjiCardType {
   number: number;
   /** Height reserved for the text of the 9:16 card, design px (padding not included). */
   text: number;
+  /** Space above the useful words' title. */
+  section: number;
+  /** Space above and below the text inside a 9:16 word tile. */
+  tilePad: readonly [number, number];
+  /** 9:16: space between the practice box and the writing in it, above and below. */
+  inkPad: number;
+  /** 9:16: space between the practice box and the reading card. */
+  cardGap: number;
 }
 
 // Text sizes in design px. Portrait sizes keep body text at 13 px or more on a 390 px wide phone
 // (24 design px of the 720 px wide frame); stroke numbers of at least 28 design px are 15 px tall.
 const KANJI_CARD_TYPES: Record<"landscape" | "portrait" | "portrait-compact", KanjiCardType> = {
-  landscape: { label: 33, pad: [40, 34], gap: 22, head: 31, headKanji: 38, reading: 19, badge: 16, title: 24, word: 46, ruby: 16, gloss: 20, number: 0, text: 640 },
-  portrait: { label: 42, pad: [34, 36], gap: 26, head: 38, headKanji: 48, reading: 26, badge: 23, title: 26, word: 58, ruby: 22, gloss: 25, number: 28, text: 462 },
-  // Compact: the readings sit on one line each, with tighter gaps, so the character gets the room.
-  "portrait-compact": { label: 34, pad: [20, 36], gap: 12, head: 32, headKanji: 40, reading: 24, badge: 20, title: 22, word: 48, ruby: 20, gloss: 24, number: 28, text: 300 },
+  landscape: { label: 33, pad: [40, 34], gap: 22, head: 31, headKanji: 38, reading: 19, badge: 16, title: 24, word: 46, ruby: 16, gloss: 20, number: 0, text: 640,
+    section: 6.6, tilePad: [15.4, 17.6], inkPad: 0, cardGap: 0 },
+  portrait: { label: 42, pad: [34, 36], gap: 26, head: 38, headKanji: 48, reading: 26, badge: 23, title: 26, word: 58, ruby: 22, gloss: 25, number: 28, text: 462,
+    section: 7.8, tilePad: [18.2, 20.8], inkPad: 0, cardGap: 0 },
+  // Compact (a phone short): the readings sit on one line each, so the useful words get large tiles
+  // with room around them, and the character gets air above and below in its box.
+  "portrait-compact": { label: 34, pad: [20, 36], gap: 12, head: 32, headKanji: 40, reading: 24, badge: 20, title: 26, word: 58, ruby: 22, gloss: 24, number: 28, text: 360,
+    section: 18, tilePad: [18, 20], inkPad: 36, cardGap: 28 },
 };
+
+/** Columns of the 9:16 word tiles for `n` words. */
+export const kanjiCardColumns = (n: number) => n <= 3 ? n : n === 4 ? 2 : 3;
+
+const CJK = /[\u2E80-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/u;
+type Face = "body" | "display" | "serif";
+// Advance widths in em of the default fonts, measured in Chrome on macOS (system-ui semibold,
+// Oswald bold, Hiragino Mincho): CJK, capitals, digits, lower case, space, punctuation.
+const FACE_EM: Record<Face, readonly [number, number, number, number, number, number]> = {
+  body: [.95, .65, .6, .5, .2, .29], display: [.95, .564, .5, .45, .23, .21], serif: [1, .65, .6, .5, .25, .3],
+};
+/** Rough width of a line of text in em, in one of the card's faces. */
+function textEm(text: string, face: Face): number {
+  const [cjk, caps, digit, lower, space, punct] = FACE_EM[face];
+  let em = 0;
+  for (const ch of text) em += CJK.test(ch) ? cjk : ch === " " ? space : /\p{P}|\p{S}/u.test(ch) ? punct : /\p{N}/u.test(ch) ? digit : /\p{Lu}/u.test(ch) ? caps : lower;
+  return em;
+}
+// A line that only just overflows by this estimate usually fits: the card's fit shrinks it a little if not.
+const linesOf = (width: number, room: number) => room > 0 ? Math.max(1, Math.ceil(width / room - .06)) : 1;
+
+/** Width inside one 9:16 word tile, design px, for `count` words in a text column `width` design px wide. */
+export function kanjiCardTileRoom(width: number, count: number, t: KanjiCardType): number {
+  const cols = kanjiCardColumns(Math.max(1, count));
+  return (width - (cols - 1) * t.gap * .7) / cols - 2 * t.gap * .45;
+}
+
+/**
+ * Text size of the words in the 9:16 word tiles, design px: the type's size, or smaller when the
+ * widest word would not fit in a tile `room` design px wide. One size for every tile.
+ */
+export function kanjiCardWordSize(words: readonly Pick<KanjiCardWord, "word">[], room: number, t: KanjiCardType): number {
+  const widest = Math.max(0, ...words.map(w => textEm(w.word, "serif")));
+  return widest > 0 && room > 0 ? Math.min(t.word, room / widest) : t.word;
+}
+
+/**
+ * Height that the compact 9:16 card's text needs, design px, at full size, for a text column
+ * `width` design px wide: estimated from the text (wrapped meanings, readings on one line or
+ * two, word tiles with wrapped romaji or meanings) with the default labels and fonts. The card
+ * reserves this height, so short text leaves the character more room and long text keeps its
+ * size; when the estimate is short, the card's text shrinks a little to fit. Pure, so Node plans
+ * what the card draws.
+ */
+export function kanjiCardTextHeight(content: KanjiCardContent, sections: Partial<Record<KanjiCardSection, boolean>> | undefined, width: number, t: KanjiCardType): number {
+  const show = kanjiCardSections(sections), L = DEFAULT_KANJI_CARD_LABELS;
+  const level = show.jlpt && content.jlpt && KANJI_CARD_JLPT_LEVELS.includes(content.jlpt) ? content.jlpt : null;
+  const meanings = show.meanings && content.meanings ? content.meanings : "";
+  const parts: number[] = [];
+  if (meanings || level) {
+    // The badge (with its padding and border) and the character with its bar keep their width; the meanings wrap.
+    const badge = level ? (textEm(`${L.jlpt} ${level}`, "display") + .06 * 8 + 1.6) * t.badge + 6 : 0;
+    const lead = meanings ? t.headKanji + t.head * .9 : 0;
+    const lines = meanings ? linesOf(textEm(meanings, "display") * t.head, width - lead - badge - t.head * .3) : 1;
+    parts.push(Math.max(t.headKanji, lines * t.head * 1.12) + t.gap * .6 + 1);
+  }
+  const readings = show.readings ? ([[L.onyomi, content.onyomi], [L.kunyomi, content.kunyomi]] as const).filter(([, v]) => !!v) : [];
+  if (readings.length) {
+    const items = readings.map(([term, value]) => (textEm(term, "display") + .06 * term.length) * t.reading * .84 + .45 * t.reading + textEm(value ?? "", "body") * t.reading);
+    const row = items.reduce((a, b) => a + b, 0) + t.gap * 1.6 * (items.length - 1);
+    const lines = row <= width * 1.02 ? 1 : items.reduce((n, w) => n + linesOf(w, width), 0);
+    parts.push(lines * t.reading * 1.3 + (lines - 1) * t.gap * .4);
+  }
+  const words = show.words ? content.words ?? [] : [];
+  if (words.length) {
+    parts.push(t.section + t.title);
+    const cols = kanjiCardColumns(words.length);
+    const room = kanjiCardTileRoom(width, words.length, t);
+    const most = (f: (w: KanjiCardWord) => number) => Math.max(...words.map(f));
+    // The words shrink to fit their tiles, so each takes one line.
+    const glossLines = most(w => linesOf(textEm(w.romaji, "body") * t.gloss, room)) + most(w => linesOf(textEm(w.meaning, "body") * t.gloss, room));
+    const tile = t.tilePad[0] + t.ruby * 1.2 + kanjiCardWordSize(words, room, t) * 1.08 + t.gap * .35 + glossLines * t.gloss * 1.25 + t.tilePad[1];
+    const rows = Math.ceil(words.length / cols);
+    parts.push(rows * tile + (rows - 1) * t.gap * .7);
+  }
+  return Math.ceil(parts.reduce((a, b) => a + b, 0) + t.gap * Math.max(0, parts.length - 1));
+}
 
 /** The text sizes for a layout and density. */
 export function kanjiCardType(layout: KanjiCardLayout, density: KanjiCardDensity = "regular"): KanjiCardType {
@@ -359,8 +448,6 @@ const NO_INSET: KanjiCardSafeInset = { left: 0, right: 0, top: 0, bottom: 0 };
 
 /** Margin between the 9:16 card or practice box and the frame edges, design px. */
 export const KANJI_CARD_MARGIN = 24;
-/** Gap between the 9:16 practice box and the reading card under it, design px. */
-export const KANJI_CARD_GAP = 16;
 
 /** Largest share of the frame that two opposite bands may cover together, so the writing panel keeps room. */
 export const KANJI_CARD_MAX_BANDS = .45;
@@ -381,13 +468,14 @@ export function kanjiCardSafeInset(inset: Partial<KanjiCardSafeInset> | undefine
  * Layout of the frame in design px. With safe bands, the label, the ink and the card text move
  * inside them.
  * - 9:16: the paper fills the frame. The reading card lies on it with `KANJI_CARD_MARGIN` at the
- *   sides and ends above the bottom band (or the margin), so the band is plain paper. The
- *   practice box spans the paper between the label and the card, and the character is centred in
- *   the frame, clear of the wider side band. The compact card is shorter, so the box is taller.
+ *   sides and ends above the bottom band (or the margin), so a band is plain paper. The practice
+ *   box spans the paper between the label and the card (`type.cardGap` above the card), and the
+ *   character is centred in it, `type.inkPad` from its top and bottom, clear of the wider side band.
  * - 16:9: the paper is the left panel and the card the right one.
  */
 export function kanjiCardGeometry(
   layout: KanjiCardLayout, withCard: boolean, bands: Partial<KanjiCardSafeInset> = NO_INSET, withLabel = true, density: KanjiCardDensity = "regular",
+  text?: { content: KanjiCardContent; sections?: Partial<Record<KanjiCardSection, boolean>> },
 ): KanjiCardGeometry {
   const inset = kanjiCardSafeInset(bands);
   const portrait = layout === "portrait", type = kanjiCardType(layout, density);
@@ -403,19 +491,23 @@ export function kanjiCardGeometry(
     const cardPad = [padY, Math.max(padX, R - M), padY, Math.max(padX, L - M)] as const;
     // Nothing is drawn below the bottom band or the margin: it is plain paper.
     const floor = height - Math.max(B, M);
-    const cardTop = floor - cardPad[0] - type.text - cardPad[2];
+    // The compact card reserves the height its own text needs (see kanjiCardTextHeight); the others a fixed height.
+    const textHeight = density === "compact" && text ? Math.min(type.text * 1.6, kanjiCardTextHeight(text.content, text.sections, width - 2 * M - cardPad[1] - cardPad[3], type)) : type.text;
+    const cardTop = floor - cardPad[0] - textHeight - cardPad[2];
     const top = withLabel ? label.y + type.label * 1.5 : Math.max(T, M);
-    const bottom = withCard ? cardTop - KANJI_CARD_GAP : floor;
+    const bottom = withCard ? cardTop - type.cardGap : floor;
     const side = Math.max(L, R, M);
+    // The air above and below the character gives way first when the box is short.
+    const pad = Math.min(type.inkPad, (bottom - top) * .06);
+    const writing = { x: side, y: top + pad, width: width - 2 * side, height: bottom - top - 2 * pad };
     return {
       width, height, paper: { x: 0, y: 0, width, height }, cardPad, density: used,
       card: withCard ? { x: M, y: cardTop, width: width - 2 * M, height: floor - cardTop } : null,
       cardRadius: withCard ? 18 : 0,
       cell: { x: M, y: top, width: width - 2 * M, height: bottom - top },
-      writing: { x: side, y: top, width: width - 2 * side, height: bottom - top },
-      inkMargin: 16,
+      writing, inkMargin: Math.min(16, Math.min(writing.width, writing.height) * .045),
       guides: { x: Math.max(L, M), y: top, width: width - Math.max(L, M) - Math.max(R, M), height: bottom - top },
-      em: 720, label, type,
+      em: 900, label, type,
     };
   }
   const label = { x: Math.max(44, L), y: Math.max(36, T) };
@@ -443,23 +535,29 @@ export function kanjiInkBox(plan: Pick<ShodoPlan, "strokes">): [number, number, 
 }
 
 /**
- * Where the brush rests before and after a pass, design px: just outside the frame, on the side
- * away from the reading card (right of a 9:16 frame, below a 16:9 one), so the brush comes in
- * from outside and leaves the frame after the last stroke. Far enough out that no part of the
- * brush or its shadow shows (see `shodoBrushClearance`).
+ * Where the brush rests before and after a pass and where it dips for an ink change, design px:
+ * just outside the frame, on the side away from the reading card (right of a 9:16 frame, below a
+ * 16:9 one). So the brush comes in from outside, leaves the frame after the last stroke and never
+ * crosses the card for ink. Far enough out that no part of the brush or its shadow shows, at the
+ * rest height or down at the inkstone (see `shodoBrushClearance`).
  */
-export function kanjiCardBrushRest(g: KanjiCardGeometry, style: ShodoStyle, size: number): [number, number] {
+export function kanjiCardBrushStations(g: KanjiCardGeometry, style: ShodoStyle, size: number): { rest: [number, number]; inkstone: [number, number] } {
   const D = style.brush.diameter * style.hand.width * size / 1000;
-  const lean = shodoRestLean(style), z = size * SHODO_REST_HEIGHT;
-  if (g.height > g.width) return [g.width + shodoBrushClearance([1, 0], lean, z, style.brush, D), g.writing.y + g.writing.height * .7];
-  return [g.writing.x + g.writing.width * .7, g.height + shodoBrushClearance([0, 1], lean, z, style.brush, D)];
+  const lean = shodoRestLean(style), heights = [0, size * SHODO_REST_HEIGHT] as const;
+  const w = g.writing;
+  if (g.height > g.width) {
+    const x = g.width + shodoBrushClearance([1, 0], lean, heights, style.brush, D);
+    return { rest: [x, w.y + w.height * .7], inkstone: [x, w.y + w.height * .35] };
+  }
+  const y = g.height + shodoBrushClearance([0, 1], lean, heights, style.brush, D);
+  return { rest: [w.x + w.width * .7, y], inkstone: [w.x + w.width * .35, y] };
 }
 
 /**
  * Plans the writing with the ink centred in the writing box. The character is made smaller
  * only when its ink would reach the label band or the edge of the box. With `seconds`, the
  * hand's speed is fitted so that the writing takes about that long. The brush comes in from
- * outside the frame and leaves it after the last stroke (`kanjiCardBrushRest`).
+ * outside the frame at once and leaves it after the last stroke (`kanjiCardBrushStations`).
  */
 export function planKanjiCardWriting(
   glyph: ShodoGlyph, g: KanjiCardGeometry,
@@ -468,12 +566,12 @@ export function planKanjiCardWriting(
   const { vermilion = [], withLabel = true, seconds: target, ink = "sumi", brushStyle = {} } = options;
   const natural = Number.isFinite(options.speed) ? Math.min(4, Math.max(.25, options.speed as number)) : KANJI_CARD_SPEED;
   const strokeInk = Object.fromEntries(vermilion.map(n => [n - 1, SHODO_INKS.shuboku]));
-  const inkstone: [number, number] = [g.width + 80, g.height / 2];
   // The host's brush, ink, paper and hand; the card sets the hand's speed, and "vermilion" sets the ink.
   const inkStyle = ink === "vermilion" ? { ...brushStyle.ink, ...SHODO_INKS.shuboku } : brushStyle.ink;
   const at = (speed: number, x: number, y: number, size: number) => {
     const style = resolveShodoStyle({ ...brushStyle, hand: { ...brushStyle.hand, speed }, ink: inkStyle }, DEFAULT_SHODO_STYLE);
-    return planShodoWriting({ style, items: [{ glyph, x, y, size, strokeInk }], rest: kanjiCardBrushRest(g, style, size), inkstone, exit: "rest" });
+    // No lead: a brush outside the frame has nothing to show before it moves in.
+    return planShodoWriting({ style, items: [{ glyph, x, y, size, strokeInk }], ...kanjiCardBrushStations(g, style, size), exit: "rest", lead: 0 });
   };
   const [x0, y0, x1, y1] = kanjiInkBox(at(natural, 0, 0, g.em));
   const box = g.writing;
@@ -545,7 +643,8 @@ export function kanjiCardWriting(glyph: ShodoGlyph, options: KanjiCardWritingOpt
   const withLabel = kanjiCardSections(options.sections).label;
   const withCard = kanjiCardHasCard(options.content ?? {}, options.sections);
   const vermilionStrokes = options.vermilionStrokes ?? options.content?.vermilionStrokes;
-  const geometry = kanjiCardGeometry(options.layout ?? "landscape", withCard, options.safeInset, withLabel, options.density ?? "regular");
+  const geometry = kanjiCardGeometry(options.layout ?? "landscape", withCard, options.safeInset, withLabel, options.density ?? "regular",
+    { content: options.content ?? {}, sections: options.sections });
   const plan = planKanjiCardWriting(glyph, geometry, {
     vermilion: vermilionStrokes, withLabel, seconds: kanjiCardPace(options.timing), ink: options.ink, speed: options.speed, brushStyle: options.brushStyle,
   });

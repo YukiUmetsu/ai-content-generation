@@ -9,7 +9,9 @@
 3. **Review.** The brush comes in again and writes it with vermilion stroke-order numbers, then leaves. Only music plays.
 4. **Words.** As the review writing ends, the voice reads each useful word and its tile is highlighted until the next one starts.
 
-The paper fills the frame. The reading card lies on it with a margin all round and stays above the platform's caption band (the bottom 19 %), which is plain paper. The brush is drawn above the card.
+The paper fills the frame. The kanji is centred in its practice box with room above and below; the reading card lies under it with a margin all round and runs down to near the bottom edge, so there is no empty band. The card is as tall as its own text needs, so a kanji with short readings and words gets a bigger character. The brush is drawn above the card.
+
+**Platform overlays.** By default the card uses the bottom of the frame, where YouTube, TikTok and Reels lay the title and channel name over the video. To keep the card above them, set `card.safeInset` to `{ "bottom": 0.19 }`; the kanji is then smaller.
 
 ### The narration is a script (data)
 
@@ -46,6 +48,7 @@ The voice-over is an **anchored-narration script** (`scripts/video-production/an
 - `brushStyle`: Kumiki brush, ink, paper and hand settings
 - `typeStep`: typing pace
 - `strokeNumbers`
+- `safeInset`: bands of the frame the card keeps clear, over the destination's (`left`, `right`, `top`, `bottom`, each 0 to 0.4). The default is the destination's side and top bands with no bottom band.
 
 All are passed to Kumiki's `shodo-kanji-card` and checked before any network request.
 

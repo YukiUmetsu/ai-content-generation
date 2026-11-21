@@ -93,11 +93,20 @@ export function kanjiShortContent(entry, { maxWords = 3, speech = {} } = {}) {
 }
 
 /**
- * Default pacing, seconds. `write` and `review` are the two writing passes (6.8 s keeps the hand of
- * the approved 水 short, whose brush comes in from outside the frame and leaves it); `introTail`
- * the hold after the intro's last line; `tail` after the last line.
+ * Default pacing, seconds. `write` and `review` are the two writing passes (6.6 s keeps the hand
+ * pace the user approved in the 水 short, now that the brush also flies in from outside the frame
+ * and out again); `introTail` the hold after the intro's last line; `tail` after the last line.
  */
-export const KANJI_SHORT_PACING = Object.freeze({ write: 6.8, review: 6.8, introTail: .45, tail: 1.4 });
+export const KANJI_SHORT_PACING = Object.freeze({ write: 6.6, review: 6.6, introTail: .45, tail: 1.4 });
+
+/**
+ * The safe bands the card keeps clear, over the destination preset's. By default the card runs
+ * down to its own margin (bottom 0), so the frame has no empty band at the bottom; the platform's
+ * title and channel name then lie over the lower part of the card. `card.safeInset` overrides any
+ * band (0..0.4 of the frame), for example `{ "bottom": 0.19 }` to keep the card above them.
+ */
+export const KANJI_SHORT_CARD_INSET = Object.freeze({ bottom: 0 });
+export const kanjiCardInset = (presetInset, override = {}) => ({ ...presetInset, ...KANJI_SHORT_CARD_INSET, ...override });
 
 /**
  * The fields an anchored-narration script can use for one kanji:

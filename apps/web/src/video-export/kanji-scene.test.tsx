@@ -55,7 +55,8 @@ describe("kanji study export plan", () => {
     expect(card?.dataset.kmKanjiFrame).toBe("0");
     expect(card?.dataset.kmKanjiPhase).toBe("intro");
     expect(container.querySelector("[data-km-video-capture]")?.getAttribute("data-output-width")).toBe("1080");
-    // The card draws the page and the brush on two canvases; a frame waits for both.
+    // The card draws the page and the brush on two canvases: a frame waits until both are ready,
+    // and the export stage until both have drawn it (data-km-shodo-drawn).
     expect([...container.querySelectorAll<HTMLElement>("[data-km-shodo]")].map(c => c.dataset.kmShodoLayer)).toEqual(["page", "brush"]);
   });
 

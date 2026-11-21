@@ -61,6 +61,9 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ card: { labels: { title: "X" } } }), "/c.json"), /card\.labels/u);
   assert.throws(() => readKanjiConfig(config({ card: { typeStep: 2 } }), "/c.json"), /card\.typeStep/u);
   assert.throws(() => readKanjiConfig(config({ card: { brushStyle: [] } }), "/c.json"), /card\.brushStyle/u);
+  assert.deepEqual(readKanjiConfig(config({ card: { safeInset: { bottom: .19 } } }), "/c.json").card.safeInset, { bottom: .19 });
+  assert.throws(() => readKanjiConfig(config({ card: { safeInset: { bottom: .5 } } }), "/c.json"), /card\.safeInset/u);
+  assert.throws(() => readKanjiConfig(config({ card: { safeInset: { botom: .1 } } }), "/c.json"), /card\.safeInset/u);
 });
 
 test("gives each run of a kanji a new version folder, so a release is never overwritten", async () => {

@@ -86,6 +86,8 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
     root.querySelector("[data-km-frame-clip][data-clip-status=pending]")||
     [...root.querySelectorAll<HTMLElement>("[data-km-shader-fx-frame]")].some(el=>el.dataset.kmShaderFxStatus!=="error"&&
       el.dataset.kmShaderFxDrawn!==el.dataset.kmShaderFxFrame)||
+    // A calligraphy canvas has drawn its frame once its drawn mark matches it.
+    [...root.querySelectorAll<HTMLElement>("[data-km-shodo]")].some(el=>el.dataset.kmShodoDrawn!==el.dataset.kmShodoFrame)||
     // A FiberStage has drawn this frame only once its drawn mark matches the frame it was asked for.
     [...root.querySelectorAll<HTMLElement>("[data-km-fiber-frame]")].some(el=>el.dataset.kmFiberStatus!=="error"&&
       el.dataset.kmFiberDrawn!==el.dataset.kmFiberFrame)||

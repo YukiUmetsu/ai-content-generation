@@ -239,13 +239,15 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
         } else drawAt(ctx, pose);
       } else drawAt(ctx, pose);
     }
+    // An export waits for this mark: the canvas has drawn the frame it was given.
+    canvas.dataset.kmShodoDrawn = String(frame);
   }, [frame, fps, plan, surface, paperCanvas, inkCanvas, background, weight, width, height, paper, dpr, showBrush, look, textures, blurLayers, motionBlur,
     cameraHeight, orderGuide, guideStrokes, guideInk, numbers, reducedMotion, page, layer]);
 
   // The brush alone is decoration: the page canvas carries the description.
   const a11y = page ? { role: "img", "aria-label": label ?? "Brush calligraphy being written" } : { "aria-hidden": true };
   return <canvas {...props} ref={canvasRef} {...a11y}
-    data-km-shodo="" data-km-shodo-layer={layer} data-km-shodo-frame={frame} data-km-shodo-ready={textures ? "true" : "false"}
+    data-km-shodo="" data-km-shodo-layer={layer} data-km-shodo-frame={frame} data-km-shodo-ready={textures || !page ? "true" : "false"}
     width={Math.round(width * dpr)} height={Math.round(height * dpr)}
     style={{ width: "100%", height: "auto", aspectRatio: `${width} / ${height}`, display: "block", ...style }} />;
 });

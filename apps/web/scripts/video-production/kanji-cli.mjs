@@ -99,8 +99,11 @@ export function readKanjiConfig(json, configPath) {
     Object.entries(narration.speech).every(([word, text]) => isText(word, 40) && isText(text, 40))))
     fail("config: narration.speech maps a word to the text the voice reads, for example { \"水泳\": \"すいえい\" }");
   const card = json.card ?? {};
-  for (const key of Object.keys(card)) if (!["heading", "density", "labels", "theme", "brushStyle", "typeStep", "strokeNumbers"].includes(key))
-    fail(`config: card.${key} is not a setting (heading, density, labels, theme, brushStyle, typeStep, strokeNumbers)`);
+  for (const key of Object.keys(card)) if (!["heading", "density", "labels", "theme", "brushStyle", "typeStep", "strokeNumbers", "safeInset"].includes(key))
+    fail(`config: card.${key} is not a setting (heading, density, labels, theme, brushStyle, typeStep, strokeNumbers, safeInset)`);
+  if (card.safeInset !== undefined && !(isObject(card.safeInset) && Object.entries(card.safeInset).every(([k, v]) =>
+    ["left", "right", "top", "bottom"].includes(k) && Number.isFinite(v) && v >= 0 && v <= .4)))
+    fail("config: card.safeInset sets left, right, top or bottom to a share of the frame from 0 to 0.4");
   if (card.density !== undefined && !["regular", "compact"].includes(card.density)) fail("config: card.density must be regular or compact");
   if (card.heading !== undefined && !(typeof card.heading === "string" && card.heading.length <= 30)) fail("config: card.heading must be at most 30 characters");
   const labelKeys = ["onyomi", "kunyomi", "words", "jlpt", "heading", "cardName", "writingName"];
