@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SAMPLE_RATE, framesFor, placeClips, speechBounds, toFrameGrid, trimSpeech } from "./narration-clips.mjs";
+import { SAMPLE_RATE, TRIM_DEFAULTS, clipPlacementFloor, framesFor, placeClips, speechBounds, toFrameGrid, trimSpeech } from "./narration-clips.mjs";
 
 /** Silence, a 200 Hz tone, silence. */
 function take(before, tone, after) {
@@ -38,6 +38,11 @@ test("places each clip so its speech starts on its onset, with whole-millisecond
   assert.throws(() => placeClips(takes, { a: .01, b: 2 }, 144000), /before the video starts/u);
   assert.throws(() => placeClips(takes, { a: .35, b: 2 }, 48000), /past the end/u);
   assert.throws(() => placeClips([{ id: "a", clip: new Int16Array(50), lead: 0 }], { a: 0 }, 48000), /whole number of milliseconds/u);
+});
+
+test("keeps placed clips apart: the floor follows the trim settings", () => {
+  assert.deepEqual(clipPlacementFloor(TRIM_DEFAULTS), { minGap: .03 + .08 + .01, minStart: .03 + .01 });
+  assert.deepEqual(clipPlacementFloor({ preRoll: .05, postRoll: .1 }), { minGap: .05 + .1 + .01, minStart: .05 + .01 });
 });
 
 test("puts lengths on the frame grid", () => {

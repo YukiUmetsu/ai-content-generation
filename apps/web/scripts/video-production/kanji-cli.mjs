@@ -17,6 +17,7 @@ import { expandNarrationScript } from "./anchored-narration.mjs";
 import { kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
+import { localSpeechEndpoint } from "./local.mjs";
 import { findChromium } from "./try.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -65,7 +66,8 @@ export function readKanjiConfig(json, configPath) {
     if ((voice.modelId ?? "s2.1-pro-free") !== "s2.1-pro-free") fail("config: only the free Fish model s2.1-pro-free is supported");
   } else if (provider === "local") {
     for (const key of ["voiceId", "modelId", "engineRevision"]) if (typeof voice[key] !== "string" || !voice[key].trim() || voice[key].length > 128) fail(`config: a local voice needs voice.${key}`);
-    if (typeof voice.endpoint !== "string" || !/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+(\/|$)/u.test(voice.endpoint)) fail("config: voice.endpoint must be a loopback http URL with a port");
+    // The local adapter's own endpoint rule, so a bad endpoint stops here, not at the first line.
+    try { localSpeechEndpoint(voice.endpoint); } catch (error) { fail(`config: voice.endpoint: ${error.message}`); }
   } else fail("config: voice.provider must be fish or local");
   if (voice.pace !== undefined && !["slow", "measured", "fast"].includes(voice.pace)) fail("config: voice.pace must be slow, measured or fast");
   if (voice.licenseStatus !== undefined && !["unknown", "verified"].includes(voice.licenseStatus)) fail("config: voice.licenseStatus must be unknown or verified");
@@ -101,8 +103,9 @@ export function readKanjiConfig(json, configPath) {
     fail(`config: card.${key} is not a setting (heading, density, labels, theme, brushStyle, typeStep, strokeNumbers)`);
   if (card.density !== undefined && !["regular", "compact"].includes(card.density)) fail("config: card.density must be regular or compact");
   if (card.heading !== undefined && !(typeof card.heading === "string" && card.heading.length <= 30)) fail("config: card.heading must be at most 30 characters");
-  if (card.labels !== undefined && !(isObject(card.labels) && Object.entries(card.labels).every(([k, v]) => ["onyomi", "kunyomi", "words", "jlpt"].includes(k) && isText(v, 30))))
-    fail("config: card.labels sets onyomi, kunyomi, words and jlpt to texts of at most 30 characters");
+  const labelKeys = ["onyomi", "kunyomi", "words", "jlpt", "heading", "cardName", "writingName"];
+  if (card.labels !== undefined && !(isObject(card.labels) && Object.entries(card.labels).every(([k, v]) => labelKeys.includes(k) && isText(v, 80))))
+    fail(`config: card.labels sets ${labelKeys.join(", ")} to texts of at most 80 characters`);
   if (card.theme !== undefined && !(isObject(card.theme) && Object.values(card.theme).every(v => isText(v, 200))))
     fail("config: card.theme sets colours (#RRGGBB) and font stacks as texts");
   if (card.brushStyle !== undefined && !isObject(card.brushStyle)) fail("config: card.brushStyle must be an object of brush, ink, paper and hand settings");

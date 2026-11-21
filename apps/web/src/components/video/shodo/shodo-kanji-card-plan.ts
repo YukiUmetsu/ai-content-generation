@@ -109,23 +109,34 @@ const FONT_KEYS = ["display", "serif", "sans", "body"] as const;
 // A CSS font family: quoted, or words that are each an identifier ("M PLUS 1p" must be quoted: "1p" is not one).
 const FAMILY = /^(?:"[^"]+"|'[^']+'|-?[_a-zA-Z\u00a0-\uffff][-_a-zA-Z0-9\u00a0-\uffff]*(?:\s+-?[_a-zA-Z\u00a0-\uffff][-_a-zA-Z0-9\u00a0-\uffff]*)*)$/u;
 
-/** Every problem of a theme, one message per key (empty when it is valid). A missing or undefined key uses its default. */
-export function kanjiCardThemeIssues(theme: Partial<KanjiCardTheme> | undefined): string[] {
+// CSS-wide keywords are not family names: unquoted, they make the whole `font` shorthand invalid.
+const CSS_WIDE = /^(?:inherit|initial|unset|revert|revert-layer|default)$/iu;
+
+/**
+ * Every problem of a theme, one message per key (empty when it is valid). A missing or undefined
+ * key uses its default. With `unknownKeys` (default), a key the theme does not have is a problem
+ * too, for a description to be checked; the card itself ignores such keys.
+ */
+export function kanjiCardThemeIssues(theme: Partial<KanjiCardTheme> | undefined, { unknownKeys = true }: { unknownKeys?: boolean } = {}): string[] {
   const issues: string[] = [];
   const known: readonly string[] = [...COLOUR_KEYS, ...FONT_KEYS];
-  for (const key of Object.keys(theme ?? {})) if (!known.includes(key)) issues.push(`${key} is not a theme key (${known.join(", ")})`);
+  if (unknownKeys) for (const key of Object.keys(theme ?? {})) if (!known.includes(key)) issues.push(`${key} is not a theme key (${known.join(", ")})`);
   for (const key of COLOUR_KEYS) { const v = theme?.[key]; if (v !== undefined && !(typeof v === "string" && HEX.test(v))) issues.push(`${key} must be a #RRGGBB colour`); }
   for (const key of FONT_KEYS) {
     const v = theme?.[key];
-    if (v !== undefined && !(typeof v === "string" && v.split(",").every(family => FAMILY.test(family.trim()))))
+    if (v !== undefined && !(typeof v === "string" && v.split(",").every(family => FAMILY.test(family.trim()) && !CSS_WIDE.test(family.trim()))))
       issues.push(`${key} must be a CSS font stack; quote a family name with digits or symbols, as in "'M PLUS 1p', sans-serif"`);
   }
   return issues;
 }
 
-/** The theme with defaults for any key that is missing or undefined. An invalid value throws a RangeError that names every bad key. */
+/**
+ * The theme with defaults for any key that is missing or undefined; keys the theme does not have
+ * are ignored (a host may pass a larger brand object). An invalid value throws a RangeError that
+ * names every bad key.
+ */
 export function kanjiCardTheme(theme: Partial<KanjiCardTheme> | undefined): KanjiCardTheme {
-  const issues = kanjiCardThemeIssues(theme);
+  const issues = kanjiCardThemeIssues(theme, { unknownKeys: false });
   if (issues.length) throw new RangeError(`Kanji card theme: ${issues.join("; ")}.`);
   const out = { ...DEFAULT_KANJI_CARD_THEME };
   for (const key of [...COLOUR_KEYS, ...FONT_KEYS]) if (theme?.[key] !== undefined) out[key] = theme[key] as string;

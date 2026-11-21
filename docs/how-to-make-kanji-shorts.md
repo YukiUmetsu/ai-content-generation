@@ -41,7 +41,7 @@ The voice-over is an **anchored-narration script** (`scripts/video-production/an
 
 `card` in the config sets the card's options:
 - `heading` and `density`
-- `labels`: the card's words, for example `{ "onyomi": "音読み", "kunyomi": "訓読み", "words": "ことば" }`
+- `labels`: the card's words (`onyomi`, `kunyomi`, `words`, `jlpt`), the heading format (`heading`, default `{HEADING}: {char}`) and the accessible names (`cardName`, `writingName`). For example: `{ "onyomi": "音読み", "kunyomi": "訓読み", "words": "ことば", "heading": "{heading}：{char}" }`
 - `theme`: colours and fonts
 - `brushStyle`: Kumiki brush, ink, paper and hand settings
 - `typeStep`: typing pace

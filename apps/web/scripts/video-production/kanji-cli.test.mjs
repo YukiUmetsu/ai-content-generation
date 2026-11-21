@@ -47,8 +47,10 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ maxWords: 7 }), "/c.json"), /maxWords must be 1 to 6/u);
   assert.throws(() => readKanjiConfig(config({ qa: { stillBudget: 3 } }), "/c.json"), /qa\.stillBudget is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ captions: { tailSeconds: 9 } }), "/c.json"), /captions\.tailSeconds/u);
-  assert.throws(() => readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://example.com:80" } }), "/c.json"), /loopback/u);
-  assert.equal(readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://127.0.0.1:8123/tts" } }), "/c.json").voice.provider, "local");
+  assert.throws(() => readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://example.com:80" } }), "/c.json"), /voice\.endpoint/u);
+  assert.throws(() => readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://127.0.0.1:5002/v1" } }), "/c.json"), /voice\.endpoint/u);
+  assert.equal(readKanjiConfig(config({ card: { labels: { heading: "{heading}：{char}", cardName: "{char}の読み" } } }), "/c.json").card.labels.heading, "{heading}：{char}");
+  assert.equal(readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://127.0.0.1:8123" } }), "/c.json").voice.provider, "local");
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
@@ -235,7 +237,7 @@ test("a config's own narration script replaces the default, and must only use th
 test("a local voice needs its own consent and no Fish key", async () => {
   const dir = await mkdtemp(join(tmpdir(), "kanji-local-"));
   try {
-    const local = { provider: "local", voiceId: "voice-a", modelId: "model-a", engineRevision: "1.0", endpoint: "http://127.0.0.1:8123/tts" };
+    const local = { provider: "local", voiceId: "voice-a", modelId: "model-a", engineRevision: "1.0", endpoint: "http://127.0.0.1:8123" };
     await writeFile(join(dir, "config.json"), JSON.stringify(config({ outputRoot: join(dir, "out"), voice: local })));
     const calls = [];
     const qa = { video: { seconds: 20 }, audio: { integratedLufs: -16 }, pacing: { longestStillSeconds: 1.3 }, pronunciation: "not machine-checked" };

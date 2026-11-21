@@ -15,7 +15,7 @@ import { fingerprintBuiltStage, startLocalStageServer } from "./stage-server.mjs
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { muxVideo, probeMuxedMp4 } from "./produce.mjs";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript, scriptAnchors } from "./anchored-narration.mjs";
-import { SAMPLE_RATE, placeClips, toFrameGrid, trimSpeech } from "./narration-clips.mjs";
+import { SAMPLE_RATE, TRIM_DEFAULTS, clipPlacementFloor, placeClips, toFrameGrid, trimSpeech } from "./narration-clips.mjs";
 import { chooseMusicWindow, decodeMono, int16Wav, prepareMusicBed } from "./music-bed.mjs";
 import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
@@ -28,9 +28,8 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const fail = (message) => { throw new Error(`Kanji short: ${message}`); };
 const exists = (path) => lstat(path).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(error));
 const FISH_REVISION = "fish-api-v1";
-/** The silence a trimmed clip keeps before and after its speech (narration-clips' trimSpeech), plus 10 ms: the floor for every gap and the first start. */
-const CLIP_PRE = .03, CLIP_POST = .08;
-const PLACEMENT_FLOOR = { minGap: CLIP_PRE + CLIP_POST + .01, minStart: CLIP_PRE + .01 };
+/** The floor for every gap and the first start: the silence trimmed clips keep around their speech. */
+const PLACEMENT_FLOOR = clipPlacementFloor(TRIM_DEFAULTS);
 /** A rough length of a line before it is synthesized, only to check a script's placement early: 0.09 s per character, at least 0.4 s. */
 const estimatedSpeech = (lines) => Object.fromEntries(lines.map(line => [line.id, Math.max(.4, [...line.say].length * .09)]));
 /** The default narration: a data file, replaced by `narration.script` in the config. */

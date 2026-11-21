@@ -29,13 +29,23 @@ export function speechBounds(samples, { sampleRate = SAMPLE_RATE, floorDb = -42 
   return { start: Math.max(0, a - win), end: b };
 }
 
+/** How much silence a trimmed clip keeps around its speech, and its fades, seconds. */
+export const TRIM_DEFAULTS = Object.freeze({ preRoll: .03, postRoll: .08, fade: .012 });
+
+/**
+ * The smallest gap between two lines' speech and the earliest start of the first, so clips trimmed
+ * with these settings never overlap or start before 0 (plus a 10 ms margin for millisecond rounding).
+ */
+export const clipPlacementFloor = ({ preRoll = TRIM_DEFAULTS.preRoll, postRoll = TRIM_DEFAULTS.postRoll } = {}) =>
+  ({ minGap: preRoll + postRoll + .01, minStart: preRoll + .01 });
+
 /**
  * The trimmed clip of a take: `preRoll` before the speech and `postRoll` after it, faded over
  * `fade` seconds, padded to a whole number of milliseconds so the sample timeline stays exact.
  * `lead` is the time from the clip's start to the speech, `speech` the speech's length (seconds).
  * @param {Int16Array} samples
  */
-export function trimSpeech(samples, { sampleRate = SAMPLE_RATE, preRoll = .03, postRoll = .08, fade = .012 } = {}) {
+export function trimSpeech(samples, { sampleRate = SAMPLE_RATE, preRoll = TRIM_DEFAULTS.preRoll, postRoll = TRIM_DEFAULTS.postRoll, fade = TRIM_DEFAULTS.fade } = {}) {
   const bounds = speechBounds(samples, { sampleRate });
   if (!bounds) fail("a narration take has no speech");
   const pre = Math.round(preRoll * sampleRate), post = Math.round(postRoll * sampleRate), fadeSamples = Math.max(1, Math.round(fade * sampleRate));
