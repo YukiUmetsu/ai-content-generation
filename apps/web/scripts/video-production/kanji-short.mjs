@@ -92,8 +92,12 @@ export function kanjiShortContent(entry, { maxWords = 3, speech = {} } = {}) {
   };
 }
 
-/** Default pacing, seconds. `write` and `review` are the two writing passes; `introTail` the hold after the intro's last line; `tail` after the last line. */
-export const KANJI_SHORT_PACING = Object.freeze({ write: 6.5, review: 6.5, introTail: .45, tail: 1.4 });
+/**
+ * Default pacing, seconds. `write` and `review` are the two writing passes (6.8 s keeps the hand of
+ * the approved 水 short, whose brush comes in from outside the frame and leaves it); `introTail`
+ * the hold after the intro's last line; `tail` after the last line.
+ */
+export const KANJI_SHORT_PACING = Object.freeze({ write: 6.8, review: 6.8, introTail: .45, tail: 1.4 });
 
 /**
  * The fields an anchored-narration script can use for one kanji:

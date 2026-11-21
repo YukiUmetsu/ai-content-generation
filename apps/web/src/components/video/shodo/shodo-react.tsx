@@ -58,6 +58,15 @@ export interface ShodoCanvasProps extends Omit<CanvasHTMLAttributes<HTMLCanvasEl
   reducedMotion?: boolean;
   /** Accessible description of the writing. */
   label?: string;
+  /**
+   * What this canvas draws: everything (default); the page only, with no brush ("page": the
+   * underlay, paper, ink and guides); or only the brush and its shadow on a transparent canvas
+   * ("brush", hidden from assistive technology). Stack a "page" canvas and a "brush" canvas with
+   * the same plan and frame to put a host's own layer, such as a card, between them.
+   */
+  layer?: "all" | "page" | "brush";
+  /** Where the stroke-order guide may place numbers, design px. Default: the paper. */
+  guideBounds?: ShodoRect;
 }
 
 function feltTile(seed: number): HTMLCanvasElement | null {
@@ -83,23 +92,25 @@ function feltTile(seed: number): HTMLCanvasElement | null {
 export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(function ShodoCanvas({
   plan, frame, fps = 30, width, height, paper, sheet = null, underlay = "felt", paperweight = "wood", motionBlur = true,
   showBrush = true, brushLook, cameraHeight, inkScale = 2, pixelRatio, orderGuide = "none", guideStrokes, guideColor, guideSize,
-  reducedMotion = false, label, style, ...props
+  reducedMotion = false, label, layer = "all", guideBounds, style, ...props
 }, ref) {
+  // The brush layer has no paper or ink, so it builds neither.
+  const page = layer !== "brush";
   const guideInk = guideColor ?? (orderGuide === "numbers" ? "#B3301A" : "#D8432A");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useImperativeHandle(ref, () => canvasRef.current as HTMLCanvasElement);
   const dpr = pixelRatio ?? (typeof window === "undefined" ? 1 : Math.min(2, window.devicePixelRatio || 1));
   const inkRes = Math.min(2, inkScale * dpr);
-  const surface = useMemo(() => new ShodoInkSurface(plan, { ...paper, scale: inkRes }), [plan, paper, inkRes]);
+  const surface = useMemo(() => page ? new ShodoInkSurface(plan, { ...paper, scale: inkRes }) : null, [plan, paper, inkRes, page]);
   const paperCanvas = useMemo(() => {
-    if (typeof document === "undefined") return null;
+    if (!page || typeof document === "undefined") return null;
     const img = renderShodoPaper(paper.width, paper.height, inkRes, plan.style.paper, sheet, plan.style.seed);
     const c = document.createElement("canvas");
     c.width = img.width; c.height = img.height;
     c.getContext("2d")?.putImageData(new ImageData(img.rgba, img.width, img.height), 0, 0);
     return c;
-  }, [paper.width, paper.height, inkRes, plan.style.paper, plan.style.seed, sheet]);
-  const inkCanvas = useMemo(() => typeof document === "undefined" ? null : document.createElement("canvas"), []);
+  }, [paper.width, paper.height, inkRes, plan.style.paper, plan.style.seed, sheet, page]);
+  const inkCanvas = useMemo(() => !page || typeof document === "undefined" ? null : document.createElement("canvas"), [page]);
   const felt = useMemo(() => typeof document === "undefined" ? null : feltTile(plan.style.seed), [plan.style.seed]);
   const look = useMemo(() => ({ ...DEFAULT_BRUSH_LOOK, ...brushLook }), [brushLook]);
   // Scanned material textures decode asynchronously; the canvas reports ready only after.
@@ -138,7 +149,7 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
     return c;
   }, [backW, backH, dpr, width, height, underlay, felt, paper, paperCanvas, plan.style.paper.color]);
   const weight = useMemo(() => {
-    if (typeof document === "undefined" || paperweight === "none") return null;
+    if (!page || typeof document === "undefined" || paperweight === "none") return null;
     const c = document.createElement("canvas");
     c.width = backW; c.height = backH;
     const w = c.getContext("2d");
@@ -146,11 +157,11 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
     w.setTransform(dpr, 0, 0, dpr, 0, 0);
     drawPaperweight(w, paper, paperweight, textures);
     return c;
-  }, [backW, backH, dpr, paper, paperweight, textures]);
+  }, [backW, backH, dpr, paper, paperweight, textures, page]);
   // Stamp the strokes' ink tiles ahead of the brush while the browser is idle, so no frame waits
   // for a whole stroke to be stamped when the brush lands.
   useEffect(() => {
-    if (reducedMotion || typeof window === "undefined") return;
+    if (reducedMotion || typeof window === "undefined" || !surface) return;
     let live = true, id = 0;
     const idle = typeof window.requestIdleCallback === "function";
     const next = () => { id = idle ? window.requestIdleCallback(step, { timeout: 120 }) : window.setTimeout(() => step(), 16); };
@@ -163,12 +174,12 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
     return () => { live = false; if (idle) window.cancelIdleCallback(id); else window.clearTimeout(id); };
   }, [surface, reducedMotion]);
   // Placed once per plan against the finished writing, so a number never moves or lands on later ink.
-  const numbers = useMemo(() => orderGuide === "numbers" ? shodoStrokeNumbers(plan, { size: guideSize, bounds: paper, only: guideStrokes }) : null,
-    [orderGuide, plan, guideSize, paper, guideStrokes]);
+  const numbers = useMemo(() => page && orderGuide === "numbers" ? shodoStrokeNumbers(plan, { size: guideSize, bounds: guideBounds ?? paper, only: guideStrokes }) : null,
+    [orderGuide, plan, guideSize, paper, guideBounds, guideStrokes, page]);
 
   useEffect(() => {
     const canvas = canvasRef.current, ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx || !paperCanvas || !inkCanvas) return;
+    if (!canvas || !ctx || page && (!paperCanvas || !inkCanvas || !surface)) return;
     const seconds = reducedMotion ? plan.duration : Math.max(0, frame) / fps;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -176,22 +187,24 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    // Ink.
-    const ink = surface.render(seconds, reducedMotion);
-    if (inkCanvas.width !== ink.width || inkCanvas.height !== ink.height) { inkCanvas.width = ink.width; inkCanvas.height = ink.height; }
-    inkCanvas.getContext("2d")?.putImageData(new ImageData(ink.rgba, ink.width, ink.height), 0, 0);
-    ctx.drawImage(inkCanvas, paper.x, paper.y, paper.width, paper.height);
-    if (weight) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(weight, 0, 0); ctx.restore(); }
-    const pose = shodoBrushPose(plan, seconds);
-    if (numbers) drawStrokeNumbers(ctx, numbers, seconds, guideInk, plan.style.paper.color);
-    else if (orderGuide !== "none" && orderGuide !== "numbers" && !reducedMotion) {
-      const inkAt = (x: number, y: number) => {
-        const ix = Math.round((x - paper.x) * surface.region.scale), iy = Math.round((y - paper.y) * surface.region.scale);
-        return ix < 0 || iy < 0 || ix >= ink.width || iy >= ink.height ? 0 : ink.rgba[(iy * ink.width + ix) * 4 + 3] / 255;
-      };
-      drawOrderGuide(ctx, plan, seconds, orderGuide, guideInk, width, inkAt, guideStrokes);
+    if (page && surface && inkCanvas) {
+      // Ink.
+      const ink = surface.render(seconds, reducedMotion);
+      if (inkCanvas.width !== ink.width || inkCanvas.height !== ink.height) { inkCanvas.width = ink.width; inkCanvas.height = ink.height; }
+      inkCanvas.getContext("2d")?.putImageData(new ImageData(ink.rgba, ink.width, ink.height), 0, 0);
+      ctx.drawImage(inkCanvas, paper.x, paper.y, paper.width, paper.height);
+      if (weight) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(weight, 0, 0); ctx.restore(); }
+      if (numbers) drawStrokeNumbers(ctx, numbers, seconds, guideInk, plan.style.paper.color);
+      else if (orderGuide !== "none" && orderGuide !== "numbers" && !reducedMotion) {
+        const inkAt = (x: number, y: number) => {
+          const ix = Math.round((x - paper.x) * surface.region.scale), iy = Math.round((y - paper.y) * surface.region.scale);
+          return ix < 0 || iy < 0 || ix >= ink.width || iy >= ink.height ? 0 : ink.rgba[(iy * ink.width + ix) * 4 + 3] / 255;
+        };
+        drawOrderGuide(ctx, plan, seconds, orderGuide, guideInk, width, inkAt, guideStrokes);
+      }
     }
-    if (showBrush && !reducedMotion) {
+    const pose = shodoBrushPose(plan, seconds);
+    if (layer !== "page" && showBrush && !reducedMotion) {
       const cam: ShodoCamera = { x: width / 2, y: height / 2, height: cameraHeight ?? Math.max(width, height) * 2.2 };
       const drawAt = (c: CanvasRenderingContext2D, p: typeof pose) => {
         drawShodoBrushShadow(c, cam, p, plan.style.brush, plan.brush.diameter, look);
@@ -227,10 +240,12 @@ export const ShodoCanvas = forwardRef<HTMLCanvasElement, ShodoCanvasProps>(funct
       } else drawAt(ctx, pose);
     }
   }, [frame, fps, plan, surface, paperCanvas, inkCanvas, background, weight, width, height, paper, dpr, showBrush, look, textures, blurLayers, motionBlur,
-    cameraHeight, orderGuide, guideStrokes, guideInk, numbers, reducedMotion]);
+    cameraHeight, orderGuide, guideStrokes, guideInk, numbers, reducedMotion, page, layer]);
 
-  return <canvas {...props} ref={canvasRef} role="img" aria-label={label ?? "Brush calligraphy being written"}
-    data-km-shodo="" data-km-shodo-frame={frame} data-km-shodo-ready={textures ? "true" : "false"}
+  // The brush alone is decoration: the page canvas carries the description.
+  const a11y = page ? { role: "img", "aria-label": label ?? "Brush calligraphy being written" } : { "aria-hidden": true };
+  return <canvas {...props} ref={canvasRef} {...a11y}
+    data-km-shodo="" data-km-shodo-layer={layer} data-km-shodo-frame={frame} data-km-shodo-ready={textures ? "true" : "false"}
     width={Math.round(width * dpr)} height={Math.round(height * dpr)}
     style={{ width: "100%", height: "auto", aspectRatio: `${width} / ${height}`, display: "block", ...style }} />;
 });

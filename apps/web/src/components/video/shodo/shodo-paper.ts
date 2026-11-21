@@ -35,16 +35,21 @@ export interface ShodoSheet {
   };
 }
 
-/** Faint vermilion kentei-style practice sheet for a paper of the given size. */
-export function kenteiSheet(width: number, height: number, columns = 1, rows = 1): ShodoSheet {
+/**
+ * Faint vermilion kentei-style practice sheet for a paper of the given size. The cells fill
+ * `block` (paper px, for example the space under a heading), or the paper inside a 7 % margin.
+ */
+export function kenteiSheet(
+  width: number, height: number, columns = 1, rows = 1, block?: { x: number; y: number; width: number; height: number },
+): ShodoSheet {
   const m = Math.min(width, height);
+  const inset: [number, number, number, number] = block
+    ? [block.x, block.y, width - block.x - block.width, height - block.y - block.height]
+    : [m * .07, m * .07, m * .07, m * .07];
   return {
     // A coarse mesh like gridded practice hanshi: about 30 mm on a 242 mm sheet.
     mesh: { pitch: m / 8, color: "#D9583A", opacity: .1, width: .8 },
-    cells: {
-      columns, rows, inset: [m * .07, m * .07, m * .07, m * .07], halfLines: true, centreMarks: true,
-      color: "#D24A2E", opacity: .22, width: 1,
-    },
+    cells: { columns, rows, inset, halfLines: true, centreMarks: true, color: "#D24A2E", opacity: .22, width: 1 },
   };
 }
 

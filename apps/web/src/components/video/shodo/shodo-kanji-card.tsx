@@ -3,6 +3,8 @@
  * vermilion stroke-order numbers, then holds a reading card with the useful words. An optional
  * intro types the character first. Frame-addressed: the host gives the glyph and the frame, so a
  * video export can seek in any order. Planning lives in `shodo-kanji-card-plan.ts`.
+ * The brush is drawn on its own canvas above the reading card: it is held over everything on
+ * the desk, and comes in from outside the frame and leaves it after each pass.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, HTMLAttributes, RefObject } from "react";
@@ -104,6 +106,8 @@ export function ShodoKanjiInfoCard({
   const wide = layout === "portrait";
   const compact = wide && density === "compact";
   const t = kanjiCardType(layout, density), W = wide ? 720 : 1280;
+  // Compact: each reading on one line, the term before its value.
+  const readingRow: CSSProperties | undefined = compact ? { display: "flex", alignItems: "baseline", gap: ".45em" } : undefined;
   const cq = (px: number) => `${(px / W * 100).toFixed(3)}cqw`;
   const fs = (px: number) => `calc(${cq(px)} * var(--km-fit, 1))`;
   const show = kanjiCardSections(sections);
@@ -145,8 +149,8 @@ export function ShodoKanjiInfoCard({
       </div> : null}
       {readings || level && !compact ? <div style={{ opacity: reveal, display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: `${fs(t.gap * .5)} ${fs(t.gap)}` }}>
         {readings && wide ? <dl style={{ margin: 0, display: "flex", flexWrap: "wrap", columnGap: fs(t.gap * 1.6), rowGap: fs(t.gap * .4), font: `600 ${fs(t.reading)}/1.3 ${th.body}` }}>
-          {onyomi ? <div><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></div> : null}
-          {kunyomi ? <div><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></div> : null}
+          {onyomi ? <div style={readingRow}><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></div> : null}
+          {kunyomi ? <div style={readingRow}><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></div> : null}
         </dl> : readings ? <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto auto", justifyContent: "start", alignItems: "baseline", columnGap: ".7em", rowGap: ".2em", font: `600 ${fs(t.reading)}/1.3 ${th.body}` }}>
           {onyomi ? <><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></> : null}
           {kunyomi ? <><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></> : null}
@@ -288,7 +292,7 @@ export function ShodoKanjiCard({
     vermilionStrokes: vermilionKey ? vermilionKey.split(",").map(Number) : [],
   }), [glyph, layout, density, insetKey, withCard, show.label, timingKey, ink, speed, vermilionKey, brushKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const { geometry: g, plan, timeline, strokes, inkBox } = writing;
-  const sheet = useMemo(() => kenteiSheet(g.paper.width, g.paper.height, 1, 1), [g]);
+  const sheet = useMemo(() => kenteiSheet(g.paper.width, g.paper.height, 1, 1, g.cell ?? undefined), [g]);
   const last = timeline.frames - 1;
   const fps = KANJI_CARD_FPS;
   // The canvas follows the exact position, so a live preview can move at the screen's refresh rate.
@@ -327,9 +331,9 @@ export function ShodoKanjiCard({
     data-km-timeline={[timeline.review[0], timeline.info[0], timeline.frames].join(" ")} data-km-write-start={timeline.write[0]} style={{
       position: "relative", width: "100%", overflow: "hidden", containerType: "inline-size", ...style,
     }}>
-    <ShodoCanvas plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
-      underlay={g.band ? "felt" : "none"} orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={kanjiCardLabelText(cardLabels.writingName, { char })} guideColor={guide === "numbers" ? th.accent : th.guide}
-      guideSize={guide === "numbers" ? Math.max(12, plan.brush.diameter * .42, g.type.number) : undefined} pixelRatio={pixelRatio} />
+    <ShodoCanvas layer="page" plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
+      underlay="none" orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={kanjiCardLabelText(cardLabels.writingName, { char })} guideColor={guide === "numbers" ? th.accent : th.guide}
+      guideSize={guide === "numbers" ? Math.max(12, plan.brush.diameter * .42, g.type.number) : undefined} guideBounds={g.guides} pixelRatio={pixelRatio} />
     {typed.opacity > 0 ? <div data-km-kanji-typed={typed.composing ? "composing" : typed.text ? "converted" : "caret"} aria-hidden="true" style={{
       position: "absolute", left: pct((ix0 + ix1) / 2, g.width), top: pct((iy0 + iy1) / 2, g.height), transform: "translate(-50%, -50%)",
       display: "flex", alignItems: "center", whiteSpace: "nowrap", opacity: typed.opacity, color: th.ink,
@@ -352,7 +356,11 @@ export function ShodoKanjiCard({
       highlight={highlight} reducedMotion={reduce}
       meanings={meanings} onyomi={onyomi} kunyomi={kunyomi} jlpt={jlpt} words={words} style={{
         position: "absolute", left: pct(g.card.x, g.width), top: pct(g.card.y, g.height), width: pct(g.card.width, g.width), height: pct(g.card.height, g.height),
-        padding: g.cardPad.map(cq).join(" "), boxShadow: portrait ? "0 -6px 18px rgba(0,0,0,.12)" : "-6px 0 18px rgba(0,0,0,.12)",
+        padding: g.cardPad.map(cq).join(" "), borderRadius: g.cardRadius ? cq(g.cardRadius) : undefined,
+        // A card lying on the paper casts a soft shadow all round; a panel only along its edge.
+        boxShadow: g.cardRadius ? `0 ${cq(4)} ${cq(18)} rgba(40,30,20,.16), 0 ${cq(1)} ${cq(3)} rgba(40,30,20,.12)` : portrait ? "0 -6px 18px rgba(0,0,0,.12)" : "-6px 0 18px rgba(0,0,0,.12)",
       }} /> : null}
+    <ShodoCanvas layer="brush" plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} pixelRatio={pixelRatio}
+      style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }} />
   </div>;
 }

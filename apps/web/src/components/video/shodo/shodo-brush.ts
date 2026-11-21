@@ -217,6 +217,31 @@ export function shodoFerruleHeight(pose: ShodoBrushPose, brush: ShodoBrush, D: n
   return tuftGeometry(pose, brush, D).ferrule[2];
 }
 
+/**
+ * How far past a frame edge the tip of a brush held still in the air must be, design px, for the
+ * whole brush and its cast shadow to lie outside the frame. `out` is the unit direction out of
+ * the frame on the paper (for example [1, 0] past the right edge); `lean` is the handle lean
+ * vector in degrees (as `shodoRestLean`); `z` the tip's height above the paper; `D` the brush
+ * diameter. The handle may lean back into the frame, so the clearance grows with the lean toward
+ * it. The top-down camera only moves points away from the frame centre, so it is left out.
+ */
+export function shodoBrushClearance(
+  out: readonly [number, number], lean: readonly [number, number], z: number, brush: ShodoBrush, D: number, look: ShodoBrushLook = DEFAULT_BRUSH_LOOK,
+): number {
+  const axis = handleAxis({ leanX: lean[0], leanY: lean[1] } as ShodoBrushPose);
+  const L = lightVector(look);
+  const reach = D * brush.length * (1 + brush.handleLength);
+  // Widest part (tuft belly, collar, handle) and the softest shadow edge (its blur and half its width).
+  const radius = D * .7, blur = 16;
+  let back = 0;
+  for (const s of [0, reach]) {
+    const p: V3 = add([0, 0, Math.max(0, z)], mul(axis, s));
+    const shadow: V2 = [p[0] - p[2] * L[0] / L[2], p[1] - p[2] * L[1] / L[2]];
+    back = Math.max(back, -(p[0] * out[0] + p[1] * out[1]) + radius, look.shadow > 0 ? -(shadow[0] * out[0] + shadow[1] * out[1]) + radius + blur : 0);
+  }
+  return back;
+}
+
 /** Draw the cast shadow of the brush on the paper (call before drawing the brush). */
 export function drawShodoBrushShadow(
   ctx: CanvasRenderingContext2D, cam: ShodoCamera, pose: ShodoBrushPose, brush: ShodoBrush, D: number, look: ShodoBrushLook,

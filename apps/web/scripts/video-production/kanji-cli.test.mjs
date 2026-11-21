@@ -124,6 +124,9 @@ test("the producer stops before any network or render work when a consent, the k
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /music file changed/u);
     // A destination the export page would refuse stops here too.
     await assert.rejects(produceKanjiShort({ ...base, config: { ...read, destination: "facebook-reels" }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /destination must be one of youtube-shorts/u);
+    // An unbuilt export page names the fix instead of a raw file error.
+    const unbuilt = { ...deps, fingerprintBuiltStage: async () => { throw Object.assign(new Error("ENOENT: no such file or directory, realpath 'dist'"), { code: "ENOENT" }); } };
+    await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, unbuilt), /export page is not built\. Run pnpm build/u);
     await mkdir(join(dir, "out", "release"), { recursive: true });
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /already exists/u);
     assert.deepEqual(touched, []);

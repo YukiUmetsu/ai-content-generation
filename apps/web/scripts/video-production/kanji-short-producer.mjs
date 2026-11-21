@@ -119,7 +119,10 @@ export async function produceKanjiShort(request, deps = {}) {
   // Everything that can fail locally fails before any text is sent to Fish.
   progress("preflight", "Checking the built export page, the browser, the kanji planner and the narration script…");
   const distRoot = request.distRoot ?? fileURLToPath(new URL("../../dist", import.meta.url));
-  const buildHash = await (deps.fingerprintBuiltStage ?? fingerprintBuiltStage)(distRoot);
+  const buildHash = await (deps.fingerprintBuiltStage ?? fingerprintBuiltStage)(distRoot).catch(error => {
+    if (error?.code === "ENOENT") fail("the export page is not built. Run pnpm build, then start again.");
+    throw error;
+  });
   await (deps.probeBrowserExecutable ?? probeBrowserExecutable)(request.browserExecutable);
   const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
   const preset = presets.find(p => p.id === config.destination);
