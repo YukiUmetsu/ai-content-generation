@@ -64,7 +64,7 @@ export function readKanjiConfig(json, configPath) {
   if (music.startSeconds !== undefined && !(Number.isFinite(music.startSeconds) && music.startSeconds >= 0)) fail("config: music.startSeconds must be a number of seconds");
   if (music.belowVoiceDb !== undefined && !(music.belowVoiceDb >= 6 && music.belowVoiceDb <= 30)) fail("config: music.belowVoiceDb must be 6 to 30");
   const timing = json.timing ?? {};
-  const ranges = { write: [3, 20], review: [3, 20], wordGap: [.3, 3], tail: [.5, 5], readingGap: [.2, 2], wordLead: [0, 2], questionStart: [0, 2], introTail: [0, 2] };
+  const ranges = { write: [3, 20], review: [3, 20], wordGap: [.3, 3], tail: [.5, 5], readingGap: [.2, 2], wordLead: [0, 2], questionStart: [.05, 2], introTail: [0, 2] };
   for (const key of Object.keys(timing)) {
     if (!Object.hasOwn(ranges, key)) fail(`config: timing.${key} is not a setting (${Object.keys(ranges).join(", ")})`);
     const [min, max] = ranges[key];
@@ -107,10 +107,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
   if (args.out) config.outputRoot = args.out;
   const log = deps.log ?? ((line) => process.stdout.write(`${line}\n`));
   if (args.dryRun) {
-    const { entries } = readKanjiDataset(JSON.parse(await readFile(config.dataset, "utf8")));
+    const { entries, problems } = readKanjiDataset(JSON.parse(await readFile(config.dataset, "utf8")));
     for (const char of args.chars) {
       const entry = entries.get(char);
       if (!entry) { log(`${char}: not in the kanji data`); continue; }
+      for (const problem of problems.filter(p => p.includes(`(${char})`))) log(`${char}: kanji data problem: ${problem}`);
       const content = kanjiShortContent(entry, { speech: config.narration.speech });
       log(`${char}  ${content.meanings} · JLPT ${content.jlpt ?? "-"} · typed ${content.name.kana} → ${char}`);
       for (const line of kanjiShortLines(content, config.narration)) log(`  ${line.id.padEnd(9)} ${line.text}${line.caption !== line.text ? `   [caption: ${line.caption}]` : ""}`);

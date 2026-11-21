@@ -11,7 +11,8 @@ import { kenteiSheet } from "./shodo-paper";
 import { ShodoCanvas } from "./shodo-react";
 import { shodoRgb } from "./shodo-style";
 import {
-  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardType, kanjiCardTypedAt, kanjiCardWriting,
+  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections, kanjiCardType, kanjiCardTypedAt,
+  kanjiCardWriting,
   spreadWordHighlights, wordHighlightAt,
 } from "./shodo-kanji-card-plan";
 import type {
@@ -102,7 +103,7 @@ export function ShodoKanjiInfoCard({
   const t = kanjiCardType(layout, density), W = wide ? 720 : 1280;
   const cq = (px: number) => `${(px / W * 100).toFixed(3)}cqw`;
   const fs = (px: number) => `calc(${cq(px)} * var(--km-fit, 1))`;
-  const show = { meanings: true, readings: true, jlpt: true, words: true, ...sections };
+  const show = kanjiCardSections(sections);
   const level = show.jlpt && jlpt && KANJI_CARD_JLPT_LEVELS.includes(jlpt) ? jlpt : null;
   const readings = show.readings && (onyomi || kunyomi);
   const list = show.words && words?.length ? words : null;
@@ -257,7 +258,7 @@ export function ShodoKanjiCard({
 }: ShodoKanjiCardProps) {
   const prefersReduced = usePrefersReducedMotion();
   const reduce = reducedMotion ?? prefersReduced;
-  const show = { label: true, meanings: true, readings: true, jlpt: true, words: true, ...sections };
+  const show = kanjiCardSections(sections);
   const content: KanjiCardContent = { meanings, onyomi, kunyomi, jlpt, words };
   const withCard = kanjiCardHasCard(content, show);
   // The bands the layout really uses (clamped), also reported in data-km-safe-inset.

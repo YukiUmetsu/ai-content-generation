@@ -49,10 +49,11 @@ export function readKanjiStudyPlan(input: unknown): KanjiStudyVisualPlan {
   return plan;
 }
 
-/** True when the card draws the strokes the narration was timed to (to the millisecond). */
+/** True when the card draws the strokes the narration was timed to, in whole milliseconds (both sides round the same way). */
 export function sameStrokes(drawn: unknown, planned: KanjiStudyVisualPlan["strokes"]): boolean {
   const d = drawn as KanjiStudyVisualPlan["strokes"] | null;
+  const ms = (v: number) => Math.round(v * 1000);
   const pass = (a: readonly (readonly [number, number])[] | undefined, b: readonly (readonly [number, number])[]) =>
-    Array.isArray(a) && a.length === b.length && a.every((p, i) => Math.abs(p[0] - b[i][0]) <= .001 && Math.abs(p[1] - b[i][1]) <= .001);
+    Array.isArray(a) && a.length === b.length && a.every((p, i) => ms(p[0]) === ms(b[i][0]) && ms(p[1]) === ms(b[i][1]));
   return !!d && pass(d.write, planned.write) && pass(d.review, planned.review);
 }

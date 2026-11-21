@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, nextOutputDir, parseKanjiArgs, readKanjiConfig } from "./kanji-cli.mjs";
-import { kanjiCaptions, kanjiVgSvg, produceKanjiShort } from "./kanji-short-producer.mjs";
+import { kanjiCaptions, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 
 const VOICE = "984831ae0346415685b109090be3e798";
 const config = (overrides = {}) => ({
@@ -43,6 +43,7 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ timing: { write: 1 } }), "/c.json"), /timing\.write/u);
   assert.throws(() => readKanjiConfig({ ...config(), schemaVersion: 2 }, "/c.json"), /schemaVersion/u);
   assert.throws(() => readKanjiConfig(config({ timing: { questionStart: -1 } }), "/c.json"), /timing\.questionStart/u);
+  assert.throws(() => readKanjiConfig(config({ timing: { questionStart: 0 } }), "/c.json"), /timing\.questionStart must be 0\.05/u);
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
@@ -168,5 +169,45 @@ test("captions run from each spoken line's start to its end, with the written wo
   const srt = kanjiCaptions([{ id: "question", caption: "Do you know how to write the kanji mizu?" }, { id: "word-1", caption: "水道" }],
     { question: .35, "word-1": 15.193 }, { question: 2.531, "word-1": .56 });
   assert.equal(srt, "1\n00:00:00,350 --> 00:00:03,081\nDo you know how to write the kanji mizu?\n\n2\n00:00:15,193 --> 00:00:15,953\n水道\n");
+});
+
+test("a word longer than the card shows, and music too short for long writing passes, stop before KanjiVG or Fish", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-limits-"));
+  try {
+    const pcm = Buffer.alloc(35 * 48000 * 2);                                            // 35 s of silence
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0); header.writeUInt32LE(36 + pcm.length, 4); header.write("WAVE", 8); header.write("fmt ", 12);
+    header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(48000, 24);
+    header.writeUInt32LE(96000, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write("data", 36); header.writeUInt32LE(pcm.length, 40);
+    const bytes = Buffer.concat([header, pcm]);
+    await writeFile(join(dir, "bed.wav"), bytes);
+    const long = { ...MIZU, words: [...MIZU.words, { word: "水".repeat(41), ruby: "みず", romaji: "mizu", meaning: "water", reading: "on" }] };
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [long] }));
+    const music = { ...config().music, sha256: createHash("sha256").update(bytes).digest("hex") };
+    const touched = [];
+    const deps = {
+      fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
+      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts"], KANJI_WORD_LIMITS: { word: 40, ruby: 60, romaji: 60, meaning: 80 } }),
+      kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
+    };
+    const run = (cfg) => produceKanjiShort({ char: "水", config: readKanjiConfig(cfg, join(dir, "config.json")), out: join(dir, "out"), browserExecutable: "/bin/chrome",
+      apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps);
+    await assert.rejects(run(config({ music })), /has a word longer than the card shows|the word 水{41} has a word/u);
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
+    await assert.rejects(run(config({ music, timing: { write: 20, review: 20 } })), /needs at least 48 s/u);
+    assert.deepEqual(touched, []);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("the planner's recorded hash is the hash of the bytes it was imported from", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-planner-"));
+  try {
+    const source = "export const KANJI_SHORT_PRESETS = ['tiktok'];\nexport const answer = 42;\n";
+    await writeFile(join(dir, "planner.mjs"), source);
+    const planner = await loadKanjiPlanner(join(dir, "planner.mjs"));
+    assert.equal(planner.answer, 42);
+    assert.equal(planner.plannerSha256, createHash("sha256").update(source).digest("hex"));
+    await assert.rejects(loadKanjiPlanner(join(dir, "missing.mjs")), /not built/u);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

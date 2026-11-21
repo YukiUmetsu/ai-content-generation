@@ -346,9 +346,17 @@ export function planKanjiCardWriting(
   return at(Math.exp((lo + hi) / 2), x, y, size);
 }
 
+/** Which parts show: every part unless its section is `false` (a missing or undefined section shows). */
+export function kanjiCardSections(sections: Partial<Record<KanjiCardSection, boolean>> | undefined): Record<KanjiCardSection, boolean> {
+  return {
+    label: sections?.label !== false, meanings: sections?.meanings !== false, readings: sections?.readings !== false,
+    jlpt: sections?.jlpt !== false, words: sections?.words !== false,
+  };
+}
+
 /** True when the card shows any text: the reading card exists only then. */
 export function kanjiCardHasCard(content: KanjiCardContent, sections: Partial<Record<KanjiCardSection, boolean>> = {}): boolean {
-  const show = { meanings: true, readings: true, jlpt: true, words: true, ...sections };
+  const show = kanjiCardSections(sections);
   return !!(show.meanings && content.meanings || show.readings && (content.onyomi || content.kunyomi)
     || show.jlpt && content.jlpt || show.words && content.words?.length);
 }
@@ -362,7 +370,7 @@ export interface KanjiCardWritingOptions {
   layout?: KanjiCardLayout;
   density?: KanjiCardDensity;
   safeInset?: Partial<KanjiCardSafeInset>;
-  /** The card's text: the reading card shows only when some of it shows (see `kanjiCardHasCard`). */
+  /** The card's text: the reading card shows only when some of it shows (see `kanjiCardHasCard`). Its `vermilionStrokes` count too. */
   content?: KanjiCardContent;
   /** Parts to show, as on the card. `label: false` hides the label. */
   sections?: Partial<Record<KanjiCardSection, boolean>>;
@@ -379,11 +387,14 @@ export interface KanjiCardWritingOptions {
  * so a host can time a voice-over to the strokes before it renders anything.
  */
 export function kanjiCardWriting(glyph: ShodoGlyph, options: KanjiCardWritingOptions = {}) {
-  const withLabel = options.sections?.label !== false;
-  const withCard = kanjiCardHasCard({ ...options.content, vermilionStrokes: undefined }, options.sections);
+  // Untyped callers could still pass the options this function had before; they would be ignored silently.
+  for (const old of ["withCard", "withLabel"]) if (old in options) throw new TypeError(`kanjiCardWriting: "${old}" is no longer an option; pass the card's content and sections.`);
+  const withLabel = kanjiCardSections(options.sections).label;
+  const withCard = kanjiCardHasCard(options.content ?? {}, options.sections);
+  const vermilionStrokes = options.vermilionStrokes ?? options.content?.vermilionStrokes;
   const geometry = kanjiCardGeometry(options.layout ?? "landscape", withCard, options.safeInset, withLabel, options.density ?? "regular");
   const plan = planKanjiCardWriting(glyph, geometry, {
-    vermilion: options.vermilionStrokes, withLabel, seconds: kanjiCardPace(options.timing), ink: options.ink, speed: options.speed,
+    vermilion: vermilionStrokes, withLabel, seconds: kanjiCardPace(options.timing), ink: options.ink, speed: options.speed,
   });
   const timeline = kanjiCardTimeline(plan.duration, options.timing);
   return { geometry, plan, timeline, strokes: kanjiCardStrokeTimes(plan, timeline), inkBox: kanjiInkBox(plan) };
@@ -431,7 +442,8 @@ export function kanjiCardTypedAt(
     // Reduced motion: the same words at the same times, without typing, caret, growth, push-in or bump.
     // The reading shows until the conversion; the highlights only fade.
     const opacity = time <= introLength ? 1 : 1 - smoothstep((time - introLength) / FADE_OUT);
-    if (time < convertAt && kana.length) return { ...none, text: kana.join(""), composing: true, opacity };
+    // Before the conversion: the reading, or nothing when there is none (full motion shows only a caret then).
+    if (time < convertAt) return kana.length ? { ...none, text: kana.join(""), composing: true, opacity } : none;
     const e = intro?.emphasizeAt !== undefined && Number.isFinite(intro.emphasizeAt) ? time - intro.emphasizeAt : -1;
     const emphasis = e < 0 ? 0 : e < .1 ? smoothstep(e / .1) : 1 - smoothstep((e - .1) / .5);
     return { ...none, text: char, opacity, converted: emphasis * .8 };

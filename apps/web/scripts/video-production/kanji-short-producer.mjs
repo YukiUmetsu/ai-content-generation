@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, parse, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { readPcmData, renderMasterAudio, wavBytes } from "./audio.mjs";
 import { synthesizeNarration } from "./speech.mjs";
 import { buildSampleTimeline } from "./timeline.mjs";
@@ -27,10 +27,17 @@ const fail = (message) => { throw new Error(`Kanji short: ${message}`); };
 const exists = (path) => lstat(path).then(() => true, (error) => error.code === "ENOENT" ? false : Promise.reject(error));
 const FISH_REVISION = "fish-api-v1";
 
-/** The Node bundle with Kumiki's kanji card planning (built by `pnpm build`). */
+/**
+ * The Node bundle with Kumiki's kanji card planning (built by `pnpm build`), imported from the
+ * bytes that are hashed, so the recorded hash is the planner that timed the narration. The bundle
+ * is self-contained (no imports).
+ */
 export async function loadKanjiPlanner(path = fileURLToPath(new URL("../../dist-shot/kanji-entry.mjs", import.meta.url))) {
-  try { return await import(pathToFileURL(path).href); }
+  let bytes;
+  try { bytes = await readFile(path); }
   catch { fail("the kanji card planner is not built. Run pnpm build, then start again."); }
+  const planner = await import(`data:text/javascript;base64,${bytes.toString("base64")}`);
+  return { ...planner, plannerSha256: sha256(bytes) };
 }
 
 /**
@@ -135,15 +142,20 @@ export async function produceKanjiShort(request, deps = {}) {
   const { entries, problems } = readKanjiDataset(JSON.parse(datasetBytes.toString("utf8")));
   const entry = entries.get(char);
   if (!entry) fail(`${char} is not in the kanji data${problems.length ? ` (${problems.length} entries had problems)` : ""}`);
+  const ownProblems = problems.filter(problem => problem.includes(`(${char})`));
   const content = kanjiShortContent(entry, { speech: config.narration?.speech });
+  // The card's text limits, before any download: a word the page would refuse stops here.
+  const limits = planner.KANJI_WORD_LIMITS ?? {};
+  for (const word of content.words) for (const [key, max] of Object.entries(limits))
+    if (!(typeof word[key] === "string" && word[key].trim() && word[key].length <= max)) fail(`the word ${word.word} has a ${key} longer than the card shows (${max} characters)`);
   const lines = kanjiShortLines(content, config.narration);
   const musicSource = await readFile(config.music.path);
   if (sha256(musicSource) !== config.music.sha256) fail("the music file changed since it was reviewed; check it and update its sha256");
 
   await mkdir(out, { recursive: true });
   const cacheDir = resolve(config.cacheDir ?? join(out, ".cache"));
-  const renderDir = join(out, ".render");
-  await mkdir(renderDir, { recursive: true });
+  // This run's own scratch folder, so a second run in the same folder cannot remove it.
+  const renderDir = await mkdtemp(join(out, ".render-"));
   const working = await mkdtemp(join(out, ".release-staging-"));
   const ffmpeg = request.ffmpeg ?? "ffmpeg";
   let stage = null, released = false;
@@ -154,8 +166,10 @@ export async function produceKanjiShort(request, deps = {}) {
     const music = int16(await readFile(sourceWav));
     const musicSeconds = music.length / SAMPLE_RATE;
     const musicFrom = Number.isFinite(config.music.startSeconds) ? config.music.startSeconds : 1;
-    if (musicSeconds - musicFrom < MIN_MUSIC_SECONDS)
-      fail(`the music has ${Math.max(0, musicSeconds - musicFrom).toFixed(1)} s from ${musicFrom} s; a short needs at least ${MIN_MUSIC_SECONDS} s`);
+    // A short lasts the two writing passes plus about 8 s of intro and words; never less than 30 s of music.
+    const musicNeeded = Math.max(MIN_MUSIC_SECONDS, pacing.write + pacing.review + 8);
+    if (musicSeconds - musicFrom < musicNeeded)
+      fail(`the music has ${Math.max(0, musicSeconds - musicFrom).toFixed(1)} s from ${musicFrom} s; this short needs at least ${musicNeeded} s`);
 
     progress("strokes", `Loading KanjiVG stroke data for ${char}…`);
     const kanjivg = await (deps.kanjiVgSvg ?? kanjiVgSvg)(char, { planner, cacheDir, allowNetwork: request.allowNetwork, signal: request.signal });
@@ -219,8 +233,9 @@ export async function produceKanjiShort(request, deps = {}) {
     const speech = takes.map(take => ({ onset: timing.onsets[take.id], end: timing.onsets[take.id] + take.speech }));
     const window = Number.isFinite(config.music.startSeconds) ? { start: config.music.startSeconds, longestQuietSeconds: null }
       : chooseMusicWindow(music, length, speech);
-    // The bed covers the whole video without looping.
-    if (window.start + length + .5 > musicSeconds) fail(`the music ends ${(window.start + length + .5 - musicSeconds).toFixed(1)} s before the video does; choose an earlier music.startSeconds`);
+    // The bed covers the whole video without looping (the mix trims it to the video's length).
+    if (window.start + length > musicSeconds) fail(`the music ends ${(window.start + length - musicSeconds).toFixed(1)} s before the video does; ${
+      Number.isFinite(config.music.startSeconds) ? "choose an earlier music.startSeconds" : "use longer music"}`);
     const cut = async (path, extraDb) => run(ffmpeg, ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", String(window.start), "-t", String(length + .5), "-i", sourceWav,
       ...(extraDb ? ["-af", `volume=${extraDb}dB`] : []), "-c:a", "pcm_s16le", path], { signal: request.signal });
     const bedPath = join(renderDir, "music-bed.wav");
@@ -306,7 +321,7 @@ export async function produceKanjiShort(request, deps = {}) {
     await writeFile(join(working, "credits.txt"), credits.join("\n") + "\n");
     const artifacts = {};
     for (const file of ["video.mp4", "master.wav", "voice.wav", "captions.srt", "card-plan.json", "credits.txt"]) artifacts[file] = sha256(await readFile(join(working, file)));
-    const warnings = [];
+    const warnings = ownProblems.map(problem => `kanji data: ${problem}`);
     if (still.seconds > 2.5) warnings.push(`the picture stands still for ${still.seconds.toFixed(2)} s at ${still.start} s (budget 2.5 s)`);
     if (musicBelowVoice > below + 1) warnings.push(`the music sits ${musicBelowVoice} dB under the voice, not ${below} dB: the bed is too quiet to raise further`);
     const qa = {
@@ -323,10 +338,9 @@ export async function produceKanjiShort(request, deps = {}) {
     };
     const qaBytes = JSON.stringify(qa, null, 2);
     await writeFile(join(working, "qa-report.json"), qaBytes);
-    const plannerPath = fileURLToPath(new URL("../../dist-shot/kanji-entry.mjs", import.meta.url));
     const renderManifest = {
       schemaVersion: 1, kind: "kanji-short-release", char, buildHash, planHash, kumikiItem: "shodo-kanji-card",
-      plannerSha256: deps.loadKanjiPlanner ? null : sha256(await readFile(plannerPath)),
+      plannerSha256: planner.plannerSha256 ?? null,
       sources: {
         dataset: { path: config.dataset, sha256: sha256(datasetBytes), entry: entry.char },
         kanjivg: { url: kanjivg.url, sha256: kanjivg.sha256 },
