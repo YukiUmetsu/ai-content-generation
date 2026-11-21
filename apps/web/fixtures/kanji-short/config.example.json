@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "dataset": "kanji-data/jlpt-n5-n3.json",
+  "outputRoot": "/Users/YOU/Movies/ContentGen/kanji-shorts",
+  "destination": "youtube-shorts",
+  "voice": {
+    "provider": "fish",
+    "voiceId": "YOUR_FISH_VOICE_ID",
+    "modelId": "s2.1-pro-free",
+    "pace": "slow",
+    "licenseStatus": "unknown"
+  },
+  "music": {
+    "path": "music/your-reviewed-bed.wav",
+    "sha256": "SHA-256 OF THE REVIEWED MUSIC FILE",
+    "title": "Title of the recording and the excerpt used",
+    "source": "https://example.org/where-it-came-from",
+    "license": "CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/)",
+    "attribution": "Optional credit line for the description",
+    "fadeInMs": 250,
+    "fadeOutMs": 1200,
+    "belowVoiceDb": 11
+  },
+  "narration": {
+    "script": "optional: a file like scripts/video-production/kanji-short-script.json, or the script itself; default: that file",
+    "labels": {
+      "on": "おんよみ",
+      "kun": "くんよみ"
+    },
+    "speech": {}
+  },
+  "timing": {
+    "write": 6.5,
+    "review": 6.5,
+    "introTail": 0.45,
+    "tail": 1.4
+  },
+  "card": {
+    "heading": "Kanji study",
+    "density": "compact",
+    "labels": {
+      "onyomi": "ON'YOMI",
+      "kunyomi": "KUN'YOMI",
+      "words": "USEFUL WORDS",
+      "jlpt": "JLPT"
+    },
+    "theme": {
+      "accent": "#B3301A"
+    },
+    "brushStyle": {
+      "ink": {
+        "strength": 1
+      }
+    },
+    "typeStep": 0.16,
+    "strokeNumbers": true
+  },
+  "credits": [
+    "Credit line required by your kanji data's licence (KanjiVG is credited automatically)."
+  ],
+  "maxWords": 3,
+  "qa": {
+    "stillBudgetSeconds": 2.5,
+    "anchorDriftSeconds": 1.5
+  },
+  "captions": {
+    "tailSeconds": 0.2
+  }
+}

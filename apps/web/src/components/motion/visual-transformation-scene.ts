@@ -44,6 +44,7 @@ export function prepareVisualScene(scene: VisualScene): PreparedVisualElement[] 
     validateColor(element.stroke, `Element '${element.id}' stroke`);
     if (element.content.kind === "shape") {
       requireVisual(element.content.shape.contours.length > 0, `Shape '${element.id}' needs at least one contour.`);
+      requireVisual(element.content.fillRule === undefined || ["nonzero", "evenodd"].includes(element.content.fillRule), `Shape '${element.id}' fillRule must be nonzero or evenodd.`);
       element.content.shape.contours.forEach(validateContour);
     } else if (element.content.kind === "text") {
       requireVisual(typeof element.content.text === "string" && (element.content.fontSize === undefined || Number.isFinite(element.content.fontSize) && element.content.fontSize > 0) && (element.content.lineHeight === undefined || Number.isFinite(element.content.lineHeight) && element.content.lineHeight > 0), `Text '${element.id}' needs text and positive finite fontSize/lineHeight.`);

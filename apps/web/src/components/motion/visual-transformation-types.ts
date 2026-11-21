@@ -1,11 +1,16 @@
 /** VT1 is an authoring fragment compiled to MG1, not a second scene clock. */
 import type { AffineMatrix, AnimationTrack, ColorValue, Diagnostic, EasingSpec, FrameRange, MotionTimeline, RationalFps, Rect } from "./types";
 import type { ContourShape } from "./morph";
+import type { AdvancedShapeMorphOptions } from "./advanced-morph";
 import type { MaskSample, MaskSpecLocal } from "./masks";
 import type { SharedElementSpec } from "./shared-element";
 
 export type VisualContent =
-  | { kind: "shape"; bounds: Rect; shape: ContourShape }
+  | {
+    kind: "shape"; bounds: Rect; shape: ContourShape;
+    /** Default `evenodd`. `topology-morph` frames use `nonzero`, so parts that overlap in transit form one union. */
+    fillRule?: "nonzero" | "evenodd";
+  }
   | { kind: "text"; bounds: Rect; text: string; fontFamily?: string; fontSize?: number; lineHeight?: number; direction?: "ltr" | "rtl" }
   | { kind: "svg-path"; bounds: Rect; d: string }
   | { kind: "group"; bounds: Rect };
@@ -30,12 +35,19 @@ export interface VisualElement {
   lineage?: string[];
 }
 export interface VisualScene { id: string; elements: VisualElement[] }
-export type TransformationStrategy = "auto" | "geometric-morph" | "shared-element" | "mask-reveal" | "particle-handoff" | "crossfade";
+export type TransformationStrategy = "auto" | "geometric-morph" | "topology-morph" | "shared-element" | "mask-reveal" | "particle-handoff" | "crossfade";
+/**
+ * `AdvancedShapeMorph` settings for `topology-morph` (parts, holes, correspondence, interpolation). Easing is not
+ * accepted here: the mapping's `easing` already shapes the handoff progress.
+ */
+export type TopologyMorphOptions = Omit<AdvancedShapeMorphOptions, "easing">;
 export interface TransformationOptions {
   strategy?: TransformationStrategy;
   fallback?: "crossfade" | "mask-reveal";
   easing?: EasingSpec;
   particles?: { count?: number; seed?: number; radius?: number; arc?: number };
+  /** Used by `topology-morph`. */
+  morph?: TopologyMorphOptions;
 }
 type MappingBase = TransformationOptions & { id: string; semanticId: string };
 export type VisualMapping = MappingBase & (
@@ -97,6 +109,7 @@ export interface TransformationLane {
   targetWeight: number;
   shared?: SharedElementSpec;
   particles: Required<NonNullable<TransformationOptions["particles"]>>;
+  morph?: TopologyMorphOptions;
 }
 export interface CompiledVisualTransformation {
   spec: VisualTransformationSpec;

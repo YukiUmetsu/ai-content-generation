@@ -3,6 +3,8 @@ import { forwardRef } from "react";
 import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import type { MeasureText } from "../media/text-layout";
 import { evaluateObjectStory } from "./object-story";
+import { LOOK_BACK, SMEAR_PATH, smearAt, smearTransform } from "../motion/smear";
+import type { SmearFrame } from "../motion/smear";
 import type { ObjectStoryFrame, ObjectStoryMark, ObjectStoryObjectFrame, ObjectStoryPlan, ObjectStoryWordShape } from "./object-story";
 
 export interface ObjectStoryProps extends Omit<ComponentPropsWithoutRef<"div">, "children"> {
@@ -11,6 +13,8 @@ export interface ObjectStoryProps extends Omit<ComponentPropsWithoutRef<"div">, 
   frame: number;
   /** Draw an object into its box. Return null to show its label as a word. */
   renderObject?: (object: ObjectStoryObjectFrame, size: { width: number; height: number }) => ReactNode;
+  /** Draw the default glow behind the stage. Turn it off to put the story over your own background. @default true */
+  backdrop?: boolean;
   /** Show each beat's finished state, for reduced motion. */
   settled?: boolean;
 }
@@ -100,30 +104,37 @@ function MotionEffects({ object, width, height, art, label, emit }: { object: Ob
   </>;
 }
 
-function StageObject({ object, height, renderObject }: { object: ObjectStoryObjectFrame; height: number; renderObject: ObjectStoryProps["renderObject"] }) {
+function StageObject({ object, height, short, renderObject, smear }: { object: ObjectStoryObjectFrame; height: number; short: number; renderObject: ObjectStoryProps["renderObject"]; smear?: SmearFrame }) {
   const { rect, opacity, dimmed, pulse, label, value, mark, level, figure, motion, trend, clockMinutes, wordShape, emits } = object;
-  if (figure && value) return <div data-km-story-object={object.id} data-km-story-figure="" style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: height * .02 }}>
+  if (figure && value) return <div data-km-story-object={object.id} data-km-story-figure="" data-km-text-tracks="" style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: height * .02 }}>
     <span data-km-story-value="" style={{ color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .24, rect.height * .5), lineHeight: 1, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", transform: `scale(${(1 + pulse * .06) * value.progress})` }}>{value.text}</span>
     {label && <p style={{ margin: 0, color: INK, fontWeight: 650, fontSize: height * .05, lineHeight: 1.2 }}>{label}</p>}
   </div>;
-  const labelSize = Math.max(height * .034, Math.min(rect.width * .1, height * .04));
+  // Sized from the short side. A size from the height makes a portrait label too wide for its object, so it wraps onto the art.
+  const labelSize = Math.max(short * .034, Math.min(rect.width * .1, short * .04));
   const boxHeight = rect.height - (label ? labelSize * 1.5 : 0);
   // A graph takes the object's place, and its label says what the line is.
   const art = trend ? null : clockMinutes !== undefined ? <ObjectStoryClock minutes={clockMinutes} width={rect.width} height={boxHeight} /> : renderObject?.(object, { width: rect.width, height: boxHeight }) ?? null;
   // A word object already says its label, so it takes the label's room too.
   const showLabel = Boolean(label && (trend || art !== null));
   const artHeight = rect.height - (showLabel ? labelSize * 1.5 : 0);
-  return <div data-km-story-object={object.id} style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity: dimmed ? opacity * .42 : opacity }}>
+  return <div data-km-story-object={object.id} data-km-text-tracks="" style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, opacity: dimmed ? opacity * .42 : opacity }}>
     <div style={{ position: "absolute", left: 0, top: 0, width: rect.width, height: artHeight, opacity: motion.opacity, transformOrigin: motion.origin === "bottom" ? "50% 100%" : "50% 50%", transform: `translate(${motion.x}px, ${motion.y}px) rotate(${motion.rotate}deg) scale(${motion.scale * motion.scaleX * (1 + pulse * .09)}, ${motion.scale * motion.scaleY * (1 + pulse * .09)})`, filter: pulse > .01 ? `drop-shadow(0 0 ${pulse * height * .03}px ${ACCENT})` : undefined }}>
       {trend ? <TrendGraph trend={trend} width={rect.width} height={artHeight} stroke={height * .007} />
+        : art !== null && smear ? <>
+          {/* Fading copies trail behind on the fastest frames; the object itself stretches along its path and squashes when it stops. */}
+          {smear.ghosts.map((ghost, i) => <div key={i} aria-hidden="true" data-km-story-smear="" data-km-illustration-region="art" style={{ position: "absolute", inset: 0, opacity: ghost.opacity,
+            transform: `translate(${ghost.dx}px, ${ghost.dy}px) ${smearTransform(smear)}`, transformOrigin: "50% 70%" }}>{art}</div>)}
+          <div style={{ position: "absolute", inset: 0, transform: smearTransform(smear) || undefined, transformOrigin: "50% 70%" }}>{art}</div>
+        </>
         : art ?? <ObjectStoryWord text={label ?? object.id} width={rect.width} height={artHeight} shape={wordShape} />}
       {level !== undefined && <div data-km-story-level={level.toFixed(3)} aria-hidden="true" style={{ position: "absolute", left: "12%", right: "12%", bottom: "-1%", height: height * .022, borderRadius: height * .011, overflow: "hidden", background: "var(--km-shot-track, rgba(255,255,255,.14))" }}>
         <div style={{ width: `${level * 100}%`, height: "100%", borderRadius: "inherit", background: WARM }} />
       </div>}
       {mark && <span data-km-story-mark={mark.kind} aria-label={mark.kind} style={{ position: "absolute", right: "-2%", top: "-2%", width: rect.width * .26, height: rect.width * .26, borderRadius: "50%", display: "grid", placeItems: "center",
         background: MARKS[mark.kind].color, color: SURFACE, fontWeight: 800, fontSize: rect.width * .17, transform: `scale(${mark.progress})` }}>{MARKS[mark.kind].glyph}</span>}
-      {value && <span data-km-story-value="" style={{ position: "absolute", left: "50%", bottom: "4%", transform: `translateX(-50%) scale(${value.progress})`, padding: `${height * .008}px ${height * .018}px`, borderRadius: height * .014, whiteSpace: "nowrap",
-        background: SURFACE, color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .17, height * .066), fontVariantNumeric: "tabular-nums", boxShadow: "0 6px 24px rgba(0,0,0,.35)" }}>{value.text}</span>}
+      {value && <span data-km-story-value="" style={{ position: "absolute", left: "50%", bottom: "4%", transform: `translateX(-50%) scale(${value.progress})`, padding: ".18em .42em", borderRadius: ".32em", whiteSpace: "nowrap",
+        background: SURFACE, color: WARM, fontWeight: 800, fontSize: Math.min(rect.width * .14, height * .066), fontVariantNumeric: "tabular-nums", boxShadow: "0 6px 24px rgba(0,0,0,.35)" }}>{value.text}</span>}
     </div>
     <MotionEffects object={object} width={rect.width} height={artHeight} art={art} label={label ?? object.id} emit={size => (emits && renderObject ? renderObject({ ...object, id: emits.id, label: emits.label, art: emits.art, trend: undefined }, size) : null)} />
     {showLabel && <p style={{ position: "absolute", left: 0, right: 0, bottom: 0, margin: 0, textAlign: "center", color: INK, fontWeight: 650, fontSize: labelSize, lineHeight: 1.2 }}>{label}</p>}
@@ -162,25 +173,37 @@ export function createStoryTextMeasure(): MeasureText {
   return (font, text) => { context.font = font; return context.measureText(text).width; };
 }
 
+/** Each object's smear at a frame, from its centre (its box plus its motion's offset) on the frames around it. */
+function smearsFor(plan: ObjectStoryPlan, frame: number): Map<string, SmearFrame> {
+  const last = plan.spec.durationFrames - 1, frames = Array.from({ length: SMEAR_PATH }, (_, k) => evaluateObjectStory(plan, Math.min(last, Math.max(0, frame - LOOK_BACK + k))));
+  const out = new Map<string, SmearFrame>();
+  for (const object of frames[LOOK_BACK].objects) {
+    const path = frames.map(state => { const o = state.objects.find(item => item.id === object.id) ?? object; return { x: o.rect.x + o.rect.width / 2 + o.motion.x, y: o.rect.y + o.rect.height / 2 + o.motion.y }; });
+    out.set(object.id, smearAt(path, Math.min(object.rect.width, object.rect.height)));
+  }
+  return out;
+}
 /** One frame of a narrated object scene. Deterministic for a given plan and frame. */
-export const ObjectStory = forwardRef<HTMLDivElement, ObjectStoryProps>(function ObjectStory({ plan, frame, renderObject, settled, style, ...props }, ref) {
+export const ObjectStory = forwardRef<HTMLDivElement, ObjectStoryProps>(function ObjectStory({ plan, frame, renderObject, settled, backdrop = true, style, ...props }, ref) {
   const { width, height } = plan.spec;
   const state = evaluateObjectStory(plan, frame, { settled });
   const { scale, origin, shake } = state.camera;
+  // Smears read each object's centre on the frames around this one, so each frame stands alone.
+  const smears = plan.spec.smear && !settled ? smearsFor(plan, frame) : undefined;
   const { caption } = state;
   return <div {...props} ref={ref} data-km-object-story={plan.spec.id} data-km-story-beat={state.beatId}
     style={{ position: "relative", width, height, overflow: "hidden", color: INK, fontFamily: "var(--km-shot-font, var(--km-font-body, system-ui, sans-serif))", ...style }}>
-    <div aria-hidden="true" style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at ${origin.x}px ${origin.y}px, var(--km-shot-glow, #1d3a52) 0%, ${SURFACE} 62%)` }} />
+    {backdrop && <div aria-hidden="true" style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at ${origin.x}px ${origin.y}px, var(--km-shot-glow, #1d3a52) 0%, ${SURFACE} 62%)` }} />}
     <div style={{ position: "absolute", inset: 0, transformOrigin: `${origin.x}px ${origin.y}px`, transform: `translate(${shake.x}px, ${shake.y}px) scale(${scale})` }}>
       <Connections state={state} width={width} height={height} />
       {state.objects.flatMap(object => object.trail.map((step, index) => <span key={`${object.id}-${index}`} data-km-story-step="" style={{ position: "absolute", left: step.x, top: step.y, width: height * .02, height: height * .03, borderRadius: "50%", transform: "translate(-50%,-50%)", background: ACCENT, opacity: step.opacity }} />))}
-      {state.objects.map(object => <StageObject key={object.id} object={object} height={height} renderObject={renderObject} />)}
+      {state.objects.map(object => <StageObject key={object.id} object={object} height={height} short={Math.min(width, height)} renderObject={renderObject} smear={smears?.get(object.id)} />)}
       {state.tokens.map(token => <span key={token.id} data-km-story-token="" style={{ position: "absolute", left: token.at.x, top: token.at.y, transform: "translate(-50%,-50%)", opacity: token.opacity, padding: `${height * .008}px ${height * .016}px`, borderRadius: height * .03,
         background: WARM, color: SURFACE, fontWeight: 800, fontSize: height * .03, whiteSpace: "nowrap", minWidth: height * .03, minHeight: height * .03 }}>{token.label}</span>)}
     </div>
     {caption && <p data-km-story-caption="" style={{ position: "absolute", left: caption.rect.x, top: caption.rect.y, width: caption.rect.width, margin: 0, textAlign: caption.align, fontWeight: 700, fontSize: caption.fontSizePx, lineHeight: `${caption.lineHeightPx}px` }}>
       {caption.lines.map((line, lineIndex) => <span key={lineIndex} style={{ display: "block", whiteSpace: "nowrap" }}>
-        {line.map((word, wordIndex) => <span key={wordIndex} style={{ display: "inline-block", margin: "0 .13em", opacity: word.progress, transform: `translateY(${(1 - word.progress) * .28}em)`, color: word.emphasis ? ACCENT : undefined }}>{word.text}</span>)}
+        {line.map((word, wordIndex) => <span key={wordIndex} style={{ display: "inline-block", margin: caption.joined ? 0 : "0 .13em", opacity: word.progress, transform: `translateY(${(1 - word.progress) * .28}em)`, color: word.emphasis ? ACCENT : undefined }}>{word.text}</span>)}
       </span>)}
     </p>}
   </div>;

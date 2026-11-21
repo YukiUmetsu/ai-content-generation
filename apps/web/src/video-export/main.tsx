@@ -13,6 +13,8 @@ import { waitForChartStoryReadiness } from "./chart-story-preflight";
 import { validateCharacterDefinition } from "@/components/character/validate";
 import type { ExportRigMap } from "./conversation-characters";
 import { prepareStockMediaFrame } from "./stock-media-readiness";
+import { KanjiStudyExport } from "./kanji-scene";
+import { readKanjiStudyPlan } from "./kanji-plan";
 declare global { interface Window { __contentgenBuildHash?: string } }
 
 const decodedRigImages = new Map<string, Promise<void>>();
@@ -194,7 +196,14 @@ async function boot() {
   const build = await buildResponse.json() as { sha256?: string };
   if (!/^[a-f0-9]{64}$/i.test(build.sha256 ?? "")) throw new Error("Video build handshake returned an invalid fingerprint");
   window.__contentgenBuildHash = build.sha256;
-  const plan = await response.json() as ExportPlan;
+  const loaded: unknown = await response.json();
+  // A kanji study short has its own small contract, checked by its scene.
+  if ((loaded as { kind?: unknown })?.kind === "kanji-study-visual-plan") {
+    const kanji = readKanjiStudyPlan(loaded);
+    createRoot(root).render(<KanjiStudyExport plan={kanji} />);
+    return;
+  }
+  const plan = loaded as ExportPlan;
   if (plan?.schemaVersion !== 1 || !["house-math-visual-plan", "general-explainer-visual-plan"].includes(plan.kind) ||
     plan.manifest?.schemaVersion !== 1 || !(plan.manifest.width === 1920 && plan.manifest.height === 1080 ||
        plan.kind === "general-explainer-visual-plan" && plan.manifest.width === 1080 && plan.manifest.height === 1920 &&

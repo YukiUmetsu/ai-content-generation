@@ -32,6 +32,18 @@
 - **Failure:** an invalid story stops production and names the scene. The Node check in `dist-shot/story-entry.mjs` uses a cautious width estimate; the export page compiles again with real font metrics.
 - **Portrait:** not drawn yet. Portrait plans keep their existing scenes.
 
+**Adopted 2026-11-21: kanji study shorts.** `pnpm video:kanji` renders Kumiki's `shodo-kanji-card` (with `shodo-calligraphy` and `ink-brush`) as 9:16 shorts. See [how to make kanji shorts](how-to-make-kanji-shorts.md).
+
+- **Boundary:** Kumiki owns the card, its safe bands, labels, theme, brush style, the typed intro and the brush. `kanjiCardWriting` gives the stroke times without React. ContentGen owns:
+  - the kanji data (`kanji-short.mjs`)
+  - the narration as data: an anchored-narration script, by default `kanji-short-script.json`
+  - the music and the release (`kanji-short-producer.mjs`, `kanji-cli.mjs`)
+- **General modules:** the script engine (`anchored-narration.mjs`) and the clip, music-bed, measurement and caption modules know nothing about kanji. Another card that reports its moments as anchors can reuse them.
+- **One plan, two places:** Node parses KanjiVG once and plans the strokes through `dist-shot/kanji-entry.mjs`. The export plan (`kanji-study-visual-plan`) carries that glyph, so the page plans the same strokes and loads nothing.
+- **Failure:** the page refuses a plan whose phases do not fill the manifest, and fails a frame whose card text does not fit.
+- **Audio:** the existing master (voice stem, captions, ducked ambience bed, mono at -16 LUFS target).
+- **Pin 2026-11-21:** this adoption moved the pin from `afeb181` to the kanji card commit. That also updated `character-presenter`, `visual-transformation`, `object-story`, `video-export-stage` and `dom-text-measure`; the web tests pass on the new pin.
+
 ## Versioned adapter contract
 
 Build a **KumikiRenderAdapter** in ContentGen's optional TS worker, not the Rust domain layer. It consumes an approved SemanticStoryboard + BrandKit/DeliveryProfile snapshot + stable asset refs, resolves currently supported Kumiki source registry versions, then emits:

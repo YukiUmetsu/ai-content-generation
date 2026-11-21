@@ -84,12 +84,20 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
     })||
     root.querySelector("[data-km-caption-performer][data-caption-status=pending]")||
     root.querySelector("[data-km-frame-clip][data-clip-status=pending]")||
+    [...root.querySelectorAll<HTMLElement>("[data-km-shader-fx-frame]")].some(el=>el.dataset.kmShaderFxStatus!=="error"&&
+      el.dataset.kmShaderFxDrawn!==el.dataset.kmShaderFxFrame)||
+    // A FiberStage has drawn this frame only once its drawn mark matches the frame it was asked for.
+    [...root.querySelectorAll<HTMLElement>("[data-km-fiber-frame]")].some(el=>el.dataset.kmFiberStatus!=="error"&&
+      el.dataset.kmFiberDrawn!==el.dataset.kmFiberFrame)||
     [...root.querySelectorAll<HTMLElement>("[data-km-hero-viewer]")].some(el=>!el.querySelector("[role=alert]")&&
       el.querySelector<HTMLCanvasElement>("canvas")?.dataset.kmHeroReady!=="true")) {
     if(performance.now()-start>15000)throw new Error("Video frame did not settle at "+frame+".");
     await nextPaint();
   }
   if(root.querySelector("[data-km-book-textures=error]"))throw new Error("3D storybook image decoding failed.");
+  const brokenFx=root.querySelector<HTMLElement>("[data-km-shader-fx-status=error]");
+  if(brokenFx)throw new Error("Shader effect \""+brokenFx.dataset.kmShaderFxId+"\" failed at frame "+frame+".");
+  if(root.querySelector("[data-km-fiber-status=error]"))throw new Error("A 3D scene failed at frame "+frame+".");
   if(root.querySelector("[data-km-explainer-fallback], [data-km-camera-viewport-3d] [role=alert], [data-km-hero-viewer] [role=alert]"))
     throw new Error("Video frame has layout or 3D rendering errors.");
   const stage=root.querySelector<HTMLElement>("[data-km-explainer-stage]");
@@ -115,6 +123,9 @@ async function ready(root:HTMLDivElement,frame:number):Promise<void>{
     if(!img.naturalWidth)throw new Error("Missing image during video export.");
     await img.decode?.();
   })),15000,"Image decoding");
+  // Chrome keeps a composited layer's old raster across a small scale change, so a frame could depend on the seek before
+  // it. Dropping the layers once makes every capture raster from scratch, in any order.
+  root.style.display="none";void root.offsetHeight;root.style.display="";
   await nextPaint();await nextPaint();
   if(root.dataset.frame!==String(frame))throw new Error("Export frame changed during preparation.");
 }
