@@ -72,11 +72,10 @@ test("names the card's moments for the narration, from the card's timeline and s
 });
 
 test("the intro lasts until its lines end, on a whole frame, and is 0 without intro lines; the phases end on a frame count divisible by 3", () => {
-  const intro = kanjiIntro({ placed: ["question"], end: 2.85, emphasis: [{ id: "question", at: 2.6 }] }, { readingLength: 2 });
+  const intro = kanjiIntro({ placed: ["question"], end: 2.85, emphasis: [{ id: "question", at: 2.6 }] });
   assert.equal(intro.intro, 99 / 30);                                                    // 2.85 + 0.45 s is exactly 99 frames
-  assert.equal(intro.convertAt, .59);
   assert.equal(intro.emphasizeAt, 2.6);
-  assert.deepEqual(kanjiIntro({ placed: [], end: 0, emphasis: [] }, { readingLength: 2 }), { intro: 0, convertAt: undefined, emphasizeAt: undefined });
+  assert.deepEqual(kanjiIntro({ placed: [], end: 0, emphasis: [] }), { intro: 0, emphasizeAt: undefined });
   const timing = kanjiShortTiming({ intro: intro.intro, write: 6.5, review: 6.5, end: 18.96 });
   assert.equal(timing.frames % 3, 0);
   assert.equal(timing.totalSamples, timing.frames * 1600);
@@ -95,7 +94,7 @@ test("the default script makes the approved short: the question while the kanji 
     ["word-1", "ja", "水道。", "水道"], ["word-2", "ja", "水泳。", "水泳"], ["word-3", "ja", "下水。", "下水"],
   ]);
   const speech = { question: 2.5, onyomi: 1.07, kunyomi: 1.08, "word-1": .56, "word-2": .66, "word-3": .51 };
-  const intro = kanjiIntro(placeOnAnchors({ lines, anchors: { start: 0 }, speech, partial: true }), { readingLength: 2 });
+  const intro = kanjiIntro(placeOnAnchors({ lines, anchors: { start: 0 }, speech, partial: true }));
   const anchors = { start: 0, "write.firstStroke": 4.4, "review.end": 14.9 };
   const placed = placeOnAnchors({ lines, anchors, speech, highlightTail: script.highlightTail });
   assert.equal(intro.intro, 99 / 30);

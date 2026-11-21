@@ -43,8 +43,12 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ destination: "youtube" }), "/c.json"), /1080 × 1920 short/u);
   assert.throws(() => readKanjiConfig(config({ timing: { write: 1 } }), "/c.json"), /timing\.write/u);
   assert.throws(() => readKanjiConfig({ ...config(), schemaVersion: 2 }, "/c.json"), /schemaVersion/u);
-  assert.throws(() => readKanjiConfig(config({ timing: { questionStart: -1 } }), "/c.json"), /timing\.questionStart/u);
-  assert.throws(() => readKanjiConfig(config({ timing: { questionStart: 0 } }), "/c.json"), /timing\.questionStart must be 0\.05/u);
+  assert.throws(() => readKanjiConfig(config({ timing: { wordGap: 1 } }), "/c.json"), /timing\.wordGap is not a setting/u);   // lines are timed by the script
+  assert.throws(() => readKanjiConfig(config({ maxWords: 7 }), "/c.json"), /maxWords must be 1 to 6/u);
+  assert.throws(() => readKanjiConfig(config({ qa: { stillBudget: 3 } }), "/c.json"), /qa\.stillBudget is not a setting/u);
+  assert.throws(() => readKanjiConfig(config({ captions: { tailSeconds: 9 } }), "/c.json"), /captions\.tailSeconds/u);
+  assert.throws(() => readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://example.com:80" } }), "/c.json"), /loopback/u);
+  assert.equal(readKanjiConfig(config({ voice: { provider: "local", voiceId: "v", modelId: "m", engineRevision: "1", endpoint: "http://127.0.0.1:8123/tts" } }), "/c.json").voice.provider, "local");
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
@@ -225,6 +229,60 @@ test("a config's own narration script replaces the default, and must only use th
     await assert.rejects(kanjiNarrationScript({ narration: { script: { ...counting, steps: [{ id: "x", say: "y", at: "outro.start" }] } } }),
       /anchors the kanji card does not have: outro\.start/u);
     assert.equal((await kanjiNarrationScript({ narration: {} })).steps[0].id, "question");                  // the default
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("a local voice needs its own consent and no Fish key", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-local-"));
+  try {
+    const local = { provider: "local", voiceId: "voice-a", modelId: "model-a", engineRevision: "1.0", endpoint: "http://127.0.0.1:8123/tts" };
+    await writeFile(join(dir, "config.json"), JSON.stringify(config({ outputRoot: join(dir, "out"), voice: local })));
+    const calls = [];
+    const qa = { video: { seconds: 20 }, audio: { integratedLufs: -16 }, pacing: { longestStillSeconds: 1.3 }, pronunciation: "not machine-checked" };
+    await main(["水", "--local-voice-consent", "--config", join(dir, "config.json")], {}, {
+      log: () => {}, providerKey: async () => { throw Error("no Fish key for a local voice"); }, findBrowser: async () => "/bin/chrome",
+      produce: async (request) => { calls.push(request); return { videoPath: "v.mp4", qa }; },
+    });
+    assert.equal(calls[0].localVoiceAuthorized, true);
+    assert.equal(calls[0].apiKey, undefined);
+    const read = readKanjiConfig(config({ voice: local }), join(dir, "config.json"));
+    await assert.rejects(produceKanjiShort({ char: "水", config: read, out: join(dir, "o2"), browserExecutable: "/bin/chrome" }, {}), /needs --local-voice-consent/u);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+/** KanjiVG's 一: one horizontal stroke. */
+const ICHI_SVG = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:kvg="http://kanjivg.tagaini.net" width="109" height="109" viewBox="0 0 109 109">
+<g id="kvg:StrokePaths_04e00"><g id="kvg:04e00" kvg:element="一" kvg:radical="general"><path id="kvg:04e00-s1" kvg:type="㇐" d="M11,54.25c3.19,0.62,6.25,0.75,9.73,0.5c20.64-1.5,50.39-5.12,68.58-5.24c3.6-0.02,5.77,0.24,7.57,0.49"/></g></g></svg>`;
+
+test("a script line with no moment in the picture, or a highlight the card cannot show, stops before any voice", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-script-check-"));
+  try {
+    const pcm = Buffer.alloc(35 * 48000 * 2);
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0); header.writeUInt32LE(36 + pcm.length, 4); header.write("WAVE", 8); header.write("fmt ", 12);
+    header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22); header.writeUInt32LE(48000, 24);
+    header.writeUInt32LE(96000, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34); header.write("data", 36); header.writeUInt32LE(pcm.length, 40);
+    const bytes = Buffer.concat([header, pcm]);
+    await writeFile(join(dir, "bed.wav"), bytes);
+    const ichi = { char: "一", jlpt: "N5", card: { meanings: "ONE", onyomi: "ICHI (イチ)", kunyomi: "hito (ひと)", jlpt: "N5" }, words: [
+      { word: "一つ", ruby: "ひとつ", romaji: "hitotsu", meaning: "one", reading: "kun" }, { word: "一月", ruby: "いちがつ", romaji: "ichigatsu", meaning: "January", reading: "on" },
+      { word: "一人", ruby: "ひとり", romaji: "hitori", meaning: "one person", reading: "irregular" }] };
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [ichi] }));
+    const music = { ...config().music, sha256: createHash("sha256").update(bytes).digest("hex") };
+    const touched = [];
+    const deps = {
+      fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
+      kanjiVgSvg: async () => ({ svg: ICHI_SVG, url: "kanjivg:04e00", sha256: "c".repeat(64), cached: true }),
+      synthesizeNarration: async () => { touched.push("voice"); return []; },
+    };
+    const steps = (extra) => ({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "q", say: "{name.kana}", at: "start" }, extra] });
+    const run = (script) => produceKanjiShort({ char: "一", config: readKanjiConfig(config({ music, narration: { script } }), join(dir, "config.json")), out: join(dir, "out"),
+      browserExecutable: "/bin/chrome", apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps);
+    // 一 has one stroke but three words: word 2 has no review stroke to start on.
+    await assert.rejects(run(steps({ id: "w-{n}", forEach: "words", say: "{item.speech}", at: "review.strokes" })), /needs the anchor review\.strokes for item 2/u);
+    // The card highlights words, not strokes.
+    await assert.rejects(run(steps({ id: "s-{n}", forEach: "strokes", say: "{n}", at: "review.strokes", highlight: true })), /highlights an item of strokes/u);
+    assert.deepEqual(touched, []);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

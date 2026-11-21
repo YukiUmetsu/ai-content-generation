@@ -12,7 +12,7 @@ import { ShodoCanvas } from "./shodo-react";
 import { shodoRgb } from "./shodo-style";
 import type { DeepPartial, ShodoStyle } from "./shodo-style";
 import {
-  DEFAULT_KANJI_CARD_LABELS, KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections,
+  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardHasCard, kanjiCardLabelText, kanjiCardLabels, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections,
   kanjiCardTheme, kanjiCardType, kanjiCardTypedAt, kanjiCardWriting,
   spreadWordHighlights, wordHighlightAt,
 } from "./shodo-kanji-card-plan";
@@ -99,7 +99,7 @@ export function ShodoKanjiInfoCard({
 }: ShodoKanjiInfoCardProps) {
   void _vermilion;
   const th = kanjiCardTheme(theme);
-  const words_ = { ...DEFAULT_KANJI_CARD_LABELS, ...labels };
+  const words_ = kanjiCardLabels(labels);
   const ref = useRef<HTMLElement>(null);
   const wide = layout === "portrait";
   const compact = wide && density === "compact";
@@ -110,16 +110,17 @@ export function ShodoKanjiInfoCard({
   const level = show.jlpt && jlpt && KANJI_CARD_JLPT_LEVELS.includes(jlpt) ? jlpt : null;
   const readings = show.readings && (onyomi || kunyomi);
   const list = show.words && words?.length ? words : null;
-  useFitHeight(ref, [char, meanings, onyomi, kunyomi, level, layout, density, JSON.stringify(list), JSON.stringify(show)].join("|"));
+  // The fit is measured again when anything that changes the text's size changes, labels and fonts included.
+  useFitHeight(ref, [char, meanings, onyomi, kunyomi, level, layout, density, JSON.stringify(list), JSON.stringify(show), JSON.stringify(words_), JSON.stringify(th)].join("|"));
   const term: CSSProperties = { font: `700 ${fs(t.reading * .84)}/1.3 ${th.display}`, letterSpacing: ".06em", color: th.muted };
   // Word highlight: a light vermilion tint and ring, a small lift and scale (transforms only,
   // so nothing around it moves), and the other words dimmed a little. Fade only with reduced motion.
   const active = highlight && highlight.word !== null && list && highlight.word < list.length ? highlight.word : null;
   const S = active === null ? 0 : Math.min(1, Math.max(0, highlight?.strength ?? 0));
   const wordOpacity = (i: number) => i === active ? Math.max(reveal, S) : reveal * (1 - .3 * S);
-  const [ar, ag, ab] = shodoRgb(th.accent);
+  const [ar, ag, ab] = shodoRgb(th.accent), [gr, gg, gb] = shodoRgb(th.glow);
   const ring = (s: number, width: number) => s > 0
-    ? `inset 0 0 0 max(1.5px, ${cq(width)}) rgba(${ar},${ag},${ab},${(.85 * s).toFixed(3)}), 0 ${cq(10 * s)} ${cq(24)} rgba(${ar >> 1},${ag >> 1},${ab >> 1},${(.18 * s).toFixed(3)})`
+    ? `inset 0 0 0 max(1.5px, ${cq(width)}) rgba(${ar},${ag},${ab},${(.85 * s).toFixed(3)}), 0 ${cq(10 * s)} ${cq(24)} rgba(${gr},${gg},${gb},${(.18 * s).toFixed(3)})`
     : "none";
   const badge = level ? <span data-km-jlpt={level} style={{
     // When long readings push the badge to its own row, it stays at the right.
@@ -127,7 +128,7 @@ export function ShodoKanjiInfoCard({
     color: th.accent, border: `max(1px, ${cq(2)}) solid ${th.accent}`, borderRadius: ".3em", padding: ".42em .8em", alignSelf: "center",
   }}>{words_.jlpt} {level}</span> : null;
   const title = show.meanings && meanings;
-  return <aside {...rest} ref={ref} aria-label={`${char} readings and words`} data-km-kanji-density={compact ? "compact" : "regular"} style={{
+  return <aside {...rest} ref={ref} aria-label={kanjiCardLabelText(words_.cardName, { char })} data-km-kanji-density={compact ? "compact" : "regular"} style={{
     background: th.card, padding: `${cq(t.pad[0])} ${cq(t.pad[1])}`, boxSizing: "border-box", overflow: "hidden", color: th.ink, ...style,
   }}>
     <div style={{ display: "grid", alignContent: "start", gap: fs(t.gap) }}>
@@ -137,7 +138,7 @@ export function ShodoKanjiInfoCard({
       }}>
         {title ? <>
           <span lang="ja" style={{ font: `700 ${fs(t.headKanji)}/1 ${th.serif}` }}>{char}</span>
-          <span aria-hidden="true" style={{ color: th.rule }}>|</span>
+          <span aria-hidden="true" style={{ color: th.bar }}>|</span>
           <span style={{ flex: "1 1 6em", minWidth: 0 }}>{meanings}</span>
         </> : null}
         {compact ? badge : null}
@@ -267,6 +268,7 @@ export function ShodoKanjiCard({
   meanings, onyomi, kunyomi, jlpt, words, vermilionStrokes, ...rest
 }: ShodoKanjiCardProps) {
   const th = kanjiCardTheme(theme);
+  const cardLabels = kanjiCardLabels(labels);
   const prefersReduced = usePrefersReducedMotion();
   const reduce = reducedMotion ?? prefersReduced;
   const show = kanjiCardSections(sections);
@@ -326,7 +328,7 @@ export function ShodoKanjiCard({
       position: "relative", width: "100%", overflow: "hidden", containerType: "inline-size", ...style,
     }}>
     <ShodoCanvas plan={plan} frame={canvasFrame} fps={canvasFps} width={g.width} height={g.height} paper={g.paper} sheet={sheet} paperweight="none"
-      underlay={g.band ? "felt" : "none"} orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={`The kanji ${char} written with a brush`}
+      underlay={g.band ? "felt" : "none"} orderGuide={guide} guideStrokes={guide === "numbers" ? undefined : vermilion} label={kanjiCardLabelText(cardLabels.writingName, { char })} guideColor={guide === "numbers" ? th.accent : th.guide}
       guideSize={guide === "numbers" ? Math.max(12, plan.brush.diameter * .42, g.type.number) : undefined} pixelRatio={pixelRatio} />
     {typed.opacity > 0 ? <div data-km-kanji-typed={typed.composing ? "composing" : typed.text ? "converted" : "caret"} aria-hidden="true" style={{
       position: "absolute", left: pct((ix0 + ix1) / 2, g.width), top: pct((iy0 + iy1) / 2, g.height), transform: "translate(-50%, -50%)",
@@ -335,7 +337,7 @@ export function ShodoKanjiCard({
     }}>
       <span lang="ja" style={{
         textDecoration: typed.composing ? "underline" : "none", textDecorationStyle: "dotted", textDecorationThickness: ".05em", textUnderlineOffset: ".14em",
-        background: typed.converted > 0 ? `rgba(179,48,26,${(.16 * typed.converted).toFixed(3)})` : "transparent", borderRadius: ".06em", padding: "0 .04em",
+        background: typed.converted > 0 ? `rgba(${shodoRgb(th.accent).join(",")},${(.16 * typed.converted).toFixed(3)})` : "transparent", borderRadius: ".06em", padding: "0 .04em",
       }}>{typed.text}</span>
       <span style={{ display: "inline-block", width: `max(2px, ${cq(4)})`, height: typed.text ? ".95em" : cq(kanaSize), marginLeft: ".04em",
         background: th.accent, opacity: typed.caret ? 1 : 0 }} />
@@ -343,7 +345,9 @@ export function ShodoKanjiCard({
     {show.label ? <div data-km-kanji-label="" style={{
       position: "absolute", left: pct(g.label.x, g.width), top: pct(g.label.y, g.height),
       font: `700 ${(g.type.label / g.width * 100).toFixed(3)}cqw/1 ${th.display}`, letterSpacing: ".01em", color: th.ink,
-    }}>{heading.toUpperCase()}: <span lang="ja">{char}</span></div> : null}
+    }}>{cardLabels.heading.split(/(\{char\})/u).map((part, i) => part === "{char}"
+      // The character keeps lang="ja", so it is drawn with Japanese glyph shapes in any heading.
+      ? <span key={i} lang="ja">{char}</span> : kanjiCardLabelText(part, { heading, char }))}</div> : null}
     {g.card ? <ShodoKanjiInfoCard char={char} layout={layout} density={density} sections={show} reveal={reveal} theme={theme} labels={labels}
       highlight={highlight} reducedMotion={reduce}
       meanings={meanings} onyomi={onyomi} kunyomi={kunyomi} jlpt={jlpt} words={words} style={{

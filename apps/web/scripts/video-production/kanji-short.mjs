@@ -94,8 +94,6 @@ export function kanjiShortContent(entry, { maxWords = 3, speech = {} } = {}) {
 
 /** Default pacing, seconds. `write` and `review` are the two writing passes; `introTail` the hold after the intro's last line; `tail` after the last line. */
 export const KANJI_SHORT_PACING = Object.freeze({ write: 6.5, review: 6.5, introTail: .45, tail: 1.4 });
-/** When the typing starts, and the pause between the last kana and the conversion, seconds (Kumiki's typed intro). */
-const TYPE_START = .15, TYPE_SETTLE = .12;
 
 /**
  * The fields an anchored-narration script can use for one kanji:
@@ -128,21 +126,21 @@ export function kanjiCardAnchors(timeline, strokes) {
     "info.start": s(timeline.info[0]), "write.strokes": strokes.write.map(p => p[0]), "review.strokes": strokes.review.map(p => p[0]),
   };
 }
-/** The anchor names `kanjiCardAnchors` gives, for checking a script before any work. */
-export const KANJI_CARD_ANCHORS = Object.freeze(["start", "write.start", "write.firstStroke", "write.lastStroke", "review.start", "review.firstStroke",
-  "review.end", "info.start", "write.strokes", "review.strokes"]);
+/** The anchor names `kanjiCardAnchors` gives (taken from it, so the two never differ), for checking a script before any work. */
+export const KANJI_CARD_ANCHORS = Object.freeze(Object.keys(kanjiCardAnchors(
+  { fps: KANJI_FPS, intro: [0, 0], write: [0, 1], review: [1, 2], info: [2, 3], frames: 3 }, { write: [[0, 1]], review: [[1, 2]] })));
 
 /**
  * The typed intro from the lines placed before the writing (all anchored on "start" or after it):
  * the intro lasts until they end plus `introTail`, on a whole frame; it is 0 when there are none.
- * The reading is typed from the start; the typed character is emphasized at the script's emphasis.
+ * The typed character is emphasized at the script's first emphasis. (When the reading converts is
+ * Kumiki's `kanjiCardConvertAt`.)
  */
-export function kanjiIntro(placed, { readingLength, typeStep = .16, introTail = KANJI_SHORT_PACING.introTail }) {
-  if (!placed.placed.length) return { intro: 0, convertAt: undefined, emphasizeAt: undefined };
+export function kanjiIntro(placed, { introTail = KANJI_SHORT_PACING.introTail } = {}) {
+  if (!placed.placed.length) return { intro: 0, emphasizeAt: undefined };
   return {
     // Round up to a whole frame; the tolerance keeps a float like 98.99999999999999 + ε from costing a frame.
     intro: Math.ceil((placed.end + introTail) * KANJI_FPS - 1e-6) / KANJI_FPS,
-    convertAt: Math.round((TYPE_START + TYPE_SETTLE + readingLength * typeStep) * 1000) / 1000,
     emphasizeAt: placed.emphasis[0]?.at,
   };
 }

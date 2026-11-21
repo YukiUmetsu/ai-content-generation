@@ -23,9 +23,17 @@ The voice-over is an **anchored-narration script** (`scripts/video-production/an
   - in a step with `"forEach": "strokes"`: `{n}`
 - **Anchors** are the card's moments: `start`, `write.start`, `write.firstStroke`, `write.lastStroke`, `review.start`, `review.firstStroke`, `review.end`, `info.start`, and per stroke `write.strokes` and `review.strokes`.
   - A line starts at its anchor plus `offset`, or `gap` after the previous line ends, whichever is later.
+  - Every gap is at least 0.12 s and the first line starts at 0.04 s or later: the silence each recorded clip keeps around its speech.
   - `"at": "after"` places it only after the previous line.
-  - The QA report records how late each line starts after its anchor, and warns above 1.5 s.
-- **Other step settings:** `when` (leave the step out when a field is empty), `locale` (the voice's language for the line), `caption`, `highlight` (highlight each word while it is spoken), and `emphasize` (the text whose spoken moment pulses the typed kanji).
+  - The QA report records how late each line starts after its anchor, and warns above `qa.anchorDriftSeconds` (1.5 s). Only the first line on an anchor counts; the lines after it on the same anchor follow it on purpose.
+- **Other step settings:**
+  - `when`: leave the step out when the field is empty. An unknown field is an error.
+  - `locale`: the voice's language for the line, as a BCP 47 tag.
+  - `caption`.
+  - `highlight`: highlight each word while it is spoken. Only on `forEach: "words"`, because the card highlights its words.
+  - `emphasize`: the part of `say` whose spoken moment pulses the typed kanji.
+- Ids take only `{n}` or `{index}`.
+- Before any voice is made, the script is placed once with estimated line lengths. A line without a moment in the picture, such as a word on `review.strokes` when the kanji has fewer strokes than words, stops production there.
 - **The intro** lasts while the lines placed at `start` are spoken. A script with no such line has no typed intro.
 - **Example:** counting the strokes during the review is one more step: `{ "id": "stroke-{n}", "forEach": "strokes", "say": "{n}", "at": "review.strokes", "gap": 0.1 }`. `--dry-run` lists it once the kanji's KanjiVG data is cached.
 
@@ -62,9 +70,15 @@ Make the folder `data/kanji-shorts/` (git ignores `data/`). Put `config.json` in
 
 - `dataset`: the kanji study-card data (`{ kanji: [{ char, jlpt, words, card }] }`), for example `jlpt-n5-n3.json` from the private `kumiki-shodo` repository. Put its credit line in `credits`.
 - `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) and `speech` (the text the voice reads for a word it misreads).
-- `voice.voiceId`: your Fish voice. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`.
+- `voice`:
+  - `provider` is `fish` (default) or `local`.
+  - **Fish:** `voiceId`. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`. Make with `--allow-network --voice-consent --transmit-text`.
+  - **Local engine:** `voiceId`, `modelId`, `engineRevision` and a loopback `endpoint`. Make with `--local-voice-consent`; add `--allow-network` once, to download KanjiVG data that is not cached.
 - `music`: a reviewed bed with its source, licence and SHA-256. A changed file stops production. The producer picks the window with the fewest silent stretches where nobody speaks, unless `startSeconds` is set. It sets the bed `belowVoiceDb` (default 11) under the voice and ducks it under speech.
-- `timing.write` and `timing.review`: seconds of each writing pass, snapped to whole frames. Also `introTail` and `tail`: the hold after the intro's last line and after the last line.
+- `timing.write` and `timing.review`: seconds of each writing pass, snapped to whole frames. Also `introTail` and `tail`: the hold after the intro's last line and after the last line. The lines' own timing is in the script.
+- `maxWords` (1–6, default 3): how many useful words the card shows.
+- `music.fadeInMs`, `music.fadeOutMs`.
+- `qa.stillBudgetSeconds` (2.5), `qa.anchorDriftSeconds` (1.5), and `captions.tailSeconds` (0.2): how long a caption stays after its line, never past the next.
 
 Paths are relative to the config file. `pnpm build` must have run (export page and `dist-shot`), and Chrome must be installed or `CONTENTGEN_CHROMIUM_EXECUTABLE` set.
 

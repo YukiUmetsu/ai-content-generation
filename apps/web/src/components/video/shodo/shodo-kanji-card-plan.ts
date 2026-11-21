@@ -37,9 +37,29 @@ export interface KanjiCardContent {
 /** Ink for the whole character: black sumi (default) or vermilion shuboku (朱墨). */
 export type KanjiCardInk = "sumi" | "vermilion";
 
-/** The fixed words of the reading card, for another language or wording. */
-export interface KanjiCardLabels { onyomi: string; kunyomi: string; words: string; jlpt: string }
-export const DEFAULT_KANJI_CARD_LABELS: Readonly<KanjiCardLabels> = { onyomi: "ON'YOMI", kunyomi: "KUN'YOMI", words: "USEFUL WORDS", jlpt: "JLPT" };
+/**
+ * The card's fixed words, for another language or wording. `heading` formats the label over the
+ * paper: `{heading}` is the heading as given, `{HEADING}` in capitals, `{char}` the character.
+ * `cardName` and `writingName` are the accessible names of the reading card and the writing.
+ */
+export interface KanjiCardLabels { onyomi: string; kunyomi: string; words: string; jlpt: string; heading: string; cardName: string; writingName: string }
+export const DEFAULT_KANJI_CARD_LABELS: Readonly<KanjiCardLabels> = {
+  onyomi: "ON'YOMI", kunyomi: "KUN'YOMI", words: "USEFUL WORDS", jlpt: "JLPT", heading: "{HEADING}: {char}",
+  cardName: "{char} readings and words", writingName: "The kanji {char} written with a brush",
+};
+
+/** The labels with defaults for any key that is missing or not a text. */
+export function kanjiCardLabels(labels: Partial<KanjiCardLabels> | undefined): KanjiCardLabels {
+  const out = { ...DEFAULT_KANJI_CARD_LABELS };
+  for (const key of Object.keys(out) as (keyof KanjiCardLabels)[]) if (typeof labels?.[key] === "string") out[key] = labels[key] as string;
+  return out;
+}
+
+/** A label template with `{heading}`, `{HEADING}` (capitals, by the language of `locale`) and `{char}` filled in. */
+export function kanjiCardLabelText(template: string, values: { heading?: string; char: string }, locale?: string): string {
+  return template.replace(/\{(heading|HEADING|char)\}/gu, (_, key: string) =>
+    key === "char" ? values.char : key === "HEADING" ? (values.heading ?? "").toLocaleUpperCase(locale) : values.heading ?? "");
+}
 
 /**
  * Colours (#RRGGBB) and font stacks of the card's text, for a brand or a look. The paper, ink and
@@ -57,8 +77,14 @@ export interface KanjiCardTheme {
   /** A word tile, and a highlighted word tile. */
   tile: string;
   tileHighlight: string;
-  /** The line under the title and the bar between the character and its meaning. */
+  /** The line under the title. */
   rule: string;
+  /** The bar between the character and its meaning. */
+  bar: string;
+  /** The soft shadow under a highlighted word. */
+  glow: string;
+  /** The arrow guide of single vermilion strokes (the stroke numbers use `accent`). */
+  guide: string;
   /** Display font: label, title, terms and badge. */
   display: string;
   /** Serif font for the character and the words. */
@@ -70,6 +96,7 @@ export interface KanjiCardTheme {
 }
 export const DEFAULT_KANJI_CARD_THEME: Readonly<KanjiCardTheme> = {
   ink: "#1B1A18", muted: "#665B51", accent: "#B3301A", card: "#FBFAF7", tile: "#F3EFE7", tileHighlight: "#F9E0D4", rule: "#C9C3B8",
+  bar: "#A39A8E", glow: "#6E2814", guide: "#D8432A",
   display: "'Oswald', 'Arial Narrow', system-ui, sans-serif",
   serif: "'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif",
   sans: "'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', system-ui, sans-serif",
@@ -77,13 +104,31 @@ export const DEFAULT_KANJI_CARD_THEME: Readonly<KanjiCardTheme> = {
 };
 
 const HEX = /^#[0-9a-f]{6}$/iu;
-/** The theme with defaults filled in. A colour that is not #RRGGBB, or an empty font, throws a RangeError that names it. */
+const COLOUR_KEYS = ["ink", "muted", "accent", "card", "tile", "tileHighlight", "rule", "bar", "glow", "guide"] as const;
+const FONT_KEYS = ["display", "serif", "sans", "body"] as const;
+// A CSS font family: quoted, or words that are each an identifier ("M PLUS 1p" must be quoted: "1p" is not one).
+const FAMILY = /^(?:"[^"]+"|'[^']+'|-?[_a-zA-Z\u00a0-\uffff][-_a-zA-Z0-9\u00a0-\uffff]*(?:\s+-?[_a-zA-Z\u00a0-\uffff][-_a-zA-Z0-9\u00a0-\uffff]*)*)$/u;
+
+/** Every problem of a theme, one message per key (empty when it is valid). A missing or undefined key uses its default. */
+export function kanjiCardThemeIssues(theme: Partial<KanjiCardTheme> | undefined): string[] {
+  const issues: string[] = [];
+  const known: readonly string[] = [...COLOUR_KEYS, ...FONT_KEYS];
+  for (const key of Object.keys(theme ?? {})) if (!known.includes(key)) issues.push(`${key} is not a theme key (${known.join(", ")})`);
+  for (const key of COLOUR_KEYS) { const v = theme?.[key]; if (v !== undefined && !(typeof v === "string" && HEX.test(v))) issues.push(`${key} must be a #RRGGBB colour`); }
+  for (const key of FONT_KEYS) {
+    const v = theme?.[key];
+    if (v !== undefined && !(typeof v === "string" && v.split(",").every(family => FAMILY.test(family.trim()))))
+      issues.push(`${key} must be a CSS font stack; quote a family name with digits or symbols, as in "'M PLUS 1p', sans-serif"`);
+  }
+  return issues;
+}
+
+/** The theme with defaults for any key that is missing or undefined. An invalid value throws a RangeError that names every bad key. */
 export function kanjiCardTheme(theme: Partial<KanjiCardTheme> | undefined): KanjiCardTheme {
-  const out = { ...DEFAULT_KANJI_CARD_THEME, ...theme };
-  for (const key of ["ink", "muted", "accent", "card", "tile", "tileHighlight", "rule"] as const)
-    if (!HEX.test(out[key])) throw new RangeError(`Kanji card theme: ${key} must be a #RRGGBB colour.`);
-  for (const key of ["display", "serif", "sans", "body"] as const)
-    if (typeof out[key] !== "string" || !out[key].trim()) throw new RangeError(`Kanji card theme: ${key} must be a font stack.`);
+  const issues = kanjiCardThemeIssues(theme);
+  if (issues.length) throw new RangeError(`Kanji card theme: ${issues.join("; ")}.`);
+  const out = { ...DEFAULT_KANJI_CARD_THEME };
+  for (const key of [...COLOUR_KEYS, ...FONT_KEYS]) if (theme?.[key] !== undefined) out[key] = theme[key] as string;
   return out;
 }
 
@@ -474,8 +519,19 @@ export interface KanjiCardTypedState {
   opacity: number;
 }
 
-/** Default seconds per typed kana, and how long the conversion highlight and the fade out take. */
+/** Default seconds per typed kana, and the pause between the last kana and the conversion. */
 export const KANJI_TYPE_STEP = .16;
+export const KANJI_TYPE_SETTLE = .12;
+const typeStepOf = (step: number | undefined) => step !== undefined && Number.isFinite(step) ? Math.min(.6, Math.max(.05, step)) : KANJI_TYPE_STEP;
+
+/**
+ * The `intro.convertAt` that starts the typing at `startAt` seconds: the reading's kana at
+ * `typeStep` each, then the short pause before the conversion. For a host that wants the typed
+ * character on screen as soon as possible.
+ */
+export function kanjiCardConvertAt(readingLength: number, { startAt = .15, typeStep }: { startAt?: number; typeStep?: number } = {}): number {
+  return Math.round((startAt + KANJI_TYPE_SETTLE + Math.max(0, readingLength) * typeStepOf(typeStep)) * 1000) / 1000;
+}
 const CONVERT_GLOW = .5, GROW = .22, FADE_OUT = .35, PUSH_FROM = .93;
 
 /**
@@ -491,7 +547,7 @@ export function kanjiCardTypedAt(
   const none: KanjiCardTypedState = { text: "", composing: false, converted: 0, grow: 1, scale: 1, caret: false, opacity: 0 };
   if (!(introLength > 0) || time < 0 || time > introLength + FADE_OUT) return none;
   const kana = [...(intro?.reading ?? "").trim()];
-  const step = intro?.typeStep !== undefined && Number.isFinite(intro.typeStep) ? Math.min(.6, Math.max(.05, intro.typeStep)) : KANJI_TYPE_STEP;
+  const step = typeStepOf(intro?.typeStep);
   // The conversion finishes inside the intro, so the character never first appears over the brush.
   const latest = Math.max(0, introLength - GROW - .1);
   const convertAt = Math.min(latest, Math.max(0, intro?.convertAt !== undefined && Number.isFinite(intro.convertAt) ? intro.convertAt : introLength * .6));
@@ -505,7 +561,7 @@ export function kanjiCardTypedAt(
     const emphasis = e < 0 ? 0 : e < .1 ? smoothstep(e / .1) : 1 - smoothstep((e - .1) / .5);
     return { ...none, text: char, opacity, converted: emphasis * .8 };
   }
-  const typeStart = Math.max(0, convertAt - .12 - kana.length * step);
+  const typeStart = Math.max(0, convertAt - KANJI_TYPE_SETTLE - kana.length * step);
   const opacity = time <= introLength ? 1 : 1 - smoothstep((time - introLength) / FADE_OUT);
   // The caret blinks twice a second; it stays on while text is being typed.
   const blink = Math.floor(time * 2) % 2 === 0;

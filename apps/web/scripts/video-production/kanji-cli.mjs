@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /** Make kanji study shorts from the command line.
  *
- *   pnpm video:kanji -- 水 火 木 --allow-network --voice-consent --transmit-text
+ *   pnpm video:kanji -- 水 火 木 --allow-network --voice-consent --transmit-text   # Fish voice
+ *   pnpm video:kanji -- 水 --local-voice-consent                                   # a local voice (voice.provider "local")
  *   pnpm video:kanji -- 水 --dry-run          # what each short shows and says; no network, no render
  *
  * Settings live in a local config file (default: <repo>/data/kanji-shorts/config.json; see
@@ -23,7 +24,8 @@ export const DEFAULT_CONFIG = join(repoRoot, "data", "kanji-shorts", "config.jso
 const fail = (message) => { throw new Error(message); };
 
 export function parseKanjiArgs(argv) {
-  const options = { chars: [], config: DEFAULT_CONFIG, out: null, dryRun: false, allowNetwork: false, voiceReferenceConsent: false, textTransmissionApproved: false };
+  const options = { chars: [], config: DEFAULT_CONFIG, out: null, dryRun: false, allowNetwork: false, voiceReferenceConsent: false, textTransmissionApproved: false,
+    localVoiceAuthorized: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") continue;
@@ -31,6 +33,7 @@ export function parseKanjiArgs(argv) {
     else if (arg === "--allow-network") options.allowNetwork = true;
     else if (arg === "--voice-consent") options.voiceReferenceConsent = true;
     else if (arg === "--transmit-text") options.textTransmissionApproved = true;
+    else if (arg === "--local-voice-consent") options.localVoiceAuthorized = true;
     else if (arg === "--config" || arg === "--out") {
       const value = argv[++i];
       if (!value || value.startsWith("--")) fail(`${arg} needs a path`);
@@ -56,8 +59,14 @@ export function readKanjiConfig(json, configPath) {
   const destination = json.destination ?? "youtube-shorts";
   if (!presets.some(p => p.id === destination && p.width === 1080 && p.height === 1920)) fail("config: destination must be a 1080 × 1920 short preset");
   const voice = json.voice ?? {};
-  if (typeof voice.voiceId !== "string" || !/^[a-z0-9]{8,64}$/iu.test(voice.voiceId)) fail("config: voice.voiceId must be a Fish voice ID");
-  if ((voice.modelId ?? "s2.1-pro-free") !== "s2.1-pro-free") fail("config: only the free Fish model s2.1-pro-free is supported");
+  const provider = voice.provider ?? "fish";
+  if (provider === "fish") {
+    if (typeof voice.voiceId !== "string" || !/^[a-z0-9]{8,64}$/iu.test(voice.voiceId)) fail("config: voice.voiceId must be a Fish voice ID");
+    if ((voice.modelId ?? "s2.1-pro-free") !== "s2.1-pro-free") fail("config: only the free Fish model s2.1-pro-free is supported");
+  } else if (provider === "local") {
+    for (const key of ["voiceId", "modelId", "engineRevision"]) if (typeof voice[key] !== "string" || !voice[key].trim() || voice[key].length > 128) fail(`config: a local voice needs voice.${key}`);
+    if (typeof voice.endpoint !== "string" || !/^http:\/\/(127\.0\.0\.1|localhost|\[::1\]):\d+(\/|$)/u.test(voice.endpoint)) fail("config: voice.endpoint must be a loopback http URL with a port");
+  } else fail("config: voice.provider must be fish or local");
   if (voice.pace !== undefined && !["slow", "measured", "fast"].includes(voice.pace)) fail("config: voice.pace must be slow, measured or fast");
   if (voice.licenseStatus !== undefined && !["unknown", "verified"].includes(voice.licenseStatus)) fail("config: voice.licenseStatus must be unknown or verified");
   const music = json.music ?? {};
@@ -66,7 +75,8 @@ export function readKanjiConfig(json, configPath) {
   if (music.startSeconds !== undefined && !(Number.isFinite(music.startSeconds) && music.startSeconds >= 0)) fail("config: music.startSeconds must be a number of seconds");
   if (music.belowVoiceDb !== undefined && !(music.belowVoiceDb >= 6 && music.belowVoiceDb <= 30)) fail("config: music.belowVoiceDb must be 6 to 30");
   const timing = json.timing ?? {};
-  const ranges = { write: [3, 20], review: [3, 20], wordGap: [.3, 3], tail: [.5, 5], readingGap: [.2, 2], wordLead: [0, 2], questionStart: [.05, 2], introTail: [0, 2] };
+  // The writing passes and the holds; the lines' own timing is in the narration script.
+  const ranges = { write: [3, 20], review: [3, 20], tail: [.5, 5], introTail: [0, 2] };
   for (const key of Object.keys(timing)) {
     if (!Object.hasOwn(ranges, key)) fail(`config: timing.${key} is not a setting (${Object.keys(ranges).join(", ")})`);
     const [min, max] = ranges[key];
@@ -99,10 +109,20 @@ export function readKanjiConfig(json, configPath) {
   if (card.typeStep !== undefined && !(Number.isFinite(card.typeStep) && card.typeStep >= .05 && card.typeStep <= .6)) fail("config: card.typeStep must be 0.05 to 0.6 seconds");
   if (card.strokeNumbers !== undefined && typeof card.strokeNumbers !== "boolean") fail("config: card.strokeNumbers must be true or false");
   if (json.credits !== undefined && !(Array.isArray(json.credits) && json.credits.every(line => typeof line === "string" && line.length <= 400))) fail("config: credits must be lines of text");
+  if (json.maxWords !== undefined && !(Number.isInteger(json.maxWords) && json.maxWords >= 1 && json.maxWords <= 6)) fail("config: maxWords must be 1 to 6 (the card shows up to 6)");
+  for (const [key, min, max] of [["fadeInMs", 0, 5000], ["fadeOutMs", 0, 5000]])
+    if (music[key] !== undefined && !(Number.isInteger(music[key]) && music[key] >= min && music[key] <= max)) fail(`config: music.${key} must be ${min} to ${max} ms`);
+  const qa = json.qa ?? {};
+  for (const key of Object.keys(qa)) if (!["stillBudgetSeconds", "anchorDriftSeconds"].includes(key)) fail(`config: qa.${key} is not a setting (stillBudgetSeconds, anchorDriftSeconds)`);
+  for (const key of Object.keys(qa)) if (!(Number.isFinite(qa[key]) && qa[key] > 0 && qa[key] <= 30)) fail(`config: qa.${key} must be 0 to 30 seconds`);
+  const captions = json.captions ?? {};
+  for (const key of Object.keys(captions)) if (key !== "tailSeconds") fail(`config: captions.${key} is not a setting (tailSeconds)`);
+  if (captions.tailSeconds !== undefined && !(Number.isFinite(captions.tailSeconds) && captions.tailSeconds >= 0 && captions.tailSeconds <= 3)) fail("config: captions.tailSeconds must be 0 to 3");
   return {
     dataset: path(json.dataset, "dataset"), outputRoot: path(json.outputRoot, "outputRoot"),
     cacheDir: json.cacheDir ? path(json.cacheDir, "cacheDir") : join(dirname(configPath), "cache"),
-    destination, voice, music: { ...music, path: path(music.path, "music.path") }, narration, timing, card, credits: json.credits ?? [],
+    destination, voice: { ...voice, provider }, music: { ...music, path: path(music.path, "music.path") }, narration, timing, card, credits: json.credits ?? [],
+    ...(json.maxWords !== undefined ? { maxWords: json.maxWords } : {}), qa, captions,
   };
 }
 
@@ -127,7 +147,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
       const entry = entries.get(char);
       if (!entry) { log(`${char}: not in the kanji data`); continue; }
       for (const problem of problems.filter(p => p.includes(`(${char})`))) log(`${char}: kanji data problem: ${problem}`);
-      const content = kanjiShortContent(entry, { speech: config.narration.speech });
+      const content = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3 });
       log(`${char}  ${content.meanings} · JLPT ${content.jlpt ?? "-"} · typed ${content.name.kana} → ${char}`);
       // Stroke lines need the stroke count: from cached KanjiVG data only, never the network.
       let strokeCount = 0;
@@ -142,7 +162,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
     }
     return [];
   }
-  const apiKey = await (deps.providerKey ?? productionProviderKey)("fish", { env });
+  // The Fish key only for a Fish voice; a local voice needs none.
+  const apiKey = config.voice.provider === "fish" ? await (deps.providerKey ?? productionProviderKey)("fish", { env }) : undefined;
   const browserExecutable = await (deps.findBrowser ?? findChromium)(env);
   const results = [];
   for (const char of args.chars) {
@@ -150,7 +171,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
     log(`${char}: ${out}`);
     const result = await (deps.produce ?? produceKanjiShort)({
       char, config, out, apiKey, browserExecutable, allowNetwork: args.allowNetwork,
-      voiceReferenceConsent: args.voiceReferenceConsent, textTransmissionApproved: args.textTransmissionApproved,
+      voiceReferenceConsent: args.voiceReferenceConsent, textTransmissionApproved: args.textTransmissionApproved, localVoiceAuthorized: args.localVoiceAuthorized,
       onProgress: (event) => { if (event.message) log(`  ${event.message}`); },
     });
     const { pacing, audio } = result.qa;
