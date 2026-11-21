@@ -7,6 +7,7 @@ import type { ShodoGlyph } from "./shodo-glyphs";
 import { planShodoWriting } from "./shodo-hand";
 import type { ShodoPlan } from "./shodo-hand";
 import { DEFAULT_SHODO_STYLE, SHODO_INKS, resolveShodoStyle } from "./shodo-style";
+import type { DeepPartial, ShodoStyle } from "./shodo-style";
 
 /** Frame rate of the card's video clock. */
 export const KANJI_CARD_FPS = 30;
@@ -36,6 +37,56 @@ export interface KanjiCardContent {
 /** Ink for the whole character: black sumi (default) or vermilion shuboku (朱墨). */
 export type KanjiCardInk = "sumi" | "vermilion";
 
+/** The fixed words of the reading card, for another language or wording. */
+export interface KanjiCardLabels { onyomi: string; kunyomi: string; words: string; jlpt: string }
+export const DEFAULT_KANJI_CARD_LABELS: Readonly<KanjiCardLabels> = { onyomi: "ON'YOMI", kunyomi: "KUN'YOMI", words: "USEFUL WORDS", jlpt: "JLPT" };
+
+/**
+ * Colours (#RRGGBB) and font stacks of the card's text, for a brand or a look. The paper, ink and
+ * brush are set with `brushStyle`.
+ */
+export interface KanjiCardTheme {
+  /** Main text and the typed character. */
+  ink: string;
+  /** Terms, furigana and the romaji of a word that is not highlighted. */
+  muted: string;
+  /** Badge, highlight ring, caret and the romaji of the highlighted word (vermilion by default). */
+  accent: string;
+  /** The reading card. */
+  card: string;
+  /** A word tile, and a highlighted word tile. */
+  tile: string;
+  tileHighlight: string;
+  /** The line under the title and the bar between the character and its meaning. */
+  rule: string;
+  /** Display font: label, title, terms and badge. */
+  display: string;
+  /** Serif font for the character and the words. */
+  serif: string;
+  /** Sans font for the typed character. */
+  sans: string;
+  /** Body font: readings, furigana, romaji and meanings. */
+  body: string;
+}
+export const DEFAULT_KANJI_CARD_THEME: Readonly<KanjiCardTheme> = {
+  ink: "#1B1A18", muted: "#665B51", accent: "#B3301A", card: "#FBFAF7", tile: "#F3EFE7", tileHighlight: "#F9E0D4", rule: "#C9C3B8",
+  display: "'Oswald', 'Arial Narrow', system-ui, sans-serif",
+  serif: "'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif",
+  sans: "'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', 'Yu Gothic', system-ui, sans-serif",
+  body: "system-ui, sans-serif",
+};
+
+const HEX = /^#[0-9a-f]{6}$/iu;
+/** The theme with defaults filled in. A colour that is not #RRGGBB, or an empty font, throws a RangeError that names it. */
+export function kanjiCardTheme(theme: Partial<KanjiCardTheme> | undefined): KanjiCardTheme {
+  const out = { ...DEFAULT_KANJI_CARD_THEME, ...theme };
+  for (const key of ["ink", "muted", "accent", "card", "tile", "tileHighlight", "rule"] as const)
+    if (!HEX.test(out[key])) throw new RangeError(`Kanji card theme: ${key} must be a #RRGGBB colour.`);
+  for (const key of ["display", "serif", "sans", "body"] as const)
+    if (typeof out[key] !== "string" || !out[key].trim()) throw new RangeError(`Kanji card theme: ${key} must be a font stack.`);
+  return out;
+}
+
 /** Seconds for each phase of the video. A phase of 0 seconds is skipped. */
 export interface KanjiCardTiming {
   /** The typed character before the brush writes (see `KanjiCardIntro`). Default: 0 (no intro). */
@@ -62,6 +113,8 @@ export interface KanjiCardIntro {
    * highlight pulse, for example when a voice-over says its name. Default: none.
    */
   emphasizeAt?: number;
+  /** Seconds per typed kana, 0.05..0.6. Default: 0.16. */
+  typeStep?: number;
 }
 
 /**
@@ -312,16 +365,17 @@ export function kanjiInkBox(plan: Pick<ShodoPlan, "strokes">): [number, number, 
  */
 export function planKanjiCardWriting(
   glyph: ShodoGlyph, g: KanjiCardGeometry,
-  options: { vermilion?: readonly number[]; withLabel?: boolean; seconds?: number; ink?: KanjiCardInk; speed?: number } = {},
+  options: { vermilion?: readonly number[]; withLabel?: boolean; seconds?: number; ink?: KanjiCardInk; speed?: number; brushStyle?: DeepPartial<ShodoStyle> } = {},
 ): ShodoPlan {
-  const { vermilion = [], withLabel = true, seconds: target, ink = "sumi" } = options;
+  const { vermilion = [], withLabel = true, seconds: target, ink = "sumi", brushStyle = {} } = options;
   const natural = Number.isFinite(options.speed) ? Math.min(4, Math.max(.25, options.speed as number)) : KANJI_CARD_SPEED;
   const strokeInk = Object.fromEntries(vermilion.map(n => [n - 1, SHODO_INKS.shuboku]));
   const rest: [number, number] = [g.paper.x + g.paper.width - 90, g.paper.y + g.paper.height * .83];
   const inkstone: [number, number] = [g.width + 80, g.height / 2];
-  const body = ink === "vermilion" ? { ...SHODO_INKS.shuboku } : undefined;
+  // The host's brush, ink, paper and hand; the card sets the hand's speed, and "vermilion" sets the ink.
+  const inkStyle = ink === "vermilion" ? { ...brushStyle.ink, ...SHODO_INKS.shuboku } : brushStyle.ink;
   const at = (speed: number, x: number, y: number, size: number) => planShodoWriting({
-    style: resolveShodoStyle({ hand: { speed }, ink: body }, DEFAULT_SHODO_STYLE),
+    style: resolveShodoStyle({ ...brushStyle, hand: { ...brushStyle.hand, speed }, ink: inkStyle }, DEFAULT_SHODO_STYLE),
     items: [{ glyph, x, y, size, strokeInk }], rest, inkstone, exit: "hover",
   });
   const [x0, y0, x1, y1] = kanjiInkBox(at(natural, 0, 0, g.em));
@@ -374,6 +428,8 @@ export interface KanjiCardWritingOptions {
   content?: KanjiCardContent;
   /** Parts to show, as on the card. `label: false` hides the label. */
   sections?: Partial<Record<KanjiCardSection, boolean>>;
+  /** Brush, ink, paper and hand settings over the default style; the card sets the hand's speed. */
+  brushStyle?: DeepPartial<ShodoStyle>;
   timing?: KanjiCardTiming;
   ink?: KanjiCardInk;
   speed?: number;
@@ -394,7 +450,7 @@ export function kanjiCardWriting(glyph: ShodoGlyph, options: KanjiCardWritingOpt
   const vermilionStrokes = options.vermilionStrokes ?? options.content?.vermilionStrokes;
   const geometry = kanjiCardGeometry(options.layout ?? "landscape", withCard, options.safeInset, withLabel, options.density ?? "regular");
   const plan = planKanjiCardWriting(glyph, geometry, {
-    vermilion: vermilionStrokes, withLabel, seconds: kanjiCardPace(options.timing), ink: options.ink, speed: options.speed,
+    vermilion: vermilionStrokes, withLabel, seconds: kanjiCardPace(options.timing), ink: options.ink, speed: options.speed, brushStyle: options.brushStyle,
   });
   const timeline = kanjiCardTimeline(plan.duration, options.timing);
   return { geometry, plan, timeline, strokes: kanjiCardStrokeTimes(plan, timeline), inkBox: kanjiInkBox(plan) };
@@ -418,7 +474,7 @@ export interface KanjiCardTypedState {
   opacity: number;
 }
 
-/** Seconds per typed kana, and how long the conversion highlight and the fade out take. */
+/** Default seconds per typed kana, and how long the conversion highlight and the fade out take. */
 export const KANJI_TYPE_STEP = .16;
 const CONVERT_GLOW = .5, GROW = .22, FADE_OUT = .35, PUSH_FROM = .93;
 
@@ -435,6 +491,7 @@ export function kanjiCardTypedAt(
   const none: KanjiCardTypedState = { text: "", composing: false, converted: 0, grow: 1, scale: 1, caret: false, opacity: 0 };
   if (!(introLength > 0) || time < 0 || time > introLength + FADE_OUT) return none;
   const kana = [...(intro?.reading ?? "").trim()];
+  const step = intro?.typeStep !== undefined && Number.isFinite(intro.typeStep) ? Math.min(.6, Math.max(.05, intro.typeStep)) : KANJI_TYPE_STEP;
   // The conversion finishes inside the intro, so the character never first appears over the brush.
   const latest = Math.max(0, introLength - GROW - .1);
   const convertAt = Math.min(latest, Math.max(0, intro?.convertAt !== undefined && Number.isFinite(intro.convertAt) ? intro.convertAt : introLength * .6));
@@ -448,12 +505,12 @@ export function kanjiCardTypedAt(
     const emphasis = e < 0 ? 0 : e < .1 ? smoothstep(e / .1) : 1 - smoothstep((e - .1) / .5);
     return { ...none, text: char, opacity, converted: emphasis * .8 };
   }
-  const typeStart = Math.max(0, convertAt - .12 - kana.length * KANJI_TYPE_STEP);
+  const typeStart = Math.max(0, convertAt - .12 - kana.length * step);
   const opacity = time <= introLength ? 1 : 1 - smoothstep((time - introLength) / FADE_OUT);
   // The caret blinks twice a second; it stays on while text is being typed.
   const blink = Math.floor(time * 2) % 2 === 0;
   if (time < convertAt) {
-    const typed = Math.min(kana.length, Math.floor((time - typeStart) / KANJI_TYPE_STEP) + 1);
+    const typed = Math.min(kana.length, Math.floor((time - typeStart) / step) + 1);
     if (time < typeStart || typed <= 0) return { ...none, caret: blink, opacity };
     return { text: kana.slice(0, typed).join(""), composing: true, converted: 0, grow: 0, scale: PUSH_FROM, caret: true, opacity };
   }

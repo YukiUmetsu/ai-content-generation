@@ -34,7 +34,11 @@
 
 **Adopted 2026-11-21: kanji study shorts.** `pnpm video:kanji` renders Kumiki's `shodo-kanji-card` (with `shodo-calligraphy` and `ink-brush`) as 9:16 shorts. See [how to make kanji shorts](how-to-make-kanji-shorts.md).
 
-- **Boundary:** Kumiki owns the card, its safe bands, the typed intro and the brush. `kanjiCardWriting` gives the stroke times without React. ContentGen owns the kanji data, the narration lines and their timing, the music and the release (`kanji-short.mjs`, `kanji-short-producer.mjs`, `kanji-cli.mjs`).
+- **Boundary:** Kumiki owns the card, its safe bands, labels, theme, brush style, the typed intro and the brush. `kanjiCardWriting` gives the stroke times without React. ContentGen owns:
+  - the kanji data (`kanji-short.mjs`)
+  - the narration as data: an anchored-narration script, by default `kanji-short-script.json`
+  - the music and the release (`kanji-short-producer.mjs`, `kanji-cli.mjs`)
+- **General modules:** the script engine (`anchored-narration.mjs`) and the clip, music-bed, measurement and caption modules know nothing about kanji. Another card that reports its moments as anchors can reuse them.
 - **One plan, two places:** Node parses KanjiVG once and plans the strokes through `dist-shot/kanji-entry.mjs`. The export plan (`kanji-study-visual-plan`) carries that glyph, so the page plans the same strokes and loads nothing.
 - **Failure:** the page refuses a plan whose phases do not fill the manifest, and fails a frame whose card text does not fit.
 - **Audio:** the existing master (voice stem, captions, ducked ambience bed, mono at -16 LUFS target).

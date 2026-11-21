@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main, nextOutputDir, parseKanjiArgs, readKanjiConfig } from "./kanji-cli.mjs";
-import { kanjiCaptions, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
+import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 
 const VOICE = "984831ae0346415685b109090be3e798";
 const config = (overrides = {}) => ({
@@ -24,8 +24,9 @@ test("reads kanji from the arguments, one or many per argument, and refuses anyt
   assert.equal(args.allowNetwork, true);
   assert.equal(args.dryRun, true);
   assert.equal(args.voiceReferenceConsent, false);
-  assert.throws(() => parseKanjiArgs([]), /at least one kanji/u);
-  assert.throws(() => parseKanjiArgs(["mizu"]), /must be a kanji/u);
+  assert.deepEqual(parseKanjiArgs(["あ"]).chars, ["あ"]);                                // any character the data has, kana too
+  assert.throws(() => parseKanjiArgs([]), /at least one character/u);
+  assert.throws(() => parseKanjiArgs(["mizu"]), /one your data has/u);
   assert.throws(() => parseKanjiArgs(["水", "--fast"]), /Unknown option/u);
   assert.throws(() => parseKanjiArgs(["水", "--config"]), /needs a path/u);
 });
@@ -47,8 +48,13 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
-  assert.throws(() => readKanjiConfig(config({ narration: { question: "How about {name} and {name}?" } }), "/c.json"), /exactly once/u);
-  assert.throws(() => readKanjiConfig(config({ narration: { questionLocale: "fr" } }), "/c.json"), /en or ja/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech\)/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { script: 3 } }), "/c.json"), /narration\.script must be a file or/u);
+  assert.equal(readKanjiConfig(config({ narration: { script: "my-script.json" } }), "/home/me/c.json").narration.script, "/home/me/my-script.json");
+  assert.throws(() => readKanjiConfig(config({ card: { colour: "red" } }), "/c.json"), /card\.colour is not a setting/u);
+  assert.throws(() => readKanjiConfig(config({ card: { labels: { title: "X" } } }), "/c.json"), /card\.labels/u);
+  assert.throws(() => readKanjiConfig(config({ card: { typeStep: 2 } }), "/c.json"), /card\.typeStep/u);
+  assert.throws(() => readKanjiConfig(config({ card: { brushStyle: [] } }), "/c.json"), /card\.brushStyle/u);
 });
 
 test("gives each run of a kanji a new version folder, so a release is never overwritten", async () => {
@@ -70,7 +76,8 @@ test("a dry run shows what each short says, with no network, key or browser", as
     const fail = () => { throw Error("must not be called in a dry run"); };
     await main(["水", "火", "--dry-run", "--config", join(dir, "config.json")], {}, { log: line => lines.push(line), providerKey: fail, findBrowser: fail, produce: fail });
     assert.match(lines[0], /^水 {2}WATER · JLPT N5 · typed みず → 水/u);
-    assert.ok(lines.some(line => line.includes("Do you know how to write the kanji みず?") && line.includes("[caption: Do you know how to write the kanji mizu?]")));
+    assert.ok(lines.some(line => line.includes("[en @ start +0.35 s] Do you know how to write the kanji みず?") && line.includes("(caption: Do you know how to write the kanji mizu?)")));
+    assert.ok(lines.some(line => line.includes("[ja @ review.end +0.3 s] 水道。")));
     assert.ok(lines.some(line => line.includes("words") && line.includes("水道") && !line.includes("水 (みず")));
     assert.ok(lines.includes("火: not in the kanji data"));
   } finally { await rm(dir, { recursive: true, force: true }); }
@@ -161,14 +168,9 @@ test("music shorter than a short stops production before KanjiVG or Fish", async
     await assert.rejects(produceKanjiShort({ char: "水", config: read, out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789",
       allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /needs at least 30 s/u);
     assert.deepEqual(touched, []);
-    await assert.rejects(readFile(join(dir, "out", ".render", "music-source.wav")), /ENOENT/u);   // scratch removed
+    // The run's own scratch folder is gone, and with nothing released the output folder too.
+    await assert.rejects(readdir(join(dir, "out")), /ENOENT/u);
   } finally { await rm(dir, { recursive: true, force: true }); }
-});
-
-test("captions run from each spoken line's start to its end, with the written word", () => {
-  const srt = kanjiCaptions([{ id: "question", caption: "Do you know how to write the kanji mizu?" }, { id: "word-1", caption: "水道" }],
-    { question: .35, "word-1": 15.193 }, { question: 2.531, "word-1": .56 });
-  assert.equal(srt, "1\n00:00:00,350 --> 00:00:03,081\nDo you know how to write the kanji mizu?\n\n2\n00:00:15,193 --> 00:00:15,953\n水道\n");
 });
 
 test("a word longer than the card shows, and music too short for long writing passes, stop before KanjiVG or Fish", async () => {
@@ -208,6 +210,21 @@ test("the planner's recorded hash is the hash of the bytes it was imported from"
     assert.equal(planner.answer, 42);
     assert.equal(planner.plannerSha256, createHash("sha256").update(source).digest("hex"));
     await assert.rejects(loadKanjiPlanner(join(dir, "missing.mjs")), /not built/u);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("a config's own narration script replaces the default, and must only use the card's anchors", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-script-"));
+  try {
+    const counting = { schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [
+      { id: "stroke-{n}", forEach: "strokes", say: "{n}", at: "review.strokes", gap: .1 },
+    ] };
+    await writeFile(join(dir, "count.json"), JSON.stringify(counting));
+    const script = await kanjiNarrationScript(readKanjiConfig(config({ narration: { script: "count.json" } }), join(dir, "config.json")));
+    assert.equal(script.steps[0].at, "review.strokes");
+    await assert.rejects(kanjiNarrationScript({ narration: { script: { ...counting, steps: [{ id: "x", say: "y", at: "outro.start" }] } } }),
+      /anchors the kanji card does not have: outro\.start/u);
+    assert.equal((await kanjiNarrationScript({ narration: {} })).steps[0].id, "question");                  // the default
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

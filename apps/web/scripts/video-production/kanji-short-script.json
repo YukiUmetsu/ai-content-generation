@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "anchored-narration-script",
+  "description": "Default kanji study short: the question while the kanji is typed, the readings while the brush writes, the useful words after the stroke-order pass. Copy it to change the wording, order or timing (narration.script in the config).",
+  "locale": "ja",
+  "highlightTail": 1,
+  "steps": [
+    {
+      "id": "question",
+      "say": "Do you know how to write the kanji {name.kana}?",
+      "caption": "Do you know how to write the kanji {name.romaji}?",
+      "locale": "en",
+      "at": "start",
+      "offset": 0.35,
+      "emphasize": "{name.kana}"
+    },
+    { "id": "onyomi", "when": "onyomi", "say": "{labels.on}、{onyomi}。", "at": "write.firstStroke" },
+    { "id": "kunyomi", "when": "kunyomi", "say": "{labels.kun}、{kunyomi}。", "at": "write.firstStroke" },
+    {
+      "id": "word-{n}",
+      "forEach": "words",
+      "say": "{item.speech}。",
+      "caption": "{item.word}",
+      "highlight": true,
+      "at": "review.end",
+      "offset": 0.3,
+      "gap": 1
+    }
+  ]
+}

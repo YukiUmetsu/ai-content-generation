@@ -12,8 +12,9 @@ import { readFile, readdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
-import { kanjiShortContent, kanjiShortLines, readKanjiDataset } from "./kanji-short.mjs";
-import { produceKanjiShort } from "./kanji-short-producer.mjs";
+import { expandNarrationScript } from "./anchored-narration.mjs";
+import { kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
+import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
 import { findChromium } from "./try.mjs";
 
@@ -37,9 +38,10 @@ export function parseKanjiArgs(argv) {
     } else if (arg.startsWith("--")) fail(`Unknown option ${arg}`);
     else for (const char of [...arg].filter(c => c.trim() && c !== "," && c !== "、")) options.chars.push(char);
   }
-  if (!options.chars.length) fail("Name at least one kanji, for example: pnpm video:kanji -- 水 火");
+  if (!options.chars.length) fail("Name at least one character, for example: pnpm video:kanji -- 水 火");
   options.chars = [...new Set(options.chars)];
-  if (options.chars.some(char => !/\p{Script=Han}/u.test(char))) fail("Every character must be a kanji");
+  // Any character the data has works (kanji or kana); only letters, digits and marks are refused here.
+  if (options.chars.some(char => /[\p{ASCII}\p{P}\p{S}]/u.test(char))) fail("Each character must be one your data has, such as a kanji");
   return options;
 }
 
@@ -70,20 +72,32 @@ export function readKanjiConfig(json, configPath) {
     const [min, max] = ranges[key];
     if (!(Number.isFinite(timing[key]) && timing[key] >= min && timing[key] <= max)) fail(`config: timing.${key} must be ${min} to ${max} seconds`);
   }
-  const narration = json.narration ?? {};
+  const narration = { ...json.narration };
   const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
-  for (const key of Object.keys(narration)) if (!["question", "questionLocale", "labels", "speech"].includes(key)) fail(`config: narration.${key} is not a setting`);
-  if (narration.question !== undefined && !(isText(narration.question, 160) && narration.question.split("{name}").length === 2))
-    fail("config: narration.question must contain {name} exactly once");
-  if (narration.questionLocale !== undefined && !["en", "ja"].includes(narration.questionLocale)) fail("config: narration.questionLocale must be en or ja");
+  const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  for (const key of Object.keys(narration)) if (!["script", "labels", "speech"].includes(key)) fail(`config: narration.${key} is not a setting (script, labels, speech)`);
+  // The script: a file (relative to this config) or the script itself; checked when a short is made.
+  if (narration.script !== undefined) {
+    if (typeof narration.script === "string") narration.script = path(narration.script, "narration.script");
+    else if (!isObject(narration.script)) fail("config: narration.script must be a file or an anchored-narration script");
+  }
   if (narration.labels !== undefined && !(narration.labels && isText(narration.labels.on, 20) && isText(narration.labels.kun, 20)))
     fail("config: narration.labels needs both on and kun, for example { \"on\": \"おんよみ\", \"kun\": \"くんよみ\" }");
   if (narration.speech !== undefined && !(narration.speech && typeof narration.speech === "object" && !Array.isArray(narration.speech) &&
     Object.entries(narration.speech).every(([word, text]) => isText(word, 40) && isText(text, 40))))
     fail("config: narration.speech maps a word to the text the voice reads, for example { \"水泳\": \"すいえい\" }");
   const card = json.card ?? {};
+  for (const key of Object.keys(card)) if (!["heading", "density", "labels", "theme", "brushStyle", "typeStep", "strokeNumbers"].includes(key))
+    fail(`config: card.${key} is not a setting (heading, density, labels, theme, brushStyle, typeStep, strokeNumbers)`);
   if (card.density !== undefined && !["regular", "compact"].includes(card.density)) fail("config: card.density must be regular or compact");
   if (card.heading !== undefined && !(typeof card.heading === "string" && card.heading.length <= 30)) fail("config: card.heading must be at most 30 characters");
+  if (card.labels !== undefined && !(isObject(card.labels) && Object.entries(card.labels).every(([k, v]) => ["onyomi", "kunyomi", "words", "jlpt"].includes(k) && isText(v, 30))))
+    fail("config: card.labels sets onyomi, kunyomi, words and jlpt to texts of at most 30 characters");
+  if (card.theme !== undefined && !(isObject(card.theme) && Object.values(card.theme).every(v => isText(v, 200))))
+    fail("config: card.theme sets colours (#RRGGBB) and font stacks as texts");
+  if (card.brushStyle !== undefined && !isObject(card.brushStyle)) fail("config: card.brushStyle must be an object of brush, ink, paper and hand settings");
+  if (card.typeStep !== undefined && !(Number.isFinite(card.typeStep) && card.typeStep >= .05 && card.typeStep <= .6)) fail("config: card.typeStep must be 0.05 to 0.6 seconds");
+  if (card.strokeNumbers !== undefined && typeof card.strokeNumbers !== "boolean") fail("config: card.strokeNumbers must be true or false");
   if (json.credits !== undefined && !(Array.isArray(json.credits) && json.credits.every(line => typeof line === "string" && line.length <= 400))) fail("config: credits must be lines of text");
   return {
     dataset: path(json.dataset, "dataset"), outputRoot: path(json.outputRoot, "outputRoot"),
@@ -108,13 +122,22 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
   const log = deps.log ?? ((line) => process.stdout.write(`${line}\n`));
   if (args.dryRun) {
     const { entries, problems } = readKanjiDataset(JSON.parse(await readFile(config.dataset, "utf8")));
+    const script = await kanjiNarrationScript(config);
     for (const char of args.chars) {
       const entry = entries.get(char);
       if (!entry) { log(`${char}: not in the kanji data`); continue; }
       for (const problem of problems.filter(p => p.includes(`(${char})`))) log(`${char}: kanji data problem: ${problem}`);
       const content = kanjiShortContent(entry, { speech: config.narration.speech });
       log(`${char}  ${content.meanings} · JLPT ${content.jlpt ?? "-"} · typed ${content.name.kana} → ${char}`);
-      for (const line of kanjiShortLines(content, config.narration)) log(`  ${line.id.padEnd(9)} ${line.text}${line.caption !== line.text ? `   [caption: ${line.caption}]` : ""}`);
+      // Stroke lines need the stroke count: from cached KanjiVG data only, never the network.
+      let strokeCount = 0;
+      try {
+        const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
+        const { svg } = await (deps.kanjiVgSvg ?? kanjiVgSvg)(char, { planner, cacheDir: config.cacheDir, allowNetwork: false });
+        strokeCount = (await planner.glyphFromKanjiVg(char, svg)).strokes.length;
+      } catch { if (script.steps.some(step => step.forEach === "strokes")) log(`  (stroke lines are left out: ${char}'s KanjiVG data is not cached yet)`); }
+      for (const line of expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration.labels, strokeCount })))
+        log(`  ${line.id.padEnd(9)} [${line.locale} @ ${line.at}${line.offset ? ` ${line.offset >= 0 ? "+" : ""}${line.offset} s` : ""}] ${line.say}${line.caption !== line.say ? `   (caption: ${line.caption})` : ""}`);
       log(`  words     ${content.words.map(w => `${w.word} (${w.ruby}, ${w.meaning})`).join(" · ")}`);
     }
     return [];

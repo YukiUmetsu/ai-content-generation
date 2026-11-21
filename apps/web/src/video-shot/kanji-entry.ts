@@ -7,6 +7,8 @@ import { SHODO_KANJIVG_BASE, SHODO_KANJIVG_CREDIT, SHODO_KANJIVG_RELEASE } from 
 import { kanjiVgFileName } from "@/components/video/shodo/shodo-glyphs";
 import type { ShodoGlyph } from "@/components/video/shodo/shodo-glyphs";
 import { kanjiCardWriting } from "@/components/video/shodo/shodo-kanji-card-plan";
+// The card's theme check, so a bad colour or font in the config stops production before any network call.
+export { kanjiCardTheme } from "@/components/video/shodo/shodo-kanji-card-plan";
 import type { KanjiCardWritingOptions } from "@/components/video/shodo/shodo-kanji-card-plan";
 
 export { SHODO_KANJIVG_BASE, SHODO_KANJIVG_CREDIT, SHODO_KANJIVG_RELEASE, kanjiVgFileName };

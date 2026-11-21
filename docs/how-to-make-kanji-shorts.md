@@ -11,6 +11,36 @@
 
 The reading card stays above the platform's caption band. In 9:16 the bottom 19 % shows a dark felt mat, where white platform captions stay readable.
 
+### The narration is a script (data)
+
+The voice-over is an **anchored-narration script** (`scripts/video-production/anchored-narration.mjs`): a list of steps, each a line with text templates, placed on a moment of the picture. The default is `scripts/video-production/kanji-short-script.json`. Copy it and set `narration.script` in the config to change the wording, the order, the language or the timing, with no code change.
+
+- **Templates** use the kanji's fields:
+  - `{name.kana}`, `{name.romaji}`, `{meanings}`, `{jlpt}`
+  - `{onyomi}`, `{kunyomi}` (kana), `{onyomiRomaji}`, `{kunyomiRomaji}`
+  - `{labels.on}`, `{labels.kun}`
+  - in a step with `"forEach": "words"`: `{item.word}`, `{item.speech}`, `{item.meaning}`
+  - in a step with `"forEach": "strokes"`: `{n}`
+- **Anchors** are the card's moments: `start`, `write.start`, `write.firstStroke`, `write.lastStroke`, `review.start`, `review.firstStroke`, `review.end`, `info.start`, and per stroke `write.strokes` and `review.strokes`.
+  - A line starts at its anchor plus `offset`, or `gap` after the previous line ends, whichever is later.
+  - `"at": "after"` places it only after the previous line.
+  - The QA report records how late each line starts after its anchor, and warns above 1.5 s.
+- **Other step settings:** `when` (leave the step out when a field is empty), `locale` (the voice's language for the line), `caption`, `highlight` (highlight each word while it is spoken), and `emphasize` (the text whose spoken moment pulses the typed kanji).
+- **The intro** lasts while the lines placed at `start` are spoken. A script with no such line has no typed intro.
+- **Example:** counting the strokes during the review is one more step: `{ "id": "stroke-{n}", "forEach": "strokes", "say": "{n}", "at": "review.strokes", "gap": 0.1 }`. `--dry-run` lists it once the kanji's KanjiVG data is cached.
+
+### The card's look is settings
+
+`card` in the config sets the card's options:
+- `heading` and `density`
+- `labels`: the card's words, for example `{ "onyomi": "音読み", "kunyomi": "訓読み", "words": "ことば" }`
+- `theme`: colours and fonts
+- `brushStyle`: Kumiki brush, ink, paper and hand settings
+- `typeStep`: typing pace
+- `strokeNumbers`
+
+All are passed to Kumiki's `shodo-kanji-card` and checked before any network request.
+
 ### Decisions in the data, not in code
 
 - **Useful words** never include the bare kanji (水 is not a useful word for 水). The card takes the first three other words of the data, in order.
@@ -18,16 +48,23 @@ The reading card stays above the platform's caption band. In 9:16 the bottom 19 
   - The voice gets the name in kana inside the English question, because a voice reads romaji such as "hi" (日) as an English word.
   - The captions file shows romaji.
 - **Words are spoken as written**, so the voice reads them in context. An irregular reading (今日, 大人) is spoken from its kana. `narration.speech` overrides the text for a word that the voice misreads, for example `{ "水泳": "すいえい" }`.
-- **Timing** comes from the brush. Kumiki's `kanjiCardWriting` gives the time of every stroke in Node (bundle `dist-shot/kanji-entry.mjs`), and the export page plans the same strokes from the same glyph.
+- **Timing** comes from the brush. Kumiki's `kanjiCardWriting` gives the time of every stroke in Node (bundle `dist-shot/kanji-entry.mjs`). The export page plans the same strokes from the same glyph and refuses any frame whose strokes differ.
+- **Reusable parts** that other narrated videos can use:
+  - `narration-clips.mjs`: trim measured speech and place it on an exact sample timeline
+  - `anchored-narration.mjs`: scripts
+  - `music-bed.mjs`: choose and level a reviewed bed under a voice
+  - `media-measure.mjs`: loudness, peak, longest still
+  - `cue-captions.mjs`: SRT from timed cues
 
 ## Set up once
 
 Make the folder `data/kanji-shorts/` (git ignores `data/`). Put `config.json` in it, after `apps/web/fixtures/kanji-short/config.example.json`:
 
 - `dataset`: the kanji study-card data (`{ kanji: [{ char, jlpt, words, card }] }`), for example `jlpt-n5-n3.json` from the private `kumiki-shodo` repository. Put its credit line in `credits`.
+- `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) and `speech` (the text the voice reads for a word it misreads).
 - `voice.voiceId`: your Fish voice. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`.
 - `music`: a reviewed bed with its source, licence and SHA-256. A changed file stops production. The producer picks the window with the fewest silent stretches where nobody speaks, unless `startSeconds` is set. It sets the bed `belowVoiceDb` (default 11) under the voice and ducks it under speech.
-- `timing.write` and `timing.review`: seconds of each writing pass. They are snapped to whole frames.
+- `timing.write` and `timing.review`: seconds of each writing pass, snapped to whole frames. Also `introTail` and `tail`: the hold after the intro's last line and after the last line.
 
 Paths are relative to the config file. `pnpm build` must have run (export page and `dist-shot`), and Chrome must be installed or `CONTENTGEN_CHROMIUM_EXECUTABLE` set.
 

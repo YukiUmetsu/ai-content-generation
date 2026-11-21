@@ -3,7 +3,12 @@
   "dataset": "kanji-data/jlpt-n5-n3.json",
   "outputRoot": "/Users/YOU/Movies/ContentGen/kanji-shorts",
   "destination": "youtube-shorts",
-  "voice": { "voiceId": "YOUR_FISH_VOICE_ID", "modelId": "s2.1-pro-free", "pace": "slow", "licenseStatus": "unknown" },
+  "voice": {
+    "voiceId": "YOUR_FISH_VOICE_ID",
+    "modelId": "s2.1-pro-free",
+    "pace": "slow",
+    "licenseStatus": "unknown"
+  },
   "music": {
     "path": "music/your-reviewed-bed.wav",
     "sha256": "SHA-256 OF THE REVIEWED MUSIC FILE",
@@ -13,13 +18,39 @@
     "attribution": "Optional credit line for the description"
   },
   "narration": {
-    "question": "Do you know how to write the kanji {name}?",
-    "questionLocale": "en",
-    "labels": { "on": "おんよみ", "kun": "くんよみ" },
+    "script": "optional: a file like scripts/video-production/kanji-short-script.json, or the script itself; default: that file",
+    "labels": {
+      "on": "おんよみ",
+      "kun": "くんよみ"
+    },
     "speech": {}
   },
-  "timing": { "write": 6.5, "review": 6.5, "wordGap": 1, "tail": 1.4 },
-  "card": { "heading": "Kanji study", "density": "compact" },
+  "timing": {
+    "write": 6.5,
+    "review": 6.5,
+    "wordGap": 1,
+    "tail": 1.4
+  },
+  "card": {
+    "heading": "Kanji study",
+    "density": "compact",
+    "labels": {
+      "onyomi": "ON'YOMI",
+      "kunyomi": "KUN'YOMI",
+      "words": "USEFUL WORDS",
+      "jlpt": "JLPT"
+    },
+    "theme": {
+      "accent": "#B3301A"
+    },
+    "brushStyle": {
+      "ink": {
+        "strength": 1
+      }
+    },
+    "typeStep": 0.16,
+    "strokeNumbers": true
+  },
   "credits": [
     "Credit line required by your kanji data's licence (KanjiVG is credited automatically)."
   ]
