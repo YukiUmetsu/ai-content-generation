@@ -54,7 +54,9 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
-  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech\)/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech, retakes\)/u);
+  assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 2 } } }), "/c.json").narration.retakes, { "ひと": 2 });
+  assert.throws(() => readKanjiConfig(config({ narration: { retakes: { "ひと": 1 } } }), "/c.json"), /narration\.retakes/u);
   assert.throws(() => readKanjiConfig(config({ narration: { script: 3 } }), "/c.json"), /narration\.script must be a file or/u);
   assert.equal(readKanjiConfig(config({ narration: { script: "my-script.json" } }), "/home/me/c.json").narration.script, "/home/me/my-script.json");
   assert.throws(() => readKanjiConfig(config({ card: { colour: "red" } }), "/c.json"), /card\.colour is not a setting/u);
@@ -123,13 +125,17 @@ test("the producer stops before any network or render work when a consent, the k
     const touched = [];
     const deps = {
       fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
-      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts", "instagram-reels", "tiktok"] }),
+      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts", "instagram-reels", "tiktok"], KANJI_CARD_CUE_SECTIONS: ["readings", "words"] }),
       kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
     };
     const base = { char: "水", config: read, out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789" };
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true }, deps), /--transmit-text/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true, apiKey: "" }, deps), /FISH_AUDIO_API_KEY/u);
     await assert.rejects(produceKanjiShort({ ...base, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /music file changed/u);
+    // A script cue the card cannot draw stops here too.
+    const cueScript = { schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "x", say: "y", at: "start", cue: "title" }] };
+    await assert.rejects(produceKanjiShort({ ...base, config: { ...read, narration: { script: cueScript } }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps),
+      /step x cues "title"; the card can draw attention to readings, words/u);
     // Opposite bands the card would shrink stop here too, with the numbers.
     await assert.rejects(produceKanjiShort({ ...base, config: { ...read, card: { safeInset: { top: .3, bottom: .3 } } }, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps), /top and bottom together cover 0\.6 of the frame/u);
     // A destination the export page would refuse stops here too.
@@ -181,7 +187,7 @@ test("music shorter than a short stops production before KanjiVG or Fish", async
     const touched = [];
     const deps = {
       fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
-      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts"] }),
+      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts"], KANJI_CARD_CUE_SECTIONS: ["readings", "words"] }),
       kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
     };
     await assert.rejects(produceKanjiShort({ char: "水", config: read, out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789",
@@ -208,14 +214,14 @@ test("a word longer than the card shows, and music too short for long writing pa
     const touched = [];
     const deps = {
       fingerprintBuiltStage: async () => "b".repeat(64), probeBrowserExecutable: async () => {},
-      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts"], KANJI_WORD_LIMITS: { word: 40, ruby: 60, romaji: 60, meaning: 80 } }),
+      loadKanjiPlanner: async () => ({ KANJI_SHORT_PRESETS: ["youtube-shorts"], KANJI_CARD_CUE_SECTIONS: ["readings", "words"], KANJI_WORD_LIMITS: { word: 40, ruby: 60, romaji: 60, meaning: 80 } }),
       kanjiVgSvg: async () => touched.push("kanjivg"), synthesizeNarration: async () => touched.push("fish"),
     };
     const run = (cfg) => produceKanjiShort({ char: "水", config: readKanjiConfig(cfg, join(dir, "config.json")), out: join(dir, "out"), browserExecutable: "/bin/chrome",
       apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps);
     await assert.rejects(run(config({ music })), /has a word longer than the card shows|the word 水{41} has a word/u);
     await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
-    await assert.rejects(run(config({ music, timing: { write: 20, review: 20 } })), /needs at least 48 s/u);
+    await assert.rejects(run(config({ music, timing: { write: 20, review: 20 } })), /needs at least 52 s/u);
     assert.deepEqual(touched, []);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
@@ -301,7 +307,14 @@ test("a script line with no moment in the picture, or a highlight the card canno
     await assert.rejects(run(steps({ id: "w-{n}", forEach: "words", say: "{item.speech}", at: "review.strokes" })), /needs the anchor review\.strokes for item 2/u);
     // The card highlights words, not strokes.
     await assert.rejects(run(steps({ id: "s-{n}", forEach: "strokes", say: "{n}", at: "review.strokes", highlight: true })), /highlights an item of strokes/u);
+    // A narration much longer than the 35 s of music stops before any voice, with the estimate.
+    await assert.rejects(run(steps({ id: "long", say: "This is a very long closing sentence. ".repeat(10).trim(), locale: "en", at: "review.end" })),
+      /this short's narration needs about \d+ s/u);
     assert.deepEqual(touched, []);
+    // A cue on a line at the very start is placed at 0 s, not before the video: the early checks pass and the voice is asked for.
+    await assert.rejects(run({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "q", say: "{name.kana}", at: "start", cue: "words" }] }),
+      /out of order/u);
+    assert.deepEqual(touched, ["voice"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

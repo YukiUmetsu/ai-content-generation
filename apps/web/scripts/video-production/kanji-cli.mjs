@@ -14,7 +14,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { expandNarrationScript } from "./anchored-narration.mjs";
-import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
+import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset, retakeFor } from "./kanji-short.mjs";
 import { scriptRuns, voiceFor } from "./voice-runs.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
@@ -93,7 +93,11 @@ export function readKanjiConfig(json, configPath) {
   const narration = { ...json.narration };
   const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
   const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  for (const key of Object.keys(narration)) if (!["script", "labels", "speech"].includes(key)) fail(`config: narration.${key} is not a setting (script, labels, speech)`);
+  for (const key of Object.keys(narration)) if (!["script", "labels", "speech", "retakes"].includes(key)) fail(`config: narration.${key} is not a setting (script, labels, speech, retakes)`);
+  // A new take of a text the voice flubbed: { "ひと": 2 }; raise the number for another take.
+  if (narration.retakes !== undefined && !(narration.retakes && typeof narration.retakes === "object" && !Array.isArray(narration.retakes) &&
+    Object.entries(narration.retakes).every(([text, take]) => text.trim() && text.length <= 400 && Number.isInteger(take) && take >= 2 && take <= 99)))
+    fail("config: narration.retakes maps a spoken text to a take number from 2, for example { \"ひと\": 2 }");
   // The script: a file (relative to this config) or the script itself; checked when a short is made.
   if (narration.script !== undefined) {
     if (typeof narration.script === "string") narration.script = path(narration.script, "narration.script");
@@ -177,6 +181,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
         const runs = config.voice.voiceIds ? scriptRuns(line.say, line.locale) : [];
         if (runs.length > 1 || runs.length === 1 && runs[0].locale !== line.locale)
           log(`            voices: ${runs.map(run => `"${run.text}" ${run.locale} (${voiceFor(run.locale, config.voice.voiceIds, config.voice.voiceId).slice(0, 8)}…)`).join(" + ")}`);
+        // The retakes that apply: a key must be the exact text one voice reads (shown above for split lines).
+        for (const text of (runs.length ? runs : [{ text: line.say }]).map(run => run.text)) {
+          const take = retakeFor(text, config.narration.retakes);
+          if (take) log(`            retake: "${text}" take ${take}`);
+        }
       }
       log(`  words     ${content.words.map(w => `${w.word} (${w.ruby}, ${w.meaning})`).join(" · ")}`);
     }

@@ -84,6 +84,7 @@ export async function synthesizeNarration(job, options) {
   const units=[];
   for(const beat of job.beats){
     if(beat.speechTurns===undefined){units.push(beat);continue;}
+    if(beat.take!==undefined)fail("a take applies to a single-voice beat, not to a multi-speaker scene");
     if(beat.speaker!==undefined||!Array.isArray(beat.speechTurns)||
       beat.speechTurns.length<2||beat.speechTurns.length>16)
       fail("multi-speaker scenes require 2–16 explicitly ordered turns and no scene-wide voice");
@@ -149,6 +150,9 @@ export async function synthesizeNarration(job, options) {
   for (const beat of units) {
     if (options.signal?.aborted) fail("narration synthesis cancelled");
     if (!valid(beat?.id) || !valid(beat?.narration)) fail("each beat needs an ID and nonempty narration");
+    // A retake (2, 3…) asks the provider again for the same text: a voice can flub a take, and the
+    // cache would otherwise return the same take forever.
+    if (beat.take !== undefined && !(Number.isInteger(beat.take) && beat.take >= 2 && beat.take <= 99)) fail("a beat's take must be a whole number from 2 to 99");
     const selectedVoiceId = beat.speaker?.voiceId ?? voice.voiceId;
     const speakerId = beat.speaker?.id ?? "narrator";
     const speakerRole = beat.speaker?.role ?? "narrator";
@@ -157,6 +161,7 @@ export async function synthesizeNarration(job, options) {
       locale: job.locale, provider: options.provider, providerRevision: options.providerRevision,
       modelId: voice.modelId, voiceId: selectedVoiceId, profileId: voice.profileId,
       ...(beat.speaker ? {speakerId,speakerRole} : {}),
+      ...(beat.take ? { take: beat.take } : {}),
       direction, encoding: "wav/pcm_s16le/mono/48000", approval: job.approval,
       licenseStatus: voice.licenseStatus, commercialRightsVerified: job.policy?.commercialRightsVerified === true,
     };

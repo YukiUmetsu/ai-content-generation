@@ -86,3 +86,54 @@ test("keeps a host's floor for every gap and the first start, such as the silenc
   assert.deepEqual(placed.onsets, { a: .04, b: 1.16 });
 });
 
+
+test("a line's pauseAfter is the silence before the next line, in place of that line's own gap", () => {
+  const read = readNarrationScript(script([
+    { id: "intro", say: "Some words are", locale: "en", at: "review", pauseAfter: .5 },
+    { id: "w{n}", forEach: "words", say: "{item.speech}", at: "review", gap: 1 },
+  ]));
+  const lines = expandNarrationScript(read, DATA);
+  assert.deepEqual(lines.map(l => [l.id, l.pauseAfter]), [["intro", .5], ["w1", undefined], ["w2", undefined]]);
+  const placed = placeOnAnchors({ lines, anchors: { review: 10 }, speech: { intro: 2, w1: .6, w2: .7 } });
+  assert.deepEqual(placed.onsets, { intro: 10, w1: 12.5, w2: 14.1 });       // half a second after the intro, then the words' own 1 s gap
+  // The host's floor still applies; an anchor later than the pause still wins.
+  assert.equal(placeOnAnchors({ lines, anchors: { review: 10 }, speech: { intro: 2, w1: .6, w2: .7 }, minGap: .8 }).onsets.w1, 12.8);
+  const short = readNarrationScript(script([{ id: "a", say: "x", at: "start", pauseAfter: 0 }, { id: "b", say: "y", at: "late", gap: 2 }]));
+  assert.equal(placeOnAnchors({ lines: expandNarrationScript(short, DATA), anchors: { start: 0, late: 5 }, speech: { a: 1, b: 1 } }).onsets.b, 5);
+  assert.throws(() => readNarrationScript(script([{ id: "a", say: "x", at: "start", pauseAfter: -1 }])), /steps\[0\] \(a\)\.pauseAfter must be 0 to 10 seconds/u);
+});
+
+test("a forEach step's pause follows its last item, and a line's cue lasts from its start until the next line", () => {
+  const read = readNarrationScript(script([
+    { id: "intro", say: "Some words are", locale: "en", at: "review", pauseAfter: .5, cue: "words" },
+    { id: "w{n}", forEach: "words", say: "{item.speech}", at: "review", gap: 1, pauseAfter: .2 },
+    { id: "end", say: "Bye", at: "after", gap: 3 },
+  ]));
+  const lines = expandNarrationScript(read, DATA);
+  assert.deepEqual(lines.map(l => [l.id, l.pauseAfter, l.cue]), [["intro", .5, "words"], ["w1", undefined, undefined], ["w2", .2, undefined], ["end", undefined, undefined]]);
+  const placed = placeOnAnchors({ lines, anchors: { review: 10 }, speech: { intro: 2, w1: .6, w2: .7, end: 1 } });
+  assert.deepEqual(placed.onsets, { intro: 10, w1: 12.5, w2: 14.1, end: 15 });   // the words keep their 1 s gap; the step's pause comes after the last
+  // The cue runs from just before the intro is spoken until just before the first word.
+  assert.deepEqual(placed.cues, [{ id: "intro", cue: "words", at: 9.92, hold: 2.5 }]);
+  assert.throws(() => readNarrationScript(script([{ id: "a", say: "x", at: "start", cue: "the words" }])), /steps\[0\] \(a\)\.cue must be a name/u);
+  // A cue on the last line lasts its speech, the lead and the tail.
+  const last = placeOnAnchors({ lines: expandNarrationScript(readNarrationScript(script([{ id: "a", say: "x", at: "start", cue: "words" }])), DATA), anchors: { start: 1 }, speech: { a: 2 } });
+  assert.deepEqual(last.cues, [{ id: "a", cue: "words", at: .92, hold: 3.08 }]);
+});
+
+test("highlights and cues start a lead before their line but never before the video", () => {
+  const read = readNarrationScript(script([{ id: "w{n}", forEach: "words", say: "{item.speech}", at: "start", highlight: true, cue: "words" }]));
+  const placed = placeOnAnchors({ lines: expandNarrationScript(read, DATA), anchors: { start: 0 }, speech: { w1: .5, w2: .5 } });
+  assert.equal(placed.highlights[0].at, 0);
+  assert.equal(placed.cues[0].at, 0);
+  assert.equal(placed.cues[0].hold, round(placed.onsets.w2 - .08));                       // still ends a lead before the next line
+  const last = placed.highlights[1];
+  assert.equal(round(last.at + last.hold), round(placed.ends.w2 + 1));                     // and the last ends its tail after its speech
+});
+const round = (v) => Math.round(v * 1000) / 1000;
+
+test("a clamped highlight or cue keeps a positive hold even when the next line follows at once", () => {
+  const read = readNarrationScript(script([{ id: "w{n}", forEach: "words", say: "{item.speech}", at: "start", highlight: true, cue: "words", gap: 0 }], { highlightLead: .8 }));
+  const placed = placeOnAnchors({ lines: expandNarrationScript(read, DATA), anchors: { start: 0 }, speech: { w1: .4, w2: .4 } });
+  assert.ok(placed.highlights.every(h => h.hold >= .05) && placed.cues.every(c => c.hold >= .05));
+});

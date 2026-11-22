@@ -278,3 +278,30 @@ test("prior narration with corrupted hash refuses reuse; missing prior beat may 
   assert.deepEqual(await readFile(recovered[1].wavPath),await readFile(source[1].wavPath),
     "untouched narration still reuses its verified source");
 });
+
+test("a retake asks the provider again for the same text and keeps both takes cached apart", async (t) => {
+  const cacheRoot = await testContext(t);
+  let calls = 0;
+  const synthesize = async () => { calls++; return { audio: pcmWave(4800 + calls), provider: "local", modelId: job.voice.modelId, voiceId: job.voice.voiceId, engineVersion: "engine-0.1", encoding: "wav" }; };
+  const options = { provider: "local", providerRevision: "engine-0.1", cacheRoot, localVoiceAuthorized: true, synthesize, ...fakeMedia };
+  const one = { ...job, beats: [job.beats[0]] };
+  const first = await synthesizeNarration(one, options);
+  const retake = await synthesizeNarration({ ...one, beats: [{ ...job.beats[0], take: 2 }] }, options);
+  assert.equal(calls, 2);
+  assert.notEqual(first[0].wavPath, retake[0].wavPath);
+  // Both stay cached: asking again for either costs nothing.
+  await synthesizeNarration(one, options);
+  await synthesizeNarration({ ...one, beats: [{ ...job.beats[0], take: 2 }] }, options);
+  assert.equal(calls, 2);
+  await assert.rejects(synthesizeNarration({ ...one, beats: [{ ...job.beats[0], take: 1 }] }, options), /take must be a whole number from 2 to 99/u);
+});
+
+test("a take is for a single-voice beat; beats without one keep their cache key", async (t) => {
+  const cacheRoot = await testContext(t);
+  const synthesize = async () => ({ audio: pcmWave(4800), provider: "local", modelId: job.voice.modelId, voiceId: job.voice.voiceId, engineVersion: "engine-0.1", encoding: "wav" });
+  const options = { provider: "local", providerRevision: "engine-0.1", cacheRoot, localVoiceAuthorized: true, synthesize, ...fakeMedia };
+  // Pinned: the key of a beat without a take must not change when takes exist.
+  const [plain] = await synthesizeNarration({ ...job, beats: [job.beats[0]] }, options);
+  assert.match(plain.wavPath, /07786d491878f10f08ac2a0af2e3d8c90e5a8ee468422446dff86b4f59f68519/u);   // the same key as before takes existed
+  await assert.rejects(synthesizeNarration({ ...job, beats: [{ id: "scene", take: 2, pauseAfterMs: 0, eventIds: [], speechTurns: [] }] }, options), /single-voice beat/u);
+});

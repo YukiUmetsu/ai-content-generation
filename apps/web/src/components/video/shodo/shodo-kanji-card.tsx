@@ -14,13 +14,13 @@ import { ShodoCanvas } from "./shodo-react";
 import { shodoRgb } from "./shodo-style";
 import type { DeepPartial, ShodoStyle } from "./shodo-style";
 import {
-  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardColumns, kanjiCardHasCard, kanjiCardTileRoom, kanjiCardWordSize, kanjiCardLabelText, kanjiCardLabels, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections,
+  KANJI_CARD_FPS, KANJI_CARD_JLPT_LEVELS, kanjiCardColumns, kanjiCardHasCard, kanjiCardTileRoom, kanjiCardWordSize, sectionCueAt, wordTileWave, kanjiCardLabelText, kanjiCardLabels, kanjiCardPhaseAt, kanjiCardSafeInset, kanjiCardSections,
   kanjiCardTheme, kanjiCardType, kanjiCardTypedAt, kanjiCardWriting,
   spreadWordHighlights, wordHighlightAt,
 } from "./shodo-kanji-card-plan";
 import type {
   KanjiCardContent, KanjiCardDensity, KanjiCardInk, KanjiCardIntro, KanjiCardLabels, KanjiCardLayout, KanjiCardPhase, KanjiCardSafeInset,
-  KanjiCardSection, KanjiCardTheme, KanjiCardTiming, KanjiWordHighlight, KanjiWordHighlightState,
+  KanjiCardCueSection, KanjiCardSection, KanjiCardTheme, KanjiCardTiming, KanjiSectionCue, KanjiSectionCueState, KanjiWordHighlight, KanjiWordHighlightState,
 } from "./shodo-kanji-card-plan";
 
 /** Mix two #RRGGBB colours, t = 0..1. */
@@ -81,6 +81,8 @@ export interface ShodoKanjiInfoCardProps extends KanjiCardContent, Omit<HTMLAttr
   reveal?: number;
   /** The highlighted useful word and its strength (from `wordHighlightAt`). */
   highlight?: KanjiWordHighlightState;
+  /** Section cues at this moment (from `sectionCueAt`): the words' title turns the accent colour and the tiles lift in a wave; the readings get a tint. */
+  cues?: Partial<Record<KanjiCardCueSection, KanjiSectionCueState>>;
   /** Highlight without scale or lift (fade only). Default: false. */
   reducedMotion?: boolean;
   /** Colours and fonts (`DEFAULT_KANJI_CARD_THEME` for any not given). */
@@ -99,7 +101,7 @@ export interface ShodoKanjiInfoCardProps extends KanjiCardContent, Omit<HTMLAttr
  * nearest size container (the video frame), so the card scales with the frame.
  */
 export function ShodoKanjiInfoCard({
-  char, meanings, onyomi, kunyomi, jlpt, words, layout = "landscape", density = "regular", sections, reveal = 1, highlight, reducedMotion = false,
+  char, meanings, onyomi, kunyomi, jlpt, words, layout = "landscape", density = "regular", sections, reveal = 1, highlight, cues, reducedMotion = false,
   theme, labels, textWidth, style, vermilionStrokes: _vermilion, ...rest
 }: ShodoKanjiInfoCardProps) {
   void _vermilion;
@@ -120,7 +122,13 @@ export function ShodoKanjiInfoCard({
   const wordSize = wide && list && textWidth ? kanjiCardWordSize(list, kanjiCardTileRoom(textWidth, list.length, t), t) : t.word;
   // The fit is measured again when anything that changes the text's size changes, labels and fonts included.
   useFitHeight(ref, [char, meanings, onyomi, kunyomi, level, layout, density, wordSize, JSON.stringify(list), JSON.stringify(show), JSON.stringify(words_), JSON.stringify(th)].join("|"));
-  const term: CSSProperties = { font: `700 ${fs(t.reading * .84)}/1.3 ${th.display}`, letterSpacing: ".06em", color: th.muted };
+  // Section cues: the readings take an accent tint; the words' title the accent colour, and the tiles lift one after another.
+  // NaN or out-of-range values count as no cue.
+  const unit = (v: number | undefined) => typeof v === "number" && v > 0 ? Math.min(1, v) : 0;
+  const R = unit(cues?.readings?.strength), Wc = unit(cues?.words?.strength);
+  const lift = (i: number) => list ? Wc * wordTileWave(i, list.length, unit(cues?.words?.progress)) : 0;
+  const term: CSSProperties = { font: `700 ${fs(t.reading * .84)}/1.3 ${th.display}`, letterSpacing: ".06em", color: mixHex(th.muted, th.accent, R) };
+  const readingsCue: CSSProperties | undefined = R > 0 ? { background: `rgba(${shodoRgb(th.accent).join(",")},${(.08 * R).toFixed(3)})`, borderRadius: cq(10), boxShadow: `0 0 0 ${cq(6)} rgba(${shodoRgb(th.accent).join(",")},${(.08 * R).toFixed(3)})` } : undefined;
   // Word highlight: a light vermilion tint and ring, a small lift and scale (transforms only,
   // so nothing around it moves), and the other words dimmed a little. Fade only with reduced motion.
   const active = highlight && highlight.word !== null && list && highlight.word < list.length ? highlight.word : null;
@@ -152,28 +160,30 @@ export function ShodoKanjiInfoCard({
         {compact ? badge : null}
       </div> : null}
       {readings || level && !compact ? <div style={{ opacity: reveal, display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: `${fs(t.gap * .5)} ${fs(t.gap)}` }}>
-        {readings && wide ? <dl style={{ margin: 0, display: "flex", flexWrap: "wrap", columnGap: fs(t.gap * 1.6), rowGap: fs(t.gap * .4), font: `600 ${fs(t.reading)}/1.3 ${th.body}` }}>
+        {readings && wide ? <dl data-km-section-cue={R > 0 ? R.toFixed(3) : undefined} style={{ margin: 0, display: "flex", flexWrap: "wrap", columnGap: fs(t.gap * 1.6), rowGap: fs(t.gap * .4), font: `600 ${fs(t.reading)}/1.3 ${th.body}`, ...readingsCue }}>
           {onyomi ? <div style={readingRow}><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></div> : null}
           {kunyomi ? <div style={readingRow}><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></div> : null}
-        </dl> : readings ? <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto auto", justifyContent: "start", alignItems: "baseline", columnGap: ".7em", rowGap: ".2em", font: `600 ${fs(t.reading)}/1.3 ${th.body}` }}>
+        </dl> : readings ? <dl data-km-section-cue={R > 0 ? R.toFixed(3) : undefined} style={{ margin: 0, display: "grid", gridTemplateColumns: "auto auto", justifyContent: "start", alignItems: "baseline", columnGap: ".7em", rowGap: ".2em", font: `600 ${fs(t.reading)}/1.3 ${th.body}`, ...readingsCue }}>
           {onyomi ? <><dt style={term}>{words_.onyomi}</dt><dd style={{ margin: 0 }}>{onyomi}</dd></> : null}
           {kunyomi ? <><dt style={term}>{words_.kunyomi}</dt><dd style={{ margin: 0 }}>{kunyomi}</dd></> : null}
         </dl> : null}
         {compact ? null : badge}
       </div> : null}
       {list ? <>
-        <div style={{ opacity: reveal, font: `700 ${fs(t.title)}/1 ${th.display}`, marginTop: fs(t.section), letterSpacing: wide ? ".04em" : undefined }}>{words_.words}</div>
+        <div data-km-section-cue={Wc > 0 ? Wc.toFixed(3) : undefined} style={{ opacity: reveal, font: `700 ${fs(t.title)}/1 ${th.display}`, marginTop: fs(t.section), letterSpacing: wide ? ".04em" : undefined, color: mixHex(th.ink, th.accent, Wc) }}>{words_.words}</div>
         {wide ? <ul role="list" style={{
           margin: 0, padding: 0, listStyle: "none", display: "grid", gap: fs(t.gap * (compact ? .7 : .55)),
           gridTemplateColumns: `repeat(${kanjiCardColumns(list.length)}, minmax(0, 1fr))`,
         }}>
           {list.map((w, i) => {
             const s = i === active ? S : 0;
+            // A highlighted word lifts more than a cue's wave, and wins where both apply.
+            const up = Math.max(s, lift(i) * .8);
             return <li key={i} aria-current={s >= .5 ? "true" : undefined} data-km-word-highlight={s > 0 ? s.toFixed(3) : undefined} style={{
               display: "grid", justifyItems: "center", alignContent: "start", textAlign: "center", minWidth: 0,
-              background: mixHex(th.tile, th.tileHighlight, s), borderRadius: fs(14), padding: `${fs(t.tilePad[0])} ${fs(t.gap * .45)} ${fs(t.tilePad[1])}`,
-              opacity: wordOpacity(i), position: "relative", zIndex: s > 0 ? 1 : 0, boxShadow: ring(s, 2.5), transformOrigin: "50% 60%",
-              transform: s > 0 && !reducedMotion ? `translateY(${cq(-6 * s)}) scale(${(1 + .045 * s).toFixed(4)})` : undefined,
+              background: mixHex(th.tile, th.tileHighlight, Math.max(s, lift(i) * .45)), borderRadius: fs(14), padding: `${fs(t.tilePad[0])} ${fs(t.gap * .45)} ${fs(t.tilePad[1])}`,
+              opacity: wordOpacity(i), position: "relative", zIndex: up > 0 ? 1 : 0, boxShadow: ring(s, 2.5), transformOrigin: "50% 60%",
+              transform: up > 0 && !reducedMotion ? `translateY(${cq(-6 * up)}) scale(${(1 + .045 * up).toFixed(4)})` : undefined,
             }}>
               <ruby lang="ja" style={{ font: `600 ${fs(wordSize)}/1.08 ${th.serif}` }}>{w.word}<rt style={{ font: `600 ${fs(t.ruby)}/1.2 ${th.body}`, letterSpacing: ".04em", color: th.muted }}>{w.ruby}</rt></ruby>
               <span style={{ marginTop: fs(t.gap * .35), font: `600 ${fs(t.gloss)}/1.25 ${th.body}`, color: mixHex(th.muted, th.accent, s), overflowWrap: "anywhere" }}>{w.romaji}</span>
@@ -183,15 +193,16 @@ export function ShodoKanjiInfoCard({
         </ul> : <ul role="list" style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gridTemplateColumns: "auto 1fr", columnGap: fs(t.word * .45), rowGap: fs(t.gap * .75) }}>
           {list.map((w, i) => {
             const s = i === active ? S : 0;
+            const up = Math.max(s, lift(i) * .8);
             return <li key={i} aria-current={s >= .5 ? "true" : undefined} data-km-word-highlight={s > 0 ? s.toFixed(3) : undefined} style={{
               display: "grid", gridColumn: "1 / -1", gridTemplateColumns: "subgrid", alignItems: "end",
-              opacity: wordOpacity(i), position: "relative", isolation: "isolate", zIndex: s > 0 ? 1 : 0, transformOrigin: "50% 50%",
-              transform: s > 0 && !reducedMotion ? `scale(${(1 + .03 * s).toFixed(4)})` : undefined,
+              opacity: wordOpacity(i), position: "relative", isolation: "isolate", zIndex: up > 0 ? 1 : 0, transformOrigin: "50% 50%",
+              transform: up > 0 && !reducedMotion ? `scale(${(1 + .03 * up).toFixed(4)})` : undefined,
             }}>
               {/* The highlight sits behind the row and takes no space, so the list does not move. */}
               <span aria-hidden="true" style={{
                 position: "absolute", inset: `${cq(-10)} ${cq(-12)}`, zIndex: -1, borderRadius: cq(14),
-                background: `rgba(${ar},${ag},${ab},${(.075 * s).toFixed(3)})`, boxShadow: ring(s, 2),
+                background: `rgba(${ar},${ag},${ab},${(.075 * Math.max(s, lift(i) * .45)).toFixed(3)})`, boxShadow: ring(s, 2),
               }} />
               <ruby lang="ja" style={{ font: `600 ${fs(t.word)}/1.08 ${th.serif}` }}>{w.word}<rt style={{ font: `600 ${fs(t.ruby)}/1.2 ${th.body}`, letterSpacing: ".04em", color: th.muted }}>{w.ruby}</rt></ruby>
               <span style={{ display: "grid", font: `500 ${fs(t.gloss)}/1.25 ${th.body}`, paddingBottom: ".12em", minWidth: 0 }}>
@@ -240,6 +251,12 @@ export interface ShodoKanjiCardProps extends KanjiCardContent, Omit<HTMLAttribut
    */
   wordHighlights?: readonly KanjiWordHighlight[] | "each";
   /**
+   * Timed cues that draw attention to a part of the reading card, in seconds from the start of the
+   * video (see `KanjiSectionCue`), for example the words while a voice-over introduces them.
+   * Default: none.
+   */
+  sectionCues?: readonly KanjiSectionCue[];
+  /**
    * No scale, lift, growth or blink (fades only). Default: the viewer's prefers-reduced-motion
    * setting. Give true or false for a video export, so that every export is the same.
    */
@@ -272,7 +289,7 @@ export interface ShodoKanjiCardProps extends KanjiCardContent, Omit<HTMLAttribut
  */
 export function ShodoKanjiCard({
   char, glyph, frame: hostFrame, heading = "Kanji study", layout = "landscape", density = "regular", timing, intro, sections, cardFrom = "intro",
-  ink = "sumi", speed, strokeNumbers = true, wordHighlights, reducedMotion, safeInset, pixelRatio, theme, labels, brushStyle, style,
+  ink = "sumi", speed, strokeNumbers = true, wordHighlights, sectionCues, reducedMotion, safeInset, pixelRatio, theme, labels, brushStyle, style,
   meanings, onyomi, kunyomi, jlpt, words, vermilionStrokes, ...rest
 }: ShodoKanjiCardProps) {
   const th = kanjiCardTheme(theme);
@@ -322,6 +339,11 @@ export function ShodoKanjiCard({
   const wordCount = show.words ? words?.length ?? 0 : 0;
   const cues = wordHighlights === "each" ? spreadWordHighlights(wordCount, timeline.frames / fps) : wordHighlights ?? [];
   const highlight = wordHighlightAt(cues, frame / fps, { count: wordCount });
+  const sectionCueList = sectionCues ?? [];
+  // A cue is reported (and drawn) only for a part the card shows.
+  const drawn = { readings: !!g.card && show.readings && !!(onyomi || kunyomi), words: !!g.card && wordCount > 0 };
+  const cueStates = (["readings", "words"] as const).reduce((out, k) => ({ ...out, [k]: drawn[k] ? sectionCueAt(sectionCueList, k, frame / fps) : { strength: 0, progress: 0 } }),
+    {} as Record<KanjiCardCueSection, KanjiSectionCueState>);
   // The typed intro: the reading in kana, then the character at the size the brush will write it.
   const introLength = (timeline.intro[1] - timeline.intro[0]) / fps;
   const typed = kanjiCardTypedAt(char, intro, introLength, position / fps, { reducedMotion: reduce });
@@ -334,6 +356,7 @@ export function ShodoKanjiCard({
   return <div {...rest} data-km-kanji-card={layout} data-km-kanji-phase={at.phase} data-km-ink-box={inkBox.map(v => v.toFixed(1)).join(" ")}
     data-km-design={`${g.width}x${g.height}`} data-km-kanji-frame={frame} data-km-safe-inset={insetKey} data-km-stroke-times={JSON.stringify(strokes)}
     data-km-word-highlight={highlight.word === null ? "" : `${highlight.word} ${highlight.strength.toFixed(3)}`}
+    data-km-section-cue={(Object.keys(cueStates) as KanjiCardCueSection[]).filter(k => cueStates[k].strength > 0).map(k => `${k} ${cueStates[k].strength.toFixed(3)} ${cueStates[k].progress.toFixed(3)}`).join(";")}
     data-km-timeline={[timeline.review[0], timeline.info[0], timeline.frames].join(" ")} data-km-write-start={timeline.write[0]} style={{
       position: "relative", width: "100%", overflow: "hidden", containerType: "inline-size", ...style,
     }}>
@@ -360,7 +383,7 @@ export function ShodoKanjiCard({
       ? <span key={i} lang="ja">{char}</span> : kanjiCardLabelText(part, { heading, char }))}</div> : null}
     {g.card ? <ShodoKanjiInfoCard char={char} layout={layout} density={density} sections={show} reveal={reveal} theme={theme} labels={labels}
       textWidth={g.card.width - g.cardPad[1] - g.cardPad[3]}
-      highlight={highlight} reducedMotion={reduce}
+      highlight={highlight} cues={cueStates} reducedMotion={reduce}
       meanings={meanings} onyomi={onyomi} kunyomi={kunyomi} jlpt={jlpt} words={words} style={{
         position: "absolute", left: pct(g.card.x, g.width), top: pct(g.card.y, g.height), width: pct(g.card.width, g.width), height: pct(g.card.height, g.height),
         // With no gap above the card, the practice box ends on its top edge: square top corners hide the box's line there.
