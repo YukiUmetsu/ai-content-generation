@@ -38,6 +38,10 @@ describe("kanji study export plan", () => {
     expect(bad(p => ({ ...p, card: { ...p.card, safeInset: undefined } }))).toThrow(/safe bands/u);
     expect(bad(p => ({ ...p, strokes: { write: [], review: p.strokes.review } }))).toThrow(/stroke times/u);
     expect(bad(p => ({ ...p, card: { ...p.card, words: [{ ...TEXT.words[0], word: "語".repeat(41) }] } }))).toThrow(/text limits/u);
+    // Section cues are optional; a cue for a part the card cannot cue, or with no hold, is refused.
+    expect(readKanjiStudyPlan({ ...plan, card: { ...plan.card, sectionCues: [{ section: "words", at: 7, hold: 1 }] } }).card.sectionCues).toHaveLength(1);
+    expect(bad(p => ({ ...p, card: { ...p.card, sectionCues: [{ section: "title" as "words", at: 7, hold: 1 }] } }))).toThrow(/section cues/u);
+    expect(bad(p => ({ ...p, card: { ...p.card, sectionCues: [{ section: "words", at: 7, hold: 0 }] } }))).toThrow(/section cues/u);
   });
 
   it("draws the strokes that the narration was timed to, to the millisecond", () => {

@@ -93,7 +93,11 @@ export function readKanjiConfig(json, configPath) {
   const narration = { ...json.narration };
   const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
   const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  for (const key of Object.keys(narration)) if (!["script", "labels", "speech"].includes(key)) fail(`config: narration.${key} is not a setting (script, labels, speech)`);
+  for (const key of Object.keys(narration)) if (!["script", "labels", "speech", "retakes"].includes(key)) fail(`config: narration.${key} is not a setting (script, labels, speech, retakes)`);
+  // A new take of a text the voice flubbed: { "ひと": 2 }; raise the number for another take.
+  if (narration.retakes !== undefined && !(narration.retakes && typeof narration.retakes === "object" && !Array.isArray(narration.retakes) &&
+    Object.entries(narration.retakes).every(([text, take]) => text.trim() && text.length <= 400 && Number.isInteger(take) && take >= 2 && take <= 99)))
+    fail("config: narration.retakes maps a spoken text to a take number from 2, for example { \"ひと\": 2 }");
   // The script: a file (relative to this config) or the script itself; checked when a short is made.
   if (narration.script !== undefined) {
     if (typeof narration.script === "string") narration.script = path(narration.script, "narration.script");

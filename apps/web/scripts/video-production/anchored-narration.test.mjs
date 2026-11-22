@@ -102,3 +102,21 @@ test("a line's pauseAfter is the silence before the next line, in place of that 
   assert.equal(placeOnAnchors({ lines: expandNarrationScript(short, DATA), anchors: { start: 0, late: 5 }, speech: { a: 1, b: 1 } }).onsets.b, 5);
   assert.throws(() => readNarrationScript(script([{ id: "a", say: "x", at: "start", pauseAfter: -1 }])), /steps\[0\] \(a\)\.pauseAfter must be 0 to 10 seconds/u);
 });
+
+test("a forEach step's pause follows its last item, and a line's cue lasts from its start until the next line", () => {
+  const read = readNarrationScript(script([
+    { id: "intro", say: "Some words are", locale: "en", at: "review", pauseAfter: .5, cue: "words" },
+    { id: "w{n}", forEach: "words", say: "{item.speech}", at: "review", gap: 1, pauseAfter: .2 },
+    { id: "end", say: "Bye", at: "after", gap: 3 },
+  ]));
+  const lines = expandNarrationScript(read, DATA);
+  assert.deepEqual(lines.map(l => [l.id, l.pauseAfter, l.cue]), [["intro", .5, "words"], ["w1", undefined, undefined], ["w2", .2, undefined], ["end", undefined, undefined]]);
+  const placed = placeOnAnchors({ lines, anchors: { review: 10 }, speech: { intro: 2, w1: .6, w2: .7, end: 1 } });
+  assert.deepEqual(placed.onsets, { intro: 10, w1: 12.5, w2: 14.1, end: 15 });   // the words keep their 1 s gap; the step's pause comes after the last
+  // The cue runs from just before the intro is spoken until just before the first word.
+  assert.deepEqual(placed.cues, [{ id: "intro", cue: "words", at: 9.92, hold: 2.5 }]);
+  assert.throws(() => readNarrationScript(script([{ id: "a", say: "x", at: "start", cue: "the words" }])), /steps\[0\] \(a\)\.cue must be a name/u);
+  // A cue on the last line lasts its speech, the lead and the tail.
+  const last = placeOnAnchors({ lines: expandNarrationScript(readNarrationScript(script([{ id: "a", say: "x", at: "start", cue: "words" }])), DATA), anchors: { start: 1 }, speech: { a: 2 } });
+  assert.deepEqual(last.cues, [{ id: "a", cue: "words", at: .92, hold: 3.08 }]);
+});

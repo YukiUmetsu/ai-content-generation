@@ -110,5 +110,7 @@ test("the default script makes the approved short: the question while the kanji 
   // The introduction starts 0.3 s after the review; the first word follows half a second after it, the others 1 s apart.
   assert.deepEqual(placed.onsets, { question: .35, onyomi: 4.4, kunyomi: 5.92, "words-intro": 15.2, "word-1": 17.9, "word-2": 19.46, "word-3": 21.12 });
   assert.deepEqual(placed.highlights.map(h => h.item), [0, 1, 2]);
+  // While the introduction plays, the card draws attention to its words, until the first word lights.
+  assert.deepEqual(placed.cues, [{ id: "words-intro", cue: "words", at: 15.12, hold: 2.7 }]);
   assert.ok(Math.abs(placed.highlights[0].at + placed.highlights[0].hold - placed.highlights[1].at) < .001);   // each word stays lit until the next
 });

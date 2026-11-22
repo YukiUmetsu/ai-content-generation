@@ -2,6 +2,7 @@
 import type { VideoExportManifest } from "@/components/video/video-export-stage";
 import type { ShodoKanjiCardProps } from "@/components/video/shodo/shodo-kanji-card";
 import type { ShodoGlyph } from "@/components/video/shodo/shodo-glyphs";
+import { KANJI_CARD_CUE_SECTIONS } from "@/components/video/shodo/shodo-kanji-card-plan";
 
 export interface KanjiStudyVisualPlan {
   schemaVersion: 1;
@@ -41,6 +42,8 @@ export function readKanjiStudyPlan(input: unknown): KanjiStudyVisualPlan {
     problem("one to six useful words are required, each within the card's text limits");
   if (!Array.isArray(c!.wordHighlights) || c!.wordHighlights.some(cue => !Number.isInteger(cue.word) || cue.word < 0 || cue.word >= c!.words!.length ||
     !finite(cue.at, 0, 600) || cue.hold !== undefined && !finite(cue.hold, .05, 60))) problem("the word highlights are invalid");
+  if (c!.sectionCues !== undefined && !(Array.isArray(c!.sectionCues) && c!.sectionCues.length <= 20 && c!.sectionCues.every(cue =>
+    KANJI_CARD_CUE_SECTIONS.includes(cue?.section) && finite(cue.at, 0, 600) && finite(cue.hold, .05, 60)))) problem("the section cues are invalid");
   const inset = c!.safeInset;
   if (!inset || !["left", "right", "top", "bottom"].every(k => finite(inset[k as keyof typeof inset], 0, .4))) problem("the safe bands are required");
   if (c!.reducedMotion !== false) problem("an export must set reducedMotion to false, so that it does not follow the capture browser's setting");

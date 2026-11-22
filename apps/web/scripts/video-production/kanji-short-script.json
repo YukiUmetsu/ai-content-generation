@@ -33,7 +33,8 @@
       "locale": "en",
       "at": "review.end",
       "offset": 0.3,
-      "pauseAfter": 0.5
+      "pauseAfter": 0.5,
+      "cue": "words"
     },
     {
       "id": "word-{n}",

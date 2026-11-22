@@ -5,7 +5,7 @@
  *
  * Script (JSON):
  *   { schemaVersion: 1, kind: "anchored-narration-script", locale, highlightLead?, highlightTail?, steps: [
- *     { id, say, caption?, locale?, when?, forEach?, at, offset?, gap?, pauseAfter?, highlight?, emphasize? } ] }
+ *     { id, say, caption?, locale?, when?, forEach?, at, offset?, gap?, pauseAfter?, highlight?, emphasize?, cue? } ] }
  * - `say` / `caption`: templates with `{path}` fields from the data (`{name.kana}`); in a `forEach`
  *   step also `{item.…}`, `{n}` (1-based) and `{index}`. `caption` defaults to `say`.
  * - `id`: letters, digits, - and _; in a `forEach` step it contains `{n}` or `{index}` (no other field).
@@ -15,8 +15,13 @@
  * - `forEach`: a data path to a list; one line per item.
  * - `at`: an anchor name, or "after". An anchor whose value is a list gives item i its i-th time.
  *   A line starts at its anchor + `offset`, or `gap` after the previous line ends, whichever is later.
- * - `pauseAfter`: seconds of silence after this line before the next one; it replaces the next
- *   line's own `gap`, for a pause that belongs to this line ("Some words are… [pause] 水道").
+ * - `pauseAfter`: seconds of silence after this step before the next line; it replaces the next
+ *   line's own `gap`, for a pause that belongs to this step ("Some words are… [pause] 水道"). In a
+ *   `forEach` step it follows the last item (the items keep the step's `gap`); after the script's
+ *   last line it has no effect.
+ * - `cue`: a name the host turns into something on the picture while the line plays, from just
+ *   before it is spoken until the next line starts (a `cues` event), for example a card that
+ *   draws attention to its words while they are introduced.
  * - `highlight`: the line's item is highlighted from `highlightLead` before it is spoken until the
  *   next highlighted line (or `highlightTail` after it ends).
  * - `emphasize`: a part of the `say` template (for example `{name.kana}`); where its text falls in
@@ -25,7 +30,7 @@
  */
 
 const fail = (message) => { throw new Error(`Narration script: ${message}`); };
-const STEP_KEYS = new Set(["id", "say", "caption", "locale", "when", "forEach", "at", "offset", "gap", "pauseAfter", "highlight", "emphasize"]);
+const STEP_KEYS = new Set(["id", "say", "caption", "locale", "when", "forEach", "at", "offset", "gap", "pauseAfter", "highlight", "emphasize", "cue"]);
 const PATH = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
 const LOCALE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u;
 const ID = /^[A-Za-z0-9_-]+$/u;
@@ -54,6 +59,7 @@ export function readNarrationScript(json) {
     if (step.offset !== undefined && !number(step.offset, -10, 60)) fail(`${at}.offset must be -10 to 60 seconds`);
     if (step.gap !== undefined && !number(step.gap, 0, 10)) fail(`${at}.gap must be 0 to 10 seconds`);
     if (step.pauseAfter !== undefined && !number(step.pauseAfter, 0, 10)) fail(`${at}.pauseAfter must be 0 to 10 seconds`);
+    if (step.cue !== undefined && !(typeof step.cue === "string" && /^[A-Za-z][A-Za-z0-9_-]{0,39}$/u.test(step.cue))) fail(`${at}.cue must be a name such as words`);
     if (step.highlight !== undefined && typeof step.highlight !== "boolean") fail(`${at}.highlight must be true or false`);
     if (step.highlight && step.forEach === undefined) fail(`${at}.highlight needs forEach: it highlights the line's item`);
     if (step.emphasize !== undefined && !(text(step.emphasize, 100) && step.say.includes(step.emphasize))) fail(`${at}.emphasize must be a part of say, such as {name.kana}`);
@@ -89,7 +95,7 @@ const empty = (value) => value === null || value === "" || (Array.isArray(value)
 
 /**
  * The lines of a script for one video's data, in spoken order: `{ id, say, caption, locale, at,
- * offset, gap, pauseAfter?, index?, highlight?, emphasizeAt? }` (`emphasizeAt` as a share 0..1 of the line's text).
+ * offset, gap, pauseAfter?, cue?, index?, highlight?, emphasizeAt? }` (`emphasizeAt` as a share 0..1 of the line's text).
  */
 export function expandNarrationScript(script, data) {
   const lines = [];
@@ -106,7 +112,10 @@ export function expandNarrationScript(script, data) {
       const say = renderTemplate(step.say, scope);
       const line = {
         id: renderTemplate(step.id, scope), say, caption: renderTemplate(step.caption ?? step.say, scope), locale: step.locale ?? script.locale,
-        at: step.at, offset: step.offset, gap: step.gap, ...(step.pauseAfter === undefined ? {} : { pauseAfter: step.pauseAfter }),
+        at: step.at, offset: step.offset, gap: step.gap,
+        // A step's pause follows its last line, so the items of a forEach step keep their own gap.
+        ...(step.pauseAfter === undefined || index !== items.length - 1 ? {} : { pauseAfter: step.pauseAfter }),
+        ...(step.cue === undefined ? {} : { cue: step.cue }),
         ...(step.forEach === undefined ? {} : { index, list: step.forEach }), ...(step.highlight ? { highlight: true } : {}),
       };
       if (!ID.test(line.id)) fail(`${step.id}: the line id ${line.id} has characters other than letters, digits, - and _`);
@@ -136,6 +145,8 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
  *   an anchor has one: the lines after it on the same anchor follow it on purpose.
  * - `minGap` and `minStart` are a host's floor for every gap and the first start (for example the
  *   silence a recorded clip carries around its speech).
+ * - `cues` are the lines' `cue` names with their time: from `highlightLead` before the line is
+ *   spoken until the same lead before the next line (or `highlightTail` after its end).
  */
 export function placeOnAnchors({ lines, anchors, speech, partial = false, highlightTail = 1, highlightLead = .08, minGap = 0, minStart = 0 }) {
   const onsets = {}, ends = {}, drift = {}, placed = [];
@@ -174,5 +185,10 @@ export function placeOnAnchors({ lines, anchors, speech, partial = false, highli
     return { item: line.index, at, hold: round3(next ? onsets[next.id] - highlightLead - at : speech[line.id] + highlightLead + highlightTail) };
   });
   const emphasis = placed.filter(line => line.emphasizeAt !== undefined).map(line => ({ id: line.id, at: round3(onsets[line.id] + speech[line.id] * line.emphasizeAt) }));
-  return { placed: placed.map(line => line.id), onsets, ends, drift, highlights, emphasis, end: placed.length ? round3(previousEnd) : 0 };
+  const cues = placed.flatMap((line, i) => {
+    if (line.cue === undefined) return [];
+    const at = round3(onsets[line.id] - highlightLead), next = placed[i + 1];
+    return [{ id: line.id, cue: line.cue, at, hold: round3(next ? onsets[next.id] - highlightLead - at : speech[line.id] + highlightLead + highlightTail) }];
+  });
+  return { placed: placed.map(line => line.id), onsets, ends, drift, highlights, emphasis, cues, end: placed.length ? round3(previousEnd) : 0 };
 }

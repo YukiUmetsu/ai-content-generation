@@ -7,7 +7,7 @@
 1. **Intro.** The voice asks "Do you know how to write the kanji mizu?". On screen the reading is typed (みず) and converts to the typed kanji (水) at once. The typed kanji pushes in slowly and pulses when its name is spoken.
 2. **Write.** The brush comes in from outside the frame (from the right with the default brush), writes the kanji and leaves the frame after the last stroke, so the finished kanji holds with nothing on it. The voice reads the on'yomi as the brush lands for the first stroke, then the kun'yomi.
 3. **Review.** The brush comes in again and writes it with vermilion stroke-order numbers, then leaves. Only music plays.
-4. **Words.** As the review writing ends, the voice says "Some common words using this kanji are", pauses half a second, then reads each useful word; its tile is highlighted until the next one starts.
+4. **Words.** As the review writing ends, the voice says "Some common words using this kanji are" (in the English voice), pauses half a second, then reads each useful word; its tile is highlighted until the next one starts. While the introduction plays, the "USEFUL WORDS" title turns vermilion and the tiles lift one after another, so the picture keeps moving until the first word lights.
 
 The paper fills the frame. The kanji is centred in its practice box with room above and below; the reading card lies under it with a margin all round and runs down to near the bottom edge, so there is no empty band. The card is as tall as its own text needs, so a kanji with short readings and words gets a bigger character. The brush is drawn above the card.
 
@@ -27,7 +27,8 @@ The voice-over is an **anchored-narration script** (`scripts/video-production/an
   - in a step with `"forEach": "strokes"`: `{n}`
 - **Anchors** are the card's moments: `start`, `write.start`, `write.firstStroke`, `write.lastStroke`, `review.start`, `review.firstStroke`, `review.end`, `info.start`, and per stroke `write.strokes` and `review.strokes`.
   - A line starts at its anchor plus `offset`, or `gap` after the previous line ends, whichever is later.
-  - `pauseAfter` on a step is the silence after its line, in place of the next line's `gap`. The words' introduction uses it for the half-second pause before the first word; the words keep their own 1 s gap between each other.
+  - `pauseAfter` on a step is the silence after its line, in place of the next line's `gap`. The words' introduction uses it for the half-second pause before the first word; the words keep their own 1 s gap between each other. In a `forEach` step the pause follows its last item; after the script's last line it has no effect.
+  - `cue` on a step names a part of the card to draw attention to while the line plays, from just before it is spoken until the next line starts: `"words"` (the useful words) or `"readings"`. The words' introduction uses `"cue": "words"`. Another name stops production before any voice is made.
   - Every gap is at least 0.12 s and the first line starts at 0.04 s or later: the silence each recorded clip keeps around its speech.
   - `"at": "after"` places it only after the previous line.
   - The QA report records how late each line starts after its anchor, and warns above `qa.anchorDriftSeconds` (1.5 s). Only the first line on an anchor counts; the lines after it on the same anchor follow it on purpose.
@@ -67,6 +68,7 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - The Japanese voice does not read the English sentence's ASCII punctuation: a lone "つき?" came out as すき. The English run is read without the sentence's final "?"; the caption keeps it.
   - The question's pulse lands as the name's run starts. `--dry-run` shows which voice reads which part, and the release's manifest records each run's voice.
 - **Words are spoken as written**, so the voice reads them in context. An irregular reading (今日, 大人) is spoken from its kana. `narration.speech` overrides the text for a word that the voice misreads, for example `{ "水泳": "すいえい" }`.
+- **A fresh take of a flubbed line.** A voice can flub one take (the Japanese voice once read the name ひと as ひとだ), and the cache would return that take every time. `narration.retakes` asks again for a text the voice reads, for example `{ "ひと": 2 }`; raise the number for another take. Each take is cached on its own, so going back to an earlier number costs nothing.
 - **Timing** comes from the brush. Kumiki's `kanjiCardWriting` gives the time of every stroke in Node (bundle `dist-shot/kanji-entry.mjs`). The export page plans the same strokes from the same glyph and refuses any frame whose strokes differ.
 - **Reusable parts** that other narrated videos can use:
   - `narration-clips.mjs`: trim measured speech and place it on an exact sample timeline

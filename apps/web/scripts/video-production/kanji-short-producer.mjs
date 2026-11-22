@@ -76,8 +76,8 @@ export async function kanjiVgSvg(char, { planner, cacheDir, allowNetwork, fetchI
 
 const pcmBytes = (samples) => Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
 
-/** Shortest music a short may use: about the two writing passes plus 8 s of intro and words, at least 30 s. */
-export const musicSecondsNeeded = (pacing) => Math.max(30, pacing.write + pacing.review + 8);
+/** Shortest music a short may use: about the two writing passes plus 12 s of intro, the words' introduction and the words, at least 30 s. */
+export const musicSecondsNeeded = (pacing) => Math.max(30, pacing.write + pacing.review + 12);
 
 /** The narration script of a config: its own `narration.script` (inline or a file), or the default. */
 export async function kanjiNarrationScript(config) {
@@ -136,6 +136,10 @@ export async function produceKanjiShort(request, deps = {}) {
   const themeIssues = card.theme === undefined ? [] : planner.kanjiCardThemeIssues(card.theme);
   if (themeIssues.length) fail(`card.theme: ${themeIssues.join("; ")}`);
   const script = await kanjiNarrationScript(config);
+  // A script cue must name a part of the card that a cue can draw attention to.
+  const cueSections = planner.KANJI_CARD_CUE_SECTIONS ?? [];
+  const unknownCue = script.steps.find(step => step.cue !== undefined && !cueSections.includes(step.cue));
+  if (unknownCue) fail(`the narration script's step ${unknownCue.id} cues "${unknownCue.cue}"; the card can draw attention to ${cueSections.join(", ") || "nothing (rebuild with pnpm build)"}`);
   const datasetBytes = await readFile(config.dataset);
   const { entries, problems } = readKanjiDataset(JSON.parse(datasetBytes.toString("utf8")));
   const entry = entries.get(char);
@@ -174,13 +178,13 @@ export async function produceKanjiShort(request, deps = {}) {
       ...(card.brushStyle ? { brushStyle: card.brushStyle } : {}) };
     const lines = expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration?.labels, strokeCount: glyph.strokes.length }));
     if (!lines.length) fail("the narration script has no line for this kanji");
-    const planFor = (timing, strokes, intro, wordHighlights) => ({
+    const planFor = (timing, strokes, intro, wordHighlights, sectionCues = []) => ({
       schemaVersion: 1, kind: "kanji-study-visual-plan",
       manifest: { schemaVersion: 1, id: `kanji-short-${char.codePointAt(0).toString(16)}`, durationFrames: ["intro", "write", "review", "info"].reduce((sum, k) => sum + Math.round(timing[k] * KANJI_FPS), 0),
         width: preset.width, height: preset.height, fps: { num: KANJI_FPS, den: 1 }, preset: preset.id },
       card: {
         char, glyph, layout: "portrait", density: cardOptions.density, heading: card.heading ?? "Kanji study", safeInset, timing,
-        ...(intro ? { intro } : {}), ...cardText, wordHighlights, strokeNumbers: card.strokeNumbers ?? true, reducedMotion: false,
+        ...(intro ? { intro } : {}), ...cardText, wordHighlights, ...(sectionCues.length ? { sectionCues } : {}), strokeNumbers: card.strokeNumbers ?? true, reducedMotion: false,
         ...(card.labels ? { labels: card.labels } : {}), ...(card.theme ? { theme: card.theme } : {}), ...(card.brushStyle ? { brushStyle: card.brushStyle } : {}),
       },
       strokes,
@@ -190,7 +194,8 @@ export async function produceKanjiShort(request, deps = {}) {
     const provisional = { intro: 3, write: pacing.write, review: pacing.review, info: 3 };
     const provisionalCard = planner.planKanjiCard(glyph, { ...cardOptions, timing: provisional });
     planner.readKanjiStudyPlan(JSON.parse(JSON.stringify(planFor(provisional, provisionalCard.strokes,
-      { reading: content.name.kana }, content.words.map((_, word) => ({ word, at: 1 }))))));
+      { reading: content.name.kana }, content.words.map((_, word) => ({ word, at: 1 })),
+      lines.filter(line => line.cue !== undefined).map(line => ({ section: line.cue, at: 1, hold: 1 }))))));
     const unhighlightable = lines.find(line => line.highlight && (line.list !== "words" || line.index >= content.words.length));
     if (unhighlightable) fail(`line ${unhighlightable.id} highlights an item of ${unhighlightable.list}; the card highlights only its words (forEach "words")`);
     placeOnAnchors({ lines, anchors: kanjiCardAnchors(provisionalCard.timeline, provisionalCard.strokes), speech: estimatedSpeech(lines), ...PLACEMENT_FLOOR });
@@ -212,6 +217,8 @@ export async function produceKanjiShort(request, deps = {}) {
       const done = await (deps.synthesizeNarration ?? synthesizeNarration)({
         voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true },
         beats: group.map(unit => ({ id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],
+          // A retake of a text the voice flubbed (narration.retakes), matched on what the voice reads.
+          ...(config.narration?.retakes?.[unit.text] ? { take: config.narration.retakes[unit.text] } : {}),
           ...(voiceIds ? { speaker: { id: `voice-${locale.toLowerCase()}`, role: "narrator", voiceId: voiceFor(locale, voiceIds, voice.voiceId) } } : {}) })),
       }, {
         provider, cacheRoot: cacheDir, direction: { pace: config.voice.pace ?? "slow" }, signal: request.signal,
@@ -248,6 +255,8 @@ export async function produceKanjiShort(request, deps = {}) {
     const final = planner.planKanjiCard(glyph, { ...cardOptions, timing: timing.timing });
     if (final.timeline.frames !== timing.frames) fail(`the card plans ${final.timeline.frames} frames, the narration ${timing.frames}`);
     const wordHighlights = placement.highlights.map(cue => ({ word: cue.item, at: cue.at, hold: cue.hold }));
+    // A line's cue (for example the words' introduction) draws attention to that part of the card while it plays.
+    const sectionCues = placement.cues.map(cue => ({ section: cue.cue, at: cue.at, hold: cue.hold }));
     const cardIntro = intro.intro > 0 ? { reading: content.name.kana, convertAt: planner.kanjiCardConvertAt([...content.name.kana].length, { typeStep: card.typeStep }),
       ...(intro.emphasizeAt !== undefined ? { emphasizeAt: intro.emphasizeAt } : {}),
       ...(card.typeStep !== undefined ? { typeStep: card.typeStep } : {}) } : null;
@@ -284,7 +293,7 @@ export async function produceKanjiShort(request, deps = {}) {
       gainDb: bed.gainDb, fadeInMs: config.music.fadeInMs ?? 250, fadeOutMs: config.music.fadeOutMs ?? 1200,
     }] }, { outputDir: await mkdtemp(join(renderDir, "audio-")), ffmpeg: request.ffmpeg, ffprobe: request.ffprobe, signal: request.signal });
 
-    const plan = planner.readKanjiStudyPlan(JSON.parse(JSON.stringify(planFor(timing.timing, final.strokes, cardIntro, wordHighlights))));
+    const plan = planner.readKanjiStudyPlan(JSON.parse(JSON.stringify(planFor(timing.timing, final.strokes, cardIntro, wordHighlights, sectionCues))));
     const manifest = plan.manifest;
     if (manifest.durationFrames !== timing.frames) fail("the export plan's length differs from the narration");
     const planBytes = JSON.stringify(plan);
@@ -355,7 +364,7 @@ export async function produceKanjiShort(request, deps = {}) {
         voiceLufs, bedLufs: bed.bedLufs, musicPreGainDb: bed.preGainDb, musicGainDb: bed.gainDb, musicBelowVoiceDb: bed.belowVoiceDb, musicBelowVoiceTargetDb: below,
         musicWindowStart: window.start, musicLongestQuietWithoutVoice: window.longestQuietSeconds, ducking: audio.ducking },
       pacing: { longestStillSeconds: Math.round(still.seconds * 1000) / 1000, longestStillStart: still.start, budgetSeconds: stillBudget, withinBudget: still.seconds <= stillBudget },
-      narration: { onsets: placement.onsets, ends: placement.ends, driftAfterAnchor: placement.drift, wordHighlights, emphasis: placement.emphasis },
+      narration: { onsets: placement.onsets, ends: placement.ends, driftAfterAnchor: placement.drift, wordHighlights, sectionCues, emphasis: placement.emphasis },
       timing: { phases: timing.timing, strokes: final.strokes, intro: cardIntro },
       speech: takes.map(take => ({ id: take.id, locale: take.locale, spoken: take.say, caption: take.caption, seconds: Math.round(take.speech * 1000) / 1000,
         ...(take.voiceRuns ? { voiceRuns: take.voiceRuns } : {}) })),

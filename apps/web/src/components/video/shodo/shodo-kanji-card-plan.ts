@@ -276,6 +276,52 @@ export function wordHighlightAt(
   return strength > 0 ? { word: cue.word, strength } : { word: null, strength: 0 };
 }
 
+/** A part of the reading card that a cue can draw attention to. */
+export type KanjiCardCueSection = "readings" | "words";
+export const KANJI_CARD_CUE_SECTIONS: readonly KanjiCardCueSection[] = ["readings", "words"];
+
+/**
+ * Draw attention to a part of the reading card from `at` for `hold` seconds of the video, for
+ * example while a voice-over introduces it ("Some common words using this kanji are…"). The
+ * words' title turns the accent colour and the word tiles lift one after another; the readings
+ * get a light accent tint. With reduced motion, colour only.
+ */
+export interface KanjiSectionCue { section: KanjiCardCueSection; at: number; hold: number }
+
+/** A section cue at one moment: its strength 0..1 (eased in and out) and how far through it the video is, 0..1. */
+export interface KanjiSectionCueState { strength: number; progress: number }
+
+/**
+ * The cue of `section` at a time of the video, eased in and out over a quarter second, as word
+ * highlights are. When cues of a section overlap, the later one wins and the earlier one ends
+ * where it starts (it eases out before, so nothing snaps). A cue shorter than the eases only
+ * fades a little, never flashes. A cue with a time that is not a finite number, or a hold that
+ * is not positive, is ignored. Pure.
+ */
+export function sectionCueAt(cues: readonly KanjiSectionCue[], section: KanjiCardCueSection, time: number): KanjiSectionCueState {
+  const list = cues.filter(c => c.section === section && Number.isFinite(c.at) && Number.isFinite(c.hold) && c.hold > 0)
+    .map((cue, order) => ({ cue, order })).sort((a, b) => a.cue.at - b.cue.at || a.order - b.order);
+  let k = -1;
+  for (let i = 0; i < list.length; i++) if (list[i].cue.at <= time) k = i;
+  if (k < 0) return { strength: 0, progress: 0 };
+  const { cue } = list[k];
+  const end = Math.min(cue.at + cue.hold, k + 1 < list.length ? list[k + 1].cue.at : Infinity);
+  const strength = Math.min(smoothstep((time - cue.at) / KANJI_WORD_EASE), smoothstep((end - time) / KANJI_WORD_EASE));
+  return strength > 0 ? { strength, progress: Math.min(1, (time - cue.at) / (end - cue.at)) } : { strength: 0, progress: 0 };
+}
+
+/**
+ * How far word tile `index` of `count` is lifted, 0..1, at `progress` through a words cue: a wave
+ * that crosses the tiles from the first to the last, each tile rising and settling in turn, with
+ * neighbours overlapping so that something always moves. 0 at the start and the end.
+ */
+export function wordTileWave(index: number, count: number, progress: number): number {
+  if (!(count > 0)) return 0;
+  const centre = (index + 1) / (count + 1), width = 2 / (count + 1);
+  const d = (progress - centre) / width;
+  return Math.abs(d) >= .5 ? 0 : Math.cos(Math.PI * d) ** 2;
+}
+
 /**
  * A demo cue list: each of `count` words in turn over a video of `length` seconds. The first word
  * starts at 20 % and the last at 80 % of the video, evenly spaced; each one holds for 2.5 s, or
