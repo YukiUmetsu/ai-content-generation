@@ -31,7 +31,11 @@
       "on": "おんよみ",
       "kun": "くんよみ"
     },
-    "speech": {}
+    "speech": {},
+    "reuse": {
+      "{name.kana}": "kunyomi"
+    },
+    "retakes": {}
   },
   "timing": {
     "write": 6.6,
