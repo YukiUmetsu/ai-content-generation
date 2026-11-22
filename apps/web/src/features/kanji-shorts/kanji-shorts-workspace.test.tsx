@@ -137,6 +137,7 @@ describe("settings the form cannot show", () => {
     for (const saved of [
       { ...SETTINGS, "card.safeInset": { bottom: .25 } }, { ...SETTINGS, "card.safeInset": { bottom: 0 } },
       { ...SETTINGS, "narration.reuse": { "{name.kana}": "onyomi" } }, { ...SETTINGS, "narration.reuse": { "{name.kana}": "kunyomi", ひと: "kunyomi" } },
+      { ...SETTINGS, "narration.reuse": { " ひと": "kunyomi" }, "narration.speech": { 水泳: " すいえい" } },
     ] as KanjiSettings[]) expect(changedSettings(saved, settingsFromDraft(draftFrom(saved)))).toEqual({});
     // Switching the band on or off is a change; a typed {name.kana} → kunyomi row is kept with the switch off.
     const draft = draftFrom({ ...SETTINGS, "card.safeInset": { bottom: .25 } });

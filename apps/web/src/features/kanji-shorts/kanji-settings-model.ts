@@ -50,13 +50,17 @@ export function draftProblems(draft: Draft): DraftProblem[] {
   return problems;
 }
 
-/** The draft's settings in the config's shape: empty rows are left out, an empty map is the default (null). */
+/**
+ * The draft's settings in the config's shape: empty rows are left out, an empty map is the default (null).
+ * Texts are kept as written (the config's own reader compares them trimmed), so a file read and saved
+ * unchanged stays unchanged.
+ */
 export function settingsFromDraft(draft: Draft): KanjiSettings {
   const map = <T,>(pairs: Pairs, value: (text: string) => T) => {
     const kept = pairs.filter(([key, text]) => key.trim() && text.trim());
-    return kept.length ? Object.fromEntries(kept.map(([key, text]) => [key.trim(), value(text.trim())])) : null;
+    return kept.length ? Object.fromEntries(kept.map(([key, text]) => [key, value(text)])) : null;
   };
-  const voiceIds = { ...draft.otherVoiceIds, ...(draft.ja.trim() ? { ja: draft.ja.trim() } : {}), ...(draft.en.trim() ? { en: draft.en.trim() } : {}) };
+  const voiceIds = { ...draft.otherVoiceIds, ...(draft.ja.trim() ? { ja: draft.ja } : {}), ...(draft.en.trim() ? { en: draft.en } : {}) };
   const reuse: Record<string, string> = map(draft.reuse, text => text) ?? {};
   if (draft.nameFromKunyomi) reuse[NAME_FROM_KUNYOMI] = "kunyomi";
   // The file's own band while the switch says the same; the standard band when it is switched on.
@@ -64,11 +68,11 @@ export function settingsFromDraft(draft: Draft): KanjiSettings {
   const bottom = draft.aboveCaptions === savedOn ? draft.savedBottom : draft.aboveCaptions ? ABOVE_CAPTIONS : undefined;
   const inset = { ...draft.otherInset, ...(bottom !== undefined ? { bottom } : {}) };
   return {
-    "voice.voiceId": draft.voiceId.trim() || null,
+    "voice.voiceId": draft.voiceId.trim() ? draft.voiceId : null,
     "voice.voiceIds": Object.keys(voiceIds).length ? voiceIds : null,
     "voice.pace": draft.pace || null,
     "narration.reuse": Object.keys(reuse).length ? reuse : null,
-    "narration.retakes": map(draft.retakes, Number),
+    "narration.retakes": map(draft.retakes, text => Number(text.trim())),
     "narration.speech": map(draft.speech, text => text),
     maxWords: numberOrNull(draft.maxWords),
     "card.safeInset": Object.keys(inset).length ? inset : null,

@@ -16,7 +16,7 @@ export class JobsUnavailableError extends Error {
  *   `failure` is what Jobs records of a failure (never the raw error, which can carry provider details);
  *   `keepFinishedWork`: work that finished is recorded as succeeded even if the signal was aborted as it finished.
  *   A succeeded result is never recorded as failed. Recording it is tried three times; if Jobs still refuses, the error
- *   says so and the job stays open in Jobs until its stale lease is recovered or it is cancelled on the Jobs page.
+ *   says so and the job stays open in Jobs (stale recovery only frees its attempt) until it is cancelled on the Jobs page.
  * @param {(context:{signal:AbortSignal,jobId:string})=>Promise<any>} work
  */
 export async function withWorkerJob(spec, work, {
