@@ -14,7 +14,8 @@ const ASCII_PUNCT = /[!-/:-@[-`{-~]/gu;
 const primary = (locale) => String(locale).toLowerCase().split("-")[0];
 
 /**
- * The runs of a line, in order: `{ text, locale }`. Japanese script is "ja"; other letters take
+ * The runs of a line, in order: `{ text, locale, from, to }` (`from`/`to`: where the run lies in
+ * the line's text, in UTF-16 units, before any cleaning). Japanese script is "ja"; other letters take
  * the line's own locale, or `other` (default "en") when the line is Japanese.
  * - Digits go with the text they touch: "12月" stays one Japanese run, "1画目" too; on their own
  *   they follow the run before them, or the line's language.
@@ -38,20 +39,25 @@ export function scriptRuns(text, lineLocale, { other = "en" } = {}) {
     i = j - 1;
   }
   const runs = [];
-  let pending = "";
+  let pending = "", offset = 0;
   chars.forEach((ch, i) => {
-    const locale = kind[i];
-    if (locale === null) { if (runs.length) runs[runs.length - 1].text += ch; else pending += ch; return; }
-    const last = runs[runs.length - 1];
-    if (last && last.locale === locale) last.text += ch;
-    else runs.push({ text: pending + ch, locale });
-    pending = "";
+    const locale = kind[i], end = offset + ch.length;
+    if (locale === null) {
+      if (runs.length) { runs[runs.length - 1].text += ch; runs[runs.length - 1].to = end; } else pending += ch;
+    } else {
+      const last = runs[runs.length - 1];
+      if (last && last.locale === locale) { last.text += ch; last.to = end; }
+      else { runs.push({ text: pending + ch, locale, from: offset - pending.length, to: end }); pending = ""; }
+    }
+    offset = end;
   });
-  if (!runs.length) return [{ text, locale: lineLocale }];
-  const clean = (run) => run.locale === "ja" && !japaneseLine
-    ? run.text.replace(ASCII_PUNCT, " ").replace(/\s+/gu, " ").trim() : run.text.trim();
-  if (runs.length === 1) return [{ text: runs[0].locale === "ja" && !japaneseLine ? clean(runs[0]) || text : text, locale: runs[0].locale }];
-  return runs.map(run => ({ text: clean(run), locale: run.locale })).filter(run => run.text);
+  if (!runs.length) return [{ text, locale: lineLocale, from: 0, to: text.length }];
+  // A run of another language before a Japanese one does not end on an opening quote or bracket ("It's 'つき'").
+  const clean = (run, i) => run.locale === "ja" && !japaneseLine
+    ? run.text.replace(ASCII_PUNCT, " ").replace(/\s+/gu, " ").trim()
+    : (runs[i + 1] ? run.text.replace(/[\s'"([{]+$/u, "") : run.text).trim();
+  if (runs.length === 1) return [{ text: runs[0].locale === "ja" && !japaneseLine ? clean(runs[0], 0) || text : text, locale: runs[0].locale, from: 0, to: text.length }];
+  return runs.map((run, i) => ({ text: clean(run, i), locale: run.locale, from: run.from, to: run.to })).filter(run => run.text);
 }
 
 /** The voice for a locale: `voiceIds` by primary language (ja, en…), else the default voice. */
@@ -88,14 +94,10 @@ export function joinRunTakes(takes, { gap = .04, sampleRate = SAMPLE_RATE } = {}
  */
 export function runShare(runs, starts, speech, textShare, text, durations = []) {
   const index = Math.min(text.length - 1, Math.max(0, Math.round(textShare * text.length)));
-  let seen = 0, k = 0, within = 0;
-  // Runs keep the line's characters in order (punctuation aside); find the run whose text covers the index.
-  for (let i = 0; i < runs.length; i++) {
-    const at = text.indexOf(runs[i].text, seen);
-    if (at < 0) break;
-    if (index >= at) { k = i; within = Math.min(1, (index - at) / Math.max(1, runs[i].text.length)); }
-    seen = at + runs[i].text.length;
-  }
+  // Each run knows where it lies in the line (`from`, `to`), also after its punctuation was dropped.
+  let k = 0;
+  runs.forEach((run, i) => { if (index >= run.from) k = i; });
+  const run = runs[k], within = Math.min(1, Math.max(0, (index - run.from) / Math.max(1, run.to - run.from)));
   const t = starts[k] + within * (durations[k] ?? 0);
   return speech > 0 ? Math.min(1, Math.max(0, t / speech)) : 0;
 }

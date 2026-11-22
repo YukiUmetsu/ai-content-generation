@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
+import { joinRunTakes, runShare, scriptRuns as runsWithPlace, voiceFor } from "./voice-runs.mjs";
+// Most cases check what is read by which voice; where each run lies is checked on its own below.
+const scriptRuns = (...args) => runsWithPlace(...args).map(({ text, locale }) => ({ text, locale }));
 
 test("splits a line by script: English words for the English voice, the Japanese name for the Japanese one", () => {
   assert.deepEqual(scriptRuns("Do you know how to write the kanji つき?", "en"),
@@ -26,7 +28,7 @@ test("joins run takes on whole milliseconds and says when each run's speech star
   assert.equal(Math.round(joined.speech * 1000), 1040 + 390);
   assert.throws(() => joinRunTakes([{ clip: new Int16Array(47), lead: 0, speech: .001 }]), /whole number of milliseconds/u);
   // The name is pulsed as its run starts.
-  const runs = scriptRuns("Do you know how to write the kanji つき?", "en");
+  const runs = runsWithPlace("Do you know how to write the kanji つき?", "en");
   const text = "Do you know how to write the kanji つき?";
   assert.ok(Math.abs(runShare(runs, joined.starts, joined.speech, 35 / 38, text) - 1040 / 1430) < 1e-9);
   assert.equal(runShare(runs, joined.starts, joined.speech, .1, text), 0);
@@ -46,9 +48,19 @@ test("digits go with the text they touch, every kanji counts as Japanese, and a 
 
 test("a pulse inside a run keeps its place in that run", () => {
   const text = "Write the word moon, 月.";
-  const runs = scriptRuns(text, "en");
+  const runs = runsWithPlace(text, "en");
   assert.deepEqual(runs.map(r => r.text), ["Write the word moon,", "月"]);
-  // "moon" starts at character 15 of the 20-character English run, which lasts 2 s.
+  // "moon" starts at character 15 of the English run (21 characters with its trailing space), which lasts 2 s.
   const share = runShare(runs, [0, 2.2], 2.6, 15 / text.length, text, [2, .4]);
-  assert.ok(Math.abs(share * 2.6 - 2 * 15 / 20) < .01);
+  assert.ok(Math.abs(share * 2.6 - 2 * 15 / 21) < .01);
+});
+
+test("each run knows where it lies in the line, so a pulse finds its run after punctuation was dropped", () => {
+  const text = "The kanji 月 (つき), means moon.";
+  const runs = runsWithPlace(text, "en");
+  assert.deepEqual(runs.map(r => [r.text, text.slice(r.from, r.to).trim()]), [["The kanji", "The kanji"], ["月 つき", "月 (つき),"], ["means moon.", "means moon."]]);
+  const at = (word) => runShare(runs, [0, 1, 2], 2.8, text.indexOf(word) / text.length, text, [.8, .8, .8]);
+  assert.ok(Math.abs(at("means") - 2 / 2.8) < .01);
+  assert.ok(Math.abs(at("つき") * 2.8 - (1 + .8 * 3 / 8)) < .05);
+  assert.deepEqual(scriptRuns("It's 'つき'.", "en"), [{ text: "It's", locale: "en" }, { text: "つき", locale: "ja" }]);
 });
