@@ -225,14 +225,16 @@ export async function produceKanjiShort(request, deps = {}) {
     const takes = await Promise.all(lines.map(async line => {
       const runs = units.filter(unit => unit.line === line.id);
       const trimmed = await Promise.all(runs.map(async unit => trimSpeech(int16Wav(await readFile(results.get(unit.id).wavPath)))));
-      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: results.get(runs[0].id).sha256 };
+      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: results.get(runs[0].id).sha256, voiceId: voiceFor(runs[0].locale, voiceIds, voice.voiceId) };
       const joined = joinRunTakes(trimmed);
       return {
         ...line, clip: joined.clip, lead: joined.lead, speech: joined.speech,
         // An emphasized part (the kanji's name) is pulsed as its own run starts, not at a share of the text.
-        ...(line.emphasizeAt === undefined ? {} : { emphasizeAt: runShare(runs, joined.starts, joined.speech, line.emphasizeAt, line.say) }),
-        sourceSha256: sha256(Buffer.from(runs.map(unit => results.get(unit.id).sha256).join("+"))),
-        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000 })),
+        ...(line.emphasizeAt === undefined ? {} : { emphasizeAt: runShare(runs, joined.starts, joined.speech, line.emphasizeAt, line.say, joined.durations) }),
+        // A joined line has no single provider audio: each run keeps its own voice and provider hash.
+        sourceSha256: null,
+        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000,
+          voiceId: voiceFor(unit.locale, voiceIds, voice.voiceId), providerSha256: results.get(unit.id).sha256 })),
       };
     }));
     const speech = Object.fromEntries(takes.map(take => [take.id, take.speech]));
@@ -370,8 +372,10 @@ export async function produceKanjiShort(request, deps = {}) {
         kanjivg: { url: kanjivg.url, sha256: kanjivg.sha256 },
         music: { title: config.music.title, source: config.music.source, license: config.music.license, sha256: config.music.sha256, windowStart: window.start, bedSha256: sha256(bedBytes) },
       },
-      narration: beats.map((beat, i) => ({ id: beat.id, locale: takes[i].locale, spoken: takes[i].say, caption: takes[i].caption, sha256: beat.sha256, providerSha256: takes[i].sourceSha256,
-        provider, modelId: voice.modelId, voiceId: voice.voiceId, licenseStatus: voice.licenseStatus })),
+      // The voice that read each line, or each run of a line read by several voices.
+      narration: beats.map((beat, i) => ({ id: beat.id, locale: takes[i].locale, spoken: takes[i].say, caption: takes[i].caption, sha256: beat.sha256,
+        provider, modelId: voice.modelId, licenseStatus: voice.licenseStatus,
+        ...(takes[i].voiceRuns ? { voiceRuns: takes[i].voiceRuns } : { voiceId: takes[i].voiceId, providerSha256: takes[i].sourceSha256 }) })),
       segmentHashes: render.segmentHashes, stills, artifacts: { ...artifacts, "qa-report.json": sha256(qaBytes) },
     };
     await writeFile(join(working, "render-manifest.json"), JSON.stringify(renderManifest, null, 2));

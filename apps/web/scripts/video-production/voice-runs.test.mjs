@@ -31,3 +31,24 @@ test("joins run takes on whole milliseconds and says when each run's speech star
   assert.ok(Math.abs(runShare(runs, joined.starts, joined.speech, 35 / 38, text) - 1040 / 1430) < 1e-9);
   assert.equal(runShare(runs, joined.starts, joined.speech, .1, text), 0);
 });
+
+test("digits go with the text they touch, every kanji counts as Japanese, and a Japanese run reads no ASCII punctuation", () => {
+  assert.deepEqual(scriptRuns("1", "ja"), [{ text: "1", locale: "ja" }]);                                      // a stroke count in a Japanese line
+  assert.deepEqual(scriptRuns("1画目。", "ja"), [{ text: "1画目。", locale: "ja" }]);
+  assert.deepEqual(scriptRuns("How about 12月?", "en"), [{ text: "How about", locale: "en" }, { text: "12月", locale: "ja" }]);
+  assert.deepEqual(scriptRuns("Count 3 strokes", "en"), [{ text: "Count 3 strokes", locale: "en" }]);
+  assert.deepEqual(scriptRuns("𠮟る。", "ja"), [{ text: "𠮟る。", locale: "ja" }]);                             // a kanji beyond the basic plane
+  assert.deepEqual(scriptRuns("Read ㇰ", "en"), [{ text: "Read", locale: "en" }, { text: "ㇰ", locale: "ja" }]);
+  assert.deepEqual(scriptRuns("月 (つき), means moon", "en"), [{ text: "月 つき", locale: "ja" }, { text: "means moon", locale: "en" }]);
+  assert.deepEqual(scriptRuns("つき?", "en"), [{ text: "つき", locale: "ja" }]);                                 // all Japanese in an English line
+  assert.deepEqual(scriptRuns("つき？", "ja"), [{ text: "つき？", locale: "ja" }]);                               // a Japanese line keeps its own punctuation
+});
+
+test("a pulse inside a run keeps its place in that run", () => {
+  const text = "Write the word moon, 月.";
+  const runs = scriptRuns(text, "en");
+  assert.deepEqual(runs.map(r => r.text), ["Write the word moon,", "月"]);
+  // "moon" starts at character 15 of the 20-character English run, which lasts 2 s.
+  const share = runShare(runs, [0, 2.2], 2.6, 15 / text.length, text, [2, .4]);
+  assert.ok(Math.abs(share * 2.6 - 2 * 15 / 20) < .01);
+});
