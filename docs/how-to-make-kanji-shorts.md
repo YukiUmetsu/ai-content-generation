@@ -68,7 +68,10 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - The Japanese voice does not read the English sentence's ASCII punctuation: a lone "つき?" came out as すき. The English run is read without the sentence's final "?"; the caption keeps it.
   - The question's pulse lands as the name's run starts. `--dry-run` shows which voice reads which part, and the release's manifest records each run's voice.
 - **Words are spoken as written**, so the voice reads them in context. An irregular reading (今日, 大人) is spoken from its kana. `narration.speech` overrides the text for a word that the voice misreads, for example `{ "水泳": "すいえい" }`.
-- **A fresh take of a flubbed line.** A voice can flub one take (the Japanese voice once read the name ひと as ひとだ), and the cache would return that take every time. `narration.retakes` asks again for a text the voice reads, for example `{ "ひと": 2 }`; raise the number for another take. Each take is cached on its own, so going back to an earlier number costs nothing.
+- **A fresh take of a flubbed line.** A voice can flub one take (the Japanese voice once read the name ひと as ひとだ), and the cache would return that take every time. `narration.retakes` asks again for a text the voice reads, for example `{ "ひと": 5 }`; raise the number for another take.
+  - The key is the exact text one voice reads, punctuation included: with `voice.voiceIds` the question's name is its own run ("ひと"), and a word line is "人。". `--dry-run` shows each split line's runs and the retakes that apply; a key that matches nothing in a short is not used there.
+  - Every take is cached on its own, so going back to an earlier number costs nothing; removing the entry goes back to the first take.
+  - The release's QA report and manifest record the take of each line or run.
 - **Timing** comes from the brush. Kumiki's `kanjiCardWriting` gives the time of every stroke in Node (bundle `dist-shot/kanji-entry.mjs`). The export page plans the same strokes from the same glyph and refuses any frame whose strokes differ.
 - **Reusable parts** that other narrated videos can use:
   - `narration-clips.mjs`: trim measured speech and place it on an exact sample timeline
@@ -82,7 +85,7 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
 Make the folder `data/kanji-shorts/` (git ignores `data/`). Put `config.json` in it, after `apps/web/fixtures/kanji-short/config.example.json`:
 
 - `dataset`: the kanji study-card data (`{ kanji: [{ char, jlpt, words, card }] }`), for example `jlpt-n5-n3.json` from the private `kumiki-shodo` repository. Put its credit line in `credits`.
-- `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) and `speech` (the text the voice reads for a word it misreads).
+- `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) `speech` (the text the voice reads for a word it misreads) and `retakes` (a fresh take of a text the voice flubbed).
 - `voice`:
   - `provider` is `fish` (default) or `local`.
   - **Fish:** `voiceId`. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`. Make with `--allow-network --voice-consent --transmit-text`.
@@ -119,5 +122,5 @@ Each `release/` folder holds:
   - the longest still stretch (budget 2.5 s)
   - the loudness: the master is mono at about -18 LUFS, which plays as about -15 LUFS on two speakers
   - every timing
-- **Pronunciation is not machine-checked.** Listen to every word. Fix a misread word with `narration.speech`.
+- **Pronunciation is not machine-checked.** Listen to every word. Fix a misread word with `narration.speech`, and a flubbed take with `narration.retakes`.
 - The release is a draft (`reviewStatus: not-reviewed`). Nothing is published.

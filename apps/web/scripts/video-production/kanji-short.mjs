@@ -177,3 +177,15 @@ export function kanjiShortTiming({ intro, write, review, end, tail = KANJI_SHORT
   const frames = Math.ceil(Math.max(end + tail, before / KANJI_FPS + .5) * KANJI_FPS / 3 - 1e-6) * 3;
   return { timing: { intro, write, review, info: (frames - before) / KANJI_FPS }, frames, totalSamples: frames * 1600 };
 }
+
+/**
+ * The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }): the
+ * key must be that exact text, compared after Unicode normalization and trimming; only the
+ * config's own keys count. Undefined when none is asked for.
+ */
+export function retakeFor(text, retakes) {
+  if (!retakes) return undefined;
+  const key = text.normalize("NFC").trim();
+  for (const [wanted, take] of Object.entries(retakes)) if (wanted.normalize("NFC").trim() === key) return take;
+  return undefined;
+}

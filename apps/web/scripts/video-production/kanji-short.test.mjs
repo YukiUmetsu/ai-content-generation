@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -113,4 +113,13 @@ test("the default script makes the approved short: the question while the kanji 
   // While the introduction plays, the card draws attention to its words, until the first word lights.
   assert.deepEqual(placed.cues, [{ id: "words-intro", cue: "words", at: 15.12, hold: 2.7 }]);
   assert.ok(Math.abs(placed.highlights[0].at + placed.highlights[0].hold - placed.highlights[1].at) < .001);   // each word stays lit until the next
+});
+
+test("a retake matches the exact text one voice reads, after normalization, and only the config's own keys", () => {
+  assert.equal(retakeFor("ひと", { "ひと": 5 }), 5);
+  assert.equal(retakeFor(" ひと ", { "ひと": 5 }), 5);
+  assert.equal(retakeFor("ひと".normalize("NFD"), { "ひと": 5 }), 5);
+  assert.equal(retakeFor("くんよみ、ひと。", { "ひと": 5 }), undefined);                     // a whole line is another text
+  assert.equal(retakeFor("toString", {}), undefined);                                         // not an inherited property
+  assert.equal(retakeFor("ひと", undefined), undefined);
 });

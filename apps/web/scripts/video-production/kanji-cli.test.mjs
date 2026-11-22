@@ -307,7 +307,14 @@ test("a script line with no moment in the picture, or a highlight the card canno
     await assert.rejects(run(steps({ id: "w-{n}", forEach: "words", say: "{item.speech}", at: "review.strokes" })), /needs the anchor review\.strokes for item 2/u);
     // The card highlights words, not strokes.
     await assert.rejects(run(steps({ id: "s-{n}", forEach: "strokes", say: "{n}", at: "review.strokes", highlight: true })), /highlights an item of strokes/u);
+    // A narration much longer than the 35 s of music stops before any voice, with the estimate.
+    await assert.rejects(run(steps({ id: "long", say: "This is a very long closing sentence. ".repeat(10).trim(), locale: "en", at: "review.end" })),
+      /this short's narration needs about \d+ s/u);
     assert.deepEqual(touched, []);
+    // A cue on a line at the very start is placed at 0 s, not before the video: the early checks pass and the voice is asked for.
+    await assert.rejects(run({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "q", say: "{name.kana}", at: "start", cue: "words" }] }),
+      /out of order/u);
+    assert.deepEqual(touched, ["voice"]);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -120,3 +120,14 @@ test("a forEach step's pause follows its last item, and a line's cue lasts from 
   const last = placeOnAnchors({ lines: expandNarrationScript(readNarrationScript(script([{ id: "a", say: "x", at: "start", cue: "words" }])), DATA), anchors: { start: 1 }, speech: { a: 2 } });
   assert.deepEqual(last.cues, [{ id: "a", cue: "words", at: .92, hold: 3.08 }]);
 });
+
+test("highlights and cues start a lead before their line but never before the video", () => {
+  const read = readNarrationScript(script([{ id: "w{n}", forEach: "words", say: "{item.speech}", at: "start", highlight: true, cue: "words" }]));
+  const placed = placeOnAnchors({ lines: expandNarrationScript(read, DATA), anchors: { start: 0 }, speech: { w1: .5, w2: .5 } });
+  assert.equal(placed.highlights[0].at, 0);
+  assert.equal(placed.cues[0].at, 0);
+  assert.equal(placed.cues[0].hold, round(placed.onsets.w2 - .08));                       // still ends a lead before the next line
+  const last = placed.highlights[1];
+  assert.equal(round(last.at + last.hold), round(placed.ends.w2 + 1));                     // and the last ends its tail after its speech
+});
+const round = (v) => Math.round(v * 1000) / 1000;

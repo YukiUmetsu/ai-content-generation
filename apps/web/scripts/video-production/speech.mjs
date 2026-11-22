@@ -84,6 +84,7 @@ export async function synthesizeNarration(job, options) {
   const units=[];
   for(const beat of job.beats){
     if(beat.speechTurns===undefined){units.push(beat);continue;}
+    if(beat.take!==undefined)fail("a take applies to a single-voice beat, not to a multi-speaker scene");
     if(beat.speaker!==undefined||!Array.isArray(beat.speechTurns)||
       beat.speechTurns.length<2||beat.speechTurns.length>16)
       fail("multi-speaker scenes require 2–16 explicitly ordered turns and no scene-wide voice");

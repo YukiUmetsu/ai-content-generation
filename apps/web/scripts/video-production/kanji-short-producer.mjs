@@ -21,7 +21,7 @@ import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -76,7 +76,11 @@ export async function kanjiVgSvg(char, { planner, cacheDir, allowNetwork, fetchI
 
 const pcmBytes = (samples) => Buffer.from(samples.buffer, samples.byteOffset, samples.byteLength);
 
-/** Shortest music a short may use: about the two writing passes plus 12 s of intro, the words' introduction and the words, at least 30 s. */
+/**
+ * Shortest music a short may use, checked first: about the two writing passes plus 12 s of intro,
+ * the words' introduction and three words, at least 30 s. Once the script is placed with
+ * estimated speech, the music is checked against that too, before any voice is made.
+ */
 export const musicSecondsNeeded = (pacing) => Math.max(30, pacing.write + pacing.review + 12);
 
 /** The narration script of a config: its own `narration.script` (inline or a file), or the default. */
@@ -193,12 +197,18 @@ export async function produceKanjiShort(request, deps = {}) {
     // plan the page would refuse or a line with no moment in the picture stops here, before any voice.
     const provisional = { intro: 3, write: pacing.write, review: pacing.review, info: 3 };
     const provisionalCard = planner.planKanjiCard(glyph, { ...cardOptions, timing: provisional });
-    planner.readKanjiStudyPlan(JSON.parse(JSON.stringify(planFor(provisional, provisionalCard.strokes,
-      { reading: content.name.kana }, content.words.map((_, word) => ({ word, at: 1 })),
-      lines.filter(line => line.cue !== undefined).map(line => ({ section: line.cue, at: 1, hold: 1 }))))));
     const unhighlightable = lines.find(line => line.highlight && (line.list !== "words" || line.index >= content.words.length));
     if (unhighlightable) fail(`line ${unhighlightable.id} highlights an item of ${unhighlightable.list}; the card highlights only its words (forEach "words")`);
-    placeOnAnchors({ lines, anchors: kanjiCardAnchors(provisionalCard.timeline, provisionalCard.strokes), speech: estimatedSpeech(lines), ...PLACEMENT_FLOOR });
+    const estimate = placeOnAnchors({ lines, anchors: kanjiCardAnchors(provisionalCard.timeline, provisionalCard.strokes), speech: estimatedSpeech(lines),
+      highlightTail: script.highlightTail, highlightLead: script.highlightLead, ...PLACEMENT_FLOOR });
+    // The estimated highlights and cues, so a time the page would refuse stops here too.
+    planner.readKanjiStudyPlan(JSON.parse(JSON.stringify(planFor(provisional, provisionalCard.strokes, { reading: content.name.kana },
+      estimate.highlights.map(cue => ({ word: cue.item, at: cue.at, hold: cue.hold })),
+      estimate.cues.map(cue => ({ section: cue.cue, at: cue.at, hold: cue.hold }))))));
+    // The music must also last the estimated narration (more words make a longer short), checked before any voice.
+    const estimatedSeconds = estimate.end + pacing.tail + 2;
+    if (musicSeconds - musicFrom < estimatedSeconds)
+      fail(`the music has ${Math.max(0, musicSeconds - musicFrom).toFixed(1)} s from ${musicFrom} s; this short's narration needs about ${Math.ceil(estimatedSeconds)} s`);
 
     const voice = { provider, voiceId: config.voice.voiceId, modelId: config.voice.modelId ?? "s2.1-pro-free", licenseStatus: config.voice.licenseStatus ?? "unknown",
       ...(provider === "local" ? { endpoint: config.voice.endpoint } : {}) };
@@ -208,7 +218,10 @@ export async function produceKanjiShort(request, deps = {}) {
     const runsOf = (line) => voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
     const units = lines.flatMap(line => {
       const runs = runsOf(line);
-      return runs.map((run, k) => ({ line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run }));
+      return runs.map((run, k) => {
+        const take = retakeFor(run.text, config.narration?.retakes);
+        return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}) };
+      });
     });
     progress("narration", `Synthesizing ${units.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
     const results = new Map();
@@ -218,7 +231,7 @@ export async function produceKanjiShort(request, deps = {}) {
         voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true },
         beats: group.map(unit => ({ id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],
           // A retake of a text the voice flubbed (narration.retakes), matched on what the voice reads.
-          ...(config.narration?.retakes?.[unit.text] ? { take: config.narration.retakes[unit.text] } : {}),
+          ...(unit.take ? { take: unit.take } : {}),
           ...(voiceIds ? { speaker: { id: `voice-${locale.toLowerCase()}`, role: "narrator", voiceId: voiceFor(locale, voiceIds, voice.voiceId) } } : {}) })),
       }, {
         provider, cacheRoot: cacheDir, direction: { pace: config.voice.pace ?? "slow" }, signal: request.signal,
@@ -232,7 +245,8 @@ export async function produceKanjiShort(request, deps = {}) {
     const takes = await Promise.all(lines.map(async line => {
       const runs = units.filter(unit => unit.line === line.id);
       const trimmed = await Promise.all(runs.map(async unit => trimSpeech(int16Wav(await readFile(results.get(unit.id).wavPath)))));
-      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: results.get(runs[0].id).sha256, voiceId: voiceFor(runs[0].locale, voiceIds, voice.voiceId) };
+      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: results.get(runs[0].id).sha256, voiceId: voiceFor(runs[0].locale, voiceIds, voice.voiceId),
+        ...(runs[0].take ? { take: runs[0].take } : {}) };
       const joined = joinRunTakes(trimmed);
       return {
         ...line, clip: joined.clip, lead: joined.lead, speech: joined.speech,
@@ -240,7 +254,7 @@ export async function produceKanjiShort(request, deps = {}) {
         ...(line.emphasizeAt === undefined ? {} : { emphasizeAt: runShare(runs, joined.starts, joined.speech, line.emphasizeAt, line.say, joined.durations) }),
         // A joined line has no single provider audio: each run keeps its own voice and provider hash.
         sourceSha256: null,
-        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000,
+        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000, ...(unit.take ? { take: unit.take } : {}),
           voiceId: voiceFor(unit.locale, voiceIds, voice.voiceId), providerSha256: results.get(unit.id).sha256 })),
       };
     }));
@@ -300,7 +314,7 @@ export async function produceKanjiShort(request, deps = {}) {
     const planHash = sha256(planBytes);
     const f = (seconds) => Math.min(timing.frames - 1, Math.max(0, Math.round(seconds * KANJI_FPS)));
     const reviewFrames = [...new Set([0, ...(cardIntro ? [f(cardIntro.convertAt + .4)] : []), f(final.strokes.write.at(-1)[1]), f(final.strokes.review.at(-1)[1]),
-      ...wordHighlights.map(cue => f(cue.at + .4)), timing.frames - 1])].sort((a, b) => a - b);
+      ...wordHighlights.map(cue => f(cue.at + .4)), ...sectionCues.map(cue => f(cue.at + cue.hold / 2)), timing.frames - 1])].sort((a, b) => a - b);
 
     progress("rendering", `Rendering ${timing.frames} frames…`);
     stage = await (deps.startLocalStageServer ?? startLocalStageServer)({ distRoot, validatedPlan: plan });
@@ -367,7 +381,7 @@ export async function produceKanjiShort(request, deps = {}) {
       narration: { onsets: placement.onsets, ends: placement.ends, driftAfterAnchor: placement.drift, wordHighlights, sectionCues, emphasis: placement.emphasis },
       timing: { phases: timing.timing, strokes: final.strokes, intro: cardIntro },
       speech: takes.map(take => ({ id: take.id, locale: take.locale, spoken: take.say, caption: take.caption, seconds: Math.round(take.speech * 1000) / 1000,
-        ...(take.voiceRuns ? { voiceRuns: take.voiceRuns } : {}) })),
+        ...(take.voiceRuns ? { voiceRuns: take.voiceRuns } : {}), ...(take.take ? { take: take.take } : {}) })),
       pronunciation: "not machine-checked: listen to every line before publishing",
       layout: "text fit, overflow and the brush strokes are checked on every captured frame by the export page",
     };
@@ -384,7 +398,7 @@ export async function produceKanjiShort(request, deps = {}) {
       // The voice that read each line, or each run of a line read by several voices.
       narration: beats.map((beat, i) => ({ id: beat.id, locale: takes[i].locale, spoken: takes[i].say, caption: takes[i].caption, sha256: beat.sha256,
         provider, modelId: voice.modelId, licenseStatus: voice.licenseStatus,
-        ...(takes[i].voiceRuns ? { voiceRuns: takes[i].voiceRuns } : { voiceId: takes[i].voiceId, providerSha256: takes[i].sourceSha256 }) })),
+        ...(takes[i].voiceRuns ? { voiceRuns: takes[i].voiceRuns } : { voiceId: takes[i].voiceId, providerSha256: takes[i].sourceSha256, ...(takes[i].take ? { take: takes[i].take } : {}) }) })),
       segmentHashes: render.segmentHashes, stills, artifacts: { ...artifacts, "qa-report.json": sha256(qaBytes) },
     };
     await writeFile(join(working, "render-manifest.json"), JSON.stringify(renderManifest, null, 2));

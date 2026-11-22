@@ -14,7 +14,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { expandNarrationScript } from "./anchored-narration.mjs";
-import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
+import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset, retakeFor } from "./kanji-short.mjs";
 import { scriptRuns, voiceFor } from "./voice-runs.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
@@ -181,6 +181,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
         const runs = config.voice.voiceIds ? scriptRuns(line.say, line.locale) : [];
         if (runs.length > 1 || runs.length === 1 && runs[0].locale !== line.locale)
           log(`            voices: ${runs.map(run => `"${run.text}" ${run.locale} (${voiceFor(run.locale, config.voice.voiceIds, config.voice.voiceId).slice(0, 8)}…)`).join(" + ")}`);
+        // The retakes that apply: a key must be the exact text one voice reads (shown above for split lines).
+        for (const text of (runs.length ? runs : [{ text: line.say }]).map(run => run.text)) {
+          const take = retakeFor(text, config.narration.retakes);
+          if (take) log(`            retake: "${text}" take ${take}`);
+        }
       }
       log(`  words     ${content.words.map(w => `${w.word} (${w.ruby}, ${w.meaning})`).join(" · ")}`);
     }
