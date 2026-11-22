@@ -234,3 +234,17 @@ test("orphan event, mismatched asset/rights, missing speech, wrong rate and clip
   halfSilent.beats[1].sha256 = sha256(silentPayoffBytes);
   await assert.rejects(renderMasterAudio({ beats: halfSilent.beats, timeline: halfSilent.timeline, sfx: halfSilent.sfx }, { outputDir: join(halfSilent.dir, "half-silent"), allowTestAssets: true }), /silence|silent/i);
 });
+
+test("the master keeps true-peak headroom when loud short bursts sit over a quiet voice", { skip: !enabled }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "contentgen-master-peaks-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  // A quiet tone with short loud bursts, some between samples: loudnorm alone left this at -1.47 dBTP.
+  const samples = 96000, audio = Buffer.alloc(44 + samples * 2);
+  audio.set(toneWav(0, 0).subarray(0, 44)); audio.writeUInt32LE(audio.length - 8, 4); audio.writeUInt32LE(samples * 2, 40);
+  for (let i = 0; i < samples; i++) audio.writeInt16LE(Math.round(400 * Math.sin(2 * Math.PI * 220 * i / 48000) + ((i % 14400) < 96 ? 30000 * Math.sin(2 * Math.PI * 3100 * i / 48000) : 0)), 44 + 2 * i);
+  const wavPath = join(dir, "bursts.wav");
+  await writeFile(wavPath, audio);
+  const beats = [{ id: "bursts", wavPath, samples, sha256: sha256(audio), text: "Bursts.", pauseAfterMs: 0, eventIds: [], licenseStatus: "test-only" }];
+  const result = await renderMasterAudio({ beats, timeline: buildSampleTimeline(beats, { fps: { num: 30, den: 1 }, events: [] }), sfx: [] }, { outputDir: join(dir, "output"), allowTestAssets: true });
+  assert.ok(result.loudness.truePeakDbtp <= -1.6, `true peak ${result.loudness.truePeakDbtp} dBTP leaves no headroom`);
+});
