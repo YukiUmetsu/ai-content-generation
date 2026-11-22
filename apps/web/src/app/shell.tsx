@@ -11,6 +11,7 @@ import { loadCatalog, makeCatalogId, persistCatalog, type LocalContent, type Stu
 import { ResearchWorkspace, type ResearchIdeaHandoff } from "./research-workspace";
 import { JobsWorkspace } from "./jobs-workspace";
 import { ProductionWorkspace } from "./production-workspace";
+import { KanjiShortsWorkspace } from "@/features/kanji-shorts/kanji-shorts-workspace";
 import { CharacterPackInspector } from "@/features/character-studio/CharacterPackInspector";
 import { ShortcutsDialog } from "./shortcuts-dialog";
 import { createEditorialProject } from "./editorial-project";
@@ -267,6 +268,12 @@ export function Shell() {
                   catalog.projects.find(p=>p.id===catalog.activeProjectId)?.name ?? "")}/>
           ) : activeSection === "jobs-qa" ? (
             <JobsWorkspace locale={locale} projects={catalog.projects} />
+          ) : activeSection === "kanji" ? (
+            <main className="min-w-0 flex-1 overflow-y-auto px-5 pb-10 sm:px-8" aria-label={locale === "ja" ? "漢字ショート" : "Kanji shorts workspace"}>
+              <div className="mx-auto max-w-6xl">
+                <KanjiShortsWorkspace locale={locale} />
+              </div>
+            </main>
           ) : activeSection === "characters" ? (
             <main className="min-w-0 flex-1 overflow-y-auto px-5 pb-10 sm:px-8" aria-label="Character Studio workspace">
               <div className="mx-auto max-w-6xl">

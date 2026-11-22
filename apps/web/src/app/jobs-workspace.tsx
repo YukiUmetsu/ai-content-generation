@@ -79,6 +79,7 @@ const videoJobNames:Record<string,[string,string]>={
   "video-narration-scene":["Narrate one scene","シーンの音声を作成"],
   "video-render-segment":["Render one scene","シーン映像を作成"],
   "video-thumbnail-concept":["Create thumbnail concept","サムネイル案を作成"],
+  "video-kanji-short":["Make a kanji short","漢字ショートを作成"],
 };
 function jobName(kind:string,locale:Locale):string{
   return videoJobNames[kind]?.[locale==="ja"?1:0]??humanize(kind);
@@ -221,6 +222,7 @@ const productionStageLabels:Record<string,string>={
   "narration-scene":"Narrate one scene","render-segment":"Render one scene segment",
   "final-mux":"Assemble final video","technical-qa":"Check video quality",
   "export-package":"Save video and publishing files",
+  "kanji-short":"Make one kanji short",
 };
 const friendlyStage=(key:string)=>productionStageLabels[key]??key;
 /** Map opaque node ids to operator-facing stage names, falling back to the id. */

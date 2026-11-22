@@ -17,6 +17,7 @@ import { inspectProduction } from "./video-production/cli.mjs";
 import { produceVideo } from "./video-production/produce.mjs";
 import { loadProjectCharacterRigs } from "./video-production/character-rig-render.mjs";
 import { findChromium } from "./video-production/try.mjs";
+import { sendVideo } from "./video-production/media-range.mjs";
 import { localSpeechEndpoint } from "./video-production/local.mjs";
 import { researchVideoTopic } from "./video-production/research-agent.mjs";
 import { generatePreproductionPlan } from "./video-production/preproduction-generator.mjs";
@@ -341,23 +342,7 @@ async function readBody(req){
   }
   return JSON.parse(Buffer.concat(parts).toString("utf8"));
 }
-async function deliverVideo(req,res,releaseDir){
-  const path=join(releaseDir,"video.mp4"),info=await lstat(path);
-  if(!info.isFile()||info.isSymbolicLink()||info.size===0)throw Error("Video output is missing.");
-  let start=0,end=info.size-1,code=200;
-  if(req.headers.range){
-    const match=/^bytes=(\d+)-(\d*)$/u.exec(req.headers.range);
-    if(!match){respond(res,416,{error:"Unsupported video byte range."});return;}
-    start=Number(match[1]);end=match[2]?Number(match[2]):end;
-    if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||start>end||end>=info.size){
-      respond(res,416,{error:"Video byte range outside file."});return;
-    }
-    code=206;
-  }
-  res.writeHead(code,{...headers,"Content-Type":"video/mp4","Accept-Ranges":"bytes",
-    "Content-Length":end-start+1,...(code===206?{"Content-Range":"bytes "+start+"-"+end+"/"+info.size}:{})});
-  createReadStream(path,{start,end}).on("error",()=>res.destroy()).pipe(res);
-}
+const deliverVideo=(req,res,releaseDir)=>sendVideo(req,res,join(releaseDir,"video.mp4"),headers);
 /** Serve only the exact verified preview inode. A media range request cannot
  * swap the file between its checksum and streaming to the user. */
 async function deliverSceneVideo(req,res,file,expectedHash,expectedSize,digestCache){
