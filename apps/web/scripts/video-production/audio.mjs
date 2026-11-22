@@ -269,8 +269,10 @@ export async function renderMasterAudio(input, config) {
   // Sidechain and loudness filters may negotiate internally at 192 kHz.
   // Convert back to the measured 48 kHz sample domain *before* sample trims.
   // loudnorm's own limiter can leave true peaks just over its target (a Fish voice's master measured
-  // over -1.45 dBTP). A last limiter at 4× oversampling (so it sees the peaks between samples, not
-  // only the samples) holds them at -1.8 dB; auto level is off so it never raises the gain.
+  // over -1.45 dBTP). A last limiter at 4× oversampling (so it sees most peaks between samples, not
+  // only the samples) limits them to -1.8 dB, headroom for speech and effects; converting back to
+  // 48 kHz can still raise extreme very-high-frequency clicks, which analyzeLoudness then refuses.
+  // Auto level is off so it never raises the gain.
   filters.push(`${mixed}${lanes.length === 1 ? "" : ","}aresample=48000,atrim=end_sample=${timeline.totalSamples},alimiter=limit=0.84:latency=1,loudnorm=I=-16:TP=-1.5:LRA=11:linear=false,`+
     `aresample=192000,alimiter=limit=${MASTER_PEAK_LIMIT}:level=disabled:latency=1,aresample=48000,atrim=end_sample=${timeline.totalSamples},asetpts=N/SR/TB[m]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[m]", "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", wavPath);
