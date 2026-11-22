@@ -62,6 +62,10 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ card: { typeStep: 2 } }), "/c.json"), /card\.typeStep/u);
   assert.throws(() => readKanjiConfig(config({ card: { brushStyle: [] } }), "/c.json"), /card\.brushStyle/u);
   assert.deepEqual(readKanjiConfig(config({ card: { safeInset: { bottom: .19 } } }), "/c.json").card.safeInset, { bottom: .19 });
+  const voices = { ja: "34cfe2f12a8a4d9490e375fcb845642f", en: "59f85041c50240f08ba9b6fa2bff650d" };
+  assert.deepEqual(readKanjiConfig(config({ voice: { voiceId: VOICE, voiceIds: voices } }), "/c.json").voice.voiceIds, voices);
+  assert.throws(() => readKanjiConfig(config({ voice: { voiceId: VOICE, voiceIds: { japanese: voices.ja } } }), "/c.json"), /voice\.voiceIds/u);
+  assert.throws(() => readKanjiConfig(config({ voice: { voiceId: VOICE, voiceIds: { ja: "x" } } }), "/c.json"), /voice\.voiceIds/u);
   assert.throws(() => readKanjiConfig(config({ card: { safeInset: { bottom: .5 } } }), "/c.json"), /card\.safeInset/u);
   assert.throws(() => readKanjiConfig(config({ card: { safeInset: { botom: .1 } } }), "/c.json"), /card\.safeInset/u);
   assert.throws(() => readKanjiConfig(config({ card: { safeInset: { top: .3, bottom: .3 } } }), "/c.json"), /top and bottom together cover 0\.6 of the frame/u);   // a dry run catches it too

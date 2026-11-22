@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { expandNarrationScript } from "./anchored-narration.mjs";
 import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset } from "./kanji-short.mjs";
+import { scriptRuns, voiceFor } from "./voice-runs.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
 import { localSpeechEndpoint } from "./local.mjs";
@@ -70,6 +71,11 @@ export function readKanjiConfig(json, configPath) {
     try { localSpeechEndpoint(voice.endpoint); } catch (error) { fail(`config: voice.endpoint: ${error.message}`); }
   } else fail("config: voice.provider must be fish or local");
   if (voice.pace !== undefined && !["slow", "measured", "fast"].includes(voice.pace)) fail("config: voice.pace must be slow, measured or fast");
+  // A voice per language: { "ja": "<id>", "en": "<id>" }. Lines that mix scripts are read in runs, each by its language's voice.
+  if (voice.voiceIds !== undefined && !(voice.voiceIds && typeof voice.voiceIds === "object" && !Array.isArray(voice.voiceIds) && Object.keys(voice.voiceIds).length > 0 &&
+    Object.entries(voice.voiceIds).every(([lang, id]) => /^[a-z]{2,3}$/u.test(lang) && typeof id === "string" &&
+      (provider === "fish" ? /^[a-z0-9]{8,64}$/iu.test(id) : id.trim() === id && id.length > 0 && id.length <= 128))))
+    fail("config: voice.voiceIds maps a language (ja, en…) to a voice ID, for example { \"ja\": \"<id>\", \"en\": \"<id>\" }");
   if (voice.licenseStatus !== undefined && !["unknown", "verified"].includes(voice.licenseStatus)) fail("config: voice.licenseStatus must be unknown or verified");
   const music = json.music ?? {};
   if (!/^[a-f0-9]{64}$/u.test(music.sha256 ?? "")) fail("config: music.sha256 must be the SHA-256 of the reviewed music file");
@@ -165,8 +171,13 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
         const { svg } = await (deps.kanjiVgSvg ?? kanjiVgSvg)(char, { planner, cacheDir: config.cacheDir, allowNetwork: false });
         strokeCount = (await planner.glyphFromKanjiVg(char, svg)).strokes.length;
       } catch { if (script.steps.some(step => step.forEach === "strokes")) log(`  (stroke lines are left out: ${char}'s KanjiVG data is not cached yet)`); }
-      for (const line of expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration.labels, strokeCount })))
+      for (const line of expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration.labels, strokeCount }))) {
         log(`  ${line.id.padEnd(9)} [${line.locale} @ ${line.at}${line.offset ? ` ${line.offset >= 0 ? "+" : ""}${line.offset} s` : ""}] ${line.say}${line.caption !== line.say ? `   (caption: ${line.caption})` : ""}`);
+        // With a voice per language, show which voice reads which part.
+        const runs = config.voice.voiceIds ? scriptRuns(line.say, line.locale) : [];
+        if (runs.length > 1 || runs.length === 1 && runs[0].locale !== line.locale)
+          log(`            voices: ${runs.map(run => `"${run.text}" ${run.locale} (${voiceFor(run.locale, config.voice.voiceIds, config.voice.voiceId).slice(0, 8)}…)`).join(" + ")}`);
+      }
       log(`  words     ${content.words.map(w => `${w.word} (${w.ruby}, ${w.meaning})`).join(" · ")}`);
     }
     return [];

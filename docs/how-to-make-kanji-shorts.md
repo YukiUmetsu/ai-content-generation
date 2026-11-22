@@ -60,6 +60,11 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
 - **The spoken name** is the reading of the kanji's own word (水 → mizu). Otherwise it is the first on'yomi (学 → gaku).
   - The voice gets the name in kana inside the English question, because a voice reads romaji such as "hi" (日) as an English word.
   - The captions file shows romaji.
+- **A voice per language.** `voice.voiceIds` maps a language to a voice, for example `{ "ja": "<Japanese voice>", "en": "<English voice>" }`. A line that mixes scripts is read in runs, each by its language's voice, and joined into one line: "Do you know how to write the kanji" in the English voice, "つき" in the Japanese one.
+  - A line in one script is read by the voice of that script (a Japanese line by the Japanese voice). `voice.voiceId` reads any language without its own voice.
+  - Digits go with the text they touch (12月 is Japanese).
+  - The Japanese voice does not read the English sentence's ASCII punctuation: a lone "つき?" came out as すき. The English run is read without the sentence's final "?"; the caption keeps it.
+  - The question's pulse lands as the name's run starts. `--dry-run` shows which voice reads which part, and the release's manifest records each run's voice.
 - **Words are spoken as written**, so the voice reads them in context. An irregular reading (今日, 大人) is spoken from its kana. `narration.speech` overrides the text for a word that the voice misreads, for example `{ "水泳": "すいえい" }`.
 - **Timing** comes from the brush. Kumiki's `kanjiCardWriting` gives the time of every stroke in Node (bundle `dist-shot/kanji-entry.mjs`). The export page plans the same strokes from the same glyph and refuses any frame whose strokes differ.
 - **Reusable parts** that other narrated videos can use:
