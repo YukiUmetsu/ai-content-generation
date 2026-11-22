@@ -54,7 +54,7 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
-  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech, retakes, reuse\)/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech, retakes, reuse, splitPhrases, phraseGap\)/u);
   assert.deepEqual(readKanjiConfig(config({ narration: { reuse: { "ひと": "kunyomi" } } }), "/c.json").narration.reuse, { "ひと": "kunyomi" });
   assert.throws(() => readKanjiConfig(config({ narration: { reuse: { "ひと": "kun yomi" } } }), "/c.json"), /narration\.reuse/u);
   assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 2 } } }), "/c.json").narration.retakes, { "ひと": 2 });
@@ -98,6 +98,33 @@ test("a dry run shows what each short says, with no network, key or browser", as
     assert.ok(lines.some(line => line.includes("[ja @ review.end +0.3 s] 水道。")));
     assert.ok(lines.some(line => line.includes("words") && line.includes("水道") && !line.includes("水 (みず")));
     assert.ok(lines.includes("火: not in the kanji data"));
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("--takes lists each recording once with its takes; --new-take records one with the consents", async () => {
+  assert.throws(() => parseKanjiArgs(["水", "--takes", "--dry-run"]), /Choose one of --dry-run, --takes and --new-take/u);
+  assert.throws(() => parseKanjiArgs(["水", "--new-take"]), /--new-take needs the text/u);
+  const dir = await mkdtemp(join(tmpdir(), "kanji-takes-cli-"));
+  try {
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
+    await writeFile(join(dir, "config.json"), JSON.stringify(config({ narration: { retakes: { "みず。": 2 } } })));
+    const lines = [], measured = { seconds: .5, pitch: [], shape: "falls", rise: -2, fall: -3 };
+    const deps = { log: line => lines.push(line), measureTake: async () => measured,
+      listTakes: async (_config, recording) => recording.text === "みず。" ? [{ take: 1, wavPath: "a" }, { take: 2, wavPath: "b" }] : [] };
+    await main(["水", "--takes", "--config", join(dir, "config.json")], {}, deps);
+    assert.ok(lines.includes(`"おんよみ、" ja · phrase, used in every short · take 1 in use`), lines.join("\n"));
+    assert.ok(lines.includes(`"みず。" ja · 水 · take 2 in use`));
+    assert.ok(lines.includes("    take 2 (in use): 0.5 s · pitch falls (start to end -2 st, peak to end -3 st)"));
+    assert.ok(lines.includes("    not recorded yet"));
+    // Recording needs the consents, and a text that is one of the kanji's recordings.
+    const recorded = [];
+    const record = { ...deps, providerKey: async () => "key-0123456789", recordTake: async (_config, recording, options) => { recorded.push([recording, options]); return { take: 3, wavPath: "c" }; } };
+    await assert.rejects(main(["水", "--new-take", "みず。", "--config", join(dir, "config.json")], {}, record), /--allow-network --voice-consent --transmit-text/u);
+    await assert.rejects(main(["水", "--new-take", "ひと。", "--allow-network", "--voice-consent", "--transmit-text", "--config", join(dir, "config.json")], {}, record), /not a recorded part of 水/u);
+    lines.length = 0;
+    await main(["水", "--new-take", "みず。", "--allow-network", "--voice-consent", "--transmit-text", "--config", join(dir, "config.json")], {}, record);
+    assert.deepEqual([recorded[0][0].text, recorded[0][0].locale, recorded[0][1].apiKey], ["みず。", "ja", "key-0123456789"]);
+    assert.match(lines[0], /^"みず。" take 3: 0\.5 s · pitch falls/u);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 

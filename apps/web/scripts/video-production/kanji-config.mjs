@@ -53,7 +53,11 @@ export function readKanjiConfig(json, configPath) {
   const narration = { ...json.narration };
   const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.length <= max;
   const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  for (const key of Object.keys(narration)) if (!["script", "labels", "speech", "retakes", "reuse"].includes(key)) fail(`config: narration.${key} is not a setting (script, labels, speech, retakes, reuse)`);
+  const narrationKeys = ["script", "labels", "speech", "retakes", "reuse", "splitPhrases", "phraseGap"];
+  for (const key of Object.keys(narration)) if (!narrationKeys.includes(key)) fail(`config: narration.${key} is not a setting (${narrationKeys.join(", ")})`);
+  // Phrases said in every short are one recording each: a line is read in parts at its template's commas.
+  if (narration.splitPhrases !== undefined && typeof narration.splitPhrases !== "boolean") fail("config: narration.splitPhrases must be true or false");
+  if (narration.phraseGap !== undefined && !(Number.isFinite(narration.phraseGap) && narration.phraseGap >= 0 && narration.phraseGap <= 1)) fail("config: narration.phraseGap must be 0 to 1 seconds");
   // A key may name the kanji's fields, so one entry covers every kanji: { "{name.kana}": "kunyomi" }.
   for (const key of ["reuse", "retakes"]) for (const text of Object.keys(isObject(narration[key]) ? narration[key] : {})) {
     const problem = textKeyProblem(text);
@@ -76,7 +80,7 @@ export function readKanjiConfig(json, configPath) {
     fail("config: narration.labels needs both on and kun, for example { \"on\": \"おんよみ\", \"kun\": \"くんよみ\" }");
   if (narration.speech !== undefined && !(narration.speech && typeof narration.speech === "object" && !Array.isArray(narration.speech) &&
     Object.entries(narration.speech).every(([word, text]) => isText(word, 40) && isText(text, 40))))
-    fail("config: narration.speech maps a word to the text the voice reads, for example { \"水泳\": \"すいえい\" }");
+    fail("config: narration.speech maps a word, or a part of a line, to the text the voice reads, for example { \"水泳\": \"すいえい\", \"いま。\": \"今。\" }");
   const card = json.card ?? {};
   for (const key of Object.keys(card)) if (!["heading", "density", "labels", "theme", "brushStyle", "typeStep", "strokeNumbers", "safeInset"].includes(key))
     fail(`config: card.${key} is not a setting (heading, density, labels, theme, brushStyle, typeStep, strokeNumbers, safeInset)`);

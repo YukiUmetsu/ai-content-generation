@@ -2,13 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KanjiShortsWorkspace } from "./kanji-shorts-workspace";
-import { KanjiApiError, cancelRun, loadPreviews, loadReleases, loadStatus, loadStudio, saveSettings, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
+import { KanjiApiError, cancelRun, chooseTake, loadPreviews, loadReleases, loadStatus, loadStudio, loadTakes, recordTake, saveSettings, speakAs, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
 import { changedSettings, draftFrom, draftProblems, editsOnto, settingsFromDraft } from "./kanji-settings-model";
 import { forgetKanjiDrafts } from "./kanji-drafts";
 
 vi.mock("./kanji-shorts-api", async (original) => ({
   ...(await original<typeof import("./kanji-shorts-api")>()),
   loadStudio: vi.fn(), loadStatus: vi.fn(), loadPreviews: vi.fn(), loadReleases: vi.fn(), saveSettings: vi.fn(), startRun: vi.fn(), cancelRun: vi.fn(),
+  loadTakes: vi.fn(), recordTake: vi.fn(), chooseTake: vi.fn(), speakAs: vi.fn(),
 }));
 
 const SETTINGS: KanjiSettings = {
@@ -29,10 +30,13 @@ const PREVIEW = {
   words: [{ word: "人間", ruby: "にんげん", meaning: "human" }],
   lines: [
     { id: "question", locale: "en", at: "start", offset: .35, say: "Do you know how to write the kanji ひと?", caption: "Do you know how to write the kanji hito?", split: true,
-      parts: [{ text: "Do you know how to write the kanji", locale: "en", voiceId: "59f85041c50240f08ba9b6fa2bff650d" },
-        { text: "ひと", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", reuse: { from: "kunyomi", whole: false } }] },
-    { id: "kunyomi", locale: "ja", at: "write.firstStroke", offset: 0, say: "くんよみ、ひと。", caption: "くんよみ、ひと。", split: false,
-      parts: [{ text: "くんよみ、ひと。", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f" }] },
+      parts: [{ text: "Do you know how to write the kanji", locale: "en", voiceId: "59f85041c50240f08ba9b6fa2bff650d", phrase: true,
+          recording: { text: "Do you know how to write the kanji", locale: "en", take: 1 } },
+        { text: "ひと", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: false, reuse: { from: "kunyomi", whole: true, source: "ひと。" },
+          recording: { text: "ひと。", locale: "ja", take: 1 } }] },
+    { id: "kunyomi", locale: "ja", at: "write.firstStroke", offset: 0, say: "くんよみ、ひと。", caption: "くんよみ、ひと。", split: true,
+      parts: [{ text: "くんよみ、", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: true, recording: { text: "くんよみ、", locale: "ja", take: 3 } },
+        { text: "ひと。", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: false, recording: { text: "ひと。", locale: "ja", take: 1 } }] },
   ],
 };
 const running = (state: Run["items"][number]["state"] = "running"): Run => ({ id: "run-1", state: "running", startedAt: "2026-11-22T00:00:00Z", finishedAt: null,
@@ -275,5 +279,43 @@ describe("edits made on a file changed elsewhere", () => {
     const draft = draftFrom({ ...SETTINGS, "narration.reuse": { "{name.kana}": "onyomi" } });
     expect(draftProblems({ ...draft, nameFromKunyomi: true })).toEqual(["name-clash"]);
     expect(draftProblems({ ...draft, reuse: [["ひと", "kunyomi"], ["ひと", "onyomi"]] })).toEqual(["duplicate"]);
+  });
+});
+
+describe("takes", () => {
+  const take = (n: number, shape: "rises" | "falls" | "level") => ({ take: n, seconds: .5, pitch: [140, 150, 155, null, 120], shape, rise: shape === "rises" ? 2 : -2, fall: shape === "falls" ? -3 : 0 });
+
+  it("open from a part: hear each take, see its pitch, choose one, record another, or read the part as another text", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1, "rises"), take(2, "falls")] });
+    vi.mocked(chooseTake).mockResolvedValue({ revision: "r2", settings: SETTINGS });
+    vi.mocked(recordTake).mockResolvedValue(take(3, "level"));
+    vi.mocked(speakAs).mockResolvedValue({ revision: "r3", settings: SETTINGS });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    // The name is heard from the kun'yomi reading: its takes are that recording's.
+    // The question's name part comes first; the kun'yomi line's own ひと。 part opens the same recording.
+    await user.click((await screen.findAllByRole("button", { name: "Takes of ひと。" }))[0]);
+    expect(await screen.findByText(/The name is heard from Kun'yomi's recording/u)).toBeInTheDocument();
+    expect(loadTakes).toHaveBeenCalledWith({ text: "ひと。", locale: "ja", take: 1 });
+    expect(await screen.findByText(/Pitch rises to the end, like a question/u)).toBeInTheDocument();
+    expect(screen.getByLabelText("Play take 2")).toHaveAttribute("src", expect.stringContaining("take=2"));
+    await user.click(screen.getByRole("button", { name: "Use this take" }));
+    expect(chooseTake).toHaveBeenCalledWith("ひと。", 2);
+    await user.click(screen.getByRole("button", { name: "Record another take" }));
+    expect(recordTake).toHaveBeenCalledWith({ text: "ひと。", locale: "ja", take: 1 }, "fish");
+    await user.type(screen.getByLabelText("Read “ひと。” as"), "人。");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(speakAs).toHaveBeenCalledWith("ひと。", "人。");
+  });
+
+  it("say a phrase's take is used in every short", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1, "level"), take(3, "falls")] });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、" }));
+    expect(await screen.findByText("A phrase: the take you choose is used in every short.")).toBeInTheDocument();
+    expect(screen.getByText("In use")).toBeInTheDocument();          // take 3 is the one in use
   });
 });

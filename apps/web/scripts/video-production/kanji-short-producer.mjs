@@ -19,9 +19,9 @@ import { SAMPLE_RATE, TRIM_DEFAULTS, clipPlacementFloor, lastPhrase, placeClips,
 import { chooseMusicWindow, decodeMono, int16Wav, prepareMusicBed } from "./music-bed.mjs";
 import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
-import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
+import { joinRunTakes, runShare, voiceFor } from "./voice-runs.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, reuseSources, kanjiIntro, kanjiTextSettings, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, reuseSources, kanjiIntro, kanjiTextSettings, kanjiSpokenParts, PHRASE_GAP, spokenAs, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -98,6 +98,41 @@ export async function kanjiNarrationScript(config) {
  *   localVoiceAuthorized?:boolean,apiKey?:string,browserExecutable:string,distRoot?:string,signal?:AbortSignal,onProgress?:(event:object)=>void,
  *   ffmpeg?:string,ffprobe?:string}} request
  */
+/** How lines are read in parts, from the config (kanjiSpokenParts). */
+export const kanjiPartOptions = (config) => ({ voiceIds: config.voice.voiceIds, split: config.narration?.splitPhrases ?? true, phraseGap: config.narration?.phraseGap ?? PHRASE_GAP });
+
+/**
+ * How the kanji shorts ask a voice for speech, shared by the producer and the takes page so a take
+ * recorded there is the very recording a short uses: the voice, a part's speaker and take, and the
+ * provider options (consent, key, cache).
+ */
+export function kanjiSpeech(config, { apiKey, signal } = {}) {
+  const provider = config.voice.provider ?? "fish";
+  const voice = { provider, voiceId: config.voice.voiceId, modelId: config.voice.modelId ?? "s2.1-pro-free", licenseStatus: config.voice.licenseStatus ?? "unknown",
+    ...(provider === "local" ? { endpoint: config.voice.endpoint } : {}) };
+  const voiceIds = config.voice.voiceIds;
+  const direction = { pace: config.voice.pace ?? "slow" };
+  return {
+    voice, voiceIds, provider, direction,
+    providerRevision: provider === "fish" ? FISH_REVISION : config.voice.engineRevision,
+    speaker: (locale) => voiceIds ? { id: `voice-${locale.toLowerCase()}`, role: "narrator", voiceId: voiceFor(locale, voiceIds, voice.voiceId) } : undefined,
+    beat(unit) {
+      const speaker = this.speaker(unit.locale);
+      return { id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],
+        // A retake of a text the voice flubbed (narration.retakes), matched on what the voice reads.
+        ...(unit.take ? { take: unit.take } : {}), ...(speaker ? { speaker } : {}) };
+    },
+    job: (locale, beats) => ({ voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true }, beats }),
+    options: (cacheRoot) => ({
+      provider, cacheRoot, direction, signal,
+      ...(voiceIds ? { authorizedVoiceIds: [...new Set(Object.values(voiceIds))] } : {}),
+      ...(provider === "fish"
+        ? { providerRevision: FISH_REVISION, apiKey, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }
+        : { providerRevision: config.voice.engineRevision, localVoiceAuthorized: true }),
+    }),
+  };
+}
+
 export async function produceKanjiShort(request, deps = {}) {
   const { char, config } = request;
   const progress = (phase, message) => request.onProgress?.({ phase, char, message });
@@ -212,19 +247,21 @@ export async function produceKanjiShort(request, deps = {}) {
     if (musicSeconds - musicFrom < estimatedSeconds)
       fail(`the music has ${Math.max(0, musicSeconds - musicFrom).toFixed(1)} s from ${musicFrom} s; this short's narration needs about ${Math.ceil(estimatedSeconds)} s`);
 
-    const voice = { provider, voiceId: config.voice.voiceId, modelId: config.voice.modelId ?? "s2.1-pro-free", licenseStatus: config.voice.licenseStatus ?? "unknown",
-      ...(provider === "local" ? { endpoint: config.voice.endpoint } : {}) };
-    // With a voice per language, a line that mixes scripts is read in runs, each by its language's
-    // voice ("Do you know how to write the kanji" in English, "つき?" in Japanese), then joined.
-    const voiceIds = config.voice.voiceIds;
+    const voicing = kanjiSpeech(config, { apiKey: request.apiKey, signal: request.signal });
+    const { voice, voiceIds } = voicing;
     // Retakes and reuses for this short: a key may name its fields ({ "{name.kana}": "kunyomi" }).
     const retakes = kanjiTextSettings(config.narration?.retakes, scriptData), reuse = kanjiTextSettings(config.narration?.reuse, scriptData);
-    const runsOf = (line) => voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
+    // Each line is read in parts (kanjiSpokenParts): a phrase said in every short is one recording,
+    // and with a voice per language each part is read by its language's voice, then joined.
     const units = lines.flatMap(line => {
-      const runs = runsOf(line);
-      return runs.map((run, k) => {
-        const take = retakeFor(run.text, retakes), reusedFrom = reuseFor(run.text, reuse);
-        return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}), ...(reusedFrom ? { reusedFrom } : {}) };
+      const parts = kanjiSpokenParts(line, kanjiPartOptions(config));
+      return parts.map((part, k) => {
+        // "Spoken as" (narration.speech) also reads any part as another text, for example いま。 as 今。,
+        // whose kanji gives the voice the word's accent. Retakes go by what the voice reads, reuses by what the line says.
+        const spoken = spokenAs(part.text, config.narration?.speech) ?? part.text;
+        const take = retakeFor(spoken, retakes), reusedFrom = reuseFor(part.text, reuse);
+        return { line: line.id, id: parts.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...part, text: spoken, written: part.text,
+          ...(take ? { take } : {}), ...(reusedFrom ? { reusedFrom } : {}) };
       });
     });
     // A reused text is heard as the last phrase of another line of this short (reuseSources); in a
@@ -232,23 +269,12 @@ export async function produceKanjiShort(request, deps = {}) {
     // as a fallback should the line's audio have no clear pause.
     for (const [unit, found] of reuseSources(units)) if (found.cut) Object.assign(unit, found); else delete unit.reusedFrom;
     const reuseWarnings = [];
-    progress("narration", `Synthesizing ${units.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
+    const phrases = new Set(units.filter(unit => unit.phrase).map(unit => unit.text)).size;
+    progress("narration", `Synthesizing ${units.length} parts (${provider}; ${phrases} are phrases said in every short, recorded once)…`);
     const results = new Map();
     for (const locale of [...new Set(units.map(unit => unit.locale))]) {
       const group = units.filter(unit => unit.locale === locale);
-      const done = await (deps.synthesizeNarration ?? synthesizeNarration)({
-        voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true },
-        beats: group.map(unit => ({ id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],
-          // A retake of a text the voice flubbed (narration.retakes), matched on what the voice reads.
-          ...(unit.take ? { take: unit.take } : {}),
-          ...(voiceIds ? { speaker: { id: `voice-${locale.toLowerCase()}`, role: "narrator", voiceId: voiceFor(locale, voiceIds, voice.voiceId) } } : {}) })),
-      }, {
-        provider, cacheRoot: cacheDir, direction: { pace: config.voice.pace ?? "slow" }, signal: request.signal,
-        ...(voiceIds ? { authorizedVoiceIds: [...new Set(Object.values(voiceIds))] } : {}),
-        ...(provider === "fish"
-          ? { providerRevision: FISH_REVISION, apiKey: request.apiKey, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }
-          : { providerRevision: config.voice.engineRevision, localVoiceAuthorized: true }),
-      });
+      const done = await (deps.synthesizeNarration ?? synthesizeNarration)(voicing.job(locale, group.map(unit => voicing.beat(unit))), voicing.options(cacheDir));
       group.forEach((unit, i) => { if (done[i]?.id !== unit.id) fail("narration came back out of order"); results.set(unit.id, done[i]); });
     }
     // The take a unit is heard from: its own, or for a reused text the matching part of the source line's take.
@@ -264,10 +290,11 @@ export async function produceKanjiShort(request, deps = {}) {
     };
     const sourceOf = (unit) => reused.has(unit.id) ? results.get(unit.source.id) : results.get(unit.id);
     const voiceOf = (unit) => voiceFor(reused.has(unit.id) ? unit.source.locale : unit.locale, voiceIds, voice.voiceId);
-    const provenance = (unit) => reused.has(unit.id) ? { reusedFrom: unit.reusedFrom } : unit.take ? { take: unit.take } : {};
+    const provenance = (unit) => ({ ...(reused.has(unit.id) ? { reusedFrom: unit.reusedFrom } : unit.take ? { take: unit.take } : {}), ...(unit.phrase ? { phrase: true } : {}) });
     const takes = await Promise.all(lines.map(async line => {
       const runs = units.filter(unit => unit.line === line.id);
-      const trimmed = await Promise.all(runs.map(takeOf));
+      // A part after a comma keeps a comma's pause before it; runs of one sentence follow each other closely.
+      const trimmed = (await Promise.all(runs.map(takeOf))).map((take, k) => runs[k].gapBefore === undefined ? take : { ...take, gapBefore: runs[k].gapBefore });
       if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: sourceOf(runs[0]).sha256, voiceId: voiceOf(runs[0]), ...provenance(runs[0]) };
       const joined = joinRunTakes(trimmed);
       return {
