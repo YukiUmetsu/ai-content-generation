@@ -206,7 +206,8 @@ export async function produceKanjiShort(request, deps = {}) {
       estimate.highlights.map(cue => ({ word: cue.item, at: cue.at, hold: cue.hold })),
       estimate.cues.map(cue => ({ section: cue.cue, at: cue.at, hold: cue.hold }))))));
     // The music must also last the estimated narration (more words make a longer short), checked before any voice.
-    const estimatedSeconds = estimate.end + pacing.tail + 2;
+    // Spoken words run longer than the estimate (up to about 1.2 s against 0.4 s), so keep a margin of 4 s.
+    const estimatedSeconds = estimate.end + pacing.tail + 4;
     if (musicSeconds - musicFrom < estimatedSeconds)
       fail(`the music has ${Math.max(0, musicSeconds - musicFrom).toFixed(1)} s from ${musicFrom} s; this short's narration needs about ${Math.ceil(estimatedSeconds)} s`);
 

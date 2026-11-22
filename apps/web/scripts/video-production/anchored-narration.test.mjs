@@ -131,3 +131,9 @@ test("highlights and cues start a lead before their line but never before the vi
   assert.equal(round(last.at + last.hold), round(placed.ends.w2 + 1));                     // and the last ends its tail after its speech
 });
 const round = (v) => Math.round(v * 1000) / 1000;
+
+test("a clamped highlight or cue keeps a positive hold even when the next line follows at once", () => {
+  const read = readNarrationScript(script([{ id: "w{n}", forEach: "words", say: "{item.speech}", at: "start", highlight: true, cue: "words", gap: 0 }], { highlightLead: .8 }));
+  const placed = placeOnAnchors({ lines: expandNarrationScript(read, DATA), anchors: { start: 0 }, speech: { w1: .4, w2: .4 } });
+  assert.ok(placed.highlights.every(h => h.hold >= .05) && placed.cues.every(c => c.hold >= .05));
+});

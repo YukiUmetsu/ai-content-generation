@@ -183,13 +183,13 @@ export function placeOnAnchors({ lines, anchors, speech, partial = false, highli
   const highlights = lit.map((line, i) => {
     const at = round3(Math.max(0, onsets[line.id] - highlightLead));
     const next = lit[i + 1];
-    return { item: line.index, at, hold: round3(next ? onsets[next.id] - highlightLead - at : onsets[line.id] + speech[line.id] + highlightTail - at) };
+    return { item: line.index, at, hold: round3(Math.max(.05, next ? onsets[next.id] - highlightLead - at : onsets[line.id] + speech[line.id] + highlightTail - at)) };
   });
   const emphasis = placed.filter(line => line.emphasizeAt !== undefined).map(line => ({ id: line.id, at: round3(onsets[line.id] + speech[line.id] * line.emphasizeAt) }));
   const cues = placed.flatMap((line, i) => {
     if (line.cue === undefined) return [];
     const at = round3(Math.max(0, onsets[line.id] - highlightLead)), next = placed[i + 1];
-    return [{ id: line.id, cue: line.cue, at, hold: round3(next ? onsets[next.id] - highlightLead - at : onsets[line.id] + speech[line.id] + highlightTail - at) }];
+    return [{ id: line.id, cue: line.cue, at, hold: round3(Math.max(.05, next ? onsets[next.id] - highlightLead - at : onsets[line.id] + speech[line.id] + highlightTail - at)) }];
   });
   return { placed: placed.map(line => line.id), onsets, ends, drift, highlights, emphasis, cues, end: placed.length ? round3(previousEnd) : 0 };
 }
