@@ -192,11 +192,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
         for (const text of partsOf(line).map(run => run.text)) {
           const take = retakeFor(text, config.narration.retakes), from = reuseFor(text, config.narration.reuse);
           const source = from && expanded.find(l => l.id === from);
-          const cut = source && source.id !== line.id ? reuseCut(partsOf(source).at(-1).text, text) : null;
-          if (from && !source) log(`            reuse: line ${from} does not exist (${expanded.map(l => l.id).join(", ")}); production would stop`);
-          else if (from && source.id === line.id) log(`            reuse: "${text}" cannot come from its own line; production would stop`);
-          else if (cut) log(`            reuse: "${text}" is read as ${cut.whole ? "the whole" : "the part after the last comma"} of line ${from}`);
-          else if (from) log(`            reuse: not here, line ${from} does not say "${text}" after a comma; it is read on its own`);
+          const chained = source && partsOf(source).some(part => reuseFor(part.text, config.narration.reuse));
+          const cut = source && source.id !== line.id && !chained ? reuseCut(partsOf(source).at(-1).text, text) : null;
+          const why = !source ? `this short has no line ${from}` : source.id === line.id ? "it is the text's own line" : chained ? `line ${from} is itself reused` : `line ${from} does not say "${text}" after a comma`;
+          if (cut) log(`            reuse: "${text}" is read as ${cut.whole ? "the whole" : "the part after the last comma"} of line ${from}`);
+          else if (from) log(`            reuse: not here (${why}); "${text}" is read on its own`);
           if (take && !cut) log(`            retake: "${text}" take ${take}`);
         }
       }

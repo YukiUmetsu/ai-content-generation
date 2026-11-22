@@ -227,13 +227,14 @@ export async function produceKanjiShort(request, deps = {}) {
     // A reused text is heard as the last phrase of another line of this short, where that line says
     // it after a comma (reuseCut); in a short where it does not, the text is read on its own. It is
     // still read on its own too, as a fallback should the line's audio have no clear pause.
-    for (const unit of units.filter(u => u.reusedFrom)) {
-      if (!lines.some(line => line.id === unit.reusedFrom)) fail(`narration.reuse takes "${unit.text}" from line ${unit.reusedFrom}, which this short does not have (${lines.map(l => l.id).join(", ")})`);
-      if (unit.reusedFrom === unit.line) fail(`narration.reuse takes "${unit.text}" from its own line ${unit.line}`);
-      if (units.some(u => u.line === unit.reusedFrom && u.reusedFrom)) fail(`narration.reuse takes "${unit.text}" from line ${unit.reusedFrom}, which is itself reused`);
-      unit.source = units.filter(u => u.line === unit.reusedFrom).at(-1);
-      unit.cut = reuseCut(unit.source.text, unit.text);
-      if (!unit.cut) { delete unit.reusedFrom; delete unit.source; delete unit.cut; }
+    // A reuse applies only where its source line is in this short, is another line, says the text
+    // after its last comma, and has no reused part itself (decided from the config, not in turn).
+    const asked = units.filter(u => u.reusedFrom);
+    const reusing = new Set(asked.map(u => u.line));
+    for (const unit of asked) {
+      const source = unit.reusedFrom !== unit.line && !reusing.has(unit.reusedFrom) ? units.filter(u => u.line === unit.reusedFrom).at(-1) : undefined;
+      const cut = source ? reuseCut(source.text, unit.text) : null;
+      if (cut) { unit.source = source; unit.cut = cut; } else delete unit.reusedFrom;
     }
     const reuseWarnings = [];
     const spoken = units;

@@ -82,8 +82,8 @@ export function speechPhrases(samples, { sampleRate = SAMPLE_RATE, pauseDb = -30
  * The samples of a take's last phrase, for example "ひと" out of "くんよみ、ひと。", to reuse that
  * natural reading elsewhere. `pauses` is how many phrase breaks the text has (its commas): the
  * longest that many pauses are the breaks, so a consonant's closure inside a word is not one. The
- * phrase starts 50 ms before its speech (never before the middle of its pause) and runs to the
- * end of the take. Null when the take has fewer pauses, or the last phrase is shorter than
+ * phrase starts where the sound before it falls 50 dB under the take's peak (a soft "h" or "s"
+ * included), never before the middle of its pause, and runs to the end of the take. Null when the take has fewer pauses, or the last phrase is shorter than
  * 0.12 s or never comes within 20 dB of the take's peak (a click or a breath, not a word).
  * @param {Int16Array} samples
  */
@@ -98,8 +98,11 @@ export function lastPhrase(samples, { pauses = 1, sampleRate = SAMPLE_RATE, paus
   let speech = 0;
   for (const v of tailEnv.level) if (v > peak * 10 ** (pauseDb / 20)) speech++;
   if (speech * .01 < .12) return null;
-  const from = Math.max(Math.round((brk.start + brk.end) / 2), brk.end - Math.round(.05 * sampleRate));
-  return samples.slice(from);
+  // Walk back from the speech to true quiet, so a breathy start is kept whole.
+  const env = envelope(samples, sampleRate), quiet = peak * 10 ** (-50 / 20), mid = Math.round((brk.start + brk.end) / 2);
+  let frame = Math.floor(brk.end / env.win) - 1;
+  while (frame > 0 && frame * env.win > mid && env.level[frame] > quiet) frame--;
+  return samples.slice(Math.max(mid, (frame - 1) * env.win));
 }
 
 /** How much silence a trimmed clip keeps around its speech, and its fades, seconds. */

@@ -312,12 +312,12 @@ test("a script line with no moment in the picture, or a highlight the card canno
     // A narration much longer than the 35 s of music stops before any voice, with the estimate.
     await assert.rejects(run(steps({ id: "long", say: "This is a very long closing sentence. ".repeat(10).trim(), locale: "en", at: "review.end" })),
       /this short's narration needs about \d+ s/u);
-    assert.deepEqual(touched, []);
-    // A text reused from a line the short does not have stops before any voice.
+    // A text reused from a line the short does not have is read on its own: the voice is asked for it.
     await assert.rejects(produceKanjiShort({ char: "一", config: readKanjiConfig(config({ music, narration: { reuse: { "Do you know how to write the kanji いち?": "outro" } } }), join(dir, "config.json")),
       out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps),
-      /from line outro, which this short does not have/u);
-    assert.deepEqual(touched, []);
+      /out of order/u);
+    assert.deepEqual(touched, ["voice"]);
+    touched.length = 0;
     // A cue on a line at the very start is placed at 0 s, not before the video: the early checks pass and the voice is asked for.
     await assert.rejects(run({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "q", say: "{name.kana}", at: "start", cue: "words" }] }),
       /out of order/u);
