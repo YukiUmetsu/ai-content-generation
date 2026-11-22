@@ -54,7 +54,9 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ timing: { writing: 5 } }), "/c.json"), /timing\.writing is not a setting/u);
   assert.throws(() => readKanjiConfig(config({ narration: { labels: { on: "オンよみ" } } }), "/c.json"), /both on and kun/u);
   assert.throws(() => readKanjiConfig(config({ narration: { speech: null } }), "/c.json"), /narration\.speech/u);
-  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech, retakes\)/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech, retakes, reuse\)/u);
+  assert.deepEqual(readKanjiConfig(config({ narration: { reuse: { "ひと": "kunyomi" } } }), "/c.json").narration.reuse, { "ひと": "kunyomi" });
+  assert.throws(() => readKanjiConfig(config({ narration: { reuse: { "ひと": "kun yomi" } } }), "/c.json"), /narration\.reuse/u);
   assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 2 } } }), "/c.json").narration.retakes, { "ひと": 2 });
   assert.throws(() => readKanjiConfig(config({ narration: { retakes: { "ひと": 1 } } }), "/c.json"), /narration\.retakes/u);
   assert.throws(() => readKanjiConfig(config({ narration: { script: 3 } }), "/c.json"), /narration\.script must be a file or/u);
@@ -310,6 +312,11 @@ test("a script line with no moment in the picture, or a highlight the card canno
     // A narration much longer than the 35 s of music stops before any voice, with the estimate.
     await assert.rejects(run(steps({ id: "long", say: "This is a very long closing sentence. ".repeat(10).trim(), locale: "en", at: "review.end" })),
       /this short's narration needs about \d+ s/u);
+    assert.deepEqual(touched, []);
+    // A text reused from a line the short does not have stops before any voice.
+    await assert.rejects(produceKanjiShort({ char: "一", config: readKanjiConfig(config({ music, narration: { reuse: { "Do you know how to write the kanji いち?": "outro" } } }), join(dir, "config.json")),
+      out: join(dir, "out"), browserExecutable: "/bin/chrome", apiKey: "key-0123456789", allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }, deps),
+      /from line outro, which this short does not have/u);
     assert.deepEqual(touched, []);
     // A cue on a line at the very start is placed at 0 s, not before the video: the early checks pass and the voice is asked for.
     await assert.rejects(run({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps: [{ id: "q", say: "{name.kana}", at: "start", cue: "words" }] }),

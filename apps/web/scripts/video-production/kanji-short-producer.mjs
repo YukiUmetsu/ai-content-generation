@@ -15,13 +15,13 @@ import { fingerprintBuiltStage, startLocalStageServer } from "./stage-server.mjs
 import { probeBrowserExecutable, renderVideoSegments } from "./render.mjs";
 import { muxVideo, probeMuxedMp4 } from "./produce.mjs";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript, scriptAnchors } from "./anchored-narration.mjs";
-import { SAMPLE_RATE, TRIM_DEFAULTS, clipPlacementFloor, placeClips, toFrameGrid, trimSpeech } from "./narration-clips.mjs";
+import { SAMPLE_RATE, TRIM_DEFAULTS, clipPlacementFloor, lastPhrase, placeClips, toFrameGrid, trimSpeech } from "./narration-clips.mjs";
 import { chooseMusicWindow, decodeMono, int16Wav, prepareMusicBed } from "./music-bed.mjs";
 import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -220,14 +220,21 @@ export async function produceKanjiShort(request, deps = {}) {
     const units = lines.flatMap(line => {
       const runs = runsOf(line);
       return runs.map((run, k) => {
-        const take = retakeFor(run.text, config.narration?.retakes);
-        return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}) };
+        const take = retakeFor(run.text, config.narration?.retakes), reusedFrom = reuseFor(run.text, config.narration?.reuse);
+        return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}), ...(reusedFrom ? { reusedFrom } : {}) };
       });
     });
-    progress("narration", `Synthesizing ${units.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
+    // A reused text is not read on its own: it is the last phrase of another line of this short.
+    for (const unit of units.filter(u => u.reusedFrom)) {
+      if (!lines.some(line => line.id === unit.reusedFrom)) fail(`narration.reuse takes "${unit.text}" from line ${unit.reusedFrom}, which this short does not have (${lines.map(l => l.id).join(", ")})`);
+      if (unit.reusedFrom === unit.line) fail(`narration.reuse takes "${unit.text}" from its own line ${unit.line}`);
+      if (units.some(u => u.line === unit.reusedFrom && u.reusedFrom)) fail(`narration.reuse takes "${unit.text}" from line ${unit.reusedFrom}, which is itself reused`);
+    }
+    const spoken = units.filter(unit => !unit.reusedFrom);
+    progress("narration", `Synthesizing ${spoken.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
     const results = new Map();
-    for (const locale of [...new Set(units.map(unit => unit.locale))]) {
-      const group = units.filter(unit => unit.locale === locale);
+    for (const locale of [...new Set(spoken.map(unit => unit.locale))]) {
+      const group = spoken.filter(unit => unit.locale === locale);
       const done = await (deps.synthesizeNarration ?? synthesizeNarration)({
         voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true },
         beats: group.map(unit => ({ id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],
@@ -243,11 +250,21 @@ export async function produceKanjiShort(request, deps = {}) {
       });
       group.forEach((unit, i) => { if (done[i]?.id !== unit.id) fail("narration came back out of order"); results.set(unit.id, done[i]); });
     }
+    // The take a unit is heard from: its own, or for a reused text the last read part of the source line.
+    const sourceOf = (unit) => unit.reusedFrom ? results.get(units.filter(u => u.line === unit.reusedFrom).at(-1).id) : results.get(unit.id);
+    const takeOf = async (unit) => {
+      const samples = int16Wav(await readFile(sourceOf(unit).wavPath));
+      if (!unit.reusedFrom) return trimSpeech(samples);
+      const phrase = lastPhrase(samples);
+      if (!phrase) fail(`line ${unit.reusedFrom} has no pause, so "${unit.text}" cannot be taken from its last phrase; remove it from narration.reuse`);
+      return trimSpeech(phrase);
+    };
+    const provenance = (unit) => ({ ...(unit.take ? { take: unit.take } : {}), ...(unit.reusedFrom ? { reusedFrom: unit.reusedFrom } : {}) });
     const takes = await Promise.all(lines.map(async line => {
       const runs = units.filter(unit => unit.line === line.id);
-      const trimmed = await Promise.all(runs.map(async unit => trimSpeech(int16Wav(await readFile(results.get(unit.id).wavPath)))));
-      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: results.get(runs[0].id).sha256, voiceId: voiceFor(runs[0].locale, voiceIds, voice.voiceId),
-        ...(runs[0].take ? { take: runs[0].take } : {}) };
+      const trimmed = await Promise.all(runs.map(takeOf));
+      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: sourceOf(runs[0]).sha256, voiceId: voiceFor(runs[0].locale, voiceIds, voice.voiceId),
+        ...provenance(runs[0]) };
       const joined = joinRunTakes(trimmed);
       return {
         ...line, clip: joined.clip, lead: joined.lead, speech: joined.speech,
@@ -255,8 +272,8 @@ export async function produceKanjiShort(request, deps = {}) {
         ...(line.emphasizeAt === undefined ? {} : { emphasizeAt: runShare(runs, joined.starts, joined.speech, line.emphasizeAt, line.say, joined.durations) }),
         // A joined line has no single provider audio: each run keeps its own voice and provider hash.
         sourceSha256: null,
-        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000, ...(unit.take ? { take: unit.take } : {}),
-          voiceId: voiceFor(unit.locale, voiceIds, voice.voiceId), providerSha256: results.get(unit.id).sha256 })),
+        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000, ...provenance(unit),
+          voiceId: voiceFor(unit.locale, voiceIds, voice.voiceId), providerSha256: sourceOf(unit).sha256 })),
       };
     }));
     const speech = Object.fromEntries(takes.map(take => [take.id, take.speech]));
@@ -382,7 +399,7 @@ export async function produceKanjiShort(request, deps = {}) {
       narration: { onsets: placement.onsets, ends: placement.ends, driftAfterAnchor: placement.drift, wordHighlights, sectionCues, emphasis: placement.emphasis },
       timing: { phases: timing.timing, strokes: final.strokes, intro: cardIntro },
       speech: takes.map(take => ({ id: take.id, locale: take.locale, spoken: take.say, caption: take.caption, seconds: Math.round(take.speech * 1000) / 1000,
-        ...(take.voiceRuns ? { voiceRuns: take.voiceRuns } : {}), ...(take.take ? { take: take.take } : {}) })),
+        ...(take.voiceRuns ? { voiceRuns: take.voiceRuns } : {}), ...(take.take ? { take: take.take } : {}), ...(take.reusedFrom ? { reusedFrom: take.reusedFrom } : {}) })),
       pronunciation: "not machine-checked: listen to every line before publishing",
       layout: "text fit, overflow and the brush strokes are checked on every captured frame by the export page",
     };
@@ -399,7 +416,7 @@ export async function produceKanjiShort(request, deps = {}) {
       // The voice that read each line, or each run of a line read by several voices.
       narration: beats.map((beat, i) => ({ id: beat.id, locale: takes[i].locale, spoken: takes[i].say, caption: takes[i].caption, sha256: beat.sha256,
         provider, modelId: voice.modelId, licenseStatus: voice.licenseStatus,
-        ...(takes[i].voiceRuns ? { voiceRuns: takes[i].voiceRuns } : { voiceId: takes[i].voiceId, providerSha256: takes[i].sourceSha256, ...(takes[i].take ? { take: takes[i].take } : {}) }) })),
+        ...(takes[i].voiceRuns ? { voiceRuns: takes[i].voiceRuns } : { voiceId: takes[i].voiceId, providerSha256: takes[i].sourceSha256, ...(takes[i].take ? { take: takes[i].take } : {}), ...(takes[i].reusedFrom ? { reusedFrom: takes[i].reusedFrom } : {}) }) })),
       segmentHashes: render.segmentHashes, stills, artifacts: { ...artifacts, "qa-report.json": sha256(qaBytes) },
     };
     await writeFile(join(working, "render-manifest.json"), JSON.stringify(renderManifest, null, 2));

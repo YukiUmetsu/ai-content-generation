@@ -178,14 +178,19 @@ export function kanjiShortTiming({ intro, write, review, end, tail = KANJI_SHORT
   return { timing: { intro, write, review, info: (frames - before) / KANJI_FPS }, frames, totalSamples: frames * 1600 };
 }
 
-/**
- * The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }): the
- * key must be that exact text, compared after Unicode normalization and trimming; only the
- * config's own keys count. Undefined when none is asked for.
- */
-export function retakeFor(text, retakes) {
-  if (!retakes) return undefined;
+/** A per-text setting of the config (`narration.retakes`, `narration.reuse`): the key must be the exact text one voice reads, compared after Unicode normalization and trimming; only the config's own keys count. */
+export function textSetting(text, settings) {
+  if (!settings) return undefined;
   const key = text.normalize("NFC").trim();
-  for (const [wanted, take] of Object.entries(retakes)) if (wanted.normalize("NFC").trim() === key) return take;
+  for (const [wanted, value] of Object.entries(settings)) if (wanted.normalize("NFC").trim() === key) return value;
   return undefined;
 }
+
+/** The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }), or undefined. */
+export const retakeFor = (text, retakes) => textSetting(text, retakes);
+
+/**
+ * The line whose last phrase a text one voice reads is taken from (`narration.reuse`, for example
+ * { "ひと": "kunyomi" }: the question's name is read as in "くんよみ、ひと。"), or undefined.
+ */
+export const reuseFor = (text, reuse) => textSetting(text, reuse);

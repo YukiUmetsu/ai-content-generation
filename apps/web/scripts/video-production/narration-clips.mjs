@@ -29,6 +29,49 @@ export function speechBounds(samples, { sampleRate = SAMPLE_RATE, floorDb = -42 
   return { start: Math.max(0, a - win), end: b };
 }
 
+/**
+ * The phrases of a take: stretches of speech separated by pauses of at least `minPause` seconds
+ * where the 10 ms RMS envelope stays `pauseDb` below the take's peak (a comma's breath, not the
+ * dips inside a word). Sample indices `{ start, end }`, in order; empty for a take with no speech.
+ * @param {Int16Array} samples
+ */
+export function speechPhrases(samples, { sampleRate = SAMPLE_RATE, pauseDb = -30, minPause = .12 } = {}) {
+  const win = Math.max(1, Math.round(sampleRate * .01)), frames = Math.floor(samples.length / win);
+  const level = new Float64Array(frames);
+  for (let f = 0; f < frames; f++) {
+    let sum = 0;
+    for (let i = f * win; i < (f + 1) * win; i++) sum += samples[i] * samples[i];
+    level[f] = Math.sqrt(sum / win);
+  }
+  const peak = level.reduce((a, b) => Math.max(a, b), 0);
+  if (peak < 1) return [];
+  const floor = peak * 10 ** (pauseDb / 20), gap = Math.max(1, Math.round(minPause / .01));
+  const phrases = [];
+  let start = -1, quiet = 0;
+  for (let f = 0; f < frames; f++) {
+    if (level[f] > floor) {
+      if (start < 0) start = f;
+      else if (quiet >= gap) { phrases.push({ start: start * win, end: (f - quiet) * win }); start = f; }
+      quiet = 0;
+    } else if (start >= 0) quiet++;
+  }
+  if (start >= 0) phrases.push({ start: start * win, end: (frames - quiet) * win });
+  return phrases;
+}
+
+/**
+ * The samples of a take's last phrase, from the middle of the pause before it to the end of the
+ * take, for example "ひと" out of "くんよみ、ひと。" to reuse that natural reading elsewhere. Null when
+ * the take has no pause, so there is no phrase to take apart.
+ * @param {Int16Array} samples
+ */
+export function lastPhrase(samples, options = {}) {
+  const phrases = speechPhrases(samples, options);
+  if (phrases.length < 2) return null;
+  const before = phrases[phrases.length - 2], last = phrases[phrases.length - 1];
+  return samples.slice(Math.round((before.end + last.start) / 2));
+}
+
 /** How much silence a trimmed clip keeps around its speech, and its fades, seconds. */
 export const TRIM_DEFAULTS = Object.freeze({ preRoll: .03, postRoll: .08, fade: .012 });
 

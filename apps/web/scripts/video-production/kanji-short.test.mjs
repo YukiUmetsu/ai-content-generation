@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -122,4 +122,6 @@ test("a retake matches the exact text one voice reads, after normalization, and 
   assert.equal(retakeFor("くんよみ、ひと。", { "ひと": 5 }), undefined);                     // a whole line is another text
   assert.equal(retakeFor("toString", {}), undefined);                                         // not an inherited property
   assert.equal(retakeFor("ひと", undefined), undefined);
+  assert.equal(reuseFor(" ひと", { "ひと": "kunyomi" }), "kunyomi");                          // reuse matches the same way
+  assert.equal(reuseFor("みず", { "ひと": "kunyomi" }), undefined);
 });
