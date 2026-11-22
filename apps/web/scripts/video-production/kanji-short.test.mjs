@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -124,4 +124,13 @@ test("a retake matches the exact text one voice reads, after normalization, and 
   assert.equal(retakeFor("ひと", undefined), undefined);
   assert.equal(reuseFor(" ひと", { "ひと": "kunyomi" }), "kunyomi");                          // reuse matches the same way
   assert.equal(reuseFor("みず", { "ひと": "kunyomi" }), undefined);
+});
+
+test("a reused text comes only from where the source line says exactly it after a comma", () => {
+  assert.deepEqual(reuseCut("くんよみ、ひと。", "ひと"), { whole: false, pauses: 1 });
+  assert.deepEqual(reuseCut("おんよみ、ゲツ、ガツ。", "ガツ"), { whole: false, pauses: 2 });
+  assert.deepEqual(reuseCut("ひと。", "ひと"), { whole: true, pauses: 0 });                     // a split run that is just the word
+  assert.equal(reuseCut("くんよみ、ついやす。", "ひ"), null);                                    // another kanji's line: not reused
+  assert.equal(reuseCut("くんよみ、ひと。", "と"), null);                                         // only the whole last part counts
+  assert.equal(reuseCut("くんよみひと", "ひと"), null);                                          // no comma, no pause to cut at
 });

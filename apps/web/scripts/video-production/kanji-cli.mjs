@@ -14,7 +14,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { expandNarrationScript } from "./anchored-narration.mjs";
-import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset, retakeFor, reuseFor } from "./kanji-short.mjs";
+import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset, retakeFor, reuseCut, reuseFor } from "./kanji-short.mjs";
 import { scriptRuns, voiceFor } from "./voice-runs.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
@@ -179,17 +179,25 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
         const { svg } = await (deps.kanjiVgSvg ?? kanjiVgSvg)(char, { planner, cacheDir: config.cacheDir, allowNetwork: false });
         strokeCount = (await planner.glyphFromKanjiVg(char, svg)).strokes.length;
       } catch { if (script.steps.some(step => step.forEach === "strokes")) log(`  (stroke lines are left out: ${char}'s KanjiVG data is not cached yet)`); }
-      for (const line of expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration.labels, strokeCount }))) {
+      const expanded = expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration.labels, strokeCount }));
+      // What one voice reads of a line: its runs with a voice per language, else the whole line.
+      const partsOf = (line) => config.voice.voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
+      for (const line of expanded) {
         log(`  ${line.id.padEnd(9)} [${line.locale} @ ${line.at}${line.offset ? ` ${line.offset >= 0 ? "+" : ""}${line.offset} s` : ""}] ${line.say}${line.caption !== line.say ? `   (caption: ${line.caption})` : ""}`);
         // With a voice per language, show which voice reads which part.
         const runs = config.voice.voiceIds ? scriptRuns(line.say, line.locale) : [];
         if (runs.length > 1 || runs.length === 1 && runs[0].locale !== line.locale)
           log(`            voices: ${runs.map(run => `"${run.text}" ${run.locale} (${voiceFor(run.locale, config.voice.voiceIds, config.voice.voiceId).slice(0, 8)}…)`).join(" + ")}`);
         // The retakes that apply: a key must be the exact text one voice reads (shown above for split lines).
-        for (const text of (runs.length ? runs : [{ text: line.say }]).map(run => run.text)) {
+        for (const text of partsOf(line).map(run => run.text)) {
           const take = retakeFor(text, config.narration.retakes), from = reuseFor(text, config.narration.reuse);
-          if (from) log(`            reuse: "${text}" is read as the last phrase of line ${from}`);
-          else if (take) log(`            retake: "${text}" take ${take}`);
+          const source = from && expanded.find(l => l.id === from);
+          const cut = source && source.id !== line.id ? reuseCut(partsOf(source).at(-1).text, text) : null;
+          if (from && !source) log(`            reuse: line ${from} does not exist (${expanded.map(l => l.id).join(", ")}); production would stop`);
+          else if (from && source.id === line.id) log(`            reuse: "${text}" cannot come from its own line; production would stop`);
+          else if (cut) log(`            reuse: "${text}" is read as ${cut.whole ? "the whole" : "the part after the last comma"} of line ${from}`);
+          else if (from) log(`            reuse: not here, line ${from} does not say "${text}" after a comma; it is read on its own`);
+          if (take && !cut) log(`            retake: "${text}" take ${take}`);
         }
       }
       log(`  words     ${content.words.map(w => `${w.word} (${w.ruby}, ${w.meaning})`).join(" · ")}`);

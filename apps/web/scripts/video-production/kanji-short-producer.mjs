@@ -21,7 +21,7 @@ import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseCut, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -224,13 +224,19 @@ export async function produceKanjiShort(request, deps = {}) {
         return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}), ...(reusedFrom ? { reusedFrom } : {}) };
       });
     });
-    // A reused text is not read on its own: it is the last phrase of another line of this short.
+    // A reused text is heard as the last phrase of another line of this short, where that line says
+    // it after a comma (reuseCut); in a short where it does not, the text is read on its own. It is
+    // still read on its own too, as a fallback should the line's audio have no clear pause.
     for (const unit of units.filter(u => u.reusedFrom)) {
       if (!lines.some(line => line.id === unit.reusedFrom)) fail(`narration.reuse takes "${unit.text}" from line ${unit.reusedFrom}, which this short does not have (${lines.map(l => l.id).join(", ")})`);
       if (unit.reusedFrom === unit.line) fail(`narration.reuse takes "${unit.text}" from its own line ${unit.line}`);
       if (units.some(u => u.line === unit.reusedFrom && u.reusedFrom)) fail(`narration.reuse takes "${unit.text}" from line ${unit.reusedFrom}, which is itself reused`);
+      unit.source = units.filter(u => u.line === unit.reusedFrom).at(-1);
+      unit.cut = reuseCut(unit.source.text, unit.text);
+      if (!unit.cut) { delete unit.reusedFrom; delete unit.source; delete unit.cut; }
     }
-    const spoken = units.filter(unit => !unit.reusedFrom);
+    const reuseWarnings = [];
+    const spoken = units;
     progress("narration", `Synthesizing ${spoken.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
     const results = new Map();
     for (const locale of [...new Set(spoken.map(unit => unit.locale))]) {
@@ -250,21 +256,24 @@ export async function produceKanjiShort(request, deps = {}) {
       });
       group.forEach((unit, i) => { if (done[i]?.id !== unit.id) fail("narration came back out of order"); results.set(unit.id, done[i]); });
     }
-    // The take a unit is heard from: its own, or for a reused text the last read part of the source line.
-    const sourceOf = (unit) => unit.reusedFrom ? results.get(units.filter(u => u.line === unit.reusedFrom).at(-1).id) : results.get(unit.id);
+    // The take a unit is heard from: its own, or for a reused text the matching part of the source line's take.
+    const reused = new Set();
     const takeOf = async (unit) => {
-      const samples = int16Wav(await readFile(sourceOf(unit).wavPath));
-      if (!unit.reusedFrom) return trimSpeech(samples);
-      const phrase = lastPhrase(samples);
-      if (!phrase) fail(`line ${unit.reusedFrom} has no pause, so "${unit.text}" cannot be taken from its last phrase; remove it from narration.reuse`);
-      return trimSpeech(phrase);
+      if (unit.reusedFrom) {
+        const samples = int16Wav(await readFile(results.get(unit.source.id).wavPath));
+        const phrase = unit.cut.whole ? samples : lastPhrase(samples, { pauses: unit.cut.pauses });
+        if (phrase) { reused.add(unit.id); return trimSpeech(phrase); }
+        reuseWarnings.push(`"${unit.text}" could not be taken from line ${unit.reusedFrom} (no clear pause after its comma); it was read on its own`);
+      }
+      return trimSpeech(int16Wav(await readFile(results.get(unit.id).wavPath)));
     };
-    const provenance = (unit) => ({ ...(unit.take ? { take: unit.take } : {}), ...(unit.reusedFrom ? { reusedFrom: unit.reusedFrom } : {}) });
+    const sourceOf = (unit) => reused.has(unit.id) ? results.get(unit.source.id) : results.get(unit.id);
+    const voiceOf = (unit) => voiceFor(reused.has(unit.id) ? unit.source.locale : unit.locale, voiceIds, voice.voiceId);
+    const provenance = (unit) => reused.has(unit.id) ? { reusedFrom: unit.reusedFrom } : unit.take ? { take: unit.take } : {};
     const takes = await Promise.all(lines.map(async line => {
       const runs = units.filter(unit => unit.line === line.id);
       const trimmed = await Promise.all(runs.map(takeOf));
-      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: sourceOf(runs[0]).sha256, voiceId: voiceFor(runs[0].locale, voiceIds, voice.voiceId),
-        ...provenance(runs[0]) };
+      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: sourceOf(runs[0]).sha256, voiceId: voiceOf(runs[0]), ...provenance(runs[0]) };
       const joined = joinRunTakes(trimmed);
       return {
         ...line, clip: joined.clip, lead: joined.lead, speech: joined.speech,
@@ -273,7 +282,7 @@ export async function produceKanjiShort(request, deps = {}) {
         // A joined line has no single provider audio: each run keeps its own voice and provider hash.
         sourceSha256: null,
         voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000, ...provenance(unit),
-          voiceId: voiceFor(unit.locale, voiceIds, voice.voiceId), providerSha256: sourceOf(unit).sha256 })),
+          voiceId: voiceOf(unit), providerSha256: sourceOf(unit).sha256 })),
       };
     }));
     const speech = Object.fromEntries(takes.map(take => [take.id, take.speech]));
@@ -389,6 +398,7 @@ export async function produceKanjiShort(request, deps = {}) {
     if (still.seconds > stillBudget) warnings.push(`the picture stands still for ${still.seconds.toFixed(2)} s at ${still.start} s (budget ${stillBudget} s)`);
     if (bed.belowVoiceDb > below + 1) warnings.push(`the music sits ${bed.belowVoiceDb} dB under the voice, not ${below} dB: the bed is too quiet to raise further`);
     if (maxDrift > driftBudget) warnings.push(`a line starts ${maxDrift} s after its moment in the picture: the line before it is too long for the gap`);
+    warnings.push(...reuseWarnings);
     const qa = {
       schemaVersion: 1, kind: "kanji-short-qa", char, reviewStatus: "not-reviewed", technicalPass: warnings.length === 0, warnings,
       video: { frames: mp4.frameCount, width: mp4.width, height: mp4.height, fps: `${KANJI_FPS}/1`, seconds: Math.round(length * 1000) / 1000 },

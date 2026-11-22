@@ -194,3 +194,19 @@ export const retakeFor = (text, retakes) => textSetting(text, retakes);
  * { "ひと": "kunyomi" }: the question's name is read as in "くんよみ、ひと。"), or undefined.
  */
 export const reuseFor = (text, reuse) => textSetting(text, reuse);
+
+const unpunctuated = (text) => text.normalize("NFC").replace(/[\s。．.!?！？、,，「」『』"'()（）]/gu, "");
+/**
+ * How a reused text comes out of a source line's text (what one voice reads): the whole of it, or
+ * its part after the last comma, with how many commas (pauses) the source has. Null when the source
+ * does not say exactly that text there, so a config shared by many kanji never makes one read
+ * another kanji's word.
+ */
+export function reuseCut(sourceText, text) {
+  const key = unpunctuated(text);
+  if (!key) return null;
+  if (unpunctuated(sourceText) === key) return { whole: true, pauses: 0 };
+  const parts = sourceText.split(/[、,，]/u);
+  if (parts.length < 2 || unpunctuated(parts[parts.length - 1]) !== key) return null;
+  return { whole: false, pauses: parts.length - 1 };
+}
