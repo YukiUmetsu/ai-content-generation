@@ -178,14 +178,52 @@ export function kanjiShortTiming({ intro, write, review, end, tail = KANJI_SHORT
   return { timing: { intro, write, review, info: (frames - before) / KANJI_FPS }, frames, totalSamples: frames * 1600 };
 }
 
-/**
- * The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }): the
- * key must be that exact text, compared after Unicode normalization and trimming; only the
- * config's own keys count. Undefined when none is asked for.
- */
-export function retakeFor(text, retakes) {
-  if (!retakes) return undefined;
+/** A per-text setting of the config (`narration.retakes`, `narration.reuse`): the key must be the exact text one voice reads, compared after Unicode normalization and trimming; only the config's own keys count. */
+export function textSetting(text, settings) {
+  if (!settings) return undefined;
   const key = text.normalize("NFC").trim();
-  for (const [wanted, take] of Object.entries(retakes)) if (wanted.normalize("NFC").trim() === key) return take;
+  for (const [wanted, value] of Object.entries(settings)) if (wanted.normalize("NFC").trim() === key) return value;
   return undefined;
+}
+
+/** The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }), or undefined. */
+export const retakeFor = (text, retakes) => textSetting(text, retakes);
+
+/**
+ * The line whose last phrase a text one voice reads is taken from (`narration.reuse`, for example
+ * { "ひと": "kunyomi" }: the question's name is read as in "くんよみ、ひと。"), or undefined.
+ */
+export const reuseFor = (text, reuse) => textSetting(text, reuse);
+
+const unpunctuated = (text) => text.normalize("NFC").replace(/[\s。．.!?！？、,，「」『』"'()（）]/gu, "");
+/**
+ * How a reused text comes out of a source line's text (what one voice reads): the whole of it, or
+ * its part after the last comma, with how many commas (pauses) the source has. Null when the source
+ * does not say exactly that text there, so a config shared by many kanji never makes one read
+ * another kanji's word.
+ */
+export function reuseCut(sourceText, text) {
+  const key = unpunctuated(text);
+  if (!key) return null;
+  if (unpunctuated(sourceText) === key) return { whole: true, pauses: 0 };
+  const parts = sourceText.split(/[、,，]/u);
+  if (parts.length < 2 || unpunctuated(parts[parts.length - 1]) !== key) return null;
+  return { whole: false, pauses: parts.length - 1 };
+}
+
+/**
+ * Where each reused text of a short is heard from (narration.reuse). Units are what one voice reads,
+ * in order: { line, text, reusedFrom? }. A reuse applies only where its source line is in this short,
+ * is another line, has no reused part itself (decided from the config, so the order does not matter)
+ * and says the text after its last comma (reuseCut): then { source (the line's last unit), cut }.
+ * Otherwise the text is read on its own, and { why } says so.
+ */
+export function reuseSources(units) {
+  const asked = units.filter(unit => unit.reusedFrom), reusing = new Set(asked.map(unit => unit.line));
+  return new Map(asked.map(unit => {
+    const from = unit.reusedFrom, source = units.filter(u => u.line === from).at(-1);
+    const why = !source ? `this short has no line ${from}` : from === unit.line ? "it is the text's own line" : reusing.has(from) ? `line ${from} is itself reused` : null;
+    const cut = why ? null : reuseCut(source.text, unit.text);
+    return [unit, cut ? { source, cut } : { why: why ?? `line ${from} does not say "${unit.text}" after a comma` }];
+  }));
 }
