@@ -4,7 +4,7 @@
  * No network, no render: making a short is produceKanjiShort.
  */
 import { createHash } from "node:crypto";
-import { lstat, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { expandNarrationScript } from "./anchored-narration.mjs";
 import { readKanjiConfig } from "./kanji-config.mjs";
@@ -24,11 +24,18 @@ export async function readKanjiStudio(configPath) {
   return { configPath, revision: sha256(text), raw, config, entries, problems };
 }
 
-/** Every kanji of the data, in its order: what the Studio's picker lists. */
+/**
+ * Every kanji of the data, in its order: what the Studio's picker lists. A kanji the producer
+ * cannot make (no useful word, no reading) is listed with its `problem`, never dropped silently.
+ */
 export function kanjiCatalog(entries) {
   return [...entries.values()].map(entry => {
-    const content = kanjiShortContent(entry);
-    return { char: content.char, jlpt: content.jlpt ?? null, meanings: content.meanings, name: content.name };
+    try {
+      const content = kanjiShortContent(entry);
+      return { char: content.char, jlpt: content.jlpt ?? null, meanings: content.meanings, name: content.name };
+    } catch (error) {
+      return { char: entry.char, jlpt: entry.jlpt ?? null, meanings: String(entry.card?.meanings ?? ""), name: { kana: "", romaji: "" }, problem: String(error.message) };
+    }
   });
 }
 
@@ -44,7 +51,9 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
   for (const char of chars) {
     const entry = entries.get(char);
     if (!entry) { previews.push({ char, found: false }); continue; }
-    const content = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3 });
+    let content;
+    try { content = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3 }); }
+    catch (error) { previews.push({ char, found: true, problem: String(error.message) }); continue; }
     let strokeCount = null;
     try {
       const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
@@ -88,6 +97,7 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
 /** The dry run's text for one preview, as `pnpm video:kanji -- 水 --dry-run` prints it. */
 export function previewText(preview) {
   if (!preview.found) return [`${preview.char}: not in the kanji data`];
+  if (preview.problem) return [`${preview.char}: ${preview.problem}`];
   const out = preview.dataProblems.map(problem => `${preview.char}: kanji data problem: ${problem}`);
   out.push(`${preview.char}  ${preview.meanings} · JLPT ${preview.jlpt ?? "-"} · typed ${preview.name.kana} → ${preview.char}`);
   if (preview.strokeLinesLeftOut) out.push(`  (stroke lines are left out: ${preview.char}'s KanjiVG data is not cached yet)`);
@@ -107,6 +117,13 @@ export function previewText(preview) {
 /** A release folder's name for a kanji: <char>-<code point in hex>, as nextOutputDir makes it. */
 export const releaseFolder = (char) => `${char}-${char.codePointAt(0).toString(16)}`;
 const FOLDER = /^(.+)-([0-9a-f]{2,6})$/u, VERSION = /^v(\d{1,5})$/u;
+/** The kanji a release folder is for, or null for any other folder (upload-202611, 水-6c35). */
+export function releaseChar(folder) {
+  const match = FOLDER.exec(folder), code = match ? Number.parseInt(match[2], 16) : NaN;
+  if (!(code <= 0x10ffff)) return null;
+  const char = String.fromCodePoint(code);
+  return match[1] === char ? char : null;
+}
 
 /** A small JSON file, or null when it is missing, too big or not JSON. */
 async function readSmallJson(path, maxBytes = 2_000_000) {
@@ -141,10 +158,8 @@ export async function kanjiReleases(outputRoot, { chars } = {}) {
   try { folders = await readdir(outputRoot, { withFileTypes: true }); } catch (error) { if (error.code === "ENOENT") return []; throw error; }
   const wanted = chars ? new Set(chars) : null, out = [];
   for (const folder of folders) {
-    const match = FOLDER.exec(folder.name);
-    if (!folder.isDirectory() || !match) continue;
-    const char = String.fromCodePoint(Number.parseInt(match[2], 16));
-    if (match[1] !== char || (wanted && !wanted.has(char))) continue;
+    const char = folder.isDirectory() ? releaseChar(folder.name) : null;
+    if (!char || (wanted && !wanted.has(char))) continue;
     const versions = [];
     for (const version of await readdir(join(outputRoot, folder.name), { withFileTypes: true })) {
       const number = VERSION.exec(version.name)?.[1];
@@ -201,14 +216,15 @@ export function applyKanjiStudioSettings(raw, changes, configPath) {
  * still has the revision the changes were made on: an edit by hand meanwhile is never overwritten.
  */
 export async function saveKanjiConfig(configPath, json, revision) {
-  const current = await readFile(configPath, "utf8");
+  const target = await realpath(configPath);
+  const current = await readFile(target, "utf8");
   if (sha256(current) !== revision) fail("settings: the config file changed since it was loaded; reload and make the change again");
-  const info = await stat(configPath);
+  const info = await stat(target);
   const text = `${JSON.stringify(json, null, 2)}\n`;
-  const temp = join(dirname(configPath), `.${basename(configPath)}.${process.pid}.${Date.now()}.tmp`);
+  const temp = join(dirname(target), `.${basename(target)}.${process.pid}.${Date.now()}.tmp`);
   try {
     await writeFile(temp, text, { mode: info.mode & 0o777, flag: "wx" });
-    await rename(temp, configPath);
+    await rename(temp, target);
   } catch (error) { await rm(temp, { force: true }); throw error; }
   return sha256(text);
 }

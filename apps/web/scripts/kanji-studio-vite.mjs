@@ -12,7 +12,7 @@ import { basename, join, sep } from "node:path";
 import { createReadStream } from "node:fs";
 import { DEFAULT_CONFIG, nextOutputDir } from "./video-production/kanji-config.mjs";
 import { KANJI_STUDIO_SETTINGS, applyKanjiStudioSettings, kanjiCatalog, kanjiQaSummary, kanjiReleases, kanjiStudioSettings,
-  previewKanjiShorts, readKanjiStudio, releaseFolder, saveKanjiConfig } from "./video-production/kanji-studio.mjs";
+  previewKanjiShorts, readKanjiStudio, releaseChar, releaseFolder, saveKanjiConfig } from "./video-production/kanji-studio.mjs";
 import { produceKanjiShort } from "./video-production/kanji-short-producer.mjs";
 import { sendVideo } from "./video-production/media-range.mjs";
 import { productionProviderKey } from "./video-production/provider-keychain.mjs";
@@ -60,7 +60,7 @@ export function kanjiFromText(text) {
   return chars;
 }
 
-const FOLDER = /^(.+)-([0-9a-f]{2,6})$/u, VERSION = /^v\d{1,5}$/u, STILL = /^frame-\d{6}\.png$/u;
+const VERSION = /^v\d{1,5}$/u, STILL = /^frame-\d{6}\.png$/u;
 
 /**
  * The page's API. `deps` replace the config path, the producer, the key, the browser and the
@@ -68,7 +68,7 @@ const FOLDER = /^(.+)-([0-9a-f]{2,6})$/u, VERSION = /^v\d{1,5}$/u, STILL = /^fra
  */
 export function createKanjiStudioApi(deps = {}) {
   const configPath = deps.configPath ?? process.env.CONTENTGEN_KANJI_CONFIG ?? DEFAULT_CONFIG;
-  let run = null, controller = null;
+  let run = null, controller = null, saving = Promise.resolve();
 
   /** What the page shows of the current or last run. */
   const runView = () => run && structuredClone(run);
@@ -93,25 +93,30 @@ export function createKanjiStudioApi(deps = {}) {
     };
   }
 
-  async function makeShorts(studio, { apiKey, browserExecutable, consent }) {
-    const signal = controller.signal;
-    for (const item of run.items) {
+  async function makeShorts(current, abort, studio, { apiKey, browserExecutable, consent }) {
+    const signal = abort.signal;
+    for (const item of current.items) {
       if (signal.aborted) { item.state = "cancelled"; continue; }
       item.state = "running"; item.phase = "preflight"; item.message = "Starting…";
       let made = null;
       try {
         const out = await nextOutputDir(studio.config.outputRoot, item.char);
         item.folder = releaseFolder(item.char); item.version = Number(basename(out).slice(1));
-        const produce = (jobSignal) => (deps.produce ?? produceKanjiShort)({
-          char: item.char, config: studio.config, out, apiKey, browserExecutable,
-          allowNetwork: consent.allowNetwork === true, voiceReferenceConsent: consent.voiceConsent === true,
-          textTransmissionApproved: consent.transmitText === true, localVoiceAuthorized: consent.localVoice === true,
-          signal: jobSignal, onProgress: (event) => { if (event.phase) item.phase = event.phase; if (event.message) item.message = clip(event.message, 200); },
-        }).then(result => (made = result));
+        const produce = (jobSignal) => {
+          if (jobSignal.aborted) throw jobSignal.reason ?? Error("Cancelled.");
+          return (deps.produce ?? produceKanjiShort)({
+            char: item.char, config: studio.config, out, apiKey, browserExecutable,
+            allowNetwork: consent.allowNetwork === true, voiceReferenceConsent: consent.voiceConsent === true,
+            textTransmissionApproved: consent.transmitText === true, localVoiceAuthorized: consent.localVoice === true,
+            signal: jobSignal, onProgress: (event) => { if (event.phase) item.phase = event.phase; if (event.message) item.message = clip(event.message, 200); },
+          }).then(result => (made = result));
+        };
         try {
           const { jobId } = await withWorkerJob({
-            name: "Kanji short", signal, jobKind: "video-kanji-short", idempotencyKey: `video-kanji-short:${run.id}:${item.char}`,
-            nodeKey: "kanji-short", nodeKind: "video.kanji-short", input: { char: item.char, runId: run.id, folder: item.folder, version: item.version },
+            name: "Kanji short", signal, jobKind: "video-kanji-short", idempotencyKey: `video-kanji-short:${current.id}:${item.char}`,
+            nodeKey: "kanji-short", nodeKind: "video.kanji-short", input: { char: item.char, runId: current.id, folder: item.folder, version: item.version },
+            // A short that was made is recorded as made, even if Cancel came as it finished.
+            keepFinishedWork: true,
             output: () => ({ char: item.char, folder: item.folder, version: item.version }),
             failure: { errorCode: "kanji_short_failed", errorDetail: "The kanji short stopped. Its error is shown on the Kanji shorts page; make it again from there." },
           }, ({ signal: jobSignal }) => produce(jobSignal), deps.jobs);
@@ -125,50 +130,58 @@ export function createKanjiStudioApi(deps = {}) {
       } catch (error) {
         // A short that was made stays made, even if Jobs could not record it.
         if (made) { item.state = "done"; item.note = `Made, but Jobs could not record it: ${errorText(error)}`; }
-        else { item.state = signal.aborted ? "cancelled" : "failed"; item.error = errorText(error); }
+        else if (error?.code === "JOBS_LEASE_LOST") {
+          item.state = "cancelled";
+          item.error = "Stopped in Jobs: cancelled on the Jobs page, or the Jobs server stopped. Make it again here.";
+        } else { item.state = signal.aborted ? "cancelled" : "failed"; item.error = errorText(error); }
       }
       if (made) { item.qa = kanjiQaSummary(made.qa); item.phase = "done"; item.message = "Ready for review"; }
     }
-    run.state = signal.aborted ? "cancelled" : "finished";
-    run.finishedAt = new Date().toISOString();
-    controller = null;
+    current.state = signal.aborted ? "cancelled" : "finished";
+    current.finishedAt = new Date().toISOString();
   }
 
   async function start(body) {
     if (controller) return [409, { error: "A run is already making shorts. Wait for it, or cancel it.", run: runView() }];
     if (body?.confirm !== true) return [400, { error: "Confirm the run to make shorts." }];
     const chars = kanjiFromText(body.kanji);
-    const { studio, problem } = await loadStudio();
-    if (!studio) return [422, { error: problem }];
-    const missing = chars.filter(char => !studio.entries.has(char));
-    if (missing.length) return [422, { error: `Not in the kanji data: ${missing.join(" ")}` }];
-    const consent = body.consent ?? {};
-    const provider = studio.config.voice.provider ?? "fish";
-    if (provider === "fish" && !(consent.allowNetwork === true && consent.voiceConsent === true && consent.transmitText === true))
-      return [400, { error: "Making shorts with Fish sends the narration text to Fish Audio: confirm the network, the voices and the text." }];
-    if (provider === "local" && consent.localVoice !== true) return [400, { error: "Confirm the local voice to make shorts." }];
-    let apiKey;
-    if (provider === "fish") {
-      apiKey = await (deps.providerKey ?? productionProviderKey)("fish", { env: process.env }).catch(() => undefined);
-      if (!apiKey) return [422, { error: "No Fish Audio key. Add it in Settings → Connections, then make the shorts again." }];
-    }
-    let browserExecutable;
-    try { browserExecutable = await (deps.findBrowser ?? findChromium)(process.env); }
-    catch (error) { return [422, { error: errorText(error) }]; }
-    controller = new AbortController();
-    run = { id: randomUUID(), state: "running", startedAt: new Date().toISOString(), finishedAt: null,
-      items: chars.map(char => ({ char, state: "queued", phase: null, message: null })) };
-    const started = makeShorts(studio, { apiKey, browserExecutable, consent }).catch(error => {
-      run.state = "finished"; run.error = errorText(error); run.finishedAt = new Date().toISOString(); controller = null;
-    });
-    deps.onRun?.(started);
-    return [202, { run: runView() }];
+    // Claimed before any wait, so a second Make (another tab) is refused, never run alongside.
+    const abort = new AbortController();
+    controller = abort;
+    const release = () => { if (controller === abort) controller = null; };
+    try {
+      const { studio, problem } = await loadStudio();
+      if (!studio) { release(); return [422, { error: problem }]; }
+      const missing = chars.filter(char => !studio.entries.has(char));
+      if (missing.length) { release(); return [422, { error: `Not in the kanji data: ${missing.join(" ")}` }]; }
+      const consent = body.consent ?? {};
+      const provider = studio.config.voice.provider ?? "fish";
+      if (provider === "fish" && !(consent.allowNetwork === true && consent.voiceConsent === true && consent.transmitText === true)) {
+        release(); return [400, { error: "Making shorts with Fish sends the narration text to Fish Audio: confirm the network, the voices and the text." }];
+      }
+      if (provider === "local" && consent.localVoice !== true) { release(); return [400, { error: "Confirm the local voice to make shorts." }]; }
+      let apiKey;
+      if (provider === "fish") {
+        apiKey = await (deps.providerKey ?? productionProviderKey)("fish", { env: process.env }).catch(() => undefined);
+        if (!apiKey) { release(); return [422, { error: "No Fish Audio key. Add it in Settings → Connections, then make the shorts again." }]; }
+      }
+      let browserExecutable;
+      try { browserExecutable = await (deps.findBrowser ?? findChromium)(process.env); }
+      catch (error) { release(); return [422, { error: errorText(error) }]; }
+      const current = { id: randomUUID(), state: "running", startedAt: new Date().toISOString(), finishedAt: null,
+        items: chars.map(char => ({ char, state: "queued", phase: null, message: null })) };
+      run = current;
+      const started = makeShorts(current, abort, studio, { apiKey, browserExecutable, consent }).catch(error => {
+        current.state = "finished"; current.error = errorText(error); current.finishedAt = new Date().toISOString();
+      }).finally(release);
+      deps.onRun?.(started);
+      return [202, { run: runView() }];
+    } catch (error) { release(); throw error; }
   }
 
   /** A release file the page shows: the video, or its last still as the poster. Only real files under the output root. */
   async function releaseFile(outputRoot, folder, version, file) {
-    const match = FOLDER.exec(folder);
-    if (!match || match[1] !== String.fromCodePoint(Number.parseInt(match[2], 16)) || !VERSION.test(version)) return null;
+    if (!releaseChar(folder) || !VERSION.test(version)) return null;
     const releaseDir = join(outputRoot, folder, version, "release");
     let path = join(releaseDir, "video.mp4");
     if (file === "poster.png") {
@@ -213,12 +226,18 @@ export function createKanjiStudioApi(deps = {}) {
       }
       if (req.method === "POST" && route === "/settings") {
         const body = await readBody(req);
-        const { studio, problem } = await loadStudio();
-        if (!studio) return respond(res, 422, { error: problem });
-        if (body.revision !== studio.revision) return respond(res, 409, { error: "The settings file changed since this page loaded it. Reload, then make the change again." });
-        const next = applyKanjiStudioSettings(studio.raw, body.changes, configPath);
-        const revision = await saveKanjiConfig(configPath, next, studio.revision);
-        return respond(res, 200, { revision, settings: kanjiStudioSettings(next) });
+        // One save at a time: the second of two saves on the same revision sees the first's file and is refused.
+        const saved = saving.then(async () => {
+          const { studio, problem } = await loadStudio();
+          if (!studio) return [422, { error: problem }];
+          if (body.revision !== studio.revision) return [409, { error: "The settings file changed since this page loaded it. Reload, then make the change again." }];
+          const next = applyKanjiStudioSettings(studio.raw, body.changes, configPath);
+          const revision = await saveKanjiConfig(configPath, next, studio.revision);
+          return [200, { revision, settings: kanjiStudioSettings(next) }];
+        });
+        saving = saved.catch(() => {});
+        const [status, payload] = await saved;
+        return respond(res, status, payload);
       }
       if (req.method === "POST" && route === "/start") {
         const [status, payload] = await start(await readBody(req));

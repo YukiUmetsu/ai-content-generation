@@ -230,3 +230,89 @@ test("the plugin mounts the API under its prefix and gives Vite no post-middlewa
   assert.equal(plugin.configurePreviewServer(server), undefined);
   assert.deepEqual(mounted, [[KANJI_STUDIO_PREFIX, "function"], [KANJI_STUDIO_PREFIX, "function"]]);
 });
+
+test("two Make presses at once (two tabs) start one run, and the other is refused", async (t) => {
+  const dir = await fixture(t);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const studio = api(dir, { providerKey: async () => { await gate; return "key-0123456789"; },
+    produce: async (request) => ({ videoPath: join(request.out, "release", "video.mp4"), qa: QA }) });
+  const first = call(studio, "POST", "/start", { kanji: "水", confirm: true, consent: CONSENT });
+  const second = call(studio, "POST", "/start", { kanji: "水", confirm: true, consent: CONSENT });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  release();
+  const statuses = [(await first).status, (await second).status].sort();
+  assert.deepEqual(statuses, [202, 409]);
+  await studio.settled();
+  // When the run ends, a new one may start; a refused start before it never blocked it.
+  assert.equal((await call(studio, "POST", "/start", { kanji: "人", confirm: true, consent: CONSENT })).status, 202);
+  await studio.settled();
+});
+
+test("a kanji the producer cannot make is listed with its problem, and stray folders are skipped", async (t) => {
+  const dir = await fixture(t);
+  const lone = { char: "乙", jlpt: "N1", card: { meanings: "SECOND", onyomi: "OTSU (オツ)", kunyomi: "kinoto (きのと)" }, words: [{ word: "乙", ruby: "おつ", romaji: "otsu", meaning: "second", reading: "on" }] };
+  await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU, lone] }));
+  await mkdir(join(dir, "out", "upload-202611", "v1", "release"), { recursive: true });
+  const state = await call(api(dir), "GET", "/state");
+  assert.equal(state.status, 200);
+  const entry = state.json().catalog.find(k => k.char === "乙");
+  assert.match(entry.problem, /no useful word/u);
+  const { previews } = (await call(api(dir), "POST", "/preview", { kanji: "乙水" })).json();
+  assert.deepEqual([previews[0].char, !!previews[0].problem, previews[1].found && !!previews[1].lines], ["乙", true, true]);
+  assert.equal((await call(api(dir), "GET", `/releases?kanji=${encodeURIComponent("水")}`)).status, 200);
+});
+
+test("a short that was made stays made when Jobs cannot record it, and Jobs never marks it failed", async (t) => {
+  const dir = await fixture(t), paths = [];
+  const fetcher = async (url) => {
+    const path = new URL(url).pathname;
+    paths.push(path.split("/").at(-1));
+    if (path.endsWith("/succeed")) return { ok: false, status: 500, json: async () => ({ error: "database is locked" }) };
+    const reply = path === "/api/jobs" ? { created: true, job: { id: "job-1", state: "RUNNING" }, nodes: [{ id: "node-1", nodeKey: "kanji-short", state: "READY" }] }
+      : path.endsWith("/start") ? { attempt: { id: "claim-1" } } : { success: true };
+    return { ok: true, json: async () => reply };
+  };
+  const studio = api(dir, { jobs: { fetcher }, produce: async (request) => ({ videoPath: join(request.out, "release", "video.mp4"), qa: QA }) });
+  await call(studio, "POST", "/start", { kanji: "人", confirm: true, consent: CONSENT });
+  await studio.settled();
+  const { run } = (await call(studio, "GET", "/status")).json();
+  assert.equal(run.items[0].state, "done");
+  assert.match(run.items[0].note, /Jobs could not record it: database is locked/u);
+  assert.equal(paths.includes("fail"), false);
+});
+
+test("Cancel while Jobs is slow to answer never starts the producer", async (t) => {
+  const dir = await fixture(t);
+  let produced = 0;
+  const fetcher = (_url, opts) => new Promise((_resolve, reject) => setTimeout(() => reject(Error("timeout")), 60));
+  const studio = api(dir, { jobs: { fetcher }, produce: async () => { produced++; return { qa: QA }; } });
+  await call(studio, "POST", "/start", { kanji: "人", confirm: true, consent: CONSENT });
+  await call(studio, "POST", "/cancel", {});
+  await studio.settled();
+  assert.equal(produced, 0);
+  assert.equal((await call(studio, "GET", "/status")).json().run.items[0].state, "cancelled");
+});
+
+test("two saves on the same revision: one is saved, the other is refused", async (t) => {
+  const dir = await fixture(t), studio = api(dir);
+  const { revision } = (await call(studio, "GET", "/state")).json();
+  const results = await Promise.all([call(studio, "POST", "/settings", { revision, changes: { maxWords: 4 } }),
+    call(studio, "POST", "/settings", { revision, changes: { maxWords: 5 } })]);
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  const saved = results.find(r => r.status === 200).json().settings.maxWords;
+  assert.equal(JSON.parse(await readFile(join(dir, "config.json"), "utf8")).maxWords, saved);
+});
+
+test("a linked settings file is changed where it points, and the link stays", async (t) => {
+  const dir = await fixture(t);
+  await mkdir(join(dir, "real"));
+  // Relative paths are read from the link's folder, as the CLI reads them.
+  await writeFile(join(dir, "real", "config.json"), JSON.stringify(CONFIG));
+  await symlink(join(dir, "real", "config.json"), join(dir, "linked.json"));
+  const studio = api(dir, { configPath: join(dir, "linked.json") });
+  const { revision } = (await call(studio, "GET", "/state")).json();
+  assert.equal((await call(studio, "POST", "/settings", { revision, changes: { maxWords: 2 } })).status, 200);
+  assert.equal(JSON.parse(await readFile(join(dir, "real", "config.json"), "utf8")).maxWords, 2);
+  assert.equal((await (await import("node:fs/promises")).lstat(join(dir, "linked.json"))).isSymbolicLink(), true);
+});

@@ -11,9 +11,11 @@ export class JobsUnavailableError extends Error {
 
 /**
  * @param {{name:string,jobKind:string,idempotencyKey:string,nodeKey:string,nodeKind:string,input:object,signal?:AbortSignal,
- *   output:(result:any)=>object,failure:{errorCode:string,errorDetail:string}}} spec
+ *   output:(result:any)=>object,failure:{errorCode:string,errorDetail:string},keepFinishedWork?:boolean}} spec
  *   `name` words the messages ("Scene preview"); `output` checks the work's result and returns what Jobs records (or throws);
- *   `failure` is what Jobs records of a failure (never the raw error, which can carry provider details).
+ *   `failure` is what Jobs records of a failure (never the raw error, which can carry provider details);
+ *   `keepFinishedWork`: work that finished is recorded as succeeded even if the signal was aborted as it finished.
+ *   A succeeded result that Jobs then fails to record is never recorded as failed: the error says so and the attempt stays for recovery.
  * @param {(context:{signal:AbortSignal,jobId:string})=>Promise<any>} work
  */
 export async function withWorkerJob(spec, work, {
@@ -61,24 +63,29 @@ export async function withWorkerJob(spec, work, {
       const reply = await request(`/api/jobs/${jobId}/nodes/${nodeId}/heartbeat`, { attemptId });
       if (reply.alive !== true) throw Error(`${name} worker ownership expired.`);
     } catch {
-      if (!stopped && !leaseError) { leaseError = Error(`${name} worker lost its Jobs claim. Retry to resume safely.`); abort.abort(leaseError); }
+      if (!stopped && !leaseError) {
+        leaseError = Object.assign(Error(`${name} worker lost its Jobs claim. Retry to resume safely.`), { code: "JOBS_LEASE_LOST" });
+        abort.abort(leaseError);
+      }
     } finally { busy = false; }
   }, heartbeatMs);
   timer.unref?.();
+  let result, output;
   try {
     if (combined.aborted) throw combined.reason ?? Error(`${name} cancelled.`);
-    const result = await work({ signal: combined, jobId });
+    result = await work({ signal: combined, jobId });
     if (leaseError) throw leaseError;
-    if (combined.aborted) throw combined.reason ?? Error(`${name} cancelled.`);
-    const output = spec.output(result);
-    stopped = true; clearInterval(timer);
-    await request(`/api/jobs/${jobId}/nodes/${nodeId}/succeed`, { attemptId, output });
-    return { result, jobId };
+    if (combined.aborted && !spec.keepFinishedWork) throw combined.reason ?? Error(`${name} cancelled.`);
+    output = spec.output(result);
   } catch (error) {
     stopped = true; clearInterval(timer);
     if (leaseError) throw leaseError;
-    if (signal?.aborted) { await request(`/api/jobs/${jobId}/cancel`, {}); throw error; }
-    await request(`/api/jobs/${jobId}/nodes/${nodeId}/fail`, { attemptId, ...spec.failure });
+    // Recording the end in Jobs must not hide what really stopped the work.
+    const record = (path, body) => request(path, body).catch(() => {});
+    if (signal?.aborted) await record(`/api/jobs/${jobId}/cancel`, {});
+    else await record(`/api/jobs/${jobId}/nodes/${nodeId}/fail`, { attemptId, ...spec.failure });
     throw error;
   } finally { stopped = true; clearInterval(timer); }
+  await request(`/api/jobs/${jobId}/nodes/${nodeId}/succeed`, { attemptId, output });
+  return { result, jobId };
 }

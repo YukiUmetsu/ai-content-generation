@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Clapperboard, Film, Loader2, RefreshCw, Square, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
@@ -8,14 +8,18 @@ import {
   type CatalogKanji, type KanjiPreview, type KanjiRelease, type KanjiSettings, type Run, type RunItem, type StudioState,
 } from "./kanji-shorts-api";
 import { KanjiSettingsPanel } from "./kanji-settings-panel";
-import { changedSettings } from "./kanji-settings-model";
-import { languageName, lineName, phaseName, sayer, type Say } from "./kanji-text";
+import { keptChoice } from "./kanji-drafts";
+import { errorText, languageName, lineName, phaseName, sayer, type Say } from "./kanji-text";
 
 const MAX_KANJI = 10;
 const LEVELS = ["N5", "N4", "N3", "all"] as const;
+/** Failed status checks in a row before the page says it cannot reach the server. */
+const MISSED_POLLS = 3;
 const field = "w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const heading = "font-serif text-lg font-semibold text-foreground";
 const helper = "mt-1 text-xs leading-relaxed text-muted-foreground";
+const alertBox = "flex gap-2 rounded-control border border-status-danger bg-status-danger/10 px-3 py-2 text-sm text-foreground";
+
 
 /** Which voice reads a part: the language whose voice it is, or the voice for other languages. */
 function voiceLabel(voiceId: string, settings: KanjiSettings, say: Say) {
@@ -48,13 +52,14 @@ function KanjiPicker({ catalog, selected, onToggle, say }: { catalog: CatalogKan
     <ul className="grid max-h-72 grid-cols-[repeat(auto-fill,minmax(3.25rem,1fr))] gap-1.5 overflow-y-auto pr-1" aria-label={say("Kanji", "漢字")}>
       {shown.map(kanji => {
         const on = selected.includes(kanji.char);
+        const name = kanji.problem ? say(`${kanji.char}, cannot be made: ${kanji.problem}`, `${kanji.char}、作成できません: ${kanji.problem}`)
+          : `${kanji.char} ${kanji.name.romaji}, ${kanji.meanings}${kanji.versions ? say(`, made ${kanji.versions} times`, `、${kanji.versions} 回作成済み`) : ""}`;
         return <li key={kanji.char}>
-          <button type="button" aria-pressed={on} onClick={() => onToggle(kanji.char)}
-            aria-label={`${kanji.char} ${kanji.name.romaji}, ${kanji.meanings}${kanji.versions ? say(`, made ${kanji.versions} times`, `、${kanji.versions} 回作成済み`) : ""}`}
-            title={`${kanji.name.kana} (${kanji.name.romaji}) · ${kanji.meanings}`}
-            className="relative flex h-14 w-full flex-col items-center justify-center rounded-control border border-border bg-surface leading-none text-foreground hover:bg-surface-subtle aria-pressed:border-primary aria-pressed:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <button type="button" aria-pressed={on} disabled={!!kanji.problem && !on} onClick={() => onToggle(kanji.char)} aria-label={name}
+            title={kanji.problem ?? `${kanji.name.kana} (${kanji.name.romaji}) · ${kanji.meanings}`}
+            className="relative flex h-14 w-full flex-col items-center justify-center rounded-control border border-border bg-surface leading-none text-foreground hover:bg-surface-subtle disabled:cursor-not-allowed disabled:border-dashed disabled:opacity-50 aria-pressed:border-primary aria-pressed:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span lang="ja" className="font-serif text-2xl">{kanji.char}</span>
-            <span lang="ja" className="mt-1 max-w-full truncate px-1 text-[11px] text-muted-foreground">{kanji.name.kana}</span>
+            <span lang="ja" className="mt-1 max-w-full truncate px-1 text-[11px] text-muted-foreground">{kanji.problem ? "—" : kanji.name.kana}</span>
             {kanji.versions > 0 && <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-status-success" />}
           </button>
         </li>;
@@ -64,8 +69,9 @@ function KanjiPicker({ catalog, selected, onToggle, say }: { catalog: CatalogKan
 }
 
 function PreviewCard({ preview, settings, say }: { preview: KanjiPreview; settings: KanjiSettings; say: Say }) {
-  if (!preview.found) return <li className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm">
-    <span lang="ja" className="font-serif text-lg">{preview.char}</span> {say("is not in the kanji data.", "は漢字データにありません。")}
+  if (!preview.found || "problem" in preview) return <li className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm text-foreground">
+    <span lang="ja" className="font-serif text-lg">{preview.char}</span>{" "}
+    {preview.found ? say(`cannot be made: ${preview.problem}`, `は作成できません: ${preview.problem}`) : say("is not in the kanji data.", "は漢字データにありません。")}
   </li>;
   return <li className="min-w-0 rounded-control border border-border bg-surface-subtle/50 p-3">
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -101,6 +107,7 @@ function RunRow({ item, active, onShow, say }: { item: RunItem; active: boolean;
     : item.state === "cancelled" ? <Square className="size-4 text-muted-foreground" /> : item.state === "running" ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none text-primary" />
     : <span className="size-4" />;
   const stateText = { queued: say("Waiting", "待機中"), running: phaseName(item.phase, say), done: say("Ready for review", "確認待ち"), failed: say("Stopped", "停止"), cancelled: say("Cancelled", "キャンセル") }[item.state];
+  const english = say("en", "ja") === "en";
   return <li className="min-w-0 rounded-control border border-border p-3" aria-current={active || undefined}>
     <div className="flex items-center gap-3">
       <span aria-hidden>{icon}</span>
@@ -112,7 +119,8 @@ function RunRow({ item, active, onShow, say }: { item: RunItem; active: boolean;
       aria-valuetext={say(`Step ${step} of ${RUN_PHASES.length}: ${stateText}`, `${RUN_PHASES.length} 段階中 ${step}: ${stateText}`)} className="mt-2 flex gap-0.5">
       {RUN_PHASES.map((phase, i) => <span key={phase} className={"h-1.5 flex-1 rounded-full " + (i < step ? (item.state === "failed" ? "bg-status-danger" : "bg-primary") : "bg-border")} />)}
     </div>
-    {item.state === "running" && item.message && <p className="mt-2 truncate text-xs text-muted-foreground" title={item.message}>{item.message}</p>}
+    {/* The producer's own step text is English; the step name above says the same in Japanese. */}
+    {english && item.state === "running" && item.message && <p className="mt-2 truncate text-xs text-muted-foreground" title={item.message}>{item.message}</p>}
     {item.error && <p className="mt-2 break-words text-xs text-status-danger">{item.error}</p>}
     {item.note && <p className="mt-2 break-words text-xs text-status-warning">{item.note}</p>}
     {item.state !== "queued" && item.tracked === false && <p className="mt-1 text-xs text-muted-foreground">{say("Not tracked in Jobs: the local Jobs server is not running.", "ジョブには記録されていません（ローカルのジョブサーバーが停止中）。")}</p>}
@@ -135,10 +143,11 @@ function ReleasePlayer({ release, say }: { release: KanjiRelease; say: Say }) {
       controls preload="metadata" poster={releaseMedia(release.folder, shown.version, "poster.png")} src={releaseMedia(release.folder, shown.version, "video.mp4")}
       aria-label={say(`${release.char} short, version ${shown.version}`, `${release.char} のショート v${shown.version}`)} />
     <div className="flex min-w-0 flex-1 flex-col gap-3">
-      <div role="group" aria-label={say("Version", "バージョン")} className="flex flex-wrap gap-1">
-        {release.versions.slice(0, 8).map(v => <button key={v.version} type="button" aria-pressed={v.version === shown.version} onClick={() => setVersion(v.version)}
-          className="min-h-8 rounded-control border border-border px-2.5 text-xs text-foreground aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">v{v.version}</button>)}
-      </div>
+      <label className="flex flex-col text-xs font-semibold text-muted-foreground">{say(`Version (${release.versions.length})`, `バージョン（${release.versions.length}）`)}
+        <select className={field + " mt-1 text-sm"} value={shown.version} onChange={e => setVersion(Number(e.target.value))}>
+          {release.versions.map(v => <option key={v.version} value={v.version}>v{v.version}{v === release.versions[0] ? say(" · newest", " · 最新") : ""}</option>)}
+        </select>
+      </label>
       {qa ? <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
         {facts.map(([name, value]) => <div key={name} className="contents"><dt className="text-muted-foreground">{name}</dt><dd className="text-foreground">{value}</dd></div>)}
       </dl> : <p className="text-sm text-muted-foreground">{say("This release has no QA report.", "この版には QA レポートがありません。")}</p>}
@@ -153,47 +162,58 @@ function ReleasePlayer({ release, say }: { release: KanjiRelease; say: Say }) {
 
 /** The Studio page for kanji study shorts: pick kanji, preview what each says, make them, watch them, and edit the settings. */
 export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
-  const say = sayer(locale);
+  const say = useMemo(() => sayer(locale), [locale]);
   const [studio, setStudio] = useState<StudioState | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [selection, setSelection] = useState("");
-  // The last preview answer, for the selection and settings it was made with.
+  const [reloads, setReloads] = useState(0);
+  const [selection, setSelectionState] = useState(keptChoice.selection);
   const [preview, setPreview] = useState<{ key: string; previews: KanjiPreview[]; error: string }>({ key: "", previews: [], error: "" });
   const [run, setRun] = useState<Run | null>(null);
   const [runError, setRunError] = useState("");
+  const [missedPolls, setMissedPolls] = useState(0);
   const [starting, setStarting] = useState(false);
-  const [shown, setShown] = useState<string | null>(null);
-  const [found, setFound] = useState<{ char: string; release: KanjiRelease | null } | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [settingsMessage, setSettingsMessage] = useState("");
-  const [settingsError, setSettingsError] = useState("");
-  const [settingsVersion, setSettingsVersion] = useState(0);
+  const [shown, setShownState] = useState<string | null>(keptChoice.shown);
+  const [found, setFound] = useState<{ key: string; release: KanjiRelease | null; error: string } | null>(null);
+  const [watchRequests, setWatchRequests] = useState(0);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+  const runHeading = useRef<HTMLParagraphElement>(null);
+  const setSelection = (next: string | ((current: string) => string)) => setSelectionState(current => {
+    const value = typeof next === "function" ? next(current) : next;
+    keptChoice.selection = value;
+    return value;
+  });
+  const setShown = (char: string | null) => { keptChoice.shown = char; setShownState(char); setWatchRequests(n => n + 1); };
 
-  const reload = useCallback(() => loadStudio().then(state => { setStudio(state); setRun(state.run); setLoadError(""); })
-    .catch((error: Error) => setLoadError(error.message)), []);
+  const reload = useCallback(() => loadStudio().then(state => {
+    setStudio(state); setLoadError("");
+    // A run the page knew as running that the server no longer has: say so, never drop it silently.
+    setRun(current => state.run ?? (current?.state === "running" ? { ...current, state: "lost" } : current));
+  }).catch((error: unknown) => setLoadError(errorText(error, say))), [say]);
   useEffect(() => { void reload(); }, [reload]);
+  const reloadAll = () => { setReloads(n => n + 1); void reload(); };
 
   const chosen = useMemo(() => kanjiIn(selection), [selection]);
   const tooMany = chosen.length > MAX_KANJI;
 
-  // The preview follows the selection and the saved settings, a moment after typing stops. Until the
-  // new answer comes, the last one for the same kanji stays on screen, marked busy.
-  const selectionKey = chosen.join(""), previewKey = `${settingsVersion}:${selectionKey}`;
+  // The preview follows the selection, the saved settings and Reload, a moment after typing stops.
+  // Until the new answer comes, the last one for the same kanji stays on screen, marked busy.
+  const selectionKey = chosen.join(""), previewKey = `${reloads}:${studio?.configured ? studio.revision : ""}:${selectionKey}`;
   const configured = studio?.configured === true;
   useEffect(() => {
     if (!configured || !selectionKey || tooMany) return;
     let current = true;
     const timer = setTimeout(() => {
       loadPreviews(selectionKey).then(result => { if (current) setPreview({ key: previewKey, previews: result.previews, error: "" }); })
-        .catch((error: Error) => { if (current) setPreview({ key: previewKey, previews: [], error: error.message }); });
+        .catch((error: unknown) => { if (current) setPreview({ key: previewKey, previews: [], error: errorText(error, say) }); });
     }, 350);
     return () => { current = false; clearTimeout(timer); };
-  }, [configured, selectionKey, previewKey, tooMany]);
-  const sameKanji = preview.key.slice(preview.key.indexOf(":") + 1) === selectionKey;
+  }, [configured, selectionKey, previewKey, tooMany, say]);
+  const sameKanji = preview.key.slice(preview.key.lastIndexOf(":") + 1) === selectionKey;
   const previews = sameKanji ? preview.previews : [], previewError = sameKanji ? preview.error : "";
   const previewing = !!selectionKey && !tooMany && preview.key !== previewKey;
 
-  // A running run is followed every 1.5 s until it ends; then the kanji list and the shown release refresh.
+  // A running run is followed every 1.5 s until it ends. Missed checks are counted and shown after a few;
+  // a run the server no longer knows is shown as lost. When the run ends, the kanji list refreshes.
   const running = run?.state === "running";
   useEffect(() => {
     if (!running) return;
@@ -201,22 +221,25 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
     const timer = setInterval(() => {
       loadStatus().then(result => {
         if (!active) return;
-        setRun(result.run);
-        if (result.run?.state !== "running") { void reload(); setShown(current => current ?? result.run?.items.find(item => item.state === "done")?.char ?? null); setSettingsVersion(v => v + 1); }
-      }).catch(() => { /* a missed poll is retried on the next tick */ });
+        setMissedPolls(0);
+        setRun(current => result.run && result.run.id === current?.id ? result.run : current ? { ...current, state: "lost" } : result.run);
+        if (result.run?.state !== "running") void reload();
+      }).catch(() => { if (active) setMissedPolls(n => n + 1); });
     }, 1500);
     return () => { active = false; clearInterval(timer); };
   }, [running, reload]);
 
-  // The shown kanji's releases, newest first; refreshed when a run ends.
+  // The shown kanji's releases, newest first: again when asked (Watch) and when one of its shorts is made.
+  const madeOfShown = run?.items.filter(item => item.char === shown && item.state === "done").length ?? 0;
+  const releaseKey = `${shown}:${watchRequests}:${madeOfShown}:${reloads}`;
   useEffect(() => {
     if (!shown) return;
     let current = true;
-    loadReleases(shown).then(result => { if (current) setFound({ char: shown, release: result.releases[0] ?? null }); })
-      .catch(() => { if (current) setFound({ char: shown, release: null }); });
+    loadReleases(shown).then(result => { if (current) setFound({ key: releaseKey, release: result.releases[0] ?? null, error: "" }); })
+      .catch((error: unknown) => { if (current) setFound({ key: releaseKey, release: null, error: errorText(error, say) }); });
     return () => { current = false; };
-  }, [shown, run?.state, run?.finishedAt]);
-  const release = found && found.char === shown ? found.release : null, releaseLoading = !!shown && found?.char !== shown;
+  }, [shown, releaseKey, say]);
+  const foundNow = found && found.key.startsWith(`${shown}:`) ? found : null;
 
   const toggle = (char: string) => {
     setSelection(current => { const chars = kanjiIn(current); return (chars.includes(char) ? chars.filter(c => c !== char) : [...chars, char]).join(""); });
@@ -226,24 +249,25 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
   async function make() {
     if (!studio?.configured) return;
     setStarting(true); setRunError("");
-    try { setRun((await startRun(chosen.join(""), studio.provider)).run); }
-    catch (error) { setRunError(error instanceof Error ? error.message : String(error)); }
+    try { setRun((await startRun(chosen.join(""), studio.provider)).run); setMissedPolls(0); runHeading.current?.focus(); }
+    catch (error) { setRunError(errorText(error, say)); }
     finally { setStarting(false); }
   }
   async function cancel() {
-    try { setRun((await cancelRun()).run); } catch (error) { setRunError(error instanceof Error ? error.message : String(error)); }
+    try { setRun((await cancelRun()).run); } catch (error) { setRunError(errorText(error, say)); }
   }
-  async function save(next: KanjiSettings) {
-    if (!studio?.configured) return;
-    setSaving(true); setSettingsError(""); setSettingsMessage("");
+  const save = useCallback(async (changes: Partial<KanjiSettings>): Promise<{ saved: KanjiSettings } | { error: string }> => {
+    if (!studio?.configured) return { error: say("The settings are not loaded.", "設定が読み込まれていません。") };
     try {
-      const saved = await saveSettings(studio.revision, changedSettings(studio.settings, next));
+      const saved = await saveSettings(studio.revision, changes);
       setStudio({ ...studio, revision: saved.revision, settings: saved.settings });
-      setSettingsMessage(say("Settings saved.", "設定を保存しました。"));
-      setSettingsVersion(v => v + 1);
-    } catch (error) { setSettingsError(error instanceof Error ? error.message : String(error)); }
-    finally { setSaving(false); }
-  }
+      return { saved: saved.settings };
+    } catch (error) {
+      const conflict = (error as { status?: number }).status === 409;
+      return { error: conflict ? say("The settings file changed since this page loaded it. Press Reload: your unsaved changes stay in the form, then save again.",
+        "このページを読み込んだ後に設定ファイルが変更されました。「再読み込み」を押してから、もう一度保存してください（未保存の変更はフォームに残ります）。") : errorText(error, say) };
+    }
+  }, [studio, say]);
 
   const header = <header className="mt-7 flex flex-wrap items-end justify-between gap-3">
     <div>
@@ -253,7 +277,7 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
         "Vertical study shorts: the brush writes the kanji, the voices read its readings and useful words. The same settings and producer as pnpm video:kanji.",
         "縦型の学習ショート。筆が漢字を書き、音声が読みとよく使うことばを読みます。pnpm video:kanji と同じ設定と制作処理です。")}</p>
     </div>
-    <Button variant="outline" size="sm" icon={<RefreshCw className="size-4" />} onClick={() => void reload()}>{say("Reload", "再読み込み")}</Button>
+    <Button variant="outline" size="sm" icon={<RefreshCw className="size-4" />} onClick={reloadAll}>{say("Reload", "再読み込み")}</Button>
   </header>;
 
   if (!studio) return <div className="pb-10">{header}
@@ -262,6 +286,7 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
       : <p role="status" className="text-sm text-muted-foreground">{say("Loading kanji shorts…", "漢字ショートを読み込んでいます…")}</p>}</Surface>
   </div>;
   if (!studio.configured) return <div className="pb-10">{header}
+    {loadError && <p role="alert" className={alertBox + " mt-6"}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{loadError}</p>}
     <Surface className="mt-6" header={<h2 className={heading}>{say("Set up kanji shorts", "漢字ショートの準備")}</h2>}>
       <p role="alert" className="text-sm text-foreground">{studio.problem}</p>
       <p className={helper}>{say("The settings file names the kanji data, the music and the voices. docs/how-to-make-kanji-shorts.md shows how to make one.",
@@ -271,21 +296,23 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
   </div>;
 
   const busy = running || starting;
+  const makeBlocked = busy || !chosen.length || tooMany || settingsDirty;
   return <div className="pb-10">
     {header}
+    {loadError && <p role="alert" className={alertBox + " mt-6"}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{loadError}</p>}
     <div className="mt-6 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
       <div className="flex min-w-0 flex-col gap-6">
         <Surface header={<div><h2 className={heading}>{say("Choose kanji", "漢字を選ぶ")}</h2>
           <p className={helper}>{say(`Pick or type up to ${MAX_KANJI}. Each becomes its own short.`, `${MAX_KANJI} 字まで選ぶか入力します。1 字ごとに 1 本のショートになります。`)}</p></div>}>
           <div className="flex flex-col gap-4">
             <div>
-            <label className="block text-xs font-semibold text-muted-foreground">{say("Kanji to make", "作る漢字")}
-              <input className={field + " mt-1 font-serif tracking-widest"} lang="ja" value={selection} onChange={e => setSelection(e.target.value)}
-                aria-describedby="kanji-count" placeholder="年今前時友" />
-            </label>
-            <p id="kanji-count" className={"mt-1.5 text-xs " + (tooMany ? "text-status-danger" : "text-muted-foreground")}>
-              {tooMany ? say(`One run makes at most ${MAX_KANJI} kanji; ${chosen.length} are chosen.`, `1 回で作れるのは ${MAX_KANJI} 字までです（${chosen.length} 字選択中）。`)
-                : say(`${chosen.length} chosen`, `${chosen.length} 字選択中`)}</p>
+              <label className="block text-xs font-semibold text-muted-foreground">{say("Kanji to make", "作る漢字")}
+                <input className={field + " mt-1 font-serif tracking-widest"} lang="ja" value={selection} onChange={e => setSelection(e.target.value)}
+                  aria-describedby="kanji-count" aria-invalid={tooMany || undefined} placeholder="年今前時友" />
+              </label>
+              <p id="kanji-count" aria-live="polite" className={"mt-1.5 text-xs " + (tooMany ? "text-status-danger" : "text-muted-foreground")}>
+                {tooMany ? say(`One run makes at most ${MAX_KANJI} kanji; ${chosen.length} are chosen.`, `1 回で作れるのは ${MAX_KANJI} 字までです（${chosen.length} 字選択中）。`)
+                  : say(`${chosen.length} chosen`, `${chosen.length} 字選択中`)}</p>
             </div>
             <KanjiPicker catalog={studio.catalog} selected={chosen} onToggle={toggle} say={say} />
           </div>
@@ -294,11 +321,12 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
         <Surface header={<div><h2 className={heading}>{say("What each short says", "各ショートの内容")}</h2>
           <p className={helper}>{say("Each line, the voice that reads each part, and where a reading reuses another line's audio. Nothing is sent to make this preview.",
             "各行と、それぞれを読む音声、別の行の音声を使う箇所。このプレビューでは何も送信しません。")}</p></div>}>
-          <div aria-busy={previewing} aria-live="polite">
+          <div aria-busy={previewing}>
             {!chosen.length ? <p className="text-sm text-muted-foreground">{say("Choose a kanji to see its short.", "漢字を選ぶと内容が表示されます。")}</p>
-              : previewError ? <p role="alert" className="text-sm text-status-danger">{previewError}</p>
-              : previewing && !previews.length ? <p className="text-sm text-muted-foreground">{say("Preparing the preview…", "プレビューを準備しています…")}</p>
-              : <ul className="flex flex-col gap-3">{previews.map(preview => <PreviewCard key={preview.char} preview={preview} settings={studio.settings} say={say} />)}</ul>}
+              : tooMany ? <p className="text-sm text-status-danger">{say(`Choose at most ${MAX_KANJI} kanji to see their shorts.`, `内容を見るには ${MAX_KANJI} 字以内にしてください。`)}</p>
+              : previewError ? <p role="alert" className={alertBox}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{previewError}</p>
+              : previewing && !previews.length ? <p role="status" className="text-sm text-muted-foreground">{say("Preparing the preview…", "プレビューを準備しています…")}</p>
+              : <ul className="flex flex-col gap-3">{previews.map(item => <PreviewCard key={item.char} preview={item} settings={studio.settings} say={say} />)}</ul>}
           </div>
         </Surface>
       </div>
@@ -306,19 +334,28 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
       <div className="flex min-w-0 flex-col gap-6">
         <Surface header={<div><h2 className={heading}>{say("Make", "作成")}</h2>
           <p className={helper}>{studio.provider === "fish"
-            ? say("Make sends each short's narration text to Fish Audio, read with your voices. Each short takes a few minutes to render. Nothing is published.",
-              "「作成」を押すと、各ショートのナレーション文を Fish Audio に送り、設定した音声で読み上げます。1 本の描画に数分かかります。公開はされません。")
-            : say("A local voice reads the narration. Each short takes a few minutes to render. Nothing is published.",
-              "ローカルの音声がナレーションを読みます。1 本の描画に数分かかります。公開はされません。")}</p></div>}>
+            ? say("Make sends each short's narration text to Fish Audio, read with your voices, and downloads KanjiVG stroke data (from GitHub) for kanji not yet cached. Each short takes a few minutes to render. Nothing is published.",
+              "「作成」を押すと、各ショートのナレーション文を Fish Audio に送って設定した音声で読み上げ、まだ取得していない漢字の筆順データ（KanjiVG、GitHub）をダウンロードします。1 本の描画に数分かかります。公開はされません。")
+            : say("A local voice reads the narration. Make downloads KanjiVG stroke data (from GitHub) for kanji not yet cached. Each short takes a few minutes to render. Nothing is published.",
+              "ローカルの音声がナレーションを読みます。「作成」を押すと、まだ取得していない漢字の筆順データ（KanjiVG、GitHub）をダウンロードします。1 本の描画に数分かかります。公開はされません。")}</p></div>}>
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap gap-2">
-              <Button icon={<Clapperboard className="size-4" />} isLoading={starting} disabled={busy || !chosen.length || tooMany} onClick={() => void make()}>
+              <Button icon={<Clapperboard className="size-4" />} isLoading={starting} disabled={makeBlocked} onClick={() => void make()}>
                 {chosen.length === 1 ? say("Make 1 short", "1 本作成") : say(`Make ${chosen.length} shorts`, `${chosen.length} 本作成`)}</Button>
               {running && <Button variant="outline" icon={<Square className="size-4" />} onClick={() => void cancel()}>{say("Cancel", "キャンセル")}</Button>}
             </div>
-            {runError && <p role="alert" className="rounded-control border border-status-danger bg-status-danger/10 px-3 py-2 text-sm text-foreground">{runError}</p>}
+            {settingsDirty && !busy && <p className="text-xs text-status-warning">{say("Save or discard the settings changes first: a run uses the saved settings.",
+              "先に設定の変更を保存するか破棄してください。作成には保存済みの設定が使われます。")}</p>}
+            {runError && <p role="alert" className={alertBox}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{runError}</p>}
+            {running && missedPolls >= MISSED_POLLS && <p role="alert" className="text-sm text-status-warning">{say(
+              "Cannot reach the Studio server to follow the run; still trying. The shorts keep rendering if the server is busy.",
+              "Studio サーバーに接続できず、進行を確認できません（再試行中）。サーバーが処理中なら描画は続いています。")}</p>}
             {run && <div aria-live="polite">
-              <p className="mb-2 text-xs font-semibold text-muted-foreground">{run.state === "running" ? say("Making…", "作成中…") : run.state === "cancelled" ? say("Cancelled", "キャンセルしました") : say("Last run", "前回の実行")}</p>
+              <p ref={runHeading} tabIndex={-1} className="mb-2 text-xs font-semibold text-muted-foreground focus:outline-none">{run.state === "running" ? say("Making…", "作成中…")
+                : run.state === "cancelled" ? say("Cancelled", "キャンセルしました") : run.state === "lost" ? say("Progress lost", "進行が不明") : say("Last run", "前回の実行")}</p>
+              {run.state === "lost" && <p role="alert" className="mb-2 text-sm text-status-warning">{say(
+                "The Studio server no longer knows this run (it restarted). Shorts already made are listed under Watch; check Jobs for the rest.",
+                "Studio サーバーがこの実行を把握していません（再起動されました）。作成済みのショートは「視聴」に表示されます。残りはジョブを確認してください。")}</p>}
               {run.error && <p role="alert" className="mb-2 text-sm text-status-danger">{run.error}</p>}
               <ul className="flex flex-col gap-2">{run.items.map(item => <RunRow key={item.char} item={item} active={item.char === shown} onShow={setShown} say={say} />)}</ul>
             </div>}
@@ -327,13 +364,14 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
 
         <Surface header={<div><h2 className={heading}>{say("Watch", "視聴")}</h2>
           <p className={helper}>{shown ? say(`The newest short of ${shown}, and its checks.`, `${shown} の最新のショートとその計測結果。`) : say("Choose a kanji that has been made.", "作成済みの漢字を選んでください。")}</p></div>}>
-          {releaseLoading ? <p className="text-sm text-muted-foreground">{say("Loading…", "読み込み中…")}</p>
-            : shown && !release ? <p className="text-sm text-muted-foreground">{say(`No short of ${shown} yet.`, `${shown} のショートはまだありません。`)}</p>
-            : release ? <ReleasePlayer key={release.folder + release.versions[0]?.version} release={release} say={say} /> : null}
+          {!shown ? null
+            : !foundNow ? <p role="status" className="text-sm text-muted-foreground">{say("Loading…", "読み込み中…")}</p>
+            : foundNow.error ? <p role="alert" className={alertBox}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{say(`Could not load the shorts of ${shown}: ${foundNow.error}`, `${shown} のショートを読み込めませんでした: ${foundNow.error}`)}</p>
+            : foundNow.release ? <ReleasePlayer key={foundNow.release.folder + foundNow.release.versions[0]?.version} release={foundNow.release} say={say} />
+            : <p className="text-sm text-muted-foreground">{say(`No short of ${shown} yet.`, `${shown} のショートはまだありません。`)}</p>}
         </Surface>
 
-        <KanjiSettingsPanel settings={studio.settings} provider={studio.provider} saving={saving}
-          message={settingsMessage} error={settingsError} onSave={next => void save(next)} say={say} />
+        <KanjiSettingsPanel settings={studio.settings} provider={studio.provider} onSave={save} onDirtyChange={setSettingsDirty} say={say} />
       </div>
     </div>
   </div>;

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KanjiShortsWorkspace } from "./kanji-shorts-workspace";
-import { cancelRun, loadPreviews, loadReleases, loadStatus, loadStudio, saveSettings, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
-import { changedSettings, draftFrom, settingsFromDraft } from "./kanji-settings-model";
+import { KanjiApiError, cancelRun, loadPreviews, loadReleases, loadStatus, loadStudio, saveSettings, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
+import { changedSettings, draftFrom, draftProblems, settingsFromDraft } from "./kanji-settings-model";
+import { forgetKanjiDrafts } from "./kanji-drafts";
 
 vi.mock("./kanji-shorts-api", async (original) => ({
   ...(await original<typeof import("./kanji-shorts-api")>()),
@@ -39,6 +40,7 @@ const running = (state: Run["items"][number]["state"] = "running"): Run => ({ id
 
 beforeEach(() => {
   vi.clearAllMocks();
+  forgetKanjiDrafts();
   vi.mocked(loadStudio).mockResolvedValue(STATE);
   vi.mocked(loadPreviews).mockResolvedValue({ previews: [PREVIEW] });
   vi.mocked(loadReleases).mockResolvedValue({ releases: [] });
@@ -125,5 +127,118 @@ describe("settings draft", () => {
       "voice.voiceIds": { ja: SETTINGS["voice.voiceIds"]!.ja, ko: "aaaaaaaaaaaaaaaa" }, "card.safeInset": { left: .05, bottom: .19 },
       "narration.retakes": { ひと: 5 }, "timing.write": null,
     });
+  });
+});
+
+describe("settings the form cannot show", () => {
+  it("are kept as the file has them: a custom bottom band, a zero band, and {name.kana} read from another line", () => {
+    for (const saved of [
+      { ...SETTINGS, "card.safeInset": { bottom: .25 } }, { ...SETTINGS, "card.safeInset": { bottom: 0 } },
+      { ...SETTINGS, "narration.reuse": { "{name.kana}": "onyomi" } }, { ...SETTINGS, "narration.reuse": { "{name.kana}": "kunyomi", ひと: "kunyomi" } },
+    ] as KanjiSettings[]) expect(changedSettings(saved, settingsFromDraft(draftFrom(saved)))).toEqual({});
+    // Switching the band on or off is a change; a typed {name.kana} → kunyomi row is kept with the switch off.
+    const draft = draftFrom({ ...SETTINGS, "card.safeInset": { bottom: .25 } });
+    expect(settingsFromDraft({ ...draft, aboveCaptions: false })["card.safeInset"]).toBeNull();
+    const typed = settingsFromDraft({ ...draftFrom(SETTINGS), reuse: [["{name.kana}", "kunyomi"]] });
+    expect(typed["narration.reuse"]).toEqual({ "{name.kana}": "kunyomi" });
+  });
+
+  it("names what stops a save instead of dropping a half-filled row", () => {
+    const draft = draftFrom(SETTINGS);
+    expect(draftProblems({ ...draft, retakes: [["ひと", ""]] })).toEqual(["retakes-row"]);
+    expect(draftProblems({ ...draft, retakes: [["ひと", "1"]] })).toEqual(["retake-number"]);
+    expect(draftProblems({ ...draft, write: "six" })).toEqual(["number"]);
+    expect(draftProblems(draft)).toEqual([]);
+  });
+});
+
+describe("the page keeps the person's work and says what happens", () => {
+  it("shows a half-filled row's problem and sends nothing", async () => {
+    const user = userEvent.setup();
+    render(<KanjiShortsWorkspace locale="en" />);
+    const settings = within((await screen.findByRole("heading", { name: "Settings" })).closest("[data-km-surface=root]") as HTMLElement);
+    await user.click(settings.getAllByRole("button", { name: "Add" })[1]);
+    await user.type(settings.getByRole("textbox", { name: "Retakes 1: Text one voice reads" }), "ひと");
+    expect(settings.getByText("Fill in both parts of each retake, or remove it.")).toBeInTheDocument();
+    await user.click(settings.getByRole("button", { name: "Save settings" }));
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps unsaved settings when the page is left and opened again, and blocks Make until they are saved", async () => {
+    const user = userEvent.setup();
+    const first = render(<KanjiShortsWorkspace locale="en" />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Pace" }), "fast");
+    await user.type(screen.getByLabelText("Kanji to make"), "人");
+    expect(screen.getByRole("button", { name: "Make 1 short" })).toBeDisabled();
+    expect(screen.getByText(/Save or discard the settings changes first/u)).toBeInTheDocument();
+    first.unmount();
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByRole("combobox", { name: "Pace" })).toHaveValue("fast");
+    expect(screen.getByLabelText("Kanji to make")).toHaveValue("人");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  });
+
+  it("keeps unsaved edits when the file changed elsewhere, and saves only what was edited here", async () => {
+    const user = userEvent.setup();
+    vi.mocked(saveSettings).mockResolvedValue({ revision: "r3", settings: { ...SETTINGS, "voice.pace": "fast", maxWords: 4 } });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Pace" }), "fast");
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, revision: "r2", settings: { ...SETTINGS, maxWords: 4 } } as StudioState);
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(await screen.findByText(/changed elsewhere\. Your unsaved changes are kept/u)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Pace" })).toHaveValue("fast");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(saveSettings).toHaveBeenCalledWith("r2", { "voice.pace": "fast" });
+  });
+
+  it("says Make downloads stroke data too", async () => {
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByText(/downloads KanjiVG stroke data \(from GitHub\)/u)).toBeInTheDocument();
+  });
+
+  it("says when a run's progress is lost, instead of hiding it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.mocked(startRun).mockResolvedValue({ run: running() });
+      vi.mocked(loadStatus).mockResolvedValue({ run: null });
+      render(<KanjiShortsWorkspace locale="en" />);
+      await user.type(await screen.findByLabelText("Kanji to make"), "人");
+      await user.click(screen.getByRole("button", { name: "Make 1 short" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+      expect(await screen.findByText(/no longer knows this run/u)).toBeInTheDocument();
+      expect(screen.getByRole("progressbar", { name: "人 progress" })).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("warns after several missed status checks", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.mocked(startRun).mockResolvedValue({ run: running() });
+      vi.mocked(loadStatus).mockRejectedValue(new KanjiApiError("unreachable", "down"));
+      render(<KanjiShortsWorkspace locale="en" />);
+      await user.type(await screen.findByLabelText("Kanji to make"), "人");
+      await user.click(screen.getByRole("button", { name: "Make 1 short" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(4700); });
+      expect(screen.getByText(/Cannot reach the Studio server to follow the run/u)).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("shows a failed release load as an error, not as nothing made", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadReleases).mockRejectedValue(new KanjiApiError("timeout", "slow"));
+    render(<KanjiShortsWorkspace locale="ja" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    expect(await screen.findByText(/人 のショートを読み込めませんでした: ローカルの Studio サーバーが時間内に応答しませんでした/u)).toBeInTheDocument();
+    expect(screen.queryByText(/ショートはまだありません/u)).not.toBeInTheDocument();
+  });
+
+  it("lists a kanji the producer cannot make as unavailable, with its reason", async () => {
+    const catalog = STATE.configured ? STATE.catalog : [];
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, catalog: [...catalog,
+      { char: "乙", jlpt: "N5", meanings: "SECOND", name: { kana: "", romaji: "" }, versions: 0, problem: "乙 has no useful word other than itself" }] } as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByRole("button", { name: /乙, cannot be made: 乙 has no useful word/u })).toBeDisabled();
   });
 });

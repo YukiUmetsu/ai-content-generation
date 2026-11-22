@@ -30,3 +30,12 @@ export function phaseName(phase: string | null, say: Say) {
   };
   return phase && names[phase] ? say(...names[phase]) : say("Waiting", "待機中");
 }
+
+/** A failed call in the person's language; the server's own messages are shown as they come. */
+export function errorText(error: unknown, say: Say) {
+  const kind = (error as { kind?: string })?.kind;
+  if (kind === "timeout") return say("The local Studio server did not answer in time. Check its terminal, then try again.", "ローカルの Studio サーバーが時間内に応答しませんでした。ターミナルを確認して、もう一度お試しください。");
+  if (kind === "unreachable") return say("Cannot reach the local Studio server. Start it (pnpm dev) and try again.", "ローカルの Studio サーバーに接続できません。起動して（pnpm dev）もう一度お試しください。");
+  if (kind === "unreadable") return say("The local Studio server answered without details.", "ローカルの Studio サーバーの応答に詳細がありません。");
+  return error instanceof Error ? error.message : String(error);
+}

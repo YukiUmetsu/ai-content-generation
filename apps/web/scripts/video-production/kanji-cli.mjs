@@ -61,6 +61,9 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
     const previews = await previewKanjiShorts({ ...studio, config }, args.chars, deps);
     if (args.json) log(JSON.stringify(previews, null, 2));
     else for (const preview of previews) for (const line of previewText(preview)) log(line);
+    // Every kanji is shown first; one that cannot be made then fails the run, as it would fail making it.
+    const unusable = previews.filter(preview => preview.problem);
+    if (unusable.length) fail(unusable.map(preview => `${preview.char}: ${preview.problem}`).join("; "));
     return [];
   }
   // The Fish key only for a Fish voice; a local voice needs none.
