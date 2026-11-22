@@ -27,10 +27,15 @@ test("the work's own error is kept when recording the failure in Jobs fails too"
   assert.ok(calls.includes("fail"));
 });
 
-test("finished work whose success Jobs cannot record is never recorded as failed", async () => {
+test("finished work whose success Jobs cannot record is retried, and never recorded as failed", async () => {
   const { calls, fetcher } = jobs({ fail: { succeed: async () => ({ ok: false, status: 500, json: async () => ({ error: "locked" }) }) } });
-  await assert.rejects(withWorkerJob(spec(), async () => 1, { fetcher }), /locked/u);
+  await assert.rejects(withWorkerJob(spec(), async () => 1, { fetcher, retryMs: 1 }), /locked/u);
+  assert.equal(calls.filter(call => call === "succeed").length, 3);
   assert.equal(calls.includes("fail"), false);
+  // A refusal that passes is recorded on the next try.
+  let refused = 0;
+  const flaky = jobs({ fail: { succeed: async () => refused++ ? { ok: true, json: async () => ({ success: true }) } : { ok: false, status: 500, json: async () => ({ error: "locked" }) } } });
+  assert.equal((await withWorkerJob(spec(), async () => 2, { fetcher: flaky.fetcher, retryMs: 1 })).result, 2);
 });
 
 test("with keepFinishedWork, a cancel that arrives as the work finishes still records the success", async () => {

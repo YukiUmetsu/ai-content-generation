@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KanjiShortsWorkspace } from "./kanji-shorts-workspace";
 import { KanjiApiError, cancelRun, loadPreviews, loadReleases, loadStatus, loadStudio, saveSettings, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
-import { changedSettings, draftFrom, draftProblems, settingsFromDraft } from "./kanji-settings-model";
+import { changedSettings, draftFrom, draftProblems, editsOnto, settingsFromDraft } from "./kanji-settings-model";
 import { forgetKanjiDrafts } from "./kanji-drafts";
 
 vi.mock("./kanji-shorts-api", async (original) => ({
@@ -80,6 +80,8 @@ describe("KanjiShortsWorkspace", () => {
     await user.type(input, "人年");
     await user.click(screen.getByRole("button", { name: "Make 2 shorts" }));
     expect(startRun).toHaveBeenCalledWith("人年", "fish");
+    // The first run's heading takes the focus once it is on screen.
+    await waitFor(() => expect(screen.getByText("Making…")).toHaveFocus());
     const bar = await screen.findByRole("progressbar", { name: "人 progress" });
     expect(bar).toHaveAttribute("aria-valuenow", "7");
     expect(bar).toHaveAttribute("aria-valuetext", "Step 7 of 10: Rendering frames");
@@ -207,7 +209,9 @@ describe("the page keeps the person's work and says what happens", () => {
       await user.click(screen.getByRole("button", { name: "Make 1 short" }));
       await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
       expect(await screen.findByText(/no longer knows this run/u)).toBeInTheDocument();
-      expect(screen.getByRole("progressbar", { name: "人 progress" })).toBeInTheDocument();
+      // Its short is unknown now: no spinner, no progress that looks live.
+      expect(screen.getByText("Unknown: check Jobs and Watch")).toBeInTheDocument();
+      expect(screen.queryByRole("progressbar", { name: "人 progress" })).not.toBeInTheDocument();
     } finally { vi.useRealTimers(); }
   });
 
@@ -240,5 +244,35 @@ describe("the page keeps the person's work and says what happens", () => {
       { char: "乙", jlpt: "N5", meanings: "SECOND", name: { kana: "", romaji: "" }, versions: 0, problem: "乙 has no useful word other than itself" }] } as StudioState);
     render(<KanjiShortsWorkspace locale="en" />);
     expect(await screen.findByRole("button", { name: /乙, cannot be made: 乙 has no useful word/u })).toBeDisabled();
+  });
+});
+
+describe("edits made on a file changed elsewhere", () => {
+  it("change only the entries edited here: another retake or the other voice changed elsewhere is kept", () => {
+    const base = { ...SETTINGS, "narration.retakes": { "おんよみ、コン。": 2, "時間。": 2 } };
+    const latest = { ...base, "narration.retakes": { "おんよみ、コン。": 2, "時間。": 3 }, "voice.voiceIds": { ...SETTINGS["voice.voiceIds"]!, en: "eeeeeeeeeeeeeeee" } };
+    const next = { ...base, "narration.retakes": { "おんよみ、コン。": 3, "時間。": 2 }, "voice.voiceIds": { ...SETTINGS["voice.voiceIds"]!, ja: "jjjjjjjjjjjjjjjj" } };
+    expect(editsOnto(base, next, latest)).toEqual({
+      "narration.retakes": { "おんよみ、コン。": 3, "時間。": 3 },
+      "voice.voiceIds": { ja: "jjjjjjjjjjjjjjjj", en: "eeeeeeeeeeeeeeee" },
+    });
+    // A removed entry is removed; an edit that the file already has sends nothing.
+    expect(editsOnto(base, { ...base, "narration.retakes": { "時間。": 2 } }, latest)).toEqual({ "narration.retakes": { "時間。": 3 } });
+    expect(editsOnto(base, { ...base, "voice.pace": "fast" }, { ...latest, "voice.pace": "fast" })).toEqual({});
+  });
+
+  it("an empty list in the file is the same as none: the page loads clean and Make is not blocked", async () => {
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, settings: { ...SETTINGS, "narration.speech": {}, "card.safeInset": {} } } as unknown as StudioState);
+    const user = userEvent.setup();
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.type(await screen.findByLabelText("Kanji to make"), "人");
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make 1 short" })).toBeEnabled();
+  });
+
+  it("the name switch and a {name.kana} row cannot both be set", () => {
+    const draft = draftFrom({ ...SETTINGS, "narration.reuse": { "{name.kana}": "onyomi" } });
+    expect(draftProblems({ ...draft, nameFromKunyomi: true })).toEqual(["name-clash"]);
+    expect(draftProblems({ ...draft, reuse: [["ひと", "kunyomi"], ["ひと", "onyomi"]] })).toEqual(["duplicate"]);
   });
 });

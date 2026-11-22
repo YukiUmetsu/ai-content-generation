@@ -15,11 +15,12 @@ export class JobsUnavailableError extends Error {
  *   `name` words the messages ("Scene preview"); `output` checks the work's result and returns what Jobs records (or throws);
  *   `failure` is what Jobs records of a failure (never the raw error, which can carry provider details);
  *   `keepFinishedWork`: work that finished is recorded as succeeded even if the signal was aborted as it finished.
- *   A succeeded result that Jobs then fails to record is never recorded as failed: the error says so and the attempt stays for recovery.
+ *   A succeeded result is never recorded as failed. Recording it is tried three times; if Jobs still refuses, the error
+ *   says so and the job stays open in Jobs until its stale lease is recovered or it is cancelled on the Jobs page.
  * @param {(context:{signal:AbortSignal,jobId:string})=>Promise<any>} work
  */
 export async function withWorkerJob(spec, work, {
-  origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetcher = globalThis.fetch, heartbeatMs = 20_000 } = {}) {
+  origin = process.env.CONTENTGEN_JOBS_ORIGIN ?? "http://127.0.0.1:8787", fetcher = globalThis.fetch, heartbeatMs = 20_000, retryMs = 1000 } = {}) {
   const { name, signal } = spec;
   const server = new URL(origin);
   if (server.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(server.hostname) ||
@@ -86,6 +87,9 @@ export async function withWorkerJob(spec, work, {
     else await record(`/api/jobs/${jobId}/nodes/${nodeId}/fail`, { attemptId, ...spec.failure });
     throw error;
   } finally { stopped = true; clearInterval(timer); }
-  await request(`/api/jobs/${jobId}/nodes/${nodeId}/succeed`, { attemptId, output });
+  for (let attempt = 1; ; attempt++) {
+    try { await request(`/api/jobs/${jobId}/nodes/${nodeId}/succeed`, { attemptId, output }); break; }
+    catch (error) { if (attempt >= 3) throw error; await new Promise(resolve => setTimeout(resolve, retryMs * attempt)); }
+  }
   return { result, jobId };
 }

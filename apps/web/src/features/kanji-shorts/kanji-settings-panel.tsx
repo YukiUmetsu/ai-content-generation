@@ -3,7 +3,7 @@ import { Plus, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { KanjiSettings } from "./kanji-shorts-api";
-import { changedSettings, draftFrom, draftProblems, sameSettings, settingsFromDraft, type Draft, type DraftProblem, type Pairs } from "./kanji-settings-model";
+import { changedSettings, draftFrom, draftProblems, editsOnto, sameSettings, settingsFromDraft, type Draft, type DraftProblem, type Pairs } from "./kanji-settings-model";
 import type { Say } from "./kanji-text";
 import { keptSettings } from "./kanji-drafts";
 
@@ -42,6 +42,9 @@ function problemText(problem: DraftProblem, say: Say) {
     "speech-row": say("Fill in both parts of each \"spoken as\" entry, or remove it.", "読み方の指定は両方を入力するか、削除してください。"),
     "retake-number": say("A take is a whole number from 2 to 99.", "テイクは 2〜99 の整数です。"),
     number: say("Words and passes must be numbers.", "ことば数と時間は数値で入力してください。"),
+    duplicate: say("A text is listed twice in one list; keep one.", "同じテキストが一覧に 2 回あります。1 つにしてください。"),
+    "name-clash": say("The name switch reads {name.kana} from the kun'yomi line; remove the {name.kana} row or turn the switch off.",
+      "名前のスイッチは {name.kana} を訓読みの行から読みます。{name.kana} の行を削除するか、スイッチをオフにしてください。"),
   }[problem];
 }
 
@@ -57,11 +60,11 @@ export function KanjiSettingsPanel({ settings, provider, onSave, onDirtyChange, 
   const [base, setBase] = useState(() => keptSettings.value?.base ?? settings);
   const [draft, setDraft] = useState(() => keptSettings.value?.draft ?? draftFrom(settings));
   const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{ kind: "saved" | "discarded" | "error"; text: string } | null>(null);
+  // Worded at render time, so it follows a language switch.
+  const [feedback, setFeedback] = useState<{ kind: "saved" | "discarded" } | { kind: "error"; text: string } | null>(null);
   const feedbackRef = useRef<HTMLParagraphElement>(null);
   const next = settingsFromDraft(draft);
-  const changes = changedSettings(base, next);
-  const dirty = Object.keys(changes).length > 0;
+  const dirty = Object.keys(changedSettings(base, next)).length > 0;
   const problems = draftProblems(draft);
   // The file changed elsewhere (or was saved): an untouched form follows it; unsaved edits are kept
   // and will be saved on top of the new file, changing only what was edited here.
@@ -80,17 +83,17 @@ export function KanjiSettingsPanel({ settings, provider, onSave, onDirtyChange, 
   const update = (patch: Partial<Draft>) => { setDraft(current => ({ ...current, ...patch })); if (feedback?.kind !== "error") setFeedback(null); };
   async function save() {
     setSaving(true); setFeedback(null);
-    const result = await onSave(changes);
+    const result = await onSave(editsOnto(base, next, settings));
     setSaving(false);
     if ("error" in result) { setFeedback({ kind: "error", text: result.error }); return; }
     // The form starts again from what the file now has.
     keptSettings.value = null;
     setBase(result.saved); setDraft(draftFrom(result.saved));
-    setFeedback({ kind: "saved", text: say("Settings saved.", "設定を保存しました。") });
+    setFeedback({ kind: "saved" });
   }
   function discard() {
     setBase(settings); setDraft(draftFrom(settings));
-    setFeedback({ kind: "discarded", text: say("Changes discarded.", "変更を破棄しました。") });
+    setFeedback({ kind: "discarded" });
   }
 
   return <Surface header={<div>
@@ -185,7 +188,8 @@ export function KanjiSettingsPanel({ settings, provider, onSave, onDirtyChange, 
       </div>
       {feedback && <p ref={feedbackRef} tabIndex={-1} role={feedback.kind === "error" ? "alert" : "status"}
         className={feedback.kind === "error" ? "rounded-control border border-status-danger bg-status-danger/10 px-3 py-2 text-sm text-foreground focus:outline-none"
-          : "text-sm text-status-success focus:outline-none"}>{feedback.text}</p>}
+          : "text-sm text-status-success focus:outline-none"}>{feedback.kind === "error" ? feedback.text
+            : feedback.kind === "saved" ? say("Settings saved.", "設定を保存しました。") : say("Changes discarded.", "変更を破棄しました。")}</p>}
     </form>
   </Surface>;
 }

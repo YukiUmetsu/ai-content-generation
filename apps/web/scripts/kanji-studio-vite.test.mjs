@@ -34,7 +34,7 @@ async function fixture(t, config = CONFIG) {
 const unavailableJobs = { fetcher: async () => { throw Error("connection refused"); } };
 function api(dir, deps = {}) {
   const runs = [];
-  const studio = createKanjiStudioApi({ configPath: join(dir, "config.json"), providerKey: async () => "key-0123456789", findBrowser: async () => "/bin/chrome",
+  const studio = createKanjiStudioApi({ runs: { run: null, controller: null }, configPath: join(dir, "config.json"), providerKey: async () => "key-0123456789", findBrowser: async () => "/bin/chrome",
     jobs: unavailableJobs, preview: { loadKanjiPlanner: async () => { throw Error("not built"); } }, onRun: (run) => runs.push(run), ...deps });
   return { ...studio, settled: () => Promise.all(runs) };
 }
@@ -315,4 +315,21 @@ test("a linked settings file is changed where it points, and the link stays", as
   assert.equal((await call(studio, "POST", "/settings", { revision, changes: { maxWords: 2 } })).status, 200);
   assert.equal(JSON.parse(await readFile(join(dir, "real", "config.json"), "utf8")).maxWords, 2);
   assert.equal((await (await import("node:fs/promises")).lstat(join(dir, "linked.json"))).isSymbolicLink(), true);
+});
+
+test("a run belongs to the process: a restarted API (same process) still reports it and refuses a second one", async (t) => {
+  const dir = await fixture(t), runs = { run: null, controller: null };
+  let finish;
+  const produce = () => new Promise(resolve => { finish = () => resolve({ qa: QA }); });
+  const first = createKanjiStudioApi({ runs, configPath: join(dir, "config.json"), providerKey: async () => "k".repeat(16), findBrowser: async () => "/bin/chrome",
+    jobs: unavailableJobs, produce });
+  assert.equal((await call(first, "POST", "/start", { kanji: "水", confirm: true, consent: CONSENT })).status, 202);
+  const restarted = createKanjiStudioApi({ runs, configPath: join(dir, "config.json"), providerKey: async () => "k".repeat(16), findBrowser: async () => "/bin/chrome",
+    jobs: unavailableJobs, produce });
+  assert.equal((await call(restarted, "GET", "/status")).json().run.state, "running");
+  assert.equal((await call(restarted, "POST", "/start", { kanji: "人", confirm: true, consent: CONSENT })).status, 409);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  finish();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal((await call(restarted, "GET", "/status")).json().run.state, "finished");
 });

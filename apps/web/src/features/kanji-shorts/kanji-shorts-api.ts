@@ -24,7 +24,8 @@ export type QaSummary = {
   warnings: string[]; technicalPass: boolean; reviewStatus: string; nameReusedFrom?: string;
 };
 export type RunItem = {
-  char: string; state: "queued" | "running" | "done" | "failed" | "cancelled"; phase: string | null; message: string | null;
+  /** "unknown": the page lost the run while this short was queued or running (shown without progress). */
+  char: string; state: "queued" | "running" | "done" | "failed" | "cancelled" | "unknown"; phase: string | null; message: string | null;
   folder?: string; version?: number; tracked?: boolean; jobId?: string; error?: string; note?: string; qa?: QaSummary | null;
 };
 /** "lost": the page knew a running run the server no longer has (it restarted). */
@@ -89,6 +90,10 @@ export const startRun = (kanji: string, provider: "fish" | "local") => call<{ ru
   consent: provider === "fish" ? { allowNetwork: true, voiceConsent: true, transmitText: true } : { allowNetwork: true, localVoice: true },
 }, 60000);
 export const cancelRun = () => call<{ run: Run }>("/cancel", {});
+
+/** A run the server no longer knows: its unfinished shorts are unknown, never shown as still progressing. */
+export const lostRun = (run: Run): Run => ({ ...run, state: "lost",
+  items: run.items.map(item => item.state === "running" || item.state === "queued" ? { ...item, state: "unknown" } : item) });
 
 /** The URL of a release's video or poster still. */
 export const releaseMedia = (folder: string, version: number, file: "video.mp4" | "poster.png") =>

@@ -22,6 +22,7 @@ import { JobsUnavailableError, withWorkerJob } from "./video-production/worker-j
 export const KANJI_STUDIO_PREFIX = "/api/contentgen-kanji";
 /** The most kanji one run makes: each is a few minutes of rendering. */
 export const MAX_KANJI_PER_RUN = 10;
+const RUNS = Symbol.for("contentgen.kanji-studio.runs");
 const headers = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" };
 const respond = (res, status, body) => {
   res.writeHead(status, { ...headers, "Content-Type": "application/json; charset=utf-8" });
@@ -68,10 +69,13 @@ const VERSION = /^v\d{1,5}$/u, STILL = /^frame-\d{6}\.png$/u;
  */
 export function createKanjiStudioApi(deps = {}) {
   const configPath = deps.configPath ?? process.env.CONTENTGEN_KANJI_CONFIG ?? DEFAULT_CONFIG;
-  let run = null, controller = null, saving = Promise.resolve();
+  // The run is the process's, not this API object's: when Vite restarts its server in the same process,
+  // the new API still reports a run in progress and refuses a second one. Tests pass their own holder.
+  const runs = deps.runs ?? (globalThis[RUNS] ??= { run: null, controller: null });
+  let saving = Promise.resolve();
 
   /** What the page shows of the current or last run. */
-  const runView = () => run && structuredClone(run);
+  const runView = () => runs.run && structuredClone(runs.run);
 
   async function loadStudio() {
     try { return { studio: await readKanjiStudio(configPath) }; }
@@ -142,13 +146,13 @@ export function createKanjiStudioApi(deps = {}) {
   }
 
   async function start(body) {
-    if (controller) return [409, { error: "A run is already making shorts. Wait for it, or cancel it.", run: runView() }];
+    if (runs.controller) return [409, { error: "A run is already making shorts. Wait for it, or cancel it.", run: runView() }];
     if (body?.confirm !== true) return [400, { error: "Confirm the run to make shorts." }];
     const chars = kanjiFromText(body.kanji);
     // Claimed before any wait, so a second Make (another tab) is refused, never run alongside.
     const abort = new AbortController();
-    controller = abort;
-    const release = () => { if (controller === abort) controller = null; };
+    runs.controller = abort;
+    const release = () => { if (runs.controller === abort) runs.controller = null; };
     try {
       const { studio, problem } = await loadStudio();
       if (!studio) { release(); return [422, { error: problem }]; }
@@ -170,7 +174,7 @@ export function createKanjiStudioApi(deps = {}) {
       catch (error) { release(); return [422, { error: errorText(error) }]; }
       const current = { id: randomUUID(), state: "running", startedAt: new Date().toISOString(), finishedAt: null,
         items: chars.map(char => ({ char, state: "queued", phase: null, message: null })) };
-      run = current;
+      runs.run = current;
       const started = makeShorts(current, abort, studio, { apiKey, browserExecutable, consent }).catch(error => {
         current.state = "finished"; current.error = errorText(error); current.finishedAt = new Date().toISOString();
       }).finally(release);
@@ -244,8 +248,8 @@ export function createKanjiStudioApi(deps = {}) {
         return respond(res, status, payload);
       }
       if (req.method === "POST" && route === "/cancel") {
-        if (!controller) return respond(res, 409, { error: "No run is making shorts.", run: runView() });
-        controller.abort(Error("Cancelled on the Kanji shorts page."));
+        if (!runs.controller) return respond(res, 409, { error: "No run is making shorts.", run: runView() });
+        runs.controller.abort(Error("Cancelled on the Kanji shorts page."));
         return respond(res, 200, { run: runView() });
       }
       respond(res, 404, { error: "Unknown kanji shorts route." });

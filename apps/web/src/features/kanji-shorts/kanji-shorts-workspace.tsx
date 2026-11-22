@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import {
-  RUN_PHASES, cancelRun, kanjiIn, loadPreviews, loadReleases, loadStatus, loadStudio, releaseMedia, saveSettings, startRun,
+  RUN_PHASES, cancelRun, kanjiIn, lostRun, loadPreviews, loadReleases, loadStatus, loadStudio, releaseMedia, saveSettings, startRun,
   type CatalogKanji, type KanjiPreview, type KanjiRelease, type KanjiSettings, type Run, type RunItem, type StudioState,
 } from "./kanji-shorts-api";
 import { KanjiSettingsPanel } from "./kanji-settings-panel";
@@ -104,9 +104,11 @@ function PreviewCard({ preview, settings, say }: { preview: KanjiPreview; settin
 function RunRow({ item, active, onShow, say }: { item: RunItem; active: boolean; onShow: (char: string) => void; say: Say }) {
   const step = item.state === "done" ? RUN_PHASES.length : Math.max(0, RUN_PHASES.indexOf((item.phase ?? "") as (typeof RUN_PHASES)[number])) + (item.state === "running" ? 1 : 0);
   const icon = item.state === "done" ? <CheckCircle2 className="size-4 text-status-success" /> : item.state === "failed" ? <XCircle className="size-4 text-status-danger" />
+    : item.state === "unknown" ? <AlertCircle className="size-4 text-status-warning" />
     : item.state === "cancelled" ? <Square className="size-4 text-muted-foreground" /> : item.state === "running" ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none text-primary" />
     : <span className="size-4" />;
-  const stateText = { queued: say("Waiting", "待機中"), running: phaseName(item.phase, say), done: say("Ready for review", "確認待ち"), failed: say("Stopped", "停止"), cancelled: say("Cancelled", "キャンセル") }[item.state];
+  const stateText = { queued: say("Waiting", "待機中"), running: phaseName(item.phase, say), done: say("Ready for review", "確認待ち"), failed: say("Stopped", "停止"), cancelled: say("Cancelled", "キャンセル"),
+    unknown: say("Unknown: check Jobs and Watch", "不明（ジョブと視聴を確認）") }[item.state];
   const english = say("en", "ja") === "en";
   return <li className="min-w-0 rounded-control border border-border p-3" aria-current={active || undefined}>
     <div className="flex items-center gap-3">
@@ -115,10 +117,10 @@ function RunRow({ item, active, onShow, say }: { item: RunItem; active: boolean;
       <span className="min-w-0 flex-1 text-sm font-semibold text-foreground">{stateText}{item.state === "running" && <span className="font-normal text-muted-foreground"> · {say(`step ${step} of ${RUN_PHASES.length}`, `${RUN_PHASES.length} 段階中 ${step}`)}</span>}</span>
       {item.state === "done" && item.folder && <Button variant="outline" size="sm" icon={<Film className="size-4" />} onClick={() => onShow(item.char)}>{say("Watch", "見る")}</Button>}
     </div>
-    <div role="progressbar" aria-label={say(`${item.char} progress`, `${item.char} の進行`)} aria-valuemin={0} aria-valuemax={RUN_PHASES.length} aria-valuenow={step}
+    {item.state !== "unknown" && <div role="progressbar" aria-label={say(`${item.char} progress`, `${item.char} の進行`)} aria-valuemin={0} aria-valuemax={RUN_PHASES.length} aria-valuenow={step}
       aria-valuetext={say(`Step ${step} of ${RUN_PHASES.length}: ${stateText}`, `${RUN_PHASES.length} 段階中 ${step}: ${stateText}`)} className="mt-2 flex gap-0.5">
       {RUN_PHASES.map((phase, i) => <span key={phase} className={"h-1.5 flex-1 rounded-full " + (i < step ? (item.state === "failed" ? "bg-status-danger" : "bg-primary") : "bg-border")} />)}
-    </div>
+    </div>}
     {/* The producer's own step text is English; the step name above says the same in Japanese. */}
     {english && item.state === "running" && item.message && <p className="mt-2 truncate text-xs text-muted-foreground" title={item.message}>{item.message}</p>}
     {item.error && <p className="mt-2 break-words text-xs text-status-danger">{item.error}</p>}
@@ -164,19 +166,19 @@ function ReleasePlayer({ release, say }: { release: KanjiRelease; say: Say }) {
 export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
   const say = useMemo(() => sayer(locale), [locale]);
   const [studio, setStudio] = useState<StudioState | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const [loadFailure, setLoadFailure] = useState<unknown>(null);
   const [reloads, setReloads] = useState(0);
   const [selection, setSelectionState] = useState(keptChoice.selection);
   const [preview, setPreview] = useState<{ key: string; previews: KanjiPreview[]; error: string }>({ key: "", previews: [], error: "" });
   const [run, setRun] = useState<Run | null>(null);
-  const [runError, setRunError] = useState("");
+  const [runError, setRunError] = useState<unknown>(null);
   const [missedPolls, setMissedPolls] = useState(0);
   const [starting, setStarting] = useState(false);
   const [shown, setShownState] = useState<string | null>(keptChoice.shown);
   const [found, setFound] = useState<{ key: string; release: KanjiRelease | null; error: string } | null>(null);
   const [watchRequests, setWatchRequests] = useState(0);
   const [settingsDirty, setSettingsDirty] = useState(false);
-  const runHeading = useRef<HTMLParagraphElement>(null);
+  const runHeading = useRef<HTMLParagraphElement>(null), focusRun = useRef(false);
   const setSelection = (next: string | ((current: string) => string)) => setSelectionState(current => {
     const value = typeof next === "function" ? next(current) : next;
     keptChoice.selection = value;
@@ -185,12 +187,13 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
   const setShown = (char: string | null) => { keptChoice.shown = char; setShownState(char); setWatchRequests(n => n + 1); };
 
   const reload = useCallback(() => loadStudio().then(state => {
-    setStudio(state); setLoadError("");
+    setStudio(state); setLoadFailure(null);
     // A run the page knew as running that the server no longer has: say so, never drop it silently.
-    setRun(current => state.run ?? (current?.state === "running" ? { ...current, state: "lost" } : current));
-  }).catch((error: unknown) => setLoadError(errorText(error, say))), [say]);
+    setRun(current => state.run ?? (current?.state === "running" ? lostRun(current) : current));
+  }).catch((error: unknown) => setLoadFailure(error)), []);
   useEffect(() => { void reload(); }, [reload]);
   const reloadAll = () => { setReloads(n => n + 1); void reload(); };
+  const loadError = loadFailure == null ? "" : errorText(loadFailure, say);
 
   const chosen = useMemo(() => kanjiIn(selection), [selection]);
   const tooMany = chosen.length > MAX_KANJI;
@@ -212,6 +215,8 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
   const previews = sameKanji ? preview.previews : [], previewError = sameKanji ? preview.error : "";
   const previewing = !!selectionKey && !tooMany && preview.key !== previewKey;
 
+  useEffect(() => { if (focusRun.current && run) { focusRun.current = false; runHeading.current?.focus(); } }, [run]);
+
   // A running run is followed every 1.5 s until it ends. Missed checks are counted and shown after a few;
   // a run the server no longer knows is shown as lost. When the run ends, the kanji list refreshes.
   const running = run?.state === "running";
@@ -222,7 +227,7 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
       loadStatus().then(result => {
         if (!active) return;
         setMissedPolls(0);
-        setRun(current => result.run && result.run.id === current?.id ? result.run : current ? { ...current, state: "lost" } : result.run);
+        setRun(current => result.run && result.run.id === current?.id ? result.run : current ? lostRun(current) : result.run);
         if (result.run?.state !== "running") void reload();
       }).catch(() => { if (active) setMissedPolls(n => n + 1); });
     }, 1500);
@@ -248,13 +253,13 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
 
   async function make() {
     if (!studio?.configured) return;
-    setStarting(true); setRunError("");
-    try { setRun((await startRun(chosen.join(""), studio.provider)).run); setMissedPolls(0); runHeading.current?.focus(); }
-    catch (error) { setRunError(errorText(error, say)); }
+    setStarting(true); setRunError(null);
+    try { setRun((await startRun(chosen.join(""), studio.provider)).run); setMissedPolls(0); focusRun.current = true; }
+    catch (error) { setRunError(error); }
     finally { setStarting(false); }
   }
   async function cancel() {
-    try { setRun((await cancelRun()).run); } catch (error) { setRunError(errorText(error, say)); }
+    try { setRun((await cancelRun()).run); } catch (error) { setRunError(error); }
   }
   const save = useCallback(async (changes: Partial<KanjiSettings>): Promise<{ saved: KanjiSettings } | { error: string }> => {
     if (!studio?.configured) return { error: say("The settings are not loaded.", "設定が読み込まれていません。") };
@@ -346,7 +351,7 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
             </div>
             {settingsDirty && !busy && <p className="text-xs text-status-warning">{say("Save or discard the settings changes first: a run uses the saved settings.",
               "先に設定の変更を保存するか破棄してください。作成には保存済みの設定が使われます。")}</p>}
-            {runError && <p role="alert" className={alertBox}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{runError}</p>}
+            {runError != null && <p role="alert" className={alertBox}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{errorText(runError, say)}</p>}
             {running && missedPolls >= MISSED_POLLS && <p role="alert" className="text-sm text-status-warning">{say(
               "Cannot reach the Studio server to follow the run; still trying. The shorts keep rendering if the server is busy.",
               "Studio サーバーに接続できず、進行を確認できません（再試行中）。サーバーが処理中なら描画は続いています。")}</p>}
