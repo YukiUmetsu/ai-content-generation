@@ -210,3 +210,20 @@ export function reuseCut(sourceText, text) {
   if (parts.length < 2 || unpunctuated(parts[parts.length - 1]) !== key) return null;
   return { whole: false, pauses: parts.length - 1 };
 }
+
+/**
+ * Where each reused text of a short is heard from (narration.reuse). Units are what one voice reads,
+ * in order: { line, text, reusedFrom? }. A reuse applies only where its source line is in this short,
+ * is another line, has no reused part itself (decided from the config, so the order does not matter)
+ * and says the text after its last comma (reuseCut): then { source (the line's last unit), cut }.
+ * Otherwise the text is read on its own, and { why } says so.
+ */
+export function reuseSources(units) {
+  const asked = units.filter(unit => unit.reusedFrom), reusing = new Set(asked.map(unit => unit.line));
+  return new Map(asked.map(unit => {
+    const from = unit.reusedFrom, source = units.filter(u => u.line === from).at(-1);
+    const why = !source ? `this short has no line ${from}` : from === unit.line ? "it is the text's own line" : reusing.has(from) ? `line ${from} is itself reused` : null;
+    const cut = why ? null : reuseCut(source.text, unit.text);
+    return [unit, cut ? { source, cut } : { why: why ?? `line ${from} does not say "${unit.text}" after a comma` }];
+  }));
+}

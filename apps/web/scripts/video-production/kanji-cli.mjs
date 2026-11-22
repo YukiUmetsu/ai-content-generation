@@ -14,7 +14,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 import { expandNarrationScript } from "./anchored-narration.mjs";
-import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset, retakeFor, reuseCut, reuseFor } from "./kanji-short.mjs";
+import { kanjiCardInset, kanjiCardInsetProblem, kanjiScriptData, kanjiShortContent, readKanjiDataset, retakeFor, reuseFor, reuseSources } from "./kanji-short.mjs";
 import { scriptRuns, voiceFor } from "./voice-runs.mjs";
 import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner, produceKanjiShort } from "./kanji-short-producer.mjs";
 import { productionProviderKey } from "./provider-keychain.mjs";
@@ -182,6 +182,8 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
       const expanded = expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration.labels, strokeCount }));
       // What one voice reads of a line: its runs with a voice per language, else the whole line.
       const partsOf = (line) => config.voice.voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
+      const units = expanded.flatMap(line => partsOf(line).map(run => ({ line: line.id, text: run.text, reusedFrom: reuseFor(run.text, config.narration.reuse) })));
+      const reuses = reuseSources(units);
       for (const line of expanded) {
         log(`  ${line.id.padEnd(9)} [${line.locale} @ ${line.at}${line.offset ? ` ${line.offset >= 0 ? "+" : ""}${line.offset} s` : ""}] ${line.say}${line.caption !== line.say ? `   (caption: ${line.caption})` : ""}`);
         // With a voice per language, show which voice reads which part.
@@ -189,15 +191,11 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
         if (runs.length > 1 || runs.length === 1 && runs[0].locale !== line.locale)
           log(`            voices: ${runs.map(run => `"${run.text}" ${run.locale} (${voiceFor(run.locale, config.voice.voiceIds, config.voice.voiceId).slice(0, 8)}…)`).join(" + ")}`);
         // The retakes that apply: a key must be the exact text one voice reads (shown above for split lines).
-        for (const text of partsOf(line).map(run => run.text)) {
-          const take = retakeFor(text, config.narration.retakes), from = reuseFor(text, config.narration.reuse);
-          const source = from && expanded.find(l => l.id === from);
-          const chained = source && partsOf(source).some(part => reuseFor(part.text, config.narration.reuse));
-          const cut = source && source.id !== line.id && !chained ? reuseCut(partsOf(source).at(-1).text, text) : null;
-          const why = !source ? `this short has no line ${from}` : source.id === line.id ? "it is the text's own line" : chained ? `line ${from} is itself reused` : `line ${from} does not say "${text}" after a comma`;
-          if (cut) log(`            reuse: "${text}" is read as ${cut.whole ? "the whole" : "the part after the last comma"} of line ${from}`);
-          else if (from) log(`            reuse: not here (${why}); "${text}" is read on its own`);
-          if (take && !cut) log(`            retake: "${text}" take ${take}`);
+        for (const unit of units.filter(u => u.line === line.id)) {
+          const take = retakeFor(unit.text, config.narration.retakes), found = reuses.get(unit);
+          if (found?.cut) log(`            reuse: "${unit.text}" is read as ${found.cut.whole ? "the whole" : "the part after the last comma"} of line ${unit.reusedFrom}`);
+          else if (found) log(`            reuse: not here (${found.why}); "${unit.text}" is read on its own`);
+          if (take && !found?.cut) log(`            retake: "${unit.text}" take ${take}`);
         }
       }
       log(`  words     ${content.words.map(w => `${w.word} (${w.ruby}, ${w.meaning})`).join(" · ")}`);

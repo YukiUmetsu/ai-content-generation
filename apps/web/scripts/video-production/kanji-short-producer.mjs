@@ -21,7 +21,7 @@ import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseCut, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, reuseSources, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -224,24 +224,15 @@ export async function produceKanjiShort(request, deps = {}) {
         return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}), ...(reusedFrom ? { reusedFrom } : {}) };
       });
     });
-    // A reused text is heard as the last phrase of another line of this short, where that line says
-    // it after a comma (reuseCut); in a short where it does not, the text is read on its own. It is
-    // still read on its own too, as a fallback should the line's audio have no clear pause.
-    // A reuse applies only where its source line is in this short, is another line, says the text
-    // after its last comma, and has no reused part itself (decided from the config, not in turn).
-    const asked = units.filter(u => u.reusedFrom);
-    const reusing = new Set(asked.map(u => u.line));
-    for (const unit of asked) {
-      const source = unit.reusedFrom !== unit.line && !reusing.has(unit.reusedFrom) ? units.filter(u => u.line === unit.reusedFrom).at(-1) : undefined;
-      const cut = source ? reuseCut(source.text, unit.text) : null;
-      if (cut) { unit.source = source; unit.cut = cut; } else delete unit.reusedFrom;
-    }
+    // A reused text is heard as the last phrase of another line of this short (reuseSources); in a
+    // short where that does not apply, the text is read on its own. It is still read on its own too,
+    // as a fallback should the line's audio have no clear pause.
+    for (const [unit, found] of reuseSources(units)) if (found.cut) Object.assign(unit, found); else delete unit.reusedFrom;
     const reuseWarnings = [];
-    const spoken = units;
-    progress("narration", `Synthesizing ${spoken.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
+    progress("narration", `Synthesizing ${units.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
     const results = new Map();
-    for (const locale of [...new Set(spoken.map(unit => unit.locale))]) {
-      const group = spoken.filter(unit => unit.locale === locale);
+    for (const locale of [...new Set(units.map(unit => unit.locale))]) {
+      const group = units.filter(unit => unit.locale === locale);
       const done = await (deps.synthesizeNarration ?? synthesizeNarration)({
         voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true },
         beats: group.map(unit => ({ id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],

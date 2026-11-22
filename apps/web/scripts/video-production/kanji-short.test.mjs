@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, reuseSources, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -133,4 +133,21 @@ test("a reused text comes only from where the source line says exactly it after 
   assert.equal(reuseCut("くんよみ、ついやす。", "ひ"), null);                                    // another kanji's line: not reused
   assert.equal(reuseCut("くんよみ、ひと。", "と"), null);                                         // only the whole last part counts
   assert.equal(reuseCut("くんよみひと", "ひと"), null);                                          // no comma, no pause to cut at
+  // Where a reuse applies in a short: a source line of this short, not its own, not itself reused, saying the text.
+  const unit = (line, text, reusedFrom) => ({ line, text, ...(reusedFrom ? { reusedFrom } : {}) });
+  const name = unit("question", "ひと", "kunyomi"), kun = unit("kunyomi", "くんよみ、ひと。");
+  const intro = unit("question", "Do you know how to write the kanji");
+  assert.deepEqual(reuseSources([intro, name, unit("onyomi", "おんよみ、ジン、ニン。"), kun]).get(name), { source: kun, cut: { whole: false, pauses: 1 } });
+  assert.deepEqual(reuseSources([name, unit("onyomi", "おんよみ、ジン。")]).get(name), { why: "this short has no line kunyomi" });
+  const own = unit("kunyomi", "ひと", "kunyomi");
+  assert.deepEqual(reuseSources([own]).get(own), { why: "it is the text's own line" });
+  const other = unit("kunyomi", "くんよみ、ついやす。");                                              // 費: the shared config does not apply
+  assert.deepEqual(reuseSources([name, other]).get(name), { why: "line kunyomi does not say \"ひと\" after a comma" });
+  // A chain is refused in either order: the source line has a reused part of its own.
+  const chainA = unit("question", "ひと", "kunyomi"), chainB = unit("kunyomi", "くんよみ、ひと。", "question");
+  for (const units of [[chainA, chainB], [chainB, chainA]]) {
+    const found = reuseSources(units);
+    assert.deepEqual([found.get(chainA).why, found.get(chainB).why], ["line kunyomi is itself reused", "line question is itself reused"]);
+  }
+  assert.equal(reuseSources([intro, kun]).size, 0);                                                 // nothing reused, nothing decided
 });

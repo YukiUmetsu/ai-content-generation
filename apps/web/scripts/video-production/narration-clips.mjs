@@ -93,13 +93,13 @@ export function lastPhrase(samples, { pauses = 1, sampleRate = SAMPLE_RATE, paus
   const breaks = [...found].sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, pauses);
   const brk = breaks.reduce((a, b) => b.start > a.start ? b : a);
   const tail = samples.subarray(brk.end);
-  const { peak } = envelope(samples, sampleRate), tailEnv = envelope(tail, sampleRate);
+  const env = envelope(samples, sampleRate), { peak } = env, tailEnv = envelope(tail, sampleRate);
   if (tailEnv.peak < peak * 10 ** (-20 / 20)) return null;
   let speech = 0;
   for (const v of tailEnv.level) if (v > peak * 10 ** (pauseDb / 20)) speech++;
   if (speech * .01 < .12) return null;
   // Walk back from the speech to true quiet, so a breathy start is kept whole.
-  const env = envelope(samples, sampleRate), quiet = peak * 10 ** (-50 / 20), mid = Math.round((brk.start + brk.end) / 2);
+  const quiet = peak * 10 ** (-50 / 20), mid = Math.round((brk.start + brk.end) / 2);
   let frame = Math.floor(brk.end / env.win) - 1;
   while (frame > 0 && frame * env.win > mid && env.level[frame] > quiet) frame--;
   return samples.slice(Math.max(mid, (frame - 1) * env.win));
