@@ -1,0 +1,279 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { KanjiShortsWorkspace } from "./kanji-shorts-workspace";
+import { KanjiApiError, cancelRun, loadPreviews, loadReleases, loadStatus, loadStudio, saveSettings, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
+import { changedSettings, draftFrom, draftProblems, editsOnto, settingsFromDraft } from "./kanji-settings-model";
+import { forgetKanjiDrafts } from "./kanji-drafts";
+
+vi.mock("./kanji-shorts-api", async (original) => ({
+  ...(await original<typeof import("./kanji-shorts-api")>()),
+  loadStudio: vi.fn(), loadStatus: vi.fn(), loadPreviews: vi.fn(), loadReleases: vi.fn(), saveSettings: vi.fn(), startRun: vi.fn(), cancelRun: vi.fn(),
+}));
+
+const SETTINGS: KanjiSettings = {
+  "voice.voiceId": "34cfe2f12a8a4d9490e375fcb845642f", "voice.voiceIds": { ja: "34cfe2f12a8a4d9490e375fcb845642f", en: "59f85041c50240f08ba9b6fa2bff650d" },
+  "voice.pace": "slow", "narration.reuse": { ひと: "kunyomi" }, "narration.retakes": null, "narration.speech": null, maxWords: null, "card.safeInset": null,
+  "timing.write": 6.6, "timing.review": 6.6,
+};
+const STATE: StudioState = {
+  configured: true, configPath: "/data/kanji-shorts/config.json", revision: "r1", provider: "fish", outputRoot: "/out", settings: SETTINGS, run: null,
+  catalog: [
+    { char: "人", jlpt: "N5", meanings: "PERSON", name: { kana: "ひと", romaji: "hito" }, versions: 2 },
+    { char: "年", jlpt: "N5", meanings: "YEAR", name: { kana: "とし", romaji: "toshi" }, versions: 0 },
+    { char: "費", jlpt: "N3", meanings: "EXPENSE", name: { kana: "ひ", romaji: "hi" }, versions: 0 },
+  ],
+};
+const PREVIEW = {
+  char: "人", found: true as const, meanings: "PERSON", jlpt: "N5", name: { kana: "ひと", romaji: "hito" }, dataProblems: [], strokeLinesLeftOut: false,
+  words: [{ word: "人間", ruby: "にんげん", meaning: "human" }],
+  lines: [
+    { id: "question", locale: "en", at: "start", offset: .35, say: "Do you know how to write the kanji ひと?", caption: "Do you know how to write the kanji hito?", split: true,
+      parts: [{ text: "Do you know how to write the kanji", locale: "en", voiceId: "59f85041c50240f08ba9b6fa2bff650d" },
+        { text: "ひと", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", reuse: { from: "kunyomi", whole: false } }] },
+    { id: "kunyomi", locale: "ja", at: "write.firstStroke", offset: 0, say: "くんよみ、ひと。", caption: "くんよみ、ひと。", split: false,
+      parts: [{ text: "くんよみ、ひと。", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f" }] },
+  ],
+};
+const running = (state: Run["items"][number]["state"] = "running"): Run => ({ id: "run-1", state: "running", startedAt: "2026-11-22T00:00:00Z", finishedAt: null,
+  items: [{ char: "人", state, phase: "rendering", message: "Rendering 744 frames…" }] });
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  forgetKanjiDrafts();
+  vi.mocked(loadStudio).mockResolvedValue(STATE);
+  vi.mocked(loadPreviews).mockResolvedValue({ previews: [PREVIEW] });
+  vi.mocked(loadReleases).mockResolvedValue({ releases: [] });
+  vi.mocked(loadStatus).mockResolvedValue({ run: null });
+});
+
+describe("KanjiShortsWorkspace", () => {
+  it("explains how to start when there is no settings file", async () => {
+    vi.mocked(loadStudio).mockResolvedValue({ configured: false, configPath: "/data/kanji-shorts/config.json", problem: "There is no settings file yet.", run: null });
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByText("There is no settings file yet.")).toBeInTheDocument();
+    expect(screen.getByText("/data/kanji-shorts/config.json")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Make/u })).not.toBeInTheDocument();
+  });
+
+  it("previews a picked kanji's lines with the voice of each part and the reused name", async () => {
+    const user = userEvent.setup();
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito, PERSON, made 2 times/u }));
+    expect(screen.getByRole("button", { name: /^人 hito/u })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("Do you know how to write the kanji hito?")).toBeInTheDocument();
+    expect(screen.getByText(/English voice · 59f85041…/u)).toBeInTheDocument();
+    expect(screen.getByText(/audio from Kun'yomi/u)).toBeInTheDocument();
+    expect(loadPreviews).toHaveBeenCalledWith("人");
+    // The level filter hides N3 kanji until All is chosen.
+    expect(screen.queryByRole("button", { name: /^費/u })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "All" }));
+    expect(screen.getByRole("button", { name: /^費/u })).toBeInTheDocument();
+  });
+
+  it("makes the chosen shorts with the consents, follows their real steps, and cancels", async () => {
+    const user = userEvent.setup();
+    vi.mocked(startRun).mockResolvedValue({ run: running() });
+    vi.mocked(cancelRun).mockResolvedValue({ run: running("cancelled") });
+    render(<KanjiShortsWorkspace locale="en" />);
+    const input = await screen.findByLabelText("Kanji to make");
+    await user.type(input, "人年");
+    await user.click(screen.getByRole("button", { name: "Make 2 shorts" }));
+    expect(startRun).toHaveBeenCalledWith("人年", "fish");
+    // The first run's heading takes the focus once it is on screen.
+    await waitFor(() => expect(screen.getByText("Making…")).toHaveFocus());
+    const bar = await screen.findByRole("progressbar", { name: "人 progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "7");
+    expect(bar).toHaveAttribute("aria-valuetext", "Step 7 of 10: Rendering frames");
+    expect(screen.getByRole("button", { name: "Make 2 shorts" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(cancelRun).toHaveBeenCalled();
+  });
+
+  it("refuses more than ten kanji before anything is sent", async () => {
+    const user = userEvent.setup();
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.type(await screen.findByLabelText("Kanji to make"), "一二三四五六七八九十百");
+    expect(screen.getByText(/at most 10 kanji; 11 are chosen/u)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make 11 shorts" })).toBeDisabled();
+  });
+
+  it("saves only the changed settings with the file's revision, and shows a refusal", async () => {
+    const user = userEvent.setup();
+    vi.mocked(saveSettings).mockRejectedValueOnce(new Error("config: maxWords must be 1 to 6"))
+      .mockResolvedValueOnce({ revision: "r2", settings: { ...SETTINGS, "narration.reuse": { ひと: "kunyomi", "{name.kana}": "kunyomi" } } });
+    render(<KanjiShortsWorkspace locale="en" />);
+    const settings = within((await screen.findByRole("heading", { name: "Settings" })).closest("[data-km-surface=root]") as HTMLElement);
+    await user.click(settings.getByRole("checkbox", { name: /name with the audio of its kun'yomi line/u }));
+    await user.click(settings.getByRole("button", { name: "Save settings" }));
+    expect(saveSettings).toHaveBeenCalledWith("r1", { "narration.reuse": { ひと: "kunyomi", "{name.kana}": "kunyomi" } });
+    expect(await settings.findByRole("alert")).toHaveTextContent("maxWords must be 1 to 6");
+    await user.click(settings.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(settings.getByRole("status")).toHaveTextContent("Settings saved."));
+  });
+
+  it("speaks Japanese", async () => {
+    render(<KanjiShortsWorkspace locale="ja" />);
+    expect(await screen.findByRole("heading", { name: "漢字ショート" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "設定" })).toBeInTheDocument();
+  });
+});
+
+describe("settings draft", () => {
+  it("keeps settings the form does not show, and leaves out blank entries", () => {
+    const saved: KanjiSettings = { ...SETTINGS, "voice.voiceIds": { ...SETTINGS["voice.voiceIds"], ko: "aaaaaaaaaaaaaaaa" }, "card.safeInset": { left: .05 } };
+    const draft = draftFrom(saved);
+    expect(changedSettings(saved, settingsFromDraft(draft))).toEqual({});
+    const next = settingsFromDraft({ ...draft, en: "", aboveCaptions: true, retakes: [["ひと", "5"], ["", ""]], write: "" });
+    expect(changedSettings(saved, next)).toEqual({
+      "voice.voiceIds": { ja: SETTINGS["voice.voiceIds"]!.ja, ko: "aaaaaaaaaaaaaaaa" }, "card.safeInset": { left: .05, bottom: .19 },
+      "narration.retakes": { ひと: 5 }, "timing.write": null,
+    });
+  });
+});
+
+describe("settings the form cannot show", () => {
+  it("are kept as the file has them: a custom bottom band, a zero band, and {name.kana} read from another line", () => {
+    for (const saved of [
+      { ...SETTINGS, "card.safeInset": { bottom: .25 } }, { ...SETTINGS, "card.safeInset": { bottom: 0 } },
+      { ...SETTINGS, "narration.reuse": { "{name.kana}": "onyomi" } }, { ...SETTINGS, "narration.reuse": { "{name.kana}": "kunyomi", ひと: "kunyomi" } },
+      { ...SETTINGS, "narration.reuse": { " ひと": "kunyomi" }, "narration.speech": { 水泳: " すいえい" } },
+    ] as KanjiSettings[]) expect(changedSettings(saved, settingsFromDraft(draftFrom(saved)))).toEqual({});
+    // Switching the band on or off is a change; a typed {name.kana} → kunyomi row is kept with the switch off.
+    const draft = draftFrom({ ...SETTINGS, "card.safeInset": { bottom: .25 } });
+    expect(settingsFromDraft({ ...draft, aboveCaptions: false })["card.safeInset"]).toBeNull();
+    const typed = settingsFromDraft({ ...draftFrom(SETTINGS), reuse: [["{name.kana}", "kunyomi"]] });
+    expect(typed["narration.reuse"]).toEqual({ "{name.kana}": "kunyomi" });
+  });
+
+  it("names what stops a save instead of dropping a half-filled row", () => {
+    const draft = draftFrom(SETTINGS);
+    expect(draftProblems({ ...draft, retakes: [["ひと", ""]] })).toEqual(["retakes-row"]);
+    expect(draftProblems({ ...draft, retakes: [["ひと", "1"]] })).toEqual(["retake-number"]);
+    expect(draftProblems({ ...draft, write: "six" })).toEqual(["number"]);
+    expect(draftProblems(draft)).toEqual([]);
+  });
+});
+
+describe("the page keeps the person's work and says what happens", () => {
+  it("shows a half-filled row's problem and sends nothing", async () => {
+    const user = userEvent.setup();
+    render(<KanjiShortsWorkspace locale="en" />);
+    const settings = within((await screen.findByRole("heading", { name: "Settings" })).closest("[data-km-surface=root]") as HTMLElement);
+    await user.click(settings.getAllByRole("button", { name: "Add" })[1]);
+    await user.type(settings.getByRole("textbox", { name: "Retakes 1: Text one voice reads" }), "ひと");
+    expect(settings.getByText("Fill in both parts of each retake, or remove it.")).toBeInTheDocument();
+    await user.click(settings.getByRole("button", { name: "Save settings" }));
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("keeps unsaved settings when the page is left and opened again, and blocks Make until they are saved", async () => {
+    const user = userEvent.setup();
+    const first = render(<KanjiShortsWorkspace locale="en" />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Pace" }), "fast");
+    await user.type(screen.getByLabelText("Kanji to make"), "人");
+    expect(screen.getByRole("button", { name: "Make 1 short" })).toBeDisabled();
+    expect(screen.getByText(/Save or discard the settings changes first/u)).toBeInTheDocument();
+    first.unmount();
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByRole("combobox", { name: "Pace" })).toHaveValue("fast");
+    expect(screen.getByLabelText("Kanji to make")).toHaveValue("人");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  });
+
+  it("keeps unsaved edits when the file changed elsewhere, and saves only what was edited here", async () => {
+    const user = userEvent.setup();
+    vi.mocked(saveSettings).mockResolvedValue({ revision: "r3", settings: { ...SETTINGS, "voice.pace": "fast", maxWords: 4 } });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Pace" }), "fast");
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, revision: "r2", settings: { ...SETTINGS, maxWords: 4 } } as StudioState);
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(await screen.findByText(/changed elsewhere\. Your unsaved changes are kept/u)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Pace" })).toHaveValue("fast");
+    await user.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(saveSettings).toHaveBeenCalledWith("r2", { "voice.pace": "fast" });
+  });
+
+  it("says Make downloads stroke data too", async () => {
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByText(/downloads KanjiVG stroke data \(from GitHub\)/u)).toBeInTheDocument();
+  });
+
+  it("says when a run's progress is lost, instead of hiding it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.mocked(startRun).mockResolvedValue({ run: running() });
+      vi.mocked(loadStatus).mockResolvedValue({ run: null });
+      render(<KanjiShortsWorkspace locale="en" />);
+      await user.type(await screen.findByLabelText("Kanji to make"), "人");
+      await user.click(screen.getByRole("button", { name: "Make 1 short" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+      expect(await screen.findByText(/no longer knows this run/u)).toBeInTheDocument();
+      // Its short is unknown now: no spinner, no progress that looks live.
+      expect(screen.getByText("Unknown: check Jobs and Watch")).toBeInTheDocument();
+      expect(screen.queryByRole("progressbar", { name: "人 progress" })).not.toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("warns after several missed status checks", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.mocked(startRun).mockResolvedValue({ run: running() });
+      vi.mocked(loadStatus).mockRejectedValue(new KanjiApiError("unreachable", "down"));
+      render(<KanjiShortsWorkspace locale="en" />);
+      await user.type(await screen.findByLabelText("Kanji to make"), "人");
+      await user.click(screen.getByRole("button", { name: "Make 1 short" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(4700); });
+      expect(screen.getByText(/Cannot reach the Studio server to follow the run/u)).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("shows a failed release load as an error, not as nothing made", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadReleases).mockRejectedValue(new KanjiApiError("timeout", "slow"));
+    render(<KanjiShortsWorkspace locale="ja" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    expect(await screen.findByText(/人 のショートを読み込めませんでした: ローカルの Studio サーバーが時間内に応答しませんでした/u)).toBeInTheDocument();
+    expect(screen.queryByText(/ショートはまだありません/u)).not.toBeInTheDocument();
+  });
+
+  it("lists a kanji the producer cannot make as unavailable, with its reason", async () => {
+    const catalog = STATE.configured ? STATE.catalog : [];
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, catalog: [...catalog,
+      { char: "乙", jlpt: "N5", meanings: "SECOND", name: { kana: "", romaji: "" }, versions: 0, problem: "乙 has no useful word other than itself" }] } as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByRole("button", { name: /乙, cannot be made: 乙 has no useful word/u })).toBeDisabled();
+  });
+});
+
+describe("edits made on a file changed elsewhere", () => {
+  it("change only the entries edited here: another retake or the other voice changed elsewhere is kept", () => {
+    const base = { ...SETTINGS, "narration.retakes": { "おんよみ、コン。": 2, "時間。": 2 } };
+    const latest = { ...base, "narration.retakes": { "おんよみ、コン。": 2, "時間。": 3 }, "voice.voiceIds": { ...SETTINGS["voice.voiceIds"]!, en: "eeeeeeeeeeeeeeee" } };
+    const next = { ...base, "narration.retakes": { "おんよみ、コン。": 3, "時間。": 2 }, "voice.voiceIds": { ...SETTINGS["voice.voiceIds"]!, ja: "jjjjjjjjjjjjjjjj" } };
+    expect(editsOnto(base, next, latest)).toEqual({
+      "narration.retakes": { "おんよみ、コン。": 3, "時間。": 3 },
+      "voice.voiceIds": { ja: "jjjjjjjjjjjjjjjj", en: "eeeeeeeeeeeeeeee" },
+    });
+    // A removed entry is removed; an edit that the file already has sends nothing.
+    expect(editsOnto(base, { ...base, "narration.retakes": { "時間。": 2 } }, latest)).toEqual({ "narration.retakes": { "時間。": 3 } });
+    expect(editsOnto(base, { ...base, "voice.pace": "fast" }, { ...latest, "voice.pace": "fast" })).toEqual({});
+  });
+
+  it("an empty list in the file is the same as none: the page loads clean and Make is not blocked", async () => {
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, settings: { ...SETTINGS, "narration.speech": {}, "card.safeInset": {} } } as unknown as StudioState);
+    const user = userEvent.setup();
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.type(await screen.findByLabelText("Kanji to make"), "人");
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Make 1 short" })).toBeEnabled();
+  });
+
+  it("the name switch and a {name.kana} row cannot both be set", () => {
+    const draft = draftFrom({ ...SETTINGS, "narration.reuse": { "{name.kana}": "onyomi" } });
+    expect(draftProblems({ ...draft, nameFromKunyomi: true })).toEqual(["name-clash"]);
+    expect(draftProblems({ ...draft, reuse: [["ひと", "kunyomi"], ["ひと", "onyomi"]] })).toEqual(["duplicate"]);
+  });
+});

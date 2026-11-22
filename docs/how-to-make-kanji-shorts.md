@@ -1,6 +1,6 @@
 # Make kanji study shorts
 
-`pnpm video:kanji` makes one vertical short (1080 × 1920, 30 fps) per kanji. The picture is Kumiki's `shodo-kanji-card`; ContentGen supplies the card data, the narration, the music bed and the release folder.
+`pnpm video:kanji` and the Studio's **Kanji shorts** page make one vertical short (1080 × 1920, 30 fps) per kanji. Both use the same settings file, preview and producer. The picture is Kumiki's `shodo-kanji-card`; ContentGen supplies the card data, the narration, the music bed and the release folder.
 
 ## What one short does
 
@@ -74,6 +74,7 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - The release's QA report and manifest record the take of each line or run.
 - **Reuse a natural reading.** A word read alone can sound stilted, while the same word inside a line sounds natural. `narration.reuse` reads a text with the audio of another line of the same short, for example `{ "ひと": "kunyomi" }`: the question's name 人 is the very audio of "ひと" in "くんよみ、ひと。".
   - The key is the exact text one voice reads, as for retakes; the value is a line id (`question`, `onyomi`, `kunyomi`, `word-1`, …).
+  - **One entry for every kanji:** a key may name the kanji's fields. `{ "{name.kana}": "kunyomi" }` reads each kanji's name with the audio of its kun'yomi line (人: ひと, 年: とし). This is the Studio's "Read each kanji's name with the audio of its kun'yomi line" switch. The fields are `{char}`, `{name.kana}`, `{name.romaji}`, `{meanings}`, `{jlpt}`, `{onyomi}`, `{kunyomi}`, `{labels.on}` and `{labels.kun}`; another field stops at config read. An exact text wins over a key that fills in to the same text, and a key that fills in empty (a kanji with no kun'yomi) does nothing. `narration.retakes` keys may name fields too.
   - It applies only where that line says exactly the text after its last comma (or is just that text). The config covers every kanji, so in a short whose line says something else (費: "くんよみ、ついやす。") the text is read on its own. `--dry-run` shows where it applies.
   - The cut is at the longest pauses, one per comma of the line (a consonant inside a word does not count), from where the sound before the word falls to quiet, so a soft "h" or "s" is kept. The text is also read on its own as a fallback: if the line's audio has no clear pause, the short uses that reading and its QA report warns.
   - Where the short has no such line, the line is the text's own, or the line itself has a reused part, the text is read on its own too. The QA report and manifest record `reusedFrom` and the source line's voice.
@@ -93,7 +94,7 @@ Make the folder `data/kanji-shorts/` (git ignores `data/`). Put `config.json` in
 - `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) `speech` (the text the voice reads for a word it misreads), `retakes` (a fresh take of a text the voice flubbed) and `reuse` (a text read as the last phrase of another line).
 - `voice`:
   - `provider` is `fish` (default) or `local`.
-  - **Fish:** `voiceId`. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`. Make with `--allow-network --voice-consent --transmit-text`.
+  - **Fish:** `voiceId`, and `voiceIds` for a voice per language. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`. Make with `--allow-network --voice-consent --transmit-text`.
   - **Local engine:** `voiceId`, `modelId`, `engineRevision` and a loopback `endpoint`. Make with `--local-voice-consent`; add `--allow-network` once, to download KanjiVG data that is not cached.
 - `music`: a reviewed bed with its source, licence and SHA-256. A changed file stops production. The producer picks the window with the fewest silent stretches where nobody speaks, unless `startSeconds` is set. It sets the bed `belowVoiceDb` (default 11) under the voice and ducks it under speech.
 - `timing.write` and `timing.review`: seconds of each writing pass, snapped to whole frames. Also `introTail` and `tail`: the hold after the intro's last line and after the last line. The lines' own timing is in the script.
@@ -115,6 +116,23 @@ pnpm video:kanji -- 水 火 木 --allow-network --voice-consent --transmit-text 
 - Each kanji gets `<outputRoot>/<kanji>-<code point>/v1`, then `v2` on the next run. A release is never overwritten.
 - Fish speech and the KanjiVG stroke data are cached in `data/kanji-shorts/cache`, so a re-run costs no new Fish requests.
 - `--config <file>` and `--out <folder>` override the defaults.
+- `--dry-run --json` prints the same preview as JSON: each line, the voice of each part, and the reuses and retakes that apply.
+
+### In the Studio
+
+Open **Kanji shorts** in the Studio's navigation (`pnpm dev` from `apps/web`). The page uses `data/kanji-shorts/config.json`, or the file named by `CONTENTGEN_KANJI_CONFIG`. Without one, the page says where to make it.
+
+1. **Choose kanji.** Type them, or pick them from the list by JLPT level or search (kanji, kana, romaji or meaning). A dot marks a kanji already made. One run makes up to 10.
+2. **Check what each short says.** Each line is listed with the voice that reads each part, where the name reuses the kun'yomi line's audio, and the retakes that apply. Nothing is sent to make the preview.
+3. **Make.** Pressing Make is the consent for that run: with Fish, the narration text goes to Fish Audio, as `--allow-network --voice-consent --transmit-text` allow on the command line. The kanji are made one after another.
+   - Each short shows the producer's real step (checking, stroke data, voices, timing, music, mixing, rendering frames, combining, measuring), not an estimated percentage.
+   - **Cancel** stops the short being made and the ones after it.
+   - A short that stops shows its error, and the run goes on to the next kanji.
+   - With the local Rust server running, each short is a `video-kanji-short` job on the Jobs page, and cancelling it there stops it too. Without the server, the short is made anyway and says it is not tracked.
+4. **Watch.** The newest short of the chosen kanji plays with its earlier versions, its length, loudness, longest still, how its name was read, and any QA warnings. Nothing is published.
+5. **Settings.** The page edits the voices (Japanese, English, other languages), the pace, the name reuse, reuses, retakes, "spoken as" readings, the number of words, the band above the platforms' captions, and the writing and review passes.
+   - Everything else in the file (data, music, script, the card's look, credits) stays as it is.
+   - A save is checked like the CLI's config read, then written in one step, and only if the file has not changed since the page loaded it. A file edited meanwhile is never overwritten: reload, then make the change again.
 
 Each `release/` folder holds:
 - `video.mp4`, `master.wav`, `voice.wav` and `captions.srt`
@@ -127,5 +145,5 @@ Each `release/` folder holds:
   - the longest still stretch (budget 2.5 s)
   - the loudness: the master is mono at about -18 LUFS, which plays as about -15 LUFS on two speakers
   - every timing
-- **Pronunciation is not machine-checked.** Listen to every word. Fix a misread word with `narration.speech`, and a flubbed take with `narration.retakes`.
+- **Pronunciation is not machine-checked.** Listen to every word. Fix a misread word with `narration.speech` (Fish read 一時 as いっとき; `{ "一時": "いちじ" }` says it as the card shows it), and a flubbed take with `narration.retakes`.
 - The release is a draft (`reviewStatus: not-reviewed`). Nothing is published.

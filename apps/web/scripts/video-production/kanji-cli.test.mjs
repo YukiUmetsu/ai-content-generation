@@ -101,6 +101,36 @@ test("a dry run shows what each short says, with no network, key or browser", as
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test("a dry run shows every kanji it can, then fails for one the producer cannot make", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "kanji-dry-bad-"));
+  try {
+    const lone = { char: "乙", jlpt: "N1", card: { meanings: "SECOND", onyomi: "OTSU (オツ)", kunyomi: "kinoto (きのと)" }, words: [{ word: "乙", ruby: "おつ", romaji: "otsu", meaning: "second", reading: "on" }] };
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [lone, MIZU] }));
+    await writeFile(join(dir, "config.json"), JSON.stringify(config()));
+    const lines = [];
+    await assert.rejects(main(["乙", "水", "--dry-run", "--config", join(dir, "config.json")], {}, { log: line => lines.push(line) }), /乙: .*no useful word/u);
+    assert.match(lines[0], /^乙: .*no useful word/u);
+    assert.ok(lines.some(line => line.startsWith("水  WATER")), "the kanji after it is still shown");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("a dry run prints its preview as JSON with --json, which needs --dry-run", async () => {
+  assert.throws(() => parseKanjiArgs(["水", "--json"]), /--json is for --dry-run/u);
+  const dir = await mkdtemp(join(tmpdir(), "kanji-json-"));
+  try {
+    await writeFile(join(dir, "data.json"), JSON.stringify({ kanji: [MIZU] }));
+    await writeFile(join(dir, "config.json"), JSON.stringify(config({ narration: { reuse: { "{name.kana}": "kunyomi" } } })));
+    const lines = [];
+    await main(["水", "--dry-run", "--json", "--config", join(dir, "config.json")], {}, { log: line => lines.push(line) });
+    const [preview] = JSON.parse(lines.join("\n"));
+    assert.equal(preview.name.kana, "みず");
+    const question = preview.lines.find(line => line.id === "question");
+    assert.equal(question.parts[0].voiceId, VOICE);
+    // One voice reads the whole question here, so the name is not a part of its own and nothing is reused.
+    assert.equal(question.parts.some(part => part.reuse), false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test("passes the consents through to the producer and makes the kanji one after another", async () => {
   const dir = await mkdtemp(join(tmpdir(), "kanji-run-"));
   try {

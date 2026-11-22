@@ -21,7 +21,7 @@ import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
 import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
 import {
-  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, reuseSources, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
+  KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, retakeFor, reuseFor, reuseSources, kanjiIntro, kanjiTextSettings, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
 import presets from "../../src/components/video/platform-presets.json" with { type: "json" };
 
@@ -180,7 +180,8 @@ export async function produceKanjiShort(request, deps = {}) {
     const cardText = { meanings: content.meanings, onyomi: content.onyomi, kunyomi: content.kunyomi, jlpt: content.jlpt, words: content.words };
     const cardOptions = { layout: "portrait", density: card.density ?? "compact", safeInset, content: cardText, sections: {},
       ...(card.brushStyle ? { brushStyle: card.brushStyle } : {}) };
-    const lines = expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration?.labels, strokeCount: glyph.strokes.length }));
+    const scriptData = kanjiScriptData(content, { labels: config.narration?.labels, strokeCount: glyph.strokes.length });
+    const lines = expandNarrationScript(script, scriptData);
     if (!lines.length) fail("the narration script has no line for this kanji");
     const planFor = (timing, strokes, intro, wordHighlights, sectionCues = []) => ({
       schemaVersion: 1, kind: "kanji-study-visual-plan",
@@ -216,11 +217,13 @@ export async function produceKanjiShort(request, deps = {}) {
     // With a voice per language, a line that mixes scripts is read in runs, each by its language's
     // voice ("Do you know how to write the kanji" in English, "つき?" in Japanese), then joined.
     const voiceIds = config.voice.voiceIds;
+    // Retakes and reuses for this short: a key may name its fields ({ "{name.kana}": "kunyomi" }).
+    const retakes = kanjiTextSettings(config.narration?.retakes, scriptData), reuse = kanjiTextSettings(config.narration?.reuse, scriptData);
     const runsOf = (line) => voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
     const units = lines.flatMap(line => {
       const runs = runsOf(line);
       return runs.map((run, k) => {
-        const take = retakeFor(run.text, config.narration?.retakes), reusedFrom = reuseFor(run.text, config.narration?.reuse);
+        const take = retakeFor(run.text, retakes), reusedFrom = reuseFor(run.text, reuse);
         return { line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run, ...(take ? { take } : {}), ...(reusedFrom ? { reusedFrom } : {}) };
       });
     });

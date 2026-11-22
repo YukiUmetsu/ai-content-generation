@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   BarChart3,
+  Brush,
   FileText,
   Folder,
   Image,
@@ -22,6 +23,7 @@ export type SectionId =
   | "content"
   | "assets"
   | "characters"
+  | "kanji"
   | "products"
   | "jobs-qa"
   | "insights"
@@ -35,6 +37,7 @@ export const SECTIONS: { id: SectionId; label: Record<Locale, string>; icon: Rea
   { id: "content", label: { en: "Content", ja: "コンテンツ" }, icon: <FileText aria-hidden className="size-5" /> },
   { id: "assets", label: { en: "Assets", ja: "アセット" }, icon: <Image aria-hidden className="size-5" /> },
   { id: "characters", label: { en: "Character Studio", ja: "キャラクター制作" }, icon: <PawPrint aria-hidden className="size-5" /> },
+  { id: "kanji", label: { en: "Kanji shorts", ja: "漢字ショート" }, icon: <Brush aria-hidden className="size-5" /> },
   { id: "products", label: { en: "Products", ja: "プロダクト" }, icon: <Package aria-hidden className="size-5" /> },
   {
     id: "jobs-qa",

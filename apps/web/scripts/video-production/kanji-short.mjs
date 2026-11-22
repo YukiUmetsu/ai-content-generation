@@ -3,6 +3,7 @@
  * The picture is Kumiki's `shodo-kanji-card`; the voice-over is an anchored-narration script
  * (default: kanji-short-script.json), so its wording, order and timing are data, not code.
  */
+import { renderTemplate } from "./anchored-narration.mjs";
 
 export const KANJI_FPS = 30;
 const LEVELS = new Set(["N5", "N4", "N3", "N2", "N1"]);
@@ -178,12 +179,39 @@ export function kanjiShortTiming({ intro, write, review, end, tail = KANJI_SHORT
   return { timing: { intro, write, review, info: (frames - before) / KANJI_FPS }, frames, totalSamples: frames * 1600 };
 }
 
-/** A per-text setting of the config (`narration.retakes`, `narration.reuse`): the key must be the exact text one voice reads, compared after Unicode normalization and trimming; only the config's own keys count. */
+/**
+ * A per-text setting of the config (`narration.retakes`, `narration.reuse`): the key must be the exact text one voice reads, compared after Unicode normalization and trimming; only the config's own keys count.
+ * `settings` is the config's object, or the [text, value] pairs of `kanjiTextSettings`.
+ */
 export function textSetting(text, settings) {
   if (!settings) return undefined;
   const key = text.normalize("NFC").trim();
-  for (const [wanted, value] of Object.entries(settings)) if (wanted.normalize("NFC").trim() === key) return value;
+  for (const [wanted, value] of Array.isArray(settings) ? settings : Object.entries(settings)) if (wanted.normalize("NFC").trim() === key) return value;
   return undefined;
+}
+
+/** The fields a text setting's key may name, so one entry covers every kanji: { "{name.kana}": "kunyomi" }. */
+export const KANJI_TEXT_FIELDS = Object.freeze(["char", "name.kana", "name.romaji", "meanings", "jlpt", "onyomi", "kunyomi", "labels.on", "labels.kun"]);
+const FIELD = /\{([^}]*)\}/gu;
+
+/** Why a text setting's key cannot be used, or null: it may name only KANJI_TEXT_FIELDS. */
+export function textKeyProblem(key) {
+  const unknown = [...key.matchAll(FIELD)].map(match => match[1]).filter(field => !KANJI_TEXT_FIELDS.includes(field));
+  return unknown.length ? `"${key}" names ${unknown.map(field => `{${field}}`).join(", ")}; a key can name ${KANJI_TEXT_FIELDS.map(field => `{${field}}`).join(", ")}` : null;
+}
+
+/**
+ * One short's text settings as [text, value] pairs (for textSetting): a key that names fields is
+ * filled from the short's script data (kanjiScriptData). An exact text wins over a filled key that
+ * comes out the same, and a key that comes out empty (a kanji with no kun'yomi) is left out.
+ */
+export function kanjiTextSettings(settings, data) {
+  if (!settings) return undefined;
+  const entries = Object.entries(settings), named = ([key]) => /\{[^}]*\}/u.test(key);
+  const exact = entries.filter(entry => !named(entry)), texts = new Set(exact.map(([key]) => key.normalize("NFC").trim()));
+  const filled = entries.filter(named).map(([key, value]) => [renderTemplate(key, data), value])
+    .filter(([text]) => text.trim() && !texts.has(text.normalize("NFC").trim()));
+  return [...exact, ...filled];
 }
 
 /** The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }), or undefined. */

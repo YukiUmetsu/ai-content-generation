@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, reuseSources, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, reuseSources, kanjiTextSettings, textKeyProblem, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -150,4 +150,15 @@ test("a reused text comes only from where the source line says exactly it after 
     assert.deepEqual([found.get(chainA).why, found.get(chainB).why], ["line kunyomi is itself reused", "line question is itself reused"]);
   }
   assert.equal(reuseSources([intro, kun]).size, 0);                                                 // nothing reused, nothing decided
+  // A key may name the kanji's fields, so one entry covers every kanji; an exact text wins over a filled key.
+  const hitoData = { char: "人", name: { kana: "ひと", romaji: "hito" }, kunyomi: "ひと", onyomi: "ジン、ニン", labels: { on: "おんよみ", kun: "くんよみ" } };
+  const filled = kanjiTextSettings({ "{name.kana}": "kunyomi", " ひと": "onyomi", "{char}です": "question" }, hitoData);
+  assert.equal(reuseFor("ひと", filled), "onyomi");
+  assert.equal(reuseFor("人です", filled), "question");
+  assert.equal(reuseFor("ひと", kanjiTextSettings({ "{name.kana}": "kunyomi" }, hitoData)), "kunyomi");
+  assert.equal(retakeFor("くんよみ、ひと。", kanjiTextSettings({ "{labels.kun}、{kunyomi}。": 3 }, hitoData)), 3);
+  assert.deepEqual(kanjiTextSettings({ "{kunyomi}": "kunyomi" }, { ...hitoData, kunyomi: "" }), []);   // no kun'yomi: no entry
+  assert.equal(kanjiTextSettings(undefined, hitoData), undefined);
+  assert.equal(textKeyProblem("{name.kana}"), null);
+  assert.match(textKeyProblem("{item.word}と{name}"), /names \{item\.word\}, \{name\}/u);
 });
