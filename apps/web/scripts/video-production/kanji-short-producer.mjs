@@ -19,6 +19,7 @@ import { SAMPLE_RATE, TRIM_DEFAULTS, clipPlacementFloor, placeClips, toFrameGrid
 import { chooseMusicWindow, decodeMono, int16Wav, prepareMusicBed } from "./music-bed.mjs";
 import { longestStill, measureLufs } from "./media-measure.mjs";
 import { srtFromCues } from "./cue-captions.mjs";
+import { joinRunTakes, runShare, scriptRuns, voiceFor } from "./voice-runs.mjs";
 import {
   KANJI_CARD_ANCHORS, KANJI_FPS, KANJI_SHORT_PACING, kanjiCardAnchors, kanjiCardInset, kanjiCardInsetProblem, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset,
 } from "./kanji-short.mjs";
@@ -194,33 +195,53 @@ export async function produceKanjiShort(request, deps = {}) {
     if (unhighlightable) fail(`line ${unhighlightable.id} highlights an item of ${unhighlightable.list}; the card highlights only its words (forEach "words")`);
     placeOnAnchors({ lines, anchors: kanjiCardAnchors(provisionalCard.timeline, provisionalCard.strokes), speech: estimatedSpeech(lines), ...PLACEMENT_FLOOR });
 
-    progress("narration", `Synthesizing ${lines.length} lines (${provider})…`);
     const voice = { provider, voiceId: config.voice.voiceId, modelId: config.voice.modelId ?? "s2.1-pro-free", licenseStatus: config.voice.licenseStatus ?? "unknown",
       ...(provider === "local" ? { endpoint: config.voice.endpoint } : {}) };
+    // With a voice per language, a line that mixes scripts is read in runs, each by its language's
+    // voice ("Do you know how to write the kanji" in English, "つき?" in Japanese), then joined.
+    const voiceIds = config.voice.voiceIds;
+    const runsOf = (line) => voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
+    const units = lines.flatMap(line => {
+      const runs = runsOf(line);
+      return runs.map((run, k) => ({ line: line.id, id: runs.length === 1 ? line.id : `${line.id}-run${k + 1}`, ...run }));
+    });
+    progress("narration", `Synthesizing ${units.length} ${voiceIds ? "voice runs" : "lines"} (${provider})…`);
     const results = new Map();
-    for (const locale of [...new Set(lines.map(line => line.locale))]) {
-      const units = lines.filter(line => line.locale === locale);
+    for (const locale of [...new Set(units.map(unit => unit.locale))]) {
+      const group = units.filter(unit => unit.locale === locale);
       const done = await (deps.synthesizeNarration ?? synthesizeNarration)({
         voice, locale, approval: "test-only", policy: { commercialRightsVerified: config.voice.commercialRightsVerified === true },
-        beats: units.map(line => ({ id: line.id, narration: line.say, pauseAfterMs: 0, eventIds: [] })),
+        beats: group.map(unit => ({ id: unit.id, narration: unit.text, pauseAfterMs: 0, eventIds: [],
+          ...(voiceIds ? { speaker: { id: `voice-${locale.toLowerCase()}`, role: "narrator", voiceId: voiceFor(locale, voiceIds, voice.voiceId) } } : {}) })),
       }, {
         provider, cacheRoot: cacheDir, direction: { pace: config.voice.pace ?? "slow" }, signal: request.signal,
+        ...(voiceIds ? { authorizedVoiceIds: [...new Set(Object.values(voiceIds))] } : {}),
         ...(provider === "fish"
           ? { providerRevision: FISH_REVISION, apiKey: request.apiKey, allowNetwork: true, voiceReferenceConsent: true, textTransmissionApproved: true }
           : { providerRevision: config.voice.engineRevision, localVoiceAuthorized: true }),
       });
-      units.forEach((line, i) => { if (done[i]?.id !== line.id) fail("narration came back out of order"); results.set(line.id, done[i]); });
+      group.forEach((unit, i) => { if (done[i]?.id !== unit.id) fail("narration came back out of order"); results.set(unit.id, done[i]); });
     }
-    const takes = await Promise.all(lines.map(async line => ({
-      ...line, ...trimSpeech(int16Wav(await readFile(results.get(line.id).wavPath))), sourceSha256: results.get(line.id).sha256,
-    })));
+    const takes = await Promise.all(lines.map(async line => {
+      const runs = units.filter(unit => unit.line === line.id);
+      const trimmed = await Promise.all(runs.map(async unit => trimSpeech(int16Wav(await readFile(results.get(unit.id).wavPath)))));
+      if (runs.length === 1) return { ...line, ...trimmed[0], sourceSha256: results.get(runs[0].id).sha256 };
+      const joined = joinRunTakes(trimmed);
+      return {
+        ...line, clip: joined.clip, lead: joined.lead, speech: joined.speech,
+        // An emphasized part (the kanji's name) is pulsed as its own run starts, not at a share of the text.
+        ...(line.emphasizeAt === undefined ? {} : { emphasizeAt: runShare(runs, joined.starts, joined.speech, line.emphasizeAt, line.say) }),
+        sourceSha256: sha256(Buffer.from(runs.map(unit => results.get(unit.id).sha256).join("+"))),
+        voiceRuns: runs.map((unit, k) => ({ text: unit.text, locale: unit.locale, startsAt: Math.round(joined.starts[k] * 1000) / 1000 })),
+      };
+    }));
     const speech = Object.fromEntries(takes.map(take => [take.id, take.speech]));
 
     progress("timing", "Placing the narration on the card's moments…");
     const placing = { speech, highlightTail: script.highlightTail, highlightLead: script.highlightLead, ...PLACEMENT_FLOOR };
-    const intro = kanjiIntro(placeOnAnchors({ ...placing, lines, anchors: { start: 0 }, partial: true }), { introTail: pacing.introTail });
+    const intro = kanjiIntro(placeOnAnchors({ ...placing, lines: takes, anchors: { start: 0 }, partial: true }), { introTail: pacing.introTail });
     const probe = planner.planKanjiCard(glyph, { ...cardOptions, timing: { intro: intro.intro, write: pacing.write, review: pacing.review, info: 1 } });
-    const placement = placeOnAnchors({ ...placing, lines, anchors: kanjiCardAnchors(probe.timeline, probe.strokes) });
+    const placement = placeOnAnchors({ ...placing, lines: takes, anchors: kanjiCardAnchors(probe.timeline, probe.strokes) });
     const timing = kanjiShortTiming({ intro: intro.intro, write: pacing.write, review: pacing.review, end: placement.end, tail: pacing.tail });
     const final = planner.planKanjiCard(glyph, { ...cardOptions, timing: timing.timing });
     if (final.timeline.frames !== timing.frames) fail(`the card plans ${final.timeline.frames} frames, the narration ${timing.frames}`);
@@ -334,7 +355,8 @@ export async function produceKanjiShort(request, deps = {}) {
       pacing: { longestStillSeconds: Math.round(still.seconds * 1000) / 1000, longestStillStart: still.start, budgetSeconds: stillBudget, withinBudget: still.seconds <= stillBudget },
       narration: { onsets: placement.onsets, ends: placement.ends, driftAfterAnchor: placement.drift, wordHighlights, emphasis: placement.emphasis },
       timing: { phases: timing.timing, strokes: final.strokes, intro: cardIntro },
-      speech: takes.map(take => ({ id: take.id, locale: take.locale, spoken: take.say, caption: take.caption, seconds: Math.round(take.speech * 1000) / 1000 })),
+      speech: takes.map(take => ({ id: take.id, locale: take.locale, spoken: take.say, caption: take.caption, seconds: Math.round(take.speech * 1000) / 1000,
+        ...(take.voiceRuns ? { voiceRuns: take.voiceRuns } : {}) })),
       pronunciation: "not machine-checked: listen to every line before publishing",
       layout: "text fit, overflow and the brush strokes are checked on every captured frame by the export page",
     };

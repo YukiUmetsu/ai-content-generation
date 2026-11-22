@@ -8,7 +8,11 @@
     "voiceId": "YOUR_FISH_VOICE_ID",
     "modelId": "s2.1-pro-free",
     "pace": "slow",
-    "licenseStatus": "unknown"
+    "licenseStatus": "unknown",
+    "voiceIds": {
+      "ja": "YOUR_JAPANESE_FISH_VOICE_ID",
+      "en": "YOUR_ENGLISH_FISH_VOICE_ID"
+    }
   },
   "music": {
     "path": "music/your-reviewed-bed.wav",
