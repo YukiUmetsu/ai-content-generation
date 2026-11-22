@@ -91,22 +91,24 @@ test("the intro lasts until its lines end, on a whole frame, and is 0 without in
   assert.throws(() => kanjiShortTiming({ intro: 3.31, write: 6.5, review: 6.5, end: 10 }), /whole number of frames/u);
 });
 
-test("the default script makes the approved short: the question while the kanji is typed, readings from the first stroke, words after the review", async () => {
+test("the default script makes the approved short: the question while the kanji is typed, readings from the first stroke, an introduction and the words after the review", async () => {
   const script = readNarrationScript(JSON.parse(await readFile(DEFAULT_KANJI_SCRIPT, "utf8")));
   const lines = expandNarrationScript(script, kanjiScriptData(kanjiShortContent(MIZU), {}));
   assert.deepEqual(lines.map(l => [l.id, l.locale, l.say, l.caption]), [
     ["question", "en", "Do you know how to write the kanji みず?", "Do you know how to write the kanji mizu?"],
     ["onyomi", "ja", "おんよみ、スイ。", "おんよみ、スイ。"],
     ["kunyomi", "ja", "くんよみ、みず。", "くんよみ、みず。"],
+    ["words-intro", "en", "Some common words using this kanji are", "Some common words using this kanji are"],
     ["word-1", "ja", "水道。", "水道"], ["word-2", "ja", "水泳。", "水泳"], ["word-3", "ja", "下水。", "下水"],
   ]);
-  const speech = { question: 2.5, onyomi: 1.07, kunyomi: 1.08, "word-1": .56, "word-2": .66, "word-3": .51 };
+  const speech = { question: 2.5, onyomi: 1.07, kunyomi: 1.08, "words-intro": 2.2, "word-1": .56, "word-2": .66, "word-3": .51 };
   const intro = kanjiIntro(placeOnAnchors({ lines, anchors: { start: 0 }, speech, partial: true }));
   const anchors = { start: 0, "write.firstStroke": 4.4, "review.end": 14.9 };
   const placed = placeOnAnchors({ lines, anchors, speech, highlightTail: script.highlightTail });
   assert.equal(intro.intro, 99 / 30);
   assert.ok(Math.abs(intro.emphasizeAt - (.35 + 2.5 * 35 / 38)) < .001);             // as "みず" is spoken
-  assert.deepEqual(placed.onsets, { question: .35, onyomi: 4.4, kunyomi: 5.92, "word-1": 15.2, "word-2": 16.76, "word-3": 18.42 });
+  // The introduction starts 0.3 s after the review; the first word follows half a second after it, the others 1 s apart.
+  assert.deepEqual(placed.onsets, { question: .35, onyomi: 4.4, kunyomi: 5.92, "words-intro": 15.2, "word-1": 17.9, "word-2": 19.46, "word-3": 21.12 });
   assert.deepEqual(placed.highlights.map(h => h.item), [0, 1, 2]);
   assert.ok(Math.abs(placed.highlights[0].at + placed.highlights[0].hold - placed.highlights[1].at) < .001);   // each word stays lit until the next
 });

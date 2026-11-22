@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "anchored-narration-script",
-  "description": "Default kanji study short: the question while the kanji is typed, the readings while the brush writes, the useful words after the stroke-order pass. Copy it to change the wording, order or timing (narration.script in the config).",
+  "description": "Default kanji study short: the question while the kanji is typed, the readings while the brush writes, then after the stroke-order pass a sentence that introduces the useful words, a short pause, and the words. Copy it to change the wording, order or timing (narration.script in the config).",
   "locale": "ja",
   "highlightTail": 1,
   "steps": [
@@ -14,8 +14,27 @@
       "offset": 0.35,
       "emphasize": "{name.kana}"
     },
-    { "id": "onyomi", "when": "onyomi", "say": "{labels.on}、{onyomi}。", "at": "write.firstStroke" },
-    { "id": "kunyomi", "when": "kunyomi", "say": "{labels.kun}、{kunyomi}。", "at": "write.firstStroke" },
+    {
+      "id": "onyomi",
+      "when": "onyomi",
+      "say": "{labels.on}、{onyomi}。",
+      "at": "write.firstStroke"
+    },
+    {
+      "id": "kunyomi",
+      "when": "kunyomi",
+      "say": "{labels.kun}、{kunyomi}。",
+      "at": "write.firstStroke"
+    },
+    {
+      "id": "words-intro",
+      "when": "words",
+      "say": "Some common words using this kanji are",
+      "locale": "en",
+      "at": "review.end",
+      "offset": 0.3,
+      "pauseAfter": 0.5
+    },
     {
       "id": "word-{n}",
       "forEach": "words",

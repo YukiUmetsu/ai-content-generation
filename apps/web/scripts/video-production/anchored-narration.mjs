@@ -5,7 +5,7 @@
  *
  * Script (JSON):
  *   { schemaVersion: 1, kind: "anchored-narration-script", locale, highlightLead?, highlightTail?, steps: [
- *     { id, say, caption?, locale?, when?, forEach?, at, offset?, gap?, highlight?, emphasize? } ] }
+ *     { id, say, caption?, locale?, when?, forEach?, at, offset?, gap?, pauseAfter?, highlight?, emphasize? } ] }
  * - `say` / `caption`: templates with `{path}` fields from the data (`{name.kana}`); in a `forEach`
  *   step also `{item.…}`, `{n}` (1-based) and `{index}`. `caption` defaults to `say`.
  * - `id`: letters, digits, - and _; in a `forEach` step it contains `{n}` or `{index}` (no other field).
@@ -15,6 +15,8 @@
  * - `forEach`: a data path to a list; one line per item.
  * - `at`: an anchor name, or "after". An anchor whose value is a list gives item i its i-th time.
  *   A line starts at its anchor + `offset`, or `gap` after the previous line ends, whichever is later.
+ * - `pauseAfter`: seconds of silence after this line before the next one; it replaces the next
+ *   line's own `gap`, for a pause that belongs to this line ("Some words are… [pause] 水道").
  * - `highlight`: the line's item is highlighted from `highlightLead` before it is spoken until the
  *   next highlighted line (or `highlightTail` after it ends).
  * - `emphasize`: a part of the `say` template (for example `{name.kana}`); where its text falls in
@@ -23,7 +25,7 @@
  */
 
 const fail = (message) => { throw new Error(`Narration script: ${message}`); };
-const STEP_KEYS = new Set(["id", "say", "caption", "locale", "when", "forEach", "at", "offset", "gap", "highlight", "emphasize"]);
+const STEP_KEYS = new Set(["id", "say", "caption", "locale", "when", "forEach", "at", "offset", "gap", "pauseAfter", "highlight", "emphasize"]);
 const PATH = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/u;
 const LOCALE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u;
 const ID = /^[A-Za-z0-9_-]+$/u;
@@ -51,6 +53,7 @@ export function readNarrationScript(json) {
     if (!text(step.at, 60) || !(step.at === "after" || PATH.test(step.at))) fail(`${at}.at must be an anchor name or "after"`);
     if (step.offset !== undefined && !number(step.offset, -10, 60)) fail(`${at}.offset must be -10 to 60 seconds`);
     if (step.gap !== undefined && !number(step.gap, 0, 10)) fail(`${at}.gap must be 0 to 10 seconds`);
+    if (step.pauseAfter !== undefined && !number(step.pauseAfter, 0, 10)) fail(`${at}.pauseAfter must be 0 to 10 seconds`);
     if (step.highlight !== undefined && typeof step.highlight !== "boolean") fail(`${at}.highlight must be true or false`);
     if (step.highlight && step.forEach === undefined) fail(`${at}.highlight needs forEach: it highlights the line's item`);
     if (step.emphasize !== undefined && !(text(step.emphasize, 100) && step.say.includes(step.emphasize))) fail(`${at}.emphasize must be a part of say, such as {name.kana}`);
@@ -86,7 +89,7 @@ const empty = (value) => value === null || value === "" || (Array.isArray(value)
 
 /**
  * The lines of a script for one video's data, in spoken order: `{ id, say, caption, locale, at,
- * offset, gap, index?, highlight?, emphasizeAt? }` (`emphasizeAt` as a share 0..1 of the line's text).
+ * offset, gap, pauseAfter?, index?, highlight?, emphasizeAt? }` (`emphasizeAt` as a share 0..1 of the line's text).
  */
 export function expandNarrationScript(script, data) {
   const lines = [];
@@ -103,7 +106,8 @@ export function expandNarrationScript(script, data) {
       const say = renderTemplate(step.say, scope);
       const line = {
         id: renderTemplate(step.id, scope), say, caption: renderTemplate(step.caption ?? step.say, scope), locale: step.locale ?? script.locale,
-        at: step.at, offset: step.offset, gap: step.gap, ...(step.forEach === undefined ? {} : { index, list: step.forEach }), ...(step.highlight ? { highlight: true } : {}),
+        at: step.at, offset: step.offset, gap: step.gap, ...(step.pauseAfter === undefined ? {} : { pauseAfter: step.pauseAfter }),
+        ...(step.forEach === undefined ? {} : { index, list: step.forEach }), ...(step.highlight ? { highlight: true } : {}),
       };
       if (!ID.test(line.id)) fail(`${step.id}: the line id ${line.id} has characters other than letters, digits, - and _`);
       if (step.emphasize !== undefined) {
@@ -124,7 +128,8 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
 /**
  * Times for the lines, in order, from the anchors (seconds; a list gives item i its i-th time) and
  * the measured speech of each line (seconds). A line starts at its anchor + offset, or `gap` after
- * the previous line ends, whichever is later ("after": only the latter).
+ * the previous line ends (the previous line's `pauseAfter` instead, when it has one), whichever is
+ * later ("after": only the latter).
  * - With `partial`, placement stops at the first line whose anchor is not known yet, so a host can
  *   place the lines that come before a phase whose length depends on them.
  * - `drift` is how late a line starts after its anchor, for a pacing check. Only the first line on
@@ -134,12 +139,12 @@ const round3 = (v) => Math.round(v * 1000) / 1000;
  */
 export function placeOnAnchors({ lines, anchors, speech, partial = false, highlightTail = 1, highlightLead = .08, minGap = 0, minStart = 0 }) {
   const onsets = {}, ends = {}, drift = {}, placed = [];
-  let previousEnd = -Infinity, previousAnchor = null;
+  let previousEnd = -Infinity, previousAnchor = null, previousPause;
   for (const line of lines) {
     const duration = speech[line.id];
     if (!(duration > 0)) fail(`line ${line.id} has no measured speech`);
     let at;
-    const gap = Math.max(line.gap, minGap);
+    const gap = Math.max(previousPause ?? line.gap, minGap);
     if (line.at === "after") {
       if (!placed.length) fail(`line ${line.id} is placed after a previous line, but it is the first`);
       at = previousEnd + gap;
@@ -159,6 +164,7 @@ export function placeOnAnchors({ lines, anchors, speech, partial = false, highli
     onsets[line.id] = round3(at);
     ends[line.id] = round3(at + duration);
     previousEnd = at + duration;
+    previousPause = line.pauseAfter;
     placed.push(line);
   }
   const lit = placed.filter(line => line.highlight);

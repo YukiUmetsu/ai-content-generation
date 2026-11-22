@@ -86,3 +86,19 @@ test("keeps a host's floor for every gap and the first start, such as the silenc
   assert.deepEqual(placed.onsets, { a: .04, b: 1.16 });
 });
 
+
+test("a line's pauseAfter is the silence before the next line, in place of that line's own gap", () => {
+  const read = readNarrationScript(script([
+    { id: "intro", say: "Some words are", locale: "en", at: "review", pauseAfter: .5 },
+    { id: "w{n}", forEach: "words", say: "{item.speech}", at: "review", gap: 1 },
+  ]));
+  const lines = expandNarrationScript(read, DATA);
+  assert.deepEqual(lines.map(l => [l.id, l.pauseAfter]), [["intro", .5], ["w1", undefined], ["w2", undefined]]);
+  const placed = placeOnAnchors({ lines, anchors: { review: 10 }, speech: { intro: 2, w1: .6, w2: .7 } });
+  assert.deepEqual(placed.onsets, { intro: 10, w1: 12.5, w2: 14.1 });       // half a second after the intro, then the words' own 1 s gap
+  // The host's floor still applies; an anchor later than the pause still wins.
+  assert.equal(placeOnAnchors({ lines, anchors: { review: 10 }, speech: { intro: 2, w1: .6, w2: .7 }, minGap: .8 }).onsets.w1, 12.8);
+  const short = readNarrationScript(script([{ id: "a", say: "x", at: "start", pauseAfter: 0 }, { id: "b", say: "y", at: "late", gap: 2 }]));
+  assert.equal(placeOnAnchors({ lines: expandNarrationScript(short, DATA), anchors: { start: 0, late: 5 }, speech: { a: 1, b: 1 } }).onsets.b, 5);
+  assert.throws(() => readNarrationScript(script([{ id: "a", say: "x", at: "start", pauseAfter: -1 }])), /steps\[0\] \(a\)\.pauseAfter must be 0 to 10 seconds/u);
+});

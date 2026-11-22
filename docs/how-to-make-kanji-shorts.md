@@ -7,7 +7,7 @@
 1. **Intro.** The voice asks "Do you know how to write the kanji mizu?". On screen the reading is typed (みず) and converts to the typed kanji (水) at once. The typed kanji pushes in slowly and pulses when its name is spoken.
 2. **Write.** The brush comes in from outside the frame (from the right with the default brush), writes the kanji and leaves the frame after the last stroke, so the finished kanji holds with nothing on it. The voice reads the on'yomi as the brush lands for the first stroke, then the kun'yomi.
 3. **Review.** The brush comes in again and writes it with vermilion stroke-order numbers, then leaves. Only music plays.
-4. **Words.** As the review writing ends, the voice reads each useful word and its tile is highlighted until the next one starts.
+4. **Words.** As the review writing ends, the voice says "Some common words using this kanji are", pauses half a second, then reads each useful word; its tile is highlighted until the next one starts.
 
 The paper fills the frame. The kanji is centred in its practice box with room above and below; the reading card lies under it with a margin all round and runs down to near the bottom edge, so there is no empty band. The card is as tall as its own text needs, so a kanji with short readings and words gets a bigger character. The brush is drawn above the card.
 
@@ -27,6 +27,7 @@ The voice-over is an **anchored-narration script** (`scripts/video-production/an
   - in a step with `"forEach": "strokes"`: `{n}`
 - **Anchors** are the card's moments: `start`, `write.start`, `write.firstStroke`, `write.lastStroke`, `review.start`, `review.firstStroke`, `review.end`, `info.start`, and per stroke `write.strokes` and `review.strokes`.
   - A line starts at its anchor plus `offset`, or `gap` after the previous line ends, whichever is later.
+  - `pauseAfter` on a step is the silence after its line, in place of the next line's `gap`. The words' introduction uses it for the half-second pause before the first word; the words keep their own 1 s gap between each other.
   - Every gap is at least 0.12 s and the first line starts at 0.04 s or later: the silence each recorded clip keeps around its speech.
   - `"at": "after"` places it only after the previous line.
   - The QA report records how late each line starts after its anchor, and warns above `qa.anchorDriftSeconds` (1.5 s). Only the first line on an anchor counts; the lines after it on the same anchor follow it on purpose.
