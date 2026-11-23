@@ -75,6 +75,8 @@ export interface ShodoStrokeSpec {
    */
   joinStart?: boolean;
   joinEnd?: boolean;
+  /** Scales the length of a 撥ね flick at this stroke's end (1 = the style's haneLength). 0.5..3. */
+  haneScale?: number;
 }
 
 /**
@@ -218,6 +220,8 @@ export function inspectShodoGlyph(glyph: ShodoGlyph): ShodoGlyphIssue[] {
       issues.push({ path: at + "/hook", message: "Hook must be a nonzero [dx, dy]." });
     if (s.pace !== undefined && (!Number.isFinite(s.pace) || s.pace < .25 || s.pace > 4))
       issues.push({ path: at + "/pace", message: "Pace must be 0.25..4." });
+    if (s.haneScale !== undefined && (!Number.isFinite(s.haneScale) || s.haneScale < .5 || s.haneScale > 3))
+      issues.push({ path: at + "/haneScale", message: "haneScale must be 0.5..3." });
     if (s.press !== undefined && (!Array.isArray(s.press) || s.press.length !== points?.length
         || s.press.some((v: number) => !Number.isFinite(v) || v < .4 || v > 1.8)))
       issues.push({ path: at + "/press", message: "Press needs one value per point, each 0.4..1.8." });

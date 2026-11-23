@@ -452,6 +452,7 @@ function turnSegments(corner: V, din: V, dout: V, shortest: number, ctx: StrokeC
 /** 終筆 / 収筆: stop or leave the paper. */
 function endSegments(
   end: ShodoEnd, kind: ShodoStrokeKind, e: V, dir: V, hook: V | undefined, ctx: StrokeContext, runLength: number, joined = false,
+  haneScale = 1,
 ): Segment[] {
   const { pt, w, style } = ctx, T = style.technique;
   let k = scriptK(style, .6, .3);
@@ -493,7 +494,8 @@ function endSegments(
     const h = norm(...(hook ?? [-.78, -.62]));
     const short = norm(dir[0] * .4 + h[0] * .2 - .5, dir[1] * .4 + h[1] * .2 + .5);
     const s1: V = [e[0] + short[0] * .1 * w, e[1] + short[1] * .1 * w];
-    const tipEnd: V = [s1[0] + h[0] * T.haneLength * w, s1[1] + h[1] * T.haneLength * w];
+    // haneScale 1 keeps the old arithmetic exactly (multiplying by 1 is exact), so other glyphs are unchanged.
+    const tipEnd: V = [s1[0] + h[0] * T.haneLength * w * haneScale, s1[1] + h[1] * T.haneLength * w * haneScale];
     return [
       { duration: T.haneHold * k, pos: hold(e), press: ramp(pt, pt * 1.04), phase: "shuhitsu", technique: "hane", step: 0, pause: true },
       { duration: .06, pos: line(e, s1), press: ramp(pt * 1.04, pt * 1.06), phase: "shuhitsu", technique: "hane", step: 1 },
@@ -671,7 +673,7 @@ function strokeProgram(spec: ShodoStrokeSpec, base: ShodoStyle, seed: number, st
   } else {
     const lastRun = runs[runs.length - 1];
     segs.push(...endSegments(end, spec.kind, lastRun[lastRun.length - 1], dirAt(lastRun, true), spec.hook ? [spec.hook[0], spec.hook[1]] : undefined, ctx,
-      runLengths[runLengths.length - 1], spec.joinEnd));
+      runLengths[runLengths.length - 1], spec.joinEnd, spec.haneScale ?? 1));
   }
   if (spec.press) applyPressProfile(segs, spec.points, spec.press);
   return { segs, land: begin.land, start, end };
