@@ -492,3 +492,32 @@ describe("the name control keeps the focus", () => {
     expect(await screen.findByRole("button", { name: /its set name needs fixing: 人 has no reading ぬ/u })).toBeEnabled();
   });
 });
+
+describe("the name control's focus, second review", () => {
+  it("after resetting a kanji with a single name, focus is on the kanji; a person who moved on keeps their focus", async () => {
+    const user = userEvent.setup();
+    const single = { ...PREVIEW, nameChoices: [PREVIEW.nameChoices[0]] };
+    const bad = { char: "人", found: true as const, problem: "人 has no reading ぬ to name it by", nameChoices: single.nameChoices, badName: "ぬ" };
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [bad] });
+    vi.mocked(setName).mockImplementation(async () => { vi.mocked(loadPreviews).mockResolvedValue({ previews: [single] }); return { revision: "r2", settings: SETTINGS }; });
+    vi.mocked(loadStudio).mockImplementation(async () => ({ ...STATE, revision: `r${Math.random()}` }) as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Call it ひと again" }));
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("人"));
+  });
+
+  it("does not pull the focus back from a field the person moved to while the name was being saved", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    vi.mocked(setName).mockImplementation(() => new Promise(resolve => { finish = () => resolve({ revision: "r2", settings: SETTINGS }); }));
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Called by" }), "じん");
+    await user.click(screen.getByRole("button", { name: "Call it じん" }));
+    const field = screen.getByLabelText("Japanese voice ID");
+    await user.click(field);
+    await act(async () => { finish(); });
+    expect(field).toHaveFocus();
+  });
+});

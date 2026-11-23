@@ -82,13 +82,17 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
   const [seen, setSeen] = useState(current);
   if (seen !== current) { setSeen(current); setPicked(null); }
   const selectRef = useRef<HTMLSelectElement>(null), alertRef = useRef<HTMLParagraphElement>(null);
-  // Focus goes where the result is: back to the select once it is on screen (the reset card has none
-  // until the preview reloads), or to the error.
+  const cardRef = useRef<HTMLLIElement>(null), headRef = useRef<HTMLSpanElement>(null);
+  // Focus goes where the result is: the error; or the select (the kanji itself when it has a single
+  // name), once the reloaded preview shows it. Only while the person has not moved elsewhere meanwhile.
   const [focusAfter, setFocusAfter] = useState<"select" | "alert" | null>(null);
   useEffect(() => {
-    if (focusAfter === "alert" && alertRef.current) { alertRef.current.focus(); setFocusAfter(null); }
-    else if (focusAfter === "select" && selectRef.current) { selectRef.current.focus(); setFocusAfter(null); }
-    // Again when the preview changes: the reset card's select appears with the reloaded preview.
+    if (!focusAfter) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !cardRef.current?.contains(active)) { setFocusAfter(null); return; }
+    const target = focusAfter === "alert" ? alertRef.current : current === null ? null : selectRef.current ?? headRef.current;
+    if (target) { target.focus(); setFocusAfter(null); }
+    // Again when the preview changes: the reset card becomes a preview with the reloaded name.
   }, [focusAfter, current, naming.failure]);
   async function callBy(kana: string) {
     if (!preview.found) return;
@@ -98,7 +102,7 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
     catch (failure) { setNaming({ busy: false, failure }); setFocusAfter("alert"); }
   }
   const nameAlert = naming.failure != null && <p ref={alertRef} tabIndex={-1} role="alert" className="mt-2 text-xs text-status-danger focus:outline-none">{errorText(naming.failure, say)}</p>;
-  if (!preview.found || "problem" in preview) return <li className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm text-foreground">
+  if (!preview.found || "problem" in preview) return <li ref={cardRef} className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm text-foreground">
     <span lang="ja" className="font-serif text-lg">{preview.char}</span>{" "}
     {preview.found ? say(`cannot be made: ${preview.problem}`, `は作成できません: ${preview.problem}`) : say("is not in the kanji data.", "は漢字データにありません。")}
     {/* A name it no longer has (the data changed) is fixed here: back to its default name. */}
@@ -108,9 +112,9 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
     </div>}
     {nameAlert}
   </li>;
-  return <li className="min-w-0 rounded-control border border-border bg-surface-subtle/50 p-3">
+  return <li ref={cardRef} className="min-w-0 rounded-control border border-border bg-surface-subtle/50 p-3">
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <span lang="ja" className="font-serif text-3xl leading-none text-foreground">{preview.char}</span>
+      <span ref={headRef} tabIndex={-1} lang="ja" className="rounded-control font-serif text-3xl leading-none text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">{preview.char}</span>
       <span className="text-sm font-semibold text-foreground">{preview.meanings}</span>
       <span className="text-xs text-muted-foreground">JLPT {preview.jlpt ?? "-"}</span>
     </div>
