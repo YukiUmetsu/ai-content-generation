@@ -71,25 +71,36 @@ export const plainRomaji = (romaji) => romaji.normalize("NFD").replace(/[\u0300-
  * - Useful words never include the bare character (水 alone is not a "useful word" for 水): the
  *   first `maxWords` other words of the entry, in the data's order.
  * - The character's spoken name is the reading of its own word when it has one (水 → mizu),
- *   otherwise its first on'yomi (学 → gaku), otherwise its first kun'yomi.
+ *   otherwise its first on'yomi (学 → gaku), otherwise its first kun'yomi. `name` chooses another
+ *   reading by its kana (年: "ねん" in place of とし); its romaji comes from the data. `nameChoices`
+ *   lists the readings that name the kanji alone: its own word's and its on'yomi. A kun'yomi
+ *   such as いきる (生) belongs to a word with okurigana (生きる), so it is no name for 生 by itself.
  * - A word is spoken as written, so the voice reads it in context; an irregular reading (今日)
  *   is spoken from its kana. `speech` overrides the text for a word, for a voice that misreads it.
  */
-export function kanjiShortContent(entry, { maxWords = 3, speech = {} } = {}) {
+export function kanjiShortContent(entry, { maxWords = 3, speech = {}, name: chosen } = {}) {
   if (!entry?.char) fail("a kanji entry is required");
   const words = entry.words.filter(word => word.word !== entry.char).slice(0, maxWords);
   if (!words.length) fail(`${entry.char} has no useful word other than itself`);
   const own = entry.words.find(word => word.word === entry.char);
   const onPairs = readingPairs(entry.card.onyomi), kunPairs = readingPairs(entry.card.kunyomi);
   const on = onPairs.map(p => p.kana), kun = kunPairs.map(p => p.kana);
-  const name = own ? { romaji: own.romaji, kana: own.ruby } : onPairs[0] ?? kunPairs[0] ?? null;
-  if (!name || !plainRomaji(name.romaji)) fail(`${entry.char} has no reading to name it by`);
+  const choices = [];
+  const fallback = own || onPairs.length ? [] : kunPairs.slice(0, 1).map(p => ["kun", p]);
+  for (const [kind, pair] of [...(own ? [["word", { romaji: own.romaji, kana: own.ruby }]] : []), ...onPairs.map(p => ["on", p]), ...fallback]) {
+    const kana = toHiragana(pair.kana), romaji = plainRomaji(pair.romaji).toLowerCase();
+    if (kana && romaji && !choices.some(c => c.kana === kana)) choices.push({ kana, romaji, kind });
+  }
+  const wanted = typeof chosen === "string" && chosen.trim() ? toHiragana(chosen.normalize("NFC").trim()) : null;
+  const name = wanted ? choices.find(c => c.kana === wanted) : choices[0];
+  if (wanted && !name) fail(`${entry.char} has no reading ${chosen} to name it by (its readings: ${choices.map(c => c.kana).join(", ") || "none"})`);
+  if (!name) fail(`${entry.char} has no reading to name it by`);
   return {
     char: entry.char, jlpt: entry.jlpt, meanings: entry.card.meanings, onyomi: entry.card.onyomi, kunyomi: entry.card.kunyomi,
     words: words.map(({ word, ruby, romaji, meaning }) => ({ word, ruby, romaji, meaning })),
     wordSpeech: words.map(word => typeof speech[word.word] === "string" && speech[word.word].trim() ? speech[word.word].trim()
       : word.reading === "irregular" ? word.ruby : word.word),
-    name: { romaji: plainRomaji(name.romaji).toLowerCase(), kana: toHiragana(name.kana) },
+    name: { romaji: name.romaji, kana: name.kana }, nameChoices: choices,
     readings: { on, kun, onRomaji: onPairs.map(p => p.romaji), kunRomaji: kunPairs.map(p => p.romaji) },
   };
 }
@@ -269,7 +280,8 @@ export const retakeFor = (text, retakes) => textSetting(text, retakes);
  */
 export const reuseFor = (text, reuse) => textSetting(text, reuse);
 
-const unpunctuated = (text) => text.normalize("NFC").replace(/[\s。．.!?！？、,，「」『』"'()（）]/gu, "");
+// Katakana reads as its hiragana (ネン。 says ねん), so a name in kana is found in a reading in katakana.
+const unpunctuated = (text) => toHiragana(text.normalize("NFC")).replace(/[\s。．.!?！？、,，「」『』"'()（）]/gu, "");
 /**
  * How a reused text comes out of a source line's text (what one voice reads): the whole of it, or
  * its part after the last comma, with how many commas (pauses) the source has. Null when the source
@@ -295,10 +307,16 @@ export function reuseCut(sourceText, text) {
 export function reuseSources(units) {
   const asked = units.filter(unit => unit.reusedFrom), reusing = new Set(asked.map(unit => unit.line));
   return new Map(asked.map(unit => {
-    const from = unit.reusedFrom, source = units.filter(u => u.line === from).at(-1);
-    const why = !source ? `this short has no line ${from}` : from === unit.line ? "it is the text's own line" : reusing.has(from) ? `line ${from} is itself reused` : null;
-    // Matched on what the lines say, also where a part is spoken as another text.
-    const cut = why ? null : reuseCut(source.written ?? source.text, unit.written ?? unit.text);
-    return [unit, cut ? { source, cut } : { why: why ?? `line ${from} does not say "${unit.text}" after a comma` }];
+    // A list of lines is tried in order: the first that says the text gives it ({ "{name.kana}": ["kunyomi", "onyomi"] }).
+    const whys = [];
+    for (const from of [unit.reusedFrom].flat()) {
+      const source = units.filter(u => u.line === from).at(-1);
+      const why = !source ? `this short has no line ${from}` : from === unit.line ? "it is the text's own line" : reusing.has(from) ? `line ${from} is itself reused` : null;
+      // Matched on what the lines say, also where a part is spoken as another text.
+      const cut = why ? null : reuseCut(source.written ?? source.text, unit.written ?? unit.text);
+      if (cut) return [unit, { source, cut, from }];
+      whys.push(why ?? `line ${from} does not say "${unit.written ?? unit.text}" after a comma`);
+    }
+    return [unit, { why: whys.join("; ") }];
   }));
 }

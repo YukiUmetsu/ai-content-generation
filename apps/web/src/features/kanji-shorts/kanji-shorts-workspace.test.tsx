@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { KanjiShortsWorkspace } from "./kanji-shorts-workspace";
-import { KanjiApiError, cancelRun, chooseTake, loadPreviews, loadReleases, loadStatus, loadStudio, loadTakes, recordTake, saveSettings, speakAs, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
+import { KanjiApiError, cancelRun, chooseTake, loadPreviews, loadReleases, loadStatus, loadStudio, loadTakes, recordTake, saveSettings, setName, speakAs, startRun, type KanjiSettings, type Run, type StudioState } from "./kanji-shorts-api";
 import { changedSettings, draftFrom, draftProblems, editsOnto, settingsFromDraft } from "./kanji-settings-model";
 import { forgetKanjiDrafts } from "./kanji-drafts";
 
 vi.mock("./kanji-shorts-api", async (original) => ({
   ...(await original<typeof import("./kanji-shorts-api")>()),
   loadStudio: vi.fn(), loadStatus: vi.fn(), loadPreviews: vi.fn(), loadReleases: vi.fn(), saveSettings: vi.fn(), startRun: vi.fn(), cancelRun: vi.fn(),
-  loadTakes: vi.fn(), recordTake: vi.fn(), chooseTake: vi.fn(), speakAs: vi.fn(),
+  loadTakes: vi.fn(), recordTake: vi.fn(), chooseTake: vi.fn(), speakAs: vi.fn(), setName: vi.fn(),
 }));
 
 const SETTINGS: KanjiSettings = {
@@ -27,6 +27,7 @@ const STATE: StudioState = {
 };
 const PREVIEW = {
   char: "人", found: true as const, meanings: "PERSON", jlpt: "N5", name: { kana: "ひと", romaji: "hito" }, dataProblems: [], strokeLinesLeftOut: false,
+  nameChoices: [{ kana: "ひと", romaji: "hito", kind: "word" as const }, { kana: "じん", romaji: "jin", kind: "on" as const }, { kana: "にん", romaji: "nin", kind: "on" as const }],
   words: [{ word: "人間", ruby: "にんげん", meaning: "human" }],
   lines: [
     { id: "question", locale: "en", at: "start", offset: .35, say: "Do you know how to write the kanji ひと?", caption: "Do you know how to write the kanji hito?", split: true,
@@ -105,12 +106,12 @@ describe("KanjiShortsWorkspace", () => {
   it("saves only the changed settings with the file's revision, and shows a refusal", async () => {
     const user = userEvent.setup();
     vi.mocked(saveSettings).mockRejectedValueOnce(new Error("config: maxWords must be 1 to 6"))
-      .mockResolvedValueOnce({ revision: "r2", settings: { ...SETTINGS, "narration.reuse": { ひと: "kunyomi", "{name.kana}": "kunyomi" } } });
+      .mockResolvedValueOnce({ revision: "r2", settings: { ...SETTINGS, "narration.reuse": { ひと: "kunyomi", "{name.kana}": ["kunyomi", "onyomi"] } } });
     render(<KanjiShortsWorkspace locale="en" />);
     const settings = within((await screen.findByRole("heading", { name: "Settings" })).closest("[data-km-surface=root]") as HTMLElement);
-    await user.click(settings.getByRole("checkbox", { name: /name with the audio of its kun'yomi line/u }));
+    await user.click(settings.getByRole("checkbox", { name: /name with the audio of its reading line/u }));
     await user.click(settings.getByRole("button", { name: "Save settings" }));
-    expect(saveSettings).toHaveBeenCalledWith("r1", { "narration.reuse": { ひと: "kunyomi", "{name.kana}": "kunyomi" } });
+    expect(saveSettings).toHaveBeenCalledWith("r1", { "narration.reuse": { ひと: "kunyomi", "{name.kana}": ["kunyomi", "onyomi"] } });
     expect(await settings.findByRole("alert")).toHaveTextContent("maxWords must be 1 to 6");
     await user.click(settings.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(settings.getByRole("status")).toHaveTextContent("Settings saved."));
@@ -417,6 +418,106 @@ describe("takes panel, second review", () => {
     await user.click(field);
     await act(async () => { finish(take(3)); });
     expect(await screen.findByText("Take 3 recorded.")).toBeInTheDocument();
+    expect(field).toHaveFocus();
+  });
+});
+
+describe("the name a kanji is called by", () => {
+  it("is picked from its readings on its preview and applied with its button; its first reading is the default and clears the setting", async () => {
+    const user = userEvent.setup();
+    vi.mocked(setName).mockResolvedValue({ revision: "r2", settings: SETTINGS });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    const called = await screen.findByRole("combobox", { name: "Called by" });
+    expect(called).toHaveValue("ひと");
+    expect(screen.getByRole("option", { name: "じん (jin) · on'yomi" })).toBeInTheDocument();
+    await user.selectOptions(called, "にん");
+    expect(setName).not.toHaveBeenCalled();                       // picking alone saves nothing
+    expect(called).toHaveValue("にん");
+    await user.click(screen.getByRole("button", { name: "Call it にん" }));
+    expect(setName).toHaveBeenCalledWith("人", "にん");
+    expect(called).toHaveFocus();
+    expect(called).toHaveValue("にん");                            // shown until the refreshed preview says it
+  });
+
+  it("offers to go back to the default name when the set one is no longer a reading of the kanji", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [{ char: "人", found: true, problem: "人 has no reading ぬ to name it by (its readings: ひと, じん, にん)",
+      nameChoices: PREVIEW.nameChoices, badName: "ぬ" }] });
+    vi.mocked(setName).mockResolvedValue({ revision: "r2", settings: SETTINGS });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Call it ひと again" }));
+    expect(setName).toHaveBeenCalledWith("人", "");
+  });
+
+  it("reads a list of one line as that line, and a file's own \"kunyomi\" name entry as a row", () => {
+    const saved: KanjiSettings = { ...SETTINGS, "narration.reuse": { "{name.kana}": "kunyomi", ひと: ["kunyomi"], いま: ["kunyomi", "onyomi"] } };
+    const draft = draftFrom(saved);
+    expect(draft.nameFromKunyomi).toBe(false);
+    expect(draft.reuse).toEqual([["{name.kana}", "kunyomi"], ["ひと", "kunyomi"], ["いま", "kunyomi, onyomi"]]);
+    expect(changedSettings(saved, settingsFromDraft(draft))).toEqual({});
+    // Switched on from scratch: kun'yomi, else on'yomi.
+    expect(settingsFromDraft({ ...draftFrom(SETTINGS), nameFromKunyomi: true })["narration.reuse"]).toEqual({ ひと: "kunyomi", "{name.kana}": ["kunyomi", "onyomi"] });
+  });
+});
+
+describe("the name control keeps the focus", () => {
+  it("puts the focus on the error when a name cannot be saved, and on the select after the reset card turns back into a preview", async () => {
+    const user = userEvent.setup();
+    vi.mocked(setName).mockRejectedValueOnce(new KanjiApiError("server", "settings: the config file changed since it was loaded"));
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Called by" }), "じん");
+    await user.click(screen.getByRole("button", { name: "Call it じん" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+  });
+
+  it("after the reset, the select of the reloaded preview has the focus", async () => {
+    const user = userEvent.setup();
+    const bad = { char: "人", found: true as const, problem: "人 has no reading ぬ to name it by", nameChoices: PREVIEW.nameChoices, badName: "ぬ" };
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [bad] });
+    vi.mocked(setName).mockImplementation(async () => { vi.mocked(loadPreviews).mockResolvedValue({ previews: [PREVIEW] }); return { revision: "r2", settings: SETTINGS }; });
+    vi.mocked(loadStudio).mockImplementation(async () => ({ ...STATE, revision: `r${Math.random()}` }) as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Call it ひと again" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Called by" })).toHaveFocus());
+  });
+
+  it("marks a kanji whose set name needs fixing in the picker", async () => {
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, catalog: [{ char: "人", jlpt: "N5", meanings: "PERSON", name: { kana: "ひと", romaji: "hito" }, versions: 0,
+      nameProblem: "人 has no reading ぬ to name it by" }] } as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByRole("button", { name: /its set name needs fixing: 人 has no reading ぬ/u })).toBeEnabled();
+  });
+});
+
+describe("the name control's focus, second review", () => {
+  it("after resetting a kanji with a single name, focus is on the kanji; a person who moved on keeps their focus", async () => {
+    const user = userEvent.setup();
+    const single = { ...PREVIEW, nameChoices: [PREVIEW.nameChoices[0]] };
+    const bad = { char: "人", found: true as const, problem: "人 has no reading ぬ to name it by", nameChoices: single.nameChoices, badName: "ぬ" };
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [bad] });
+    vi.mocked(setName).mockImplementation(async () => { vi.mocked(loadPreviews).mockResolvedValue({ previews: [single] }); return { revision: "r2", settings: SETTINGS }; });
+    vi.mocked(loadStudio).mockImplementation(async () => ({ ...STATE, revision: `r${Math.random()}` }) as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Call it ひと again" }));
+    await waitFor(() => expect(document.activeElement?.textContent).toBe("人"));
+  });
+
+  it("does not pull the focus back from a field the person moved to while the name was being saved", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    vi.mocked(setName).mockImplementation(() => new Promise(resolve => { finish = () => resolve({ revision: "r2", settings: SETTINGS }); }));
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Called by" }), "じん");
+    await user.click(screen.getByRole("button", { name: "Call it じん" }));
+    const field = screen.getByLabelText("Japanese voice ID");
+    await user.click(field);
+    await act(async () => { finish(); });
     expect(field).toHaveFocus();
   });
 });

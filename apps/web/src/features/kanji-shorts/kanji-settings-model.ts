@@ -1,8 +1,9 @@
 /** The settings form's draft and how it maps to the config's settings. Pure. */
 import type { KanjiSettings } from "./kanji-shorts-api";
 
-/** The reuse entry that reads every kanji's name with the audio of its kun'yomi line. */
+/** The reuse entry that reads every kanji's name with the audio of its reading: the kun'yomi line, else the on'yomi line. */
 export const NAME_FROM_KUNYOMI = "{name.kana}";
+export const NAME_LINES = ["kunyomi", "onyomi"];
 /** The bottom band that keeps the card above the platforms' title and caption overlay. */
 export const ABOVE_CAPTIONS = 0.19;
 
@@ -10,23 +11,29 @@ export type Pairs = [string, string][];
 export type Draft = {
   voiceId: string; ja: string; en: string; otherVoiceIds: Record<string, string>; pace: "" | "slow" | "measured" | "fast";
   nameFromKunyomi: boolean; reuse: Pairs; retakes: Pairs; speech: Pairs;
+  /** The switch's entry as the file has it ("kunyomi", or the list), kept while the switch stays on. */
+  savedNameLines: string | string[] | undefined;
   maxWords: string; write: string; review: string;
   /** The switch, and the file's own bottom band, kept as it is while the switch is not changed. */
   aboveCaptions: boolean; savedBottom: number | undefined; otherInset: Record<string, number>;
 };
 
-const pairsOf = (map: Record<string, string | number> | null): Pairs => Object.entries(map ?? {}).map(([key, value]) => [key, String(value)]);
+/** A map as rows; a list of lines shows as "kunyomi, onyomi". */
+const pairsOf = (map: Record<string, string | number | string[]> | null): Pairs => Object.entries(map ?? {}).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : String(value)]);
+// The switch is exactly its list; a file's own "kunyomi" stays a row the person can see.
+const isSwitchValue = (value: unknown) => Array.isArray(value) && value.join() === NAME_LINES.join();
 const numberOrNull = (text: string) => text.trim() === "" ? null : Number(text);
 
 export function draftFrom(settings: KanjiSettings): Draft {
   const { ja = "", en = "", ...otherVoiceIds } = settings["voice.voiceIds"] ?? {};
   const { bottom, ...otherInset } = settings["card.safeInset"] ?? {};
-  const reuse = pairsOf(settings["narration.reuse"]);
-  const isNameSwitch = ([key, line]: [string, string]) => key === NAME_FROM_KUNYOMI && line === "kunyomi";
+  const saved = settings["narration.reuse"] ?? {};
+  const switchOn = isSwitchValue(saved[NAME_FROM_KUNYOMI]);
   return {
     voiceId: settings["voice.voiceId"] ?? "", ja, en, otherVoiceIds, pace: settings["voice.pace"] ?? "",
     // Only the switch's own entry is the switch; "{name.kana}" read from another line stays a row.
-    nameFromKunyomi: reuse.some(isNameSwitch), reuse: reuse.filter(pair => !isNameSwitch(pair)),
+    nameFromKunyomi: switchOn, savedNameLines: switchOn ? saved[NAME_FROM_KUNYOMI] : undefined,
+    reuse: pairsOf(settings["narration.reuse"]).filter(([key]) => !(switchOn && key === NAME_FROM_KUNYOMI)),
     retakes: pairsOf(settings["narration.retakes"]), speech: pairsOf(settings["narration.speech"]),
     maxWords: settings.maxWords?.toString() ?? "", write: settings["timing.write"]?.toString() ?? "", review: settings["timing.review"]?.toString() ?? "",
     aboveCaptions: (bottom ?? 0) > 0, savedBottom: bottom, otherInset: otherInset as Record<string, number>,
@@ -61,8 +68,10 @@ export function settingsFromDraft(draft: Draft): KanjiSettings {
     return kept.length ? Object.fromEntries(kept.map(([key, text]) => [key, value(text)])) : null;
   };
   const voiceIds = { ...draft.otherVoiceIds, ...(draft.ja.trim() ? { ja: draft.ja } : {}), ...(draft.en.trim() ? { en: draft.en } : {}) };
-  const reuse: Record<string, string> = map(draft.reuse, text => text) ?? {};
-  if (draft.nameFromKunyomi) reuse[NAME_FROM_KUNYOMI] = "kunyomi";
+  // A row may list lines tried in order: "kunyomi, onyomi".
+  const lines = (text: string) => { const list = text.split(/[,、]/u).map(line => line.trim()).filter(Boolean); return list.length > 1 ? list : text; };
+  const reuse: Record<string, string | string[]> = map(draft.reuse, lines) ?? {};
+  if (draft.nameFromKunyomi) reuse[NAME_FROM_KUNYOMI] = draft.savedNameLines ?? NAME_LINES;
   // The file's own band while the switch says the same; the standard band when it is switched on.
   const savedOn = (draft.savedBottom ?? 0) > 0;
   const bottom = draft.aboveCaptions === savedOn ? draft.savedBottom : draft.aboveCaptions ? ABOVE_CAPTIONS : undefined;
@@ -85,8 +94,9 @@ export function settingsFromDraft(draft: Draft): KanjiSettings {
  * A value as text with its keys in order, so two maps that differ only in key order compare equal,
  * and an empty map is the same as none (the config treats {} and a missing map alike).
  */
+// A list of one line is that line (the config reads ["kunyomi"] as "kunyomi").
 const canonical = (value: unknown): string => JSON.stringify(value ?? null, (_key, inner: unknown) =>
-  inner && typeof inner === "object" && !Array.isArray(inner)
+  Array.isArray(inner) && inner.length === 1 ? inner[0] : inner && typeof inner === "object" && !Array.isArray(inner)
     ? Object.keys(inner).length ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : null
     : inner);
 export const sameSettings = (a: KanjiSettings, b: KanjiSettings) => canonical(a) === canonical(b);

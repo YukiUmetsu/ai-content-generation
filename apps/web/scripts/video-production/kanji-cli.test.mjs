@@ -57,6 +57,11 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.throws(() => readKanjiConfig(config({ narration: { question: "Q {name}?" } }), "/c.json"), /narration\.question is not a setting \(script, labels, speech, retakes, reuse, splitPhrases, phraseGap\)/u);
   assert.deepEqual(readKanjiConfig(config({ narration: { reuse: { "ひと": "kunyomi" } } }), "/c.json").narration.reuse, { "ひと": "kunyomi" });
   assert.throws(() => readKanjiConfig(config({ narration: { reuse: { "ひと": "kun yomi" } } }), "/c.json"), /narration\.reuse/u);
+  assert.deepEqual(readKanjiConfig(config({ narration: { reuse: { "{name.kana}": ["kunyomi", "onyomi"] } } }), "/c.json").narration.reuse, { "{name.kana}": ["kunyomi", "onyomi"] });
+  assert.throws(() => readKanjiConfig(config({ narration: { reuse: { "ひと": [] } } }), "/c.json"), /narration\.reuse/u);
+  assert.deepEqual(readKanjiConfig(config({ names: { 年: "ねん" } }), "/c.json").names, { 年: "ねん" });
+  assert.throws(() => readKanjiConfig(config({ names: { 年: "nen" } }), "/c.json"), /names maps a kanji to the reading, in kana/u);
+  assert.throws(() => readKanjiConfig(config({ names: { 年月: "ねん" } }), "/c.json"), /names maps a kanji/u);
   assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 2 } } }), "/c.json").narration.retakes, { "ひと": 2 });
   // Take 1 (the first recording) may be named, to override a key that names fields; 0 and 100 may not.
   assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 1 } } }), "/c.json").narration.retakes, { "ひと": 1 });

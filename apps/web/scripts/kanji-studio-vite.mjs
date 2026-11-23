@@ -10,10 +10,11 @@ import { randomUUID } from "node:crypto";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
 import { createReadStream } from "node:fs";
-import { DEFAULT_CONFIG, nextOutputDir } from "./video-production/kanji-config.mjs";
+import { DEFAULT_CONFIG, nextOutputDir, readKanjiConfig } from "./video-production/kanji-config.mjs";
 import { KANJI_STUDIO_SETTINGS, applyKanjiStudioSettings, kanjiCatalog, kanjiQaSummary, kanjiReleases, kanjiStudioSettings,
   previewKanjiShorts, readKanjiStudio, releaseChar, releaseFolder, saveKanjiConfig } from "./video-production/kanji-studio.mjs";
 import { produceKanjiShort } from "./video-production/kanji-short-producer.mjs";
+import { kanjiShortContent } from "./video-production/kanji-short.mjs";
 import { sendVideo } from "./video-production/media-range.mjs";
 import { productionProviderKey } from "./video-production/provider-keychain.mjs";
 import { findChromium } from "./video-production/try.mjs";
@@ -96,7 +97,7 @@ export function createKanjiStudioApi(deps = {}) {
     return {
       configured: true, configPath, revision: studio.revision, provider: studio.config.voice.provider ?? "fish", outputRoot: studio.config.outputRoot,
       settings: kanjiStudioSettings(studio.raw), settingPaths: KANJI_STUDIO_SETTINGS,
-      catalog: kanjiCatalog(studio.entries).map(kanji => ({ ...kanji, versions: made.get(kanji.char) ?? 0 })),
+      catalog: kanjiCatalog(studio.entries, { names: studio.config.names }).map(kanji => ({ ...kanji, versions: made.get(kanji.char) ?? 0 })),
       run: runView(),
     };
   }
@@ -278,6 +279,32 @@ export function createKanjiStudioApi(deps = {}) {
           const named = Object.keys(retakes).some(key => /\{[^}]*\}/u.test(key));
           if (body.take > 1 || named) retakes[part.text] = body.take;
           const next = applyKanjiStudioSettings(studio.raw, { "narration.retakes": Object.keys(retakes).length ? retakes : null }, configPath);
+          const revision = await saveKanjiConfig(configPath, next, studio.revision);
+          return [200, { revision, settings: kanjiStudioSettings(next) }];
+        });
+        saving = saved.catch(() => {});
+        const [status, payload] = await saved;
+        return respond(res, status, payload);
+      }
+      if (req.method === "POST" && route === "/name") {
+        const body = await readBody(req);
+        if (typeof body.char !== "string" || [...body.char].length !== 1 || typeof body.kana !== "string" || body.kana.length > 20)
+          return respond(res, 400, { error: "Send a kanji and the reading, in kana, it is called by (empty for its default name)." });
+        // The name in the settings file (names); an empty reading goes back to the data's default.
+        const saved = saving.then(async () => {
+          const { studio, problem } = await loadStudio();
+          if (!studio) return [422, { error: problem }];
+          const names = { ...(studio.raw.names ?? {}) };
+          if (body.kana.trim()) names[body.char] = body.kana.trim(); else delete names[body.char];
+          // A reading the kanji does not have is refused here, before the file changes; clearing a name always works.
+          if (body.kana.trim()) {
+            const entry = studio.entries.get(body.char);
+            if (!entry) return [422, { error: `${body.char} is not in the kanji data.` }];
+            kanjiShortContent(entry, { name: names[body.char] });
+          }
+          const next = structuredClone(studio.raw);
+          if (Object.keys(names).length) next.names = names; else delete next.names;
+          readKanjiConfig(next, configPath);
           const revision = await saveKanjiConfig(configPath, next, studio.revision);
           return [200, { revision, settings: kanjiStudioSettings(next) }];
         });
