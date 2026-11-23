@@ -494,8 +494,8 @@ function endSegments(
     const h = norm(...(hook ?? [-.78, -.62]));
     const short = norm(dir[0] * .4 + h[0] * .2 - .5, dir[1] * .4 + h[1] * .2 + .5);
     const s1: V = [e[0] + short[0] * .1 * w, e[1] + short[1] * .1 * w];
-    const reach = T.haneLength * w * haneScale;
-    const tipEnd: V = [s1[0] + h[0] * reach, s1[1] + h[1] * reach];
+    // haneScale 1 keeps the old arithmetic exactly (multiplying by 1 is exact), so other glyphs are unchanged.
+    const tipEnd: V = [s1[0] + h[0] * T.haneLength * w * haneScale, s1[1] + h[1] * T.haneLength * w * haneScale];
     return [
       { duration: T.haneHold * k, pos: hold(e), press: ramp(pt, pt * 1.04), phase: "shuhitsu", technique: "hane", step: 0, pause: true },
       { duration: .06, pos: line(e, s1), press: ramp(pt * 1.04, pt * 1.06), phase: "shuhitsu", technique: "hane", step: 1 },

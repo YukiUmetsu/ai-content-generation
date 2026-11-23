@@ -28,7 +28,8 @@ export async function glyphFromKanjiVg(char: string, svg: string): Promise<Shodo
   // A reviewed kaisho form is used only for the KanjiVG text it was checked against.
   const reviewed = SHODO_REVIEWED_KANJI[char];
   if (reviewed && reviewed.reviewed.svgLength === svg.length && reviewed.reviewed.svgHash === kanjiVgTextHash(svg)) {
-    return { char: reviewed.char, source: reviewed.source, strokes: reviewed.strokes, ...(reviewed.parts ? { parts: reviewed.parts } : {}) };
+    // A copy, so no caller can change the shared reviewed table.
+    return structuredClone({ char: reviewed.char, source: reviewed.source, strokes: reviewed.strokes, ...(reviewed.parts ? { parts: reviewed.parts } : {}) });
   }
   // FNV-1a of the SVG: the loader caches by base URL, so different SVG text never shares a result.
   const hash = kanjiVgTextHash(svg);

@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { inspectShodoGlyph, parseKanjiVgSvg, shodoKaishoForm } from "@/components/video/shodo/shodo-glyphs";
 import { SHODO_REVIEWED_KANJI } from "@/components/video/shodo/shodo-reviewed-kanji";
@@ -7,11 +8,23 @@ import { DEFAULT_SHODO_STYLE } from "@/components/video/shodo/shodo-style";
 import { glyphFromKanjiVg, kanjiVgTextHash } from "./kanji-entry";
 
 // The KanjiVG release the reviewed forms were checked against, from the local cache the kanji shorts use.
-const CACHE = new URL("../../../../data/kanji-shorts/cache/kanjivg/r20260714/", import.meta.url);
+// Vitest rewrites import.meta.url to an http URL, so the cache is found by walking up from the working directory.
+const cacheDir = (): string | null => {
+  for (let dir = process.cwd(); ; dir = dirname(dir)) {
+    const candidate = join(dir, "data/kanji-shorts/cache/kanjivg/r20260714");
+    if (existsSync(candidate)) return candidate;
+    if (dirname(dir) === dir) return null;
+  }
+};
+const CACHE = cacheDir();
 const svgFor = (file: string): string | null => {
-  const path = new URL(`${file}.svg`, CACHE);
+  if (!CACHE) return null;
+  const path = join(CACHE, `${file}.svg`);
   return existsSync(path) ? readFileSync(path, "utf8") : null;
 };
+
+// Without the local cache the KanjiVG checks are skipped (reported as skipped, never as passed).
+const haveCache = Object.values(SHODO_REVIEWED_KANJI).every(glyph => svgFor(glyph.reviewed.file) !== null);
 
 describe("reviewed kaisho forms", () => {
   it("covers 先, 学 and 毎 with valid strokes", () => {
@@ -19,10 +32,12 @@ describe("reviewed kaisho forms", () => {
     for (const glyph of Object.values(SHODO_REVIEWED_KANJI)) expect(inspectShodoGlyph(glyph)).toEqual([]);
   });
 
-  it("keeps KanjiVG's stroke order, centrelines and turns; only the listed joins move", () => {
+  it.skipIf(!haveCache)("keeps KanjiVG's stroke order, centrelines and turns; only the listed joins move", () => {
     for (const [char, reviewed] of Object.entries(SHODO_REVIEWED_KANJI)) {
-      const svg = svgFor(reviewed.reviewed.file);
-      if (!svg) continue; // the KanjiVG cache is local; without it the check is skipped, not passed
+      const svg = svgFor(reviewed.reviewed.file)!;
+      // The cached file must be the text the form was reviewed against, or the comparison below means nothing.
+      expect(svg.length, `${char} cached KanjiVG length`).toBe(reviewed.reviewed.svgLength);
+      expect(kanjiVgTextHash(svg), `${char} cached KanjiVG hash`).toBe(reviewed.reviewed.svgHash);
       const baseline = shodoKaishoForm(parseKanjiVgSvg(svg, char));
       expect(reviewed.strokes.length).toBe(baseline.strokes.length);
       const moved = new Set((reviewed.moved ?? []).map(m => `${m.stroke}:${m.point}`));
@@ -55,9 +70,8 @@ describe("reviewed kaisho forms", () => {
     }
   });
 
-  it("is used only for the KanjiVG text it was reviewed against", async () => {
-    const svg = svgFor(SHODO_REVIEWED_KANJI["先"].reviewed.file);
-    if (!svg) return;
+  it.skipIf(!haveCache)("is used only for the KanjiVG text it was reviewed against", async () => {
+    const svg = svgFor(SHODO_REVIEWED_KANJI["先"].reviewed.file)!;
     const reviewed = await glyphFromKanjiVg("先", svg);
     expect(reviewed.strokes[0].weight).toBe(SHODO_REVIEWED_KANJI["先"].strokes[0].weight);
     expect(reviewed.strokes).toEqual(SHODO_REVIEWED_KANJI["先"].strokes);
