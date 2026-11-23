@@ -461,3 +461,34 @@ describe("the name a kanji is called by", () => {
     expect(settingsFromDraft({ ...draftFrom(SETTINGS), nameFromKunyomi: true })["narration.reuse"]).toEqual({ ひと: "kunyomi", "{name.kana}": ["kunyomi", "onyomi"] });
   });
 });
+
+describe("the name control keeps the focus", () => {
+  it("puts the focus on the error when a name cannot be saved, and on the select after the reset card turns back into a preview", async () => {
+    const user = userEvent.setup();
+    vi.mocked(setName).mockRejectedValueOnce(new KanjiApiError("server", "settings: the config file changed since it was loaded"));
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Called by" }), "じん");
+    await user.click(screen.getByRole("button", { name: "Call it じん" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+  });
+
+  it("after the reset, the select of the reloaded preview has the focus", async () => {
+    const user = userEvent.setup();
+    const bad = { char: "人", found: true as const, problem: "人 has no reading ぬ to name it by", nameChoices: PREVIEW.nameChoices, badName: "ぬ" };
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [bad] });
+    vi.mocked(setName).mockImplementation(async () => { vi.mocked(loadPreviews).mockResolvedValue({ previews: [PREVIEW] }); return { revision: "r2", settings: SETTINGS }; });
+    vi.mocked(loadStudio).mockImplementation(async () => ({ ...STATE, revision: `r${Math.random()}` }) as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Call it ひと again" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Called by" })).toHaveFocus());
+  });
+
+  it("marks a kanji whose set name needs fixing in the picker", async () => {
+    vi.mocked(loadStudio).mockResolvedValue({ ...STATE, catalog: [{ char: "人", jlpt: "N5", meanings: "PERSON", name: { kana: "ひと", romaji: "hito" }, versions: 0,
+      nameProblem: "人 has no reading ぬ to name it by" }] } as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    expect(await screen.findByRole("button", { name: /its set name needs fixing: 人 has no reading ぬ/u })).toBeEnabled();
+  });
+});

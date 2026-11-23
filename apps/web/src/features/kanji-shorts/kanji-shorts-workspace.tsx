@@ -54,13 +54,14 @@ function KanjiPicker({ catalog, selected, onToggle, say }: { catalog: CatalogKan
       {shown.map(kanji => {
         const on = selected.includes(kanji.char);
         const name = kanji.problem ? say(`${kanji.char}, cannot be made: ${kanji.problem}`, `${kanji.char}、作成できません: ${kanji.problem}`)
-          : `${kanji.char} ${kanji.name.romaji}, ${kanji.meanings}${kanji.versions ? say(`, made ${kanji.versions} times`, `、${kanji.versions} 回作成済み`) : ""}`;
+          : `${kanji.char} ${kanji.name.romaji}, ${kanji.meanings}${kanji.versions ? say(`, made ${kanji.versions} times`, `、${kanji.versions} 回作成済み`) : ""}` +
+            (kanji.nameProblem ? say(`; its set name needs fixing: ${kanji.nameProblem}`, `。設定された呼び方を直す必要があります: ${kanji.nameProblem}`) : "");
         return <li key={kanji.char}>
           <button type="button" aria-pressed={on} disabled={!!kanji.problem && !on} onClick={() => onToggle(kanji.char)} aria-label={name}
-            title={kanji.problem ?? `${kanji.name.kana} (${kanji.name.romaji}) · ${kanji.meanings}`}
+            title={kanji.problem ?? kanji.nameProblem ?? `${kanji.name.kana} (${kanji.name.romaji}) · ${kanji.meanings}`}
             className="relative flex h-14 w-full flex-col items-center justify-center rounded-control border border-border bg-surface leading-none text-foreground hover:bg-surface-subtle disabled:cursor-not-allowed disabled:border-dashed disabled:opacity-50 aria-pressed:border-primary aria-pressed:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <span lang="ja" className="font-serif text-2xl">{kanji.char}</span>
-            <span lang="ja" className="mt-1 max-w-full truncate px-1 text-[11px] text-muted-foreground">{kanji.problem ? "—" : kanji.name.kana}</span>
+            <span lang="ja" className={"mt-1 max-w-full truncate px-1 text-[11px] " + (kanji.nameProblem ? "text-status-warning" : "text-muted-foreground")}>{kanji.problem ? "—" : kanji.nameProblem ? "?" : kanji.name.kana}</span>
             {kanji.versions > 0 && <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-status-success" />}
           </button>
         </li>;
@@ -80,14 +81,23 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
   const [picked, setPicked] = useState<string | null>(null);
   const [seen, setSeen] = useState(current);
   if (seen !== current) { setSeen(current); setPicked(null); }
-  const selectRef = useRef<HTMLSelectElement>(null);
+  const selectRef = useRef<HTMLSelectElement>(null), alertRef = useRef<HTMLParagraphElement>(null);
+  // Focus goes where the result is: back to the select once it is on screen (the reset card has none
+  // until the preview reloads), or to the error.
+  const [focusAfter, setFocusAfter] = useState<"select" | "alert" | null>(null);
+  useEffect(() => {
+    if (focusAfter === "alert" && alertRef.current) { alertRef.current.focus(); setFocusAfter(null); }
+    else if (focusAfter === "select" && selectRef.current) { selectRef.current.focus(); setFocusAfter(null); }
+    // Again when the preview changes: the reset card's select appears with the reloaded preview.
+  }, [focusAfter, current, naming.failure]);
   async function callBy(kana: string) {
     if (!preview.found) return;
     setNaming({ busy: true, failure: null });
     // The data's own choice (its first reading) is the default: choosing it removes the setting.
-    try { await setName(preview.char, kana === choices[0]?.kana ? "" : kana); setNaming({ busy: false, failure: null }); onChanged(); selectRef.current?.focus(); }
-    catch (failure) { setNaming({ busy: false, failure }); }
+    try { await setName(preview.char, kana === choices[0]?.kana ? "" : kana); setNaming({ busy: false, failure: null }); setFocusAfter("select"); onChanged(); }
+    catch (failure) { setNaming({ busy: false, failure }); setFocusAfter("alert"); }
   }
+  const nameAlert = naming.failure != null && <p ref={alertRef} tabIndex={-1} role="alert" className="mt-2 text-xs text-status-danger focus:outline-none">{errorText(naming.failure, say)}</p>;
   if (!preview.found || "problem" in preview) return <li className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm text-foreground">
     <span lang="ja" className="font-serif text-lg">{preview.char}</span>{" "}
     {preview.found ? say(`cannot be made: ${preview.problem}`, `は作成できません: ${preview.problem}`) : say("is not in the kanji data.", "は漢字データにありません。")}
@@ -95,8 +105,8 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
     {preview.found && preview.badName && <div className="mt-2 flex flex-wrap items-center gap-2">
       <Button variant="outline" size="sm" isLoading={naming.busy} onClick={() => void callBy(choices[0]?.kana ?? "")}>
         {say(`Call it ${choices[0]?.kana ?? "by its default name"} again`, `呼び方を ${choices[0]?.kana ?? "既定"} に戻す`)}</Button>
-      {naming.failure != null && <span role="alert" className="text-xs text-status-danger">{errorText(naming.failure, say)}</span>}
     </div>}
+    {nameAlert}
   </li>;
   return <li className="min-w-0 rounded-control border border-border bg-surface-subtle/50 p-3">
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -117,7 +127,7 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
       {picked && <Button variant="outline" size="sm" isLoading={naming.busy} onClick={() => void callBy(picked)}>
         {say(`Call it ${picked}`, `${picked} と呼ぶ`)}</Button>}
     </div>}
-    {naming.failure != null && <p role="alert" className="mt-2 text-xs text-status-danger">{errorText(naming.failure, say)}</p>}
+    {nameAlert}
     {preview.dataProblems.map(problem => <p key={problem} className="mt-2 text-xs text-status-warning">{problem}</p>)}
     {preview.strokeLinesLeftOut && <p className="mt-2 text-xs text-muted-foreground">{say("Stroke lines appear once the kanji's stroke data is cached.", "筆順データを取得すると画数の行が表示されます。")}</p>}
     <ol className="mt-3 flex flex-col gap-2">
