@@ -65,6 +65,8 @@ export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, sa
   }
   if (shown !== `${written}|${recording.text}`) {
     setShown(`${written}|${recording.text}`); setReadAs(recording.text === written ? "" : recording.text); setTakes(null); setPending(null);
+    // A result about the old text (a take of it recorded) no longer applies; a saved "read as" is what changed it.
+    if (done?.kind !== "read-as") setDone(null);
   }
   const doneRef = useRef<HTMLParagraphElement>(null), latest = useRef(0), actor = useRef<Element | null>(null);
   const ja = say("en", "ja") === "ja";
@@ -123,7 +125,7 @@ export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, sa
           return <li key={take.take} className={"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-control border p-2 " + (used ? "border-primary bg-primary/5" : "border-border")}>
             <span className="w-16 shrink-0 text-sm font-semibold text-foreground">{say(`Take ${take.take}`, `テイク ${take.take}`)}</span>
             <audio controls preload="none" src={takeAudio(recording, take.take)} className="h-8 w-full min-w-0 max-w-[14rem]" aria-label={say(`Play take ${take.take}`, `テイク ${take.take} を再生`)} />
-            <PitchLine pitch={take.pitch ?? []} low={low} high={high} say={say} />
+            {!take.unreadable && !take.silent && <PitchLine pitch={take.pitch ?? []} low={low} high={high} say={say} />}
             <span className="min-w-0 flex-1 basis-40 text-xs text-muted-foreground">{take.seconds ? `${take.seconds} s · ` : ""}{shapeText(take, say)}</span>
             {used ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-status-success"><Check aria-hidden className="size-3.5" />{say("In use", "使用中")}</span>
               : <Button variant="outline" size="sm" isLoading={choosing === take.take} disabled={choosing !== null}
@@ -149,9 +151,10 @@ export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, sa
       <p className="basis-full text-xs text-muted-foreground">{say("For example 今。 for いま。: the kanji gives the voice the word's accent. Leave it empty to read the text as written.",
         "例: いま。を 今。と読ませると、漢字から正しいアクセントになります。空にすると書いてあるとおりに読みます。")}</p>
     </form>
-    {done && <p ref={doneRef} tabIndex={-1} role="status" className="text-sm text-status-success focus:outline-none">{
-      done.kind === "recorded" ? say(`Take ${done.take} recorded.`, `テイク ${done.take} を録音しました。`)
+    {/* Always in the page, so a screen reader announces what fills it. */}
+    <p ref={doneRef} tabIndex={done ? -1 : undefined} role="status" className={"text-sm text-status-success focus:outline-none " + (done ? "" : "sr-only")}>{!done ? ""
+      : done.kind === "recorded" ? say(`Take ${done.take} recorded.`, `テイク ${done.take} を録音しました。`)
         : done.kind === "chosen" ? say(`Take ${done.take} is now used. Make the short again to hear it.`, `テイク ${done.take} を使います。動画で聞くにはショートをもう一度作成してください。`)
-        : say("Saved. Make the short again to hear it.", "保存しました。動画で聞くにはショートをもう一度作成してください。")}</p>}
+        : say("Saved. Make the short again to hear it.", "保存しました。動画で聞くにはショートをもう一度作成してください。")}</p>
   </div>;
 }
