@@ -76,7 +76,7 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - **Any part can be read as another text** too, keyed by the part as the line says it: `{ "いま。": "今。" }` gives the voice the kanji. In kana いま is also 居間 and came out rising; as 今 it falls from い to ま. The caption and the card keep the line's own text. The name that reuses this reading follows it.
 - **A fresh take of a flubbed line.** A voice can flub one take, and the cache would return that take every time. The Japanese voice once read the name ひと as ひとだ, and gave とし a rise at its end. `narration.retakes` chooses the take of a text, for example `{ "とし。": 3 }`.
   - The key is the exact text one voice reads, punctuation included: a reading part ("とし。"), a phrase ("くんよみ、") or a word line ("人間。"). For a part read as another text, the key is that text ("今。").
-  - A phrase's take is heard in every short.
+  - A phrase's take is heard in every short made from then on. A short already made keeps its recording until it is made again.
   - `--dry-run` shows each line's parts and the retakes that apply. A key that matches nothing in a short is not used there.
 - **Takes: hear, compare and choose.**
   - **In the Studio,** each part in "What each short says" has **Takes**. It lists the recorded takes. You can play each one and see its measured pitch line and shape, then **Use this take**, **Record another take**, or **Read as** another text.
@@ -104,7 +104,13 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
 Make the folder `data/kanji-shorts/` (git ignores `data/`). Put `config.json` in it, after `apps/web/fixtures/kanji-short/config.example.json`:
 
 - `dataset`: the kanji study-card data (`{ kanji: [{ char, jlpt, words, card }] }`), for example `jlpt-n5-n3.json` from the private `kumiki-shodo` repository. Put its credit line in `credits`.
-- `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) `speech` (the text the voice reads for a word it misreads), `retakes` (a fresh take of a text the voice flubbed) and `reuse` (a text read as the last phrase of another line).
+- `narration`: optional settings:
+  - `script`: a file, or the script itself.
+  - `labels`: `{ "on", "kun" }`, the words the voice says before each reading.
+  - `speech`: the text the voice reads for a word it misreads, or for any part of a line.
+  - `retakes`: the take of a text, from 1 (the first recording) to 99.
+  - `reuse`: a text read with another line's recording.
+  - `splitPhrases` and `phraseGap`: whether lines are read in parts, with phrases recorded once, and the pause between the parts.
 - `voice`:
   - `provider` is `fish` (default) or `local`.
   - **Fish:** `voiceId`, and `voiceIds` for a voice per language. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`. Make with `--allow-network --voice-consent --transmit-text`.

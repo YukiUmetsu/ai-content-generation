@@ -216,6 +216,17 @@ export function kanjiSpokenParts(line, { voiceIds, split = true, phraseGap = PHR
       parts.push({ text: run.text, locale: run.locale, from: at, to, phrase: !own, ...(parts.length && k === 0 ? { gapBefore: phraseGap } : {}) });
     });
   }
+  // A part that is only punctuation (a "、" between an English label and its reading) is never read alone:
+  // it joins the part before it in its language, else the part after it.
+  const spoken = /[\p{L}\p{N}]/u;
+  for (let i = 0; i < parts.length; i++) {
+    if (spoken.test(parts[i].text) || parts.length === 1) continue;
+    const [lone] = parts.splice(i, 1);
+    const before = parts[i - 1], after = parts[i];
+    if (before && (before.locale === lone.locale || !after)) { before.text += lone.text; before.to = lone.to; }
+    else if (after) { after.text = lone.text + after.text; after.from = lone.from; after.phrase = after.phrase && lone.phrase; if (lone.gapBefore !== undefined) after.gapBefore = lone.gapBefore; }
+    i--;
+  }
   return parts.length ? parts : [{ text: line.say, locale: line.locale, from: 0, to: line.say.length, phrase: !(line.fields ?? []).some(f => !f.path.startsWith("labels.")) }];
 }
 

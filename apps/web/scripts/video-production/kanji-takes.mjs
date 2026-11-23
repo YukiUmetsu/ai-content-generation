@@ -57,7 +57,13 @@ export async function recordKanjiTake(config, part, { apiKey, signal, synthesize
  * shape (pitchShape: "rises" to its end like a question, "falls" after its peak, "level").
  */
 export async function takeMeasure(wavPath) {
-  const trimmed = trimSpeech(int16Wav(await readFile(wavPath)));
+  let trimmed;
+  try { trimmed = trimSpeech(int16Wav(await readFile(wavPath))); }
+  catch (error) {
+    // A take with no speech (the voice returned silence) is shown as silent, never hides the other takes.
+    if (/no speech/u.test(error.message)) return { seconds: 0, pitch: [], shape: null, rise: null, fall: null, silent: true };
+    throw error;
+  }
   const contour = pitchContour(trimmed.clip);
   const every = Math.max(1, Math.ceil(contour.length / 48));
   return {

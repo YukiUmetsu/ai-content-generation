@@ -31,12 +31,12 @@ const PREVIEW = {
   lines: [
     { id: "question", locale: "en", at: "start", offset: .35, say: "Do you know how to write the kanji ひと?", caption: "Do you know how to write the kanji hito?", split: true,
       parts: [{ text: "Do you know how to write the kanji", locale: "en", voiceId: "59f85041c50240f08ba9b6fa2bff650d", phrase: true,
-          recording: { text: "Do you know how to write the kanji", locale: "en", take: 1 } },
+          recording: { text: "Do you know how to write the kanji", written: "Do you know how to write the kanji", locale: "en", take: 1 } },
         { text: "ひと", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: false, reuse: { from: "kunyomi", whole: true, source: "ひと。" },
-          recording: { text: "ひと。", locale: "ja", take: 1 } }] },
+          recording: { text: "ひと。", written: "ひと。", locale: "ja", take: 1 } }] },
     { id: "kunyomi", locale: "ja", at: "write.firstStroke", offset: 0, say: "くんよみ、ひと。", caption: "くんよみ、ひと。", split: true,
-      parts: [{ text: "くんよみ、", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: true, recording: { text: "くんよみ、", locale: "ja", take: 3 } },
-        { text: "ひと。", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: false, recording: { text: "ひと。", locale: "ja", take: 1 } }] },
+      parts: [{ text: "くんよみ、", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: true, recording: { text: "くんよみ、", written: "くんよみ、", locale: "ja", take: 3 } },
+        { text: "ひと。", locale: "ja", voiceId: "34cfe2f12a8a4d9490e375fcb845642f", phrase: false, recording: { text: "ひと。", written: "ひと。", locale: "ja", take: 1 } }] },
   ],
 };
 const running = (state: Run["items"][number]["state"] = "running"): Run => ({ id: "run-1", state: "running", startedAt: "2026-11-22T00:00:00Z", finishedAt: null,
@@ -295,15 +295,16 @@ describe("takes", () => {
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
     // The name is heard from the kun'yomi reading: its takes are that recording's.
     // The question's name part comes first; the kun'yomi line's own ひと。 part opens the same recording.
-    await user.click((await screen.findAllByRole("button", { name: "Takes of ひと。" }))[0]);
-    expect(await screen.findByText(/The name is heard from Kun'yomi's recording/u)).toBeInTheDocument();
-    expect(loadTakes).toHaveBeenCalledWith({ text: "ひと。", locale: "ja", take: 1 });
+    await user.click(await screen.findByRole("button", { name: "Takes of ひと。 (Question)" }));
+    expect(await screen.findByText(/This part is heard from Kun'yomi's recording/u)).toBeInTheDocument();
+    expect(loadTakes).toHaveBeenCalledWith({ text: "ひと。", written: "ひと。", locale: "ja", take: 1 });
     expect(await screen.findByText(/Pitch rises to the end, like a question/u)).toBeInTheDocument();
     expect(screen.getByLabelText("Play take 2")).toHaveAttribute("src", expect.stringContaining("take=2"));
-    await user.click(screen.getByRole("button", { name: "Use this take" }));
+    await user.click(screen.getByRole("button", { name: "Use take 2" }));
     expect(chooseTake).toHaveBeenCalledWith("ひと。", 2);
-    await user.click(screen.getByRole("button", { name: "Record another take" }));
-    expect(recordTake).toHaveBeenCalledWith({ text: "ひと。", locale: "ja", take: 1 }, "fish");
+    expect(await screen.findByText("Take 2 is now used. Make the short again to hear it.")).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Record a take" }));
+    expect(recordTake).toHaveBeenCalledWith({ text: "ひと。", written: "ひと。", locale: "ja", take: 1 }, "fish");
     await user.type(screen.getByLabelText("Read “ひと。” as"), "人。");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(speakAs).toHaveBeenCalledWith("ひと。", "人。");
@@ -314,8 +315,59 @@ describe("takes", () => {
     vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1, "level"), take(3, "falls")] });
     render(<KanjiShortsWorkspace locale="en" />);
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
-    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、" }));
-    expect(await screen.findByText("A phrase: the take you choose is used in every short.")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、 (Kun'yomi)" }));
+    expect(await screen.findByText("A phrase: the take you choose is used in every short made from now on.")).toBeInTheDocument();
     expect(screen.getByText("In use")).toBeInTheDocument();          // take 3 is the one in use
+  });
+});
+
+describe("takes panel, after review", () => {
+  const take = (n: number) => ({ take: n, seconds: .5, pitch: [140, 150, 155, null, 120], shape: "falls" as const, rise: -2, fall: -3 });
+  const reused = { ...PREVIEW, lines: PREVIEW.lines.map(line => line.id !== "question" ? line : { ...line, parts: [line.parts[0], {
+    ...line.parts[1], reuse: { from: "kunyomi", whole: true, source: "人。" }, recording: { text: "人。", written: "ひと。", locale: "ja", take: 1 } }] }) };
+
+  it("reads as under the part as its line says it, also from a reused name's panel, and shows the saved reading", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [reused] });
+    vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1)] });
+    vi.mocked(speakAs).mockResolvedValue({ revision: "r2", settings: SETTINGS });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Takes of 人。 (Question)" }));
+    const field = await screen.findByLabelText("Read “ひと。” as");
+    expect(field).toHaveValue("人。");
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(speakAs).toHaveBeenCalledWith("ひと。", "");
+  });
+
+  it("keeps a recording in progress visible while a take is chosen, and says a chosen take is not recorded yet", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1), take(2)] });
+    let finishRecording: (value: ReturnType<typeof take>) => void = () => {};
+    vi.mocked(recordTake).mockReturnValue(new Promise(resolve => { finishRecording = resolve; }));
+    vi.mocked(chooseTake).mockResolvedValue({ revision: "r2", settings: SETTINGS });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、 (Kun'yomi)" }));
+    // The phrase's chosen take 3 has no recording yet.
+    expect(await screen.findByText(/Take 3 is chosen but not recorded yet/u)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Record a take" }));
+    await user.click(screen.getByRole("button", { name: "Use take 1" }));
+    expect(screen.getByRole("button", { name: "Record a take" })).toBeDisabled();
+    await act(async () => { finishRecording(take(4)); });
+    expect(recordTake).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers to try again when the takes cannot be loaded, instead of loading forever", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadTakes).mockRejectedValueOnce(new KanjiApiError("unreachable", "down")).mockResolvedValueOnce({ takes: [take(1)] });
+    render(<KanjiShortsWorkspace locale="ja" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "「くんよみ、」のテイク（訓読み）" }));
+    expect(await screen.findByText(/ローカルの Studio サーバーに接続できません/u)).toBeInTheDocument();
+    expect(screen.queryByText("テイクを読み込んでいます…")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+    expect(await screen.findByText("テイク 1")).toBeInTheDocument();
   });
 });

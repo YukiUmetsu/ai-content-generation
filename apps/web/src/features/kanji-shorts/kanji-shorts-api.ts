@@ -37,7 +37,7 @@ export type StudioState =
       settings: KanjiSettings; catalog: CatalogKanji[]; run: Run | null };
 
 /** The recording a part is heard from: its text as the voice reads it, its language and the take in use. */
-export type Recording = { text: string; locale: string; take: number };
+export type Recording = { text: string; locale: string; take: number; /** The part as its line says it: where a "read as" is saved. */ written: string };
 export type PreviewPart = {
   text: string; locale: string; voiceId: string; reuse?: { from: string; whole?: boolean; skipped?: string; source?: string }; retake?: number;
   /** Said in every short: one recording, made once. */
@@ -48,7 +48,9 @@ export type PreviewPart = {
 };
 
 /** One take of a recording, measured: its pitch every few hundredths of a second (Hz, null unvoiced) and its shape. */
-export type Take = { take: number; seconds: number; pitch: (number | null)[]; shape: "rises" | "falls" | "level" | null; rise: number | null; fall: number | null };
+export type Take = { take: number; seconds: number; pitch: (number | null)[]; shape: "rises" | "falls" | "level" | null; rise: number | null; fall: number | null;
+  /** The voice returned no speech; or the take could not be measured. */
+  silent?: boolean; unreadable?: boolean };
 export type PreviewLine = { id: string; locale: string; at: string; offset: number; say: string; caption: string; split: boolean; parts: PreviewPart[] };
 export type KanjiPreview =
   | { char: string; found: false }

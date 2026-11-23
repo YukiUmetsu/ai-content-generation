@@ -58,7 +58,10 @@ test("reads the local config, resolving relative paths against its folder", () =
   assert.deepEqual(readKanjiConfig(config({ narration: { reuse: { "ひと": "kunyomi" } } }), "/c.json").narration.reuse, { "ひと": "kunyomi" });
   assert.throws(() => readKanjiConfig(config({ narration: { reuse: { "ひと": "kun yomi" } } }), "/c.json"), /narration\.reuse/u);
   assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 2 } } }), "/c.json").narration.retakes, { "ひと": 2 });
-  assert.throws(() => readKanjiConfig(config({ narration: { retakes: { "ひと": 1 } } }), "/c.json"), /narration\.retakes/u);
+  // Take 1 (the first recording) may be named, to override a key that names fields; 0 and 100 may not.
+  assert.deepEqual(readKanjiConfig(config({ narration: { retakes: { "ひと": 1 } } }), "/c.json").narration.retakes, { "ひと": 1 });
+  assert.throws(() => readKanjiConfig(config({ narration: { retakes: { "ひと": 0 } } }), "/c.json"), /narration\.retakes/u);
+  assert.throws(() => readKanjiConfig(config({ narration: { retakes: { "ひと": 100 } } }), "/c.json"), /narration\.retakes/u);
   assert.throws(() => readKanjiConfig(config({ narration: { script: 3 } }), "/c.json"), /narration\.script must be a file or/u);
   assert.equal(readKanjiConfig(config({ narration: { script: "my-script.json" } }), "/home/me/c.json").narration.script, "/home/me/my-script.json");
   assert.throws(() => readKanjiConfig(config({ card: { colour: "red" } }), "/c.json"), /card\.colour is not a setting/u);
@@ -121,6 +124,15 @@ test("--takes lists each recording once with its takes; --new-take records one w
     const record = { ...deps, providerKey: async () => "key-0123456789", recordTake: async (_config, recording, options) => { recorded.push([recording, options]); return { take: 3, wavPath: "c" }; } };
     await assert.rejects(main(["水", "--new-take", "みず。", "--config", join(dir, "config.json")], {}, record), /--allow-network --voice-consent --transmit-text/u);
     await assert.rejects(main(["水", "--new-take", "ひと。", "--allow-network", "--voice-consent", "--transmit-text", "--config", join(dir, "config.json")], {}, record), /not a recorded part of 水/u);
+    // Without a voice per language a line read in parts still shows its parts and phrases.
+    lines.length = 0;
+    await main(["水", "--dry-run", "--config", join(dir, "config.json")], {}, { log: line => lines.push(line) });
+    assert.ok(lines.some(line => line.includes('parts: "おんよみ、" ja') && line.includes("phrase")), lines.join("\n"));
+    // A kanji with no recordings says why, and the run fails after the others are listed.
+    lines.length = 0;
+    await assert.rejects(main(["水", "火", "--takes", "--config", join(dir, "config.json")], {}, deps), /火: not in the kanji data/u);
+    assert.ok(lines.includes("火: not in the kanji data"));
+    assert.ok(lines.some(line => line.startsWith('"みず。"')));
     lines.length = 0;
     await main(["水", "--new-take", "みず。", "--allow-network", "--voice-consent", "--transmit-text", "--config", join(dir, "config.json")], {}, record);
     assert.deepEqual([recorded[0][0].text, recorded[0][0].locale, recorded[0][1].apiKey], ["みず。", "ja", "key-0123456789"]);

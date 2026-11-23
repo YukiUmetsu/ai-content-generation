@@ -96,7 +96,7 @@ test("a preview shows each line, its voices and the reuses that apply, with no n
   assert.deepEqual(question.parts.map(p => [p.text, p.locale, p.voiceId.slice(0, 4)]), [["Do you know how to write the kanji", "en", "59f8"], ["ひと", "ja", "34cf"]]);
   // The kun'yomi line is read in parts (くんよみ、 is a phrase), so the name is that line's whole recording of ひと。.
   assert.deepEqual(question.parts[1].reuse, { from: "kunyomi", whole: true, source: "ひと。" });
-  assert.deepEqual(question.parts[1].recording, { text: "ひと。", locale: "ja", take: 1 });
+  assert.deepEqual(question.parts[1].recording, { text: "ひと。", written: "ひと。", locale: "ja", take: 1 });
   const kun = hito.lines.find(line => line.id === "kunyomi");
   assert.deepEqual(kun.parts.map(p => [p.text, p.phrase]), [["くんよみ、", true], ["ひと。", false]]);
   assert.deepEqual(previews[1], { char: "火", found: false });
@@ -387,12 +387,41 @@ test("one take is recorded at a time", async (t) => {
   const { readKanjiConfig } = await import("./video-production/kanji-config.mjs");
   const dir = await fixture(t), path = join(dir, "config.json");
   const config = readKanjiConfig(JSON.parse(await readFile(path, "utf8")), path);
-  let finish;
-  const studio = api(dir, { synthesize: (job) => new Promise(resolve => { finish = async () => resolve([{ id: job.beats[0].id,
-    wavPath: await cacheTake(config, "ひと。", "ja", job.beats[0].take ?? 1, glideWav(.4, 140, 150)) }]); }) });
+  // The second press comes while the first is with the voice: wait for that moment, never for a fixed time.
+  let finish, started;
+  const synthesizing = new Promise(resolve => { started = resolve; });
+  const studio = api(dir, { synthesize: (job) => new Promise(resolve => {
+    finish = async () => resolve([{ id: job.beats[0].id, wavPath: await cacheTake(config, "ひと。", "ja", job.beats[0].take ?? 1, glideWav(.4, 140, 150)) }]);
+    started();
+  }) });
   const first = call(studio, "POST", "/takes", { text: "ひと。", locale: "ja", consent: CONSENT });
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await synthesizing;
   assert.equal((await call(studio, "POST", "/takes", { text: "ひと。", locale: "ja", consent: CONSENT })).status, 409);
   await finish();
   assert.equal((await first).status, 200);
+});
+
+test("choosing a take or a reading wins over keys that name fields or differ only in spacing, and a silent take does not hide the others", async (t) => {
+  const { cacheTake, glideWav } = await import("./video-production/kanji-takes.fixture.mjs");
+  const { readKanjiConfig } = await import("./video-production/kanji-config.mjs");
+  const { wavBytes } = await import("./video-production/audio.mjs");
+  const dir = await fixture(t, { ...CONFIG, narration: { retakes: { "{labels.kun}、": 3, "ひと。 ": 2 }, speech: { " いま。": "今。" } } });
+  const path = join(dir, "config.json"), studio = api(dir);
+  // Take 1 for くんよみ、 must beat the field key's take 3: the exact text is written with take 1.
+  assert.equal((await call(studio, "POST", "/takes/use", { text: "くんよみ、", take: 1 })).status, 200);
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")).narration.retakes, { "{labels.kun}、": 3, "ひと。 ": 2, "くんよみ、": 1 });
+  const { previews } = (await call(studio, "POST", "/preview", { kanji: "人" })).json();
+  assert.equal(previews[0].lines.find(l => l.id === "kunyomi").parts[0].recording.take, 1);
+  // A key with a stray space for the same text is replaced, not left to win.
+  await call(studio, "POST", "/takes/use", { text: "ひと。", take: 4 });
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")).narration.retakes, { "{labels.kun}、": 3, "くんよみ、": 1, "ひと。": 4 });
+  await call(studio, "POST", "/speech", { text: "いま。", as: "" });
+  assert.equal(JSON.parse(await readFile(path, "utf8")).narration.speech, undefined);
+  // A silent take is listed as silent; the good take is still there.
+  const config = readKanjiConfig(JSON.parse(await readFile(path, "utf8")), path);
+  await cacheTake(config, "ひと。", "ja", 1, glideWav(.4, 140, 150));
+  await cacheTake(config, "ひと。", "ja", 2, wavBytes(Buffer.alloc(48000)));
+  const listed = await call(studio, "GET", `/takes?text=${encodeURIComponent("ひと。")}&locale=ja`);
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.json().takes.map(take => [take.take, !!take.silent]), [[1, false], [2, true]]);
 });

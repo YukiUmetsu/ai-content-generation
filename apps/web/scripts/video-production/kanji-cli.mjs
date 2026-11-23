@@ -27,7 +27,7 @@ export { DEFAULT_CONFIG, nextOutputDir, readKanjiConfig };
 
 const fail = (message) => { throw new Error(message); };
 /** A measured take in one line: its length and how its pitch moves. */
-const takeLine = (m) => `${m.seconds} s · pitch ${m.shape === null ? "not measured (too little voiced)" : `${m.shape} (start to end ${m.rise > 0 ? "+" : ""}${m.rise} st, peak to end ${m.fall} st)`}`;
+const takeLine = (m) => m.silent ? "silent: the voice returned no speech; record another take" : `${m.seconds} s · pitch ${m.shape === null ? "not measured (too little voiced)" : `${m.shape} (start to end ${m.rise > 0 ? "+" : ""}${m.rise} st, peak to end ${m.fall} st)`}`;
 
 export function parseKanjiArgs(argv) {
   const options = { chars: [], config: DEFAULT_CONFIG, out: null, dryRun: false, json: false, takes: false, newTake: null, allowNetwork: false, voiceReferenceConsent: false, textTransmissionApproved: false,
@@ -81,6 +81,10 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
   if (args.takes || args.newTake !== null) {
     const studio = await readKanjiStudio(args.config);
     const previews = await previewKanjiShorts({ ...studio, config }, args.chars, deps);
+    // A kanji that is not in the data, or cannot be made, has no recordings: say why, and fail after listing the others.
+    const unusable = previews.filter(preview => !preview.lines);
+    for (const preview of unusable) for (const line of previewText(preview)) log(line);
+    if (args.newTake !== null && unusable.length) fail(unusable.map(preview => previewText(preview)[0]).join("; "));
     // Each recording once (a phrase is the same recording in every short), in the order it is heard.
     const recordings = new Map();
     for (const preview of previews.filter(p => p.lines)) for (const line of preview.lines) for (const part of line.parts) {
@@ -107,6 +111,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
       if (!takes.length) log("    not recorded yet");
       for (const take of takes) log(`    take ${take.take}${take.take === recording.take ? " (in use)" : ""}: ${takeLine(await (deps.measureTake ?? takeMeasure)(take.wavPath))}`);
     }
+    if (unusable.length) fail(unusable.map(preview => previewText(preview)[0]).join("; "));
     return [];
   }
   // The Fish key only for a Fish voice; a local voice needs none.

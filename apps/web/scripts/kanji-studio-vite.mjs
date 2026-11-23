@@ -62,6 +62,9 @@ export function kanjiFromText(text) {
   return chars;
 }
 
+/** A text setting without any key for this text (the config compares keys trimmed and in Unicode NFC). */
+const sameText = (a, b) => a.normalize("NFC").trim() === b.normalize("NFC").trim();
+const withoutText = (settings, text) => Object.fromEntries(Object.entries(settings ?? {}).filter(([key]) => !sameText(key, text)));
 const VERSION = /^v\d{1,5}$/u, STILL = /^frame-\d{6}\.png$/u;
 
 /**
@@ -243,7 +246,7 @@ export function createKanjiStudioApi(deps = {}) {
         if (!studio) return respond(res, 422, { error: problem });
         const part = takeText({ text: url.searchParams.get("text") ?? "", locale: url.searchParams.get("locale") ?? "" });
         const takes = await kanjiTakes(studio.config, part);
-        return respond(res, 200, { takes: await Promise.all(takes.map(async take => ({ take: take.take, ...(await takeMeasure(take.wavPath)) }))) });
+        return respond(res, 200, { takes: await Promise.all(takes.map(async take => ({ take: take.take, ...(await takeMeasure(take.wavPath).catch(() => ({ unreadable: true }))) }))) });
       }
       if (req.method === "GET" && route === "/take-audio") {
         const { studio, problem } = await loadStudio();
@@ -270,8 +273,10 @@ export function createKanjiStudioApi(deps = {}) {
         const saved = saving.then(async () => {
           const { studio, problem } = await loadStudio();
           if (!studio) return [422, { error: problem }];
-          const retakes = { ...(studio.raw.narration?.retakes ?? {}) };
-          if (body.take === 1) delete retakes[part.text]; else retakes[part.text] = body.take;
+          const retakes = withoutText(studio.raw.narration?.retakes, part.text);
+          // Take 1 needs no entry, unless a key that names fields ({labels.kun}、) would choose another take for it.
+          const named = Object.keys(retakes).some(key => /\{[^}]*\}/u.test(key));
+          if (body.take > 1 || named) retakes[part.text] = body.take;
           const next = applyKanjiStudioSettings(studio.raw, { "narration.retakes": Object.keys(retakes).length ? retakes : null }, configPath);
           const revision = await saveKanjiConfig(configPath, next, studio.revision);
           return [200, { revision, settings: kanjiStudioSettings(next) }];
@@ -288,8 +293,8 @@ export function createKanjiStudioApi(deps = {}) {
         const saved = saving.then(async () => {
           const { studio, problem } = await loadStudio();
           if (!studio) return [422, { error: problem }];
-          const speech = { ...(studio.raw.narration?.speech ?? {}) };
-          if (body.as.trim() && body.as.trim() !== part.text) speech[part.text] = body.as.trim(); else delete speech[part.text];
+          const speech = withoutText(studio.raw.narration?.speech, part.text);
+          if (body.as.trim() && body.as.trim() !== part.text.trim()) speech[part.text] = body.as.trim();
           const next = applyKanjiStudioSettings(studio.raw, { "narration.speech": Object.keys(speech).length ? speech : null }, configPath);
           const revision = await saveKanjiConfig(configPath, next, studio.revision);
           return [200, { revision, settings: kanjiStudioSettings(next) }];

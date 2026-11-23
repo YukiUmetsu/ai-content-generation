@@ -69,8 +69,8 @@ export function readKanjiConfig(json, configPath) {
     fail("config: narration.reuse maps a spoken text to the line whose last phrase it is read from, for example { \"ひと\": \"kunyomi\" }");
   // A new take of a text the voice flubbed: { "ひと": 2 }; raise the number for another take.
   if (narration.retakes !== undefined && !(narration.retakes && typeof narration.retakes === "object" && !Array.isArray(narration.retakes) &&
-    Object.entries(narration.retakes).every(([text, take]) => text.trim() && text.length <= 400 && Number.isInteger(take) && take >= 2 && take <= 99)))
-    fail("config: narration.retakes maps a spoken text to a take number from 2, for example { \"ひと\": 2 }");
+    Object.entries(narration.retakes).every(([text, take]) => text.trim() && text.length <= 400 && Number.isInteger(take) && take >= 1 && take <= 99)))
+    fail("config: narration.retakes maps a spoken text to a take number from 1 (the first recording) to 99, for example { \"ひと\": 2 }");
   // The script: a file (relative to this config) or the script itself; checked when a short is made.
   if (narration.script !== undefined) {
     if (typeof narration.script === "string") narration.script = path(narration.script, "narration.script");

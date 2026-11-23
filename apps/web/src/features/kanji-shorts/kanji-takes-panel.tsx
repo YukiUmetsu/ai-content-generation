@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Check, Mic } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AlertCircle, Check, Mic, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { chooseTake, loadTakes, recordTake, speakAs, takeAudio, type Recording, type Take } from "./kanji-shorts-api";
 import { errorText, type Say } from "./kanji-text";
 
-/** A take's pitch as a small line: higher is higher pitch, gaps are unvoiced (a devoiced し). */
-function PitchLine({ pitch, say }: { pitch: (number | null)[]; say: Say }) {
-  const voiced = pitch.filter((hz): hz is number => hz !== null);
-  if (voiced.length < 2) return <span className="text-xs text-muted-foreground">{say("pitch: too little voiced", "ピッチ: 有声部分が少なすぎます")}</span>;
-  const low = Math.log2(Math.min(...voiced)), high = Math.log2(Math.max(...voiced)), span = Math.max(high - low, 1 / 12);
-  const width = 120, height = 28, step = width / Math.max(1, pitch.length - 1);
+/**
+ * A take's pitch as a small line, on a scale shared by the takes of one recording so they compare:
+ * higher is higher pitch, gaps are unvoiced (a devoiced し).
+ */
+function PitchLine({ pitch, low, high, say }: { pitch: (number | null)[]; low: number; high: number; say: Say }) {
+  if (pitch.filter(hz => hz !== null).length < 2) return <span className="text-xs text-muted-foreground">{say("pitch: too little voiced", "ピッチ: 有声部分が少なすぎます")}</span>;
+  const span = Math.max(high - low, 2 / 12), width = 120, height = 28, step = width / Math.max(1, pitch.length - 1);
   const segments: string[] = [];
   let current = "";
   pitch.forEach((hz, i) => {
@@ -24,69 +25,119 @@ function PitchLine({ pitch, say }: { pitch: (number | null)[]; say: Say }) {
   </svg>;
 }
 
+/** The measured shape in words (the pitch line says the same visually). */
 function shapeText(take: Take, say: Say) {
+  if (take.silent) return say("Silent: the voice returned no speech. Record another take.", "無音です（音声が返されませんでした）。別のテイクを録音してください。");
+  if (take.unreadable) return say("This take could not be measured.", "このテイクは測定できませんでした。");
   if (take.shape === null) return say("Pitch not measured (too little voiced).", "ピッチは測定できません（有声部分が少なすぎます）。");
-  const words = { rises: say("rises to the end, like a question", "語尾で上がる（疑問のよう）"), falls: say("falls after its peak", "山のあと下がる"), level: say("level", "平ら") }[take.shape];
-  return say(`Pitch ${words} (start to end ${take.rise! > 0 ? "+" : ""}${take.rise} st).`, `ピッチ: ${words}（始めから終わり ${take.rise! > 0 ? "+" : ""}${take.rise} 半音）。`);
+  const sign = (n: number) => `${n > 0 ? "+" : ""}${n}`;
+  if (take.shape === "rises") return say(`Pitch rises to the end, like a question (${sign(take.rise!)} semitones).`, `ピッチが語尾で上がります（疑問のよう、${sign(take.rise!)} 半音）。`);
+  if (take.shape === "falls") return say(`Pitch falls ${-take.fall!} semitones after its peak.`, `ピッチが山のあと ${-take.fall!} 半音下がります。`);
+  return say("Pitch is level.", "ピッチは平らです。");
 }
 
 /**
  * The takes of one recording: hear each, see its measured pitch, choose the one a short uses, record
  * another, or have the voice read the part as another text. Choosing writes narration.retakes; reading
- * as writes narration.speech. Make the short again to hear it in place.
+ * as writes narration.speech under the part as its line says it (`recording.written`). Make the short
+ * again to hear it in place. The panel stays open across a refresh of the preview, and follows it.
  */
-export function KanjiTakesPanel({ recording, written, phrase, provider, onChanged, say }: {
-  recording: Recording; written: string; phrase: boolean; provider: "fish" | "local"; onChanged: () => void; say: Say;
+export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, say }: {
+  id: string; recording: Recording; phrase: boolean; provider: "fish" | "local"; onChanged: () => void; say: Say;
 }) {
   const [takes, setTakes] = useState<Take[] | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
-  const [busy, setBusy] = useState<"record" | "use" | "speech" | null>(null);
+  const [recording_, setRecording] = useState(false);
+  const [choosing, setChoosing] = useState<number | null>(null);
+  const [savingAs, setSavingAs] = useState(false);
+  // A choice shown at once, until the refreshed preview says the same (or something else).
+  const [pending, setPending] = useState<{ take: number; was: number } | null>(null);
+  const [done, setDone] = useState<{ kind: "recorded"; take: number } | { kind: "chosen"; take: number } | { kind: "read-as" } | null>(null);
+  const written = recording.written;
   const [readAs, setReadAs] = useState(recording.text === written ? "" : recording.text);
-  const load = useCallback(() => loadTakes(recording).then(result => { setTakes(result.takes); setFailure(null); }).catch(setFailure), [recording]);
-  useEffect(() => { void load(); }, [load]);
-  async function act(kind: "record" | "use" | "speech", work: () => Promise<unknown>) {
-    setBusy(kind); setFailure(null);
-    try { await work(); } catch (error) { setFailure(error); } finally { setBusy(null); }
+  // Another text read (a "read as" saved here or elsewhere): its takes and its field follow it.
+  const [shown, setShown] = useState(`${written}|${recording.text}`);
+  if (shown !== `${written}|${recording.text}`) {
+    setShown(`${written}|${recording.text}`); setReadAs(recording.text === written ? "" : recording.text); setTakes(null); setPending(null);
   }
-  const record = () => act("record", async () => { await recordTake(recording, provider); await load(); });
-  const choose = (take: number) => act("use", async () => { await chooseTake(recording.text, take); onChanged(); });
-  const saveReadAs = () => act("speech", async () => { await speakAs(written, readAs); onChanged(); });
-  return <div className="mt-2 flex flex-col gap-3 rounded-control border border-border bg-surface p-3 sm:ml-[6.5rem]">
+  const doneRef = useRef<HTMLParagraphElement>(null), latest = useRef(0);
+  const ja = say("en", "ja") === "ja";
+  const load = useCallback(() => {
+    const request = ++latest.current;
+    // Only the newest answer is shown: a slower, older one never replaces it.
+    return loadTakes(recording).then(result => { if (request === latest.current) { setTakes(result.takes); setFailure(null); } })
+      .catch(error => { if (request === latest.current) setFailure(error); });
+  }, [recording]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (done) doneRef.current?.focus(); }, [done]);
+  const inUse = pending && pending.was === recording.take ? pending.take : recording.take;
+
+  async function record() {
+    setRecording(true); setFailure(null); setDone(null);
+    try { const made = await recordTake(recording, provider); await load(); setDone({ kind: "recorded", take: made.take }); }
+    catch (error) { setFailure(error); } finally { setRecording(false); }
+  }
+  async function choose(take: number) {
+    setChoosing(take); setFailure(null); setDone(null);
+    try { await chooseTake(recording.text, take); setPending({ take, was: recording.take }); setDone({ kind: "chosen", take }); onChanged(); }
+    catch (error) { setFailure(error); } finally { setChoosing(null); }
+  }
+  async function saveReadAs() {
+    setSavingAs(true); setFailure(null); setDone(null);
+    try { await speakAs(written, readAs); setDone({ kind: "read-as" }); onChanged(); }
+    catch (error) { setFailure(error); } finally { setSavingAs(false); }
+  }
+  const voiced = (takes ?? []).flatMap(take => take.pitch.filter((hz): hz is number => hz !== null)).map(hz => Math.log2(hz));
+  const low = voiced.length ? Math.min(...voiced) : 0, high = voiced.length ? Math.max(...voiced) : 1;
+  const missing = takes && !takes.some(take => take.take === inUse);
+  const quote = (text: string) => ja ? `「${text}」` : `“${text}”`;
+
+  return <div id={id} className="mt-2 flex min-w-0 flex-col gap-3 rounded-control border border-border bg-surface p-3 sm:ml-[6.5rem]">
     <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <p className="text-sm font-semibold text-foreground">{say("Takes of", "テイク:")} <span lang={recording.locale}>“{recording.text}”</span></p>
-      {phrase && <p className="text-xs text-status-info">{say("A phrase: the take you choose is used in every short.", "フレーズ: 選んだテイクはすべてのショートで使われます。")}</p>}
+      <p className="min-w-0 break-words text-sm font-semibold text-foreground">{say("Takes of", "テイク:")} <span lang={recording.locale}>{quote(recording.text)}</span></p>
+      {phrase && <p className="text-xs text-status-info">{say("A phrase: the take you choose is used in every short made from now on.", "フレーズ: 選んだテイクは、これから作るすべてのショートで使われます。")}</p>}
     </div>
-    {failure != null && <p role="alert" className="flex gap-2 text-sm text-status-danger"><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0" />{errorText(failure, say)}</p>}
-    {takes === null ? <p role="status" className="text-sm text-muted-foreground">{say("Loading the takes…", "テイクを読み込んでいます…")}</p>
+    {failure != null && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-status-danger">
+      <AlertCircle aria-hidden className="size-4 shrink-0" /><span className="min-w-0 flex-1 break-words">{errorText(failure, say)}</span>
+      {takes === null && <Button variant="outline" size="sm" icon={<RefreshCw className="size-4" />} onClick={() => void load()}>{say("Try again", "再試行")}</Button>}
+    </div>}
+    {takes === null ? failure == null && <p role="status" className="text-sm text-muted-foreground">{say("Loading the takes…", "テイクを読み込んでいます…")}</p>
       : !takes.length ? <p className="text-sm text-muted-foreground">{say("Not recorded yet: it is recorded when the short is made, or record a take now.", "まだ録音されていません。ショートの作成時に録音されます。今すぐ録音することもできます。")}</p>
       : <ul className="flex flex-col gap-2">
         {takes.map(take => {
-          const inUse = take.take === recording.take;
-          return <li key={take.take} className={"flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border p-2 " + (inUse ? "border-primary bg-primary/5" : "border-border")}>
+          const used = take.take === inUse;
+          return <li key={take.take} className={"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-control border p-2 " + (used ? "border-primary bg-primary/5" : "border-border")}>
             <span className="w-16 shrink-0 text-sm font-semibold text-foreground">{say(`Take ${take.take}`, `テイク ${take.take}`)}</span>
-            <audio controls preload="none" src={takeAudio(recording, take.take)} className="h-8 w-full max-w-[14rem]" aria-label={say(`Play take ${take.take}`, `テイク ${take.take} を再生`)} />
-            <PitchLine pitch={take.pitch} say={say} />
-            <span className="min-w-[10rem] flex-1 text-xs text-muted-foreground">{take.seconds} s · {shapeText(take, say)}</span>
-            {inUse ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-status-success"><Check aria-hidden className="size-3.5" />{say("In use", "使用中")}</span>
-              : <Button variant="outline" size="sm" isLoading={busy === "use"} onClick={() => void choose(take.take)}>{say("Use this take", "このテイクを使う")}</Button>}
+            <audio controls preload="none" src={takeAudio(recording, take.take)} className="h-8 w-full min-w-0 max-w-[14rem]" aria-label={say(`Play take ${take.take}`, `テイク ${take.take} を再生`)} />
+            <PitchLine pitch={take.pitch} low={low} high={high} say={say} />
+            <span className="min-w-0 flex-1 basis-40 text-xs text-muted-foreground">{take.seconds ? `${take.seconds} s · ` : ""}{shapeText(take, say)}</span>
+            {used ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-status-success"><Check aria-hidden className="size-3.5" />{say("In use", "使用中")}</span>
+              : <Button variant="outline" size="sm" isLoading={choosing === take.take} disabled={choosing !== null}
+                aria-label={say(`Use take ${take.take}`, `テイク ${take.take} を使う`)} onClick={() => void choose(take.take)}>{say("Use this take", "このテイクを使う")}</Button>}
           </li>;
         })}
       </ul>}
-    <div className="flex flex-wrap items-center gap-3">
-      <Button variant="outline" size="sm" icon={<Mic className="size-4" />} isLoading={busy === "record"} onClick={() => void record()}>{say("Record another take", "別のテイクを録音")}</Button>
+    {missing && <p className="text-xs text-status-warning">{say(`Take ${inUse} is chosen but not recorded yet: it is recorded (and sent to the voice) when the short is made.`,
+      `テイク ${inUse} が選ばれていますが、まだ録音されていません。ショートの作成時に録音されます（音声サービスに送信されます）。`)}</p>}
+    <div className="flex flex-col gap-1">
+      <Button variant="outline" size="sm" className="self-start" icon={<Mic className="size-4" />} isLoading={recording_} disabled={recording_}
+        aria-busy={recording_ || undefined} onClick={() => void record()}>{say("Record a take", "録音する")}</Button>
       <span className="text-xs text-muted-foreground">{provider === "fish" ? say("Sends this text to Fish Audio, read with your voice.", "このテキストを Fish Audio に送り、設定した音声で読み上げます。")
         : say("Read by the local voice.", "ローカルの音声で読み上げます。")}</span>
     </div>
-    <form className="flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); void saveReadAs(); }}>
-      <label className="flex min-w-[12rem] flex-1 flex-col text-xs font-semibold text-muted-foreground">
-        {say(`Read “${written}” as`, `「${written}」の読ませ方`)}
-        <input lang="ja" className="mt-1 w-full rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <form className="flex min-w-0 flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); void saveReadAs(); }}>
+      <label className="flex w-full min-w-0 flex-col text-xs font-semibold text-muted-foreground sm:w-auto sm:flex-1">
+        {say(`Read ${quote(written)} as`, `${quote(written)}の読ませ方`)}
+        <input lang={recording.locale} className="mt-1 w-full min-w-0 rounded-control border border-input bg-surface px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={readAs} onChange={e => setReadAs(e.target.value)} maxLength={40} placeholder={written} />
       </label>
-      <Button type="submit" variant="outline" size="sm" isLoading={busy === "speech"}>{say("Save", "保存")}</Button>
+      <Button type="submit" variant="outline" size="sm" isLoading={savingAs} disabled={savingAs}>{say("Save", "保存")}</Button>
       <p className="basis-full text-xs text-muted-foreground">{say("For example 今。 for いま。: the kanji gives the voice the word's accent. Leave it empty to read the text as written.",
         "例: いま。を 今。と読ませると、漢字から正しいアクセントになります。空にすると書いてあるとおりに読みます。")}</p>
     </form>
-    <p className="text-xs text-muted-foreground">{say("Make the short again to hear the chosen take in it.", "選んだテイクを動画で聞くには、ショートをもう一度作成してください。")}</p>
+    {done && <p ref={doneRef} tabIndex={-1} role="status" className="text-sm text-status-success focus:outline-none">{
+      done.kind === "recorded" ? say(`Take ${done.take} recorded.`, `テイク ${done.take} を録音しました。`)
+        : done.kind === "chosen" ? say(`Take ${done.take} is now used. Make the short again to hear it.`, `テイク ${done.take} を使います。動画で聞くにはショートをもう一度作成してください。`)
+        : say("Saved. Make the short again to hear it.", "保存しました。動画で聞くにはショートをもう一度作成してください。")}</p>}
   </div>;
 }

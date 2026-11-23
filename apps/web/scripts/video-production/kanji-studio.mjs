@@ -80,17 +80,19 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
         return {
           id: line.id, locale: line.locale, at: line.at, offset: line.offset ?? 0, say: line.say, caption: line.caption,
           // Split: read in runs by more than one voice, or by a voice of another language than the line's.
-          split: !!voiceIds && (parts.length > 1 || parts[0]?.locale !== line.locale),
+          split: parts.length > 1 || parts[0]?.locale !== line.locale,
           parts: parts.map(unit => {
-            const found = reuses.get(unit), take = retakeFor(unit.text, retakes);
+            const found = reuses.get(unit), chosen = retakeFor(unit.text, retakes), take = chosen > 1 ? chosen : undefined;
             return {
               text: unit.written, ...(unit.text !== unit.written ? { spoken: unit.text } : {}),
               locale: unit.locale, voiceId: voiceFor(unit.locale, voiceIds, config.voice.voiceId), phrase: unit.phrase,
               ...(found?.cut ? { reuse: { from: unit.reusedFrom, whole: found.cut.whole, source: found.source.text } } : found ? { reuse: { from: unit.reusedFrom, skipped: found.why } } : {}),
               ...(take && !found?.cut ? { retake: take } : {}),
               // The recording this part is heard from: its own, or for a reused part the other line's part.
-              recording: found?.cut ? { text: found.source.text, locale: found.source.locale, take: retakeFor(found.source.text, retakes) ?? 1 }
-                : { text: unit.text, locale: unit.locale, take: take ?? 1 },
+              // `written` is the part as its line says it: the key a "read as" (narration.speech) is saved under.
+              recording: found?.cut ? { text: found.source.text, written: found.source.written ?? found.source.text, locale: found.source.locale,
+                take: Math.max(1, retakeFor(found.source.text, retakes) ?? 1) }
+                : { text: unit.text, written: unit.written, locale: unit.locale, take: take ?? 1 },
             };
           }),
         };

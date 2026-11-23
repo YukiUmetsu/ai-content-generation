@@ -92,7 +92,7 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
         </div>
         <ul className="mt-1 flex flex-wrap gap-1.5 sm:pl-[6.5rem]">
           {line.parts.map((part, i) => {
-            const key = `${line.id}:${i}`, reused = !!part.reuse && !part.reuse.skipped;
+            const key = `${line.id}:${i}`, reused = !!part.reuse && !part.reuse.skipped, panel = `takes-${preview.char}-${line.id}-${i}`;
             return <li key={i} className="flex min-w-0 flex-wrap items-center gap-x-1 rounded-control border border-border bg-surface py-0.5 pl-2 pr-0.5 text-xs text-muted-foreground">
               <span lang={part.locale} className="font-medium text-foreground">{part.text}</span>
               {part.spoken && <span lang={part.locale}>· {say(`read as ${part.spoken}`, `「${part.spoken}」と読む`)}</span>}
@@ -101,18 +101,18 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
               {reused && <span className="text-status-success">· {say(`audio from ${lineName(part.reuse!.from, say)}`, `${lineName(part.reuse!.from, say)}の音声`)}</span>}
               {part.reuse?.skipped && <span title={part.reuse.skipped}>· {say("read on its own", "単独で読む")}</span>}
               {part.recording.take > 1 && <span>· {say(`take ${part.recording.take}`, `テイク ${part.recording.take}`)}</span>}
-              <button type="button" aria-expanded={open === key} onClick={() => setOpen(open === key ? null : key)}
-                aria-label={say(`Takes of ${part.recording.text}`, `「${part.recording.text}」のテイク`)}
-                className="ml-1 inline-flex min-h-7 items-center gap-1 rounded-control px-1.5 text-xs font-semibold text-primary hover:bg-primary/10 aria-expanded:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <button type="button" aria-expanded={open === key} aria-controls={panel} onClick={() => setOpen(open === key ? null : key)}
+                aria-label={say(`Takes of ${part.recording.text} (${lineName(line.id, say)})`, `「${part.recording.text}」のテイク（${lineName(line.id, say)}）`)}
+                className="ml-1 inline-flex min-h-9 items-center gap-1 rounded-control px-2 text-xs font-semibold text-primary hover:bg-primary/10 aria-expanded:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <Mic aria-hidden className="size-3.5" />{say("Takes", "テイク")}</button>
             </li>;
           })}
         </ul>
         {line.parts.map((part, i) => open === `${line.id}:${i}` && <div key={i}>
-          {part.reuse && !part.reuse.skipped && <p className="mt-2 text-xs text-muted-foreground sm:ml-[6.5rem]">{say(`The name is heard from ${lineName(part.reuse.from, say)}'s recording: its takes are these.`,
-            `名前は${lineName(part.reuse.from, say)}の録音を使います。そのテイクです。`)}</p>}
-          <KanjiTakesPanel recording={part.recording} written={part.reuse && !part.reuse.skipped ? part.reuse.source ?? part.recording.text : part.text}
-            phrase={part.phrase && !(part.reuse && !part.reuse.skipped)} provider={provider} onChanged={onChanged} say={say} />
+          {part.reuse && !part.reuse.skipped && <p className="mt-2 text-xs text-muted-foreground sm:ml-[6.5rem]">{say(`This part is heard from ${lineName(part.reuse.from, say)}'s recording: its takes are these.`,
+            `この部分は${lineName(part.reuse.from, say)}の録音を使います。そのテイクです。`)}</p>}
+          <KanjiTakesPanel id={`takes-${preview.char}-${line.id}-${i}`}
+            recording={part.recording} phrase={part.phrase && !(part.reuse && !part.reuse.skipped)} provider={provider} onChanged={onChanged} say={say} />
         </div>)}
       </li>)}
     </ol>

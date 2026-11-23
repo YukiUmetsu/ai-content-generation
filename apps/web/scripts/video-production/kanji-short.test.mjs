@@ -193,3 +193,12 @@ test("a part can be spoken as another text (narration.speech), matched on what t
   const name = { line: "question", text: "いま", reusedFrom: "kunyomi" }, kun = { line: "kunyomi", text: "今。", written: "いま。" };
   assert.deepEqual(reuseSources([name, kun]).get(name).cut, { whole: true, pauses: 0 });
 });
+
+test("a part of punctuation only is never read alone", async () => {
+  const { expandNarrationScript } = await import("./anchored-narration.mjs");
+  const [line] = expandNarrationScript({ steps: [{ id: "onyomi", say: "{labels.on}、{onyomi}。", at: "start" }], locale: "ja" },
+    { labels: { on: "On'yomi" }, onyomi: "コン" });
+  const parts = kanjiSpokenParts(line, { voiceIds: { ja: "j".repeat(16), en: "e".repeat(16) } });
+  assert.deepEqual(parts.map(p => [p.text, p.locale, p.gapBefore]), [["On'yomi", "en", undefined], ["、コン。", "ja", PHRASE_GAP]]);
+  assert.ok(parts.every(p => /[\p{L}\p{N}]/u.test(p.text)));
+});
