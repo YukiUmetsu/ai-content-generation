@@ -60,7 +60,12 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
 
 - **Useful words** never include the bare kanji (水 is not a useful word for 水). The card takes the first three other words of the data, in order.
 - **The spoken name** is the reading of the kanji's own word (水 → mizu). Otherwise it is the first on'yomi (学 → gaku).
-  - **Any of its readings can be its name.** In the settings file, `names` maps a kanji to the reading it is called by, in kana: `{ "年": "ねん" }` makes the question "Do you know how to write the kanji nen?" and types ねん → 年. The romaji comes from the data, and a reading the kanji does not have is refused. In the Studio, each kanji's preview has **Called by**; choosing its first reading again goes back to the default. `--dry-run` lists the names each kanji can be called by.
+  - **Another reading can be its name.** In the settings file, `names` maps a kanji to the reading it is called by, in kana. `{ "年": "ねん" }` makes the question "Do you know how to write the kanji nen?" and types ねん → 年.
+    - A kanji can be called by its own word's reading or any of its on'yomi. A kun'yomi with okurigana (生: いきる, from 生きる) is no name for the kanji alone.
+    - The romaji comes from the data, and another reading is refused.
+    - In the Studio, each kanji's preview has **Called by**. Pick a reading, then press its button. Its first reading is the default.
+    - A name the data no longer has is shown on the preview, with a button to go back to the default.
+    - `--dry-run` lists the names each kanji can be called by.
   - The voice gets the name in kana inside the English question, because a voice reads romaji such as "hi" (日) as an English word.
   - The captions file shows romaji.
 - **A voice per language.** `voice.voiceIds` maps a language to a voice, for example `{ "ja": "<Japanese voice>", "en": "<English voice>" }`. A line that mixes scripts is read in runs, each by its language's voice, and joined into one line: "Do you know how to write the kanji" in the English voice, "つき" in the Japanese one.
@@ -90,7 +95,7 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - With `{ "{name.kana}": ["kunyomi", "onyomi"] }`, the question's name is the very recording of the reading in the kun'yomi line (人: "ひと。"), or else in the on'yomi line (年 called nen: "ネン。"). So the name and the reading sound the same, and one choice of take fixes both.
   - A list of lines is tried in order, and the first that says the text gives it. Katakana matches its hiragana, so ねん is found in "ネン。".
   - The key is the exact text one voice reads, as for retakes; the value is a line id (`question`, `onyomi`, `kunyomi`, `word-1`, …).
-  - **One entry for every kanji:** a key may name the kanji's fields. `{ "{name.kana}": "kunyomi" }` reads each kanji's name with the audio of its kun'yomi line (人: ひと, 年: とし). This is the Studio's "Read each kanji's name with the audio of its kun'yomi line" switch. The fields are `{char}`, `{name.kana}`, `{name.romaji}`, `{meanings}`, `{jlpt}`, `{onyomi}`, `{kunyomi}`, `{labels.on}` and `{labels.kun}`; another field stops at config read. An exact text wins over a key that fills in to the same text, and a key that fills in empty (a kanji with no kun'yomi) does nothing. `narration.retakes` keys may name fields too.
+  - **One entry for every kanji:** a key may name the kanji's fields. `{ "{name.kana}": ["kunyomi", "onyomi"] }` reads each kanji's name with the audio of its reading line (人: ひと, 年 called nen: ネン). This is the Studio's "Read each kanji's name with the audio of its reading line" switch. A file's own `"kunyomi"` stays a row of its own: it reads the name from the kun'yomi line only. The fields are `{char}`, `{name.kana}`, `{name.romaji}`, `{meanings}`, `{jlpt}`, `{onyomi}`, `{kunyomi}`, `{labels.on}` and `{labels.kun}`; another field stops at config read. An exact text wins over a key that fills in to the same text, and a key that fills in empty (a kanji with no kun'yomi) does nothing. `narration.retakes` keys may name fields too.
   - It applies only where that line says exactly the text after its last comma (or is just that text). The config covers every kanji, so in a short whose line says something else (費: "くんよみ、ついやす。") the text is read on its own. `--dry-run` shows where it applies.
   - The cut is at the longest pauses, one per comma of the line (a consonant inside a word does not count), from where the sound before the word falls to quiet, so a soft "h" or "s" is kept. The text is also read on its own as a fallback: if the line's audio has no clear pause, the short uses that reading and its QA report warns.
   - Where the short has no such line, the line is the text's own, or the line itself has a reused part, the text is read on its own too. The QA report and manifest record `reusedFrom` and the source line's voice.
@@ -146,7 +151,7 @@ pnpm video:kanji -- 水 火 木 --allow-network --voice-consent --transmit-text 
 Open **Kanji shorts** in the Studio's navigation (`pnpm dev` from `apps/web`). The page uses `data/kanji-shorts/config.json`, or the file named by `CONTENTGEN_KANJI_CONFIG`. Without one, the page says where to make it.
 
 1. **Choose kanji.** Type them, or pick them from the list by JLPT level or search (kanji, kana, romaji or meaning). A dot marks a kanji already made. One run makes up to 10.
-2. **Check what each short says.** Each line is listed with the voice that reads each part, where the name reuses the kun'yomi line's audio, and the retakes that apply. Nothing is sent to make the preview.
+2. **Check what each short says.** Each line is listed with the voice that reads each part, where the name reuses a reading line's audio, and the retakes that apply. Nothing is sent to make the preview.
 3. **Make.** Pressing Make is the consent for that run: with Fish, the narration text goes to Fish Audio, as `--allow-network --voice-consent --transmit-text` allow on the command line. The kanji are made one after another.
    - Each short shows the producer's real step (checking, stroke data, voices, timing, music, mixing, rendering frames, combining, measuring), not an estimated percentage.
    - **Cancel** stops the short being made and the ones after it.

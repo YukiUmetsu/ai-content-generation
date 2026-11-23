@@ -442,3 +442,24 @@ test("a kanji's name is one of its readings, saved in the settings file; another
   assert.equal(JSON.parse(await readFile(path, "utf8")).names, undefined);
   assert.equal((await call(studio, "POST", "/name", { char: "水火", kana: "すい" })).status, 400);
 });
+
+test("names are written only by the name route: the settings save refuses them, and a name can always be cleared", async (t) => {
+  const dir = await fixture(t, { ...CONFIG, names: { 火: "ひ" } }), path = join(dir, "config.json"), studio = api(dir);
+  const { revision } = (await call(studio, "GET", "/state")).json();
+  const viaSettings = await call(studio, "POST", "/settings", { revision, changes: { names: { 水: "ぬ" } } });
+  assert.equal(viaSettings.status, 422);
+  assert.match(viaSettings.json().error, /names is not a setting the Studio edits/u);
+  // 火 is not in this data: its name can still be removed.
+  assert.equal((await call(studio, "POST", "/name", { char: "火", kana: "" })).status, 200);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).names, undefined);
+});
+
+test("a kanji whose set name it does not have is still listed, and its preview offers the names it has", async (t) => {
+  const dir = await fixture(t, { ...CONFIG, names: { 水: "ぬ" } }), studio = api(dir);
+  const entry = (await call(studio, "GET", "/state")).json().catalog.find(k => k.char === "水");
+  assert.equal(entry.problem, undefined);
+  assert.match(entry.nameProblem, /水 has no reading ぬ/u);
+  const { previews } = (await call(studio, "POST", "/preview", { kanji: "水" })).json();
+  assert.equal(previews[0].badName, "ぬ");
+  assert.deepEqual(previews[0].nameChoices.map(c => c.kana), ["みず", "すい"]);
+});

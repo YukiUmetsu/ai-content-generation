@@ -3,15 +3,15 @@ export const KANJI_API = "/api/contentgen-kanji";
 
 export type KanjiName = { kana: string; romaji: string };
 /** A kanji of the data; `problem` says why the producer cannot make it. */
-export type CatalogKanji = { char: string; jlpt: string | null; meanings: string; name: KanjiName; versions: number; problem?: string };
+export type CatalogKanji = { char: string; jlpt: string | null; meanings: string; name: KanjiName; versions: number; problem?: string;
+  /** The name set for it is not one of its readings (the data changed): shown with its default name, fixable on its preview. */
+  nameProblem?: string };
 
 /** The settings the page edits, by their path in the config file; null leaves a setting to its default. */
 export type KanjiSettings = {
   "voice.voiceId": string | null;
   "voice.voiceIds": Record<string, string> | null;
   "voice.pace": "slow" | "measured" | "fast" | null;
-  /** The reading each kanji is called by ({ "年": "ねん" }); set on its preview. */
-  names: Record<string, string> | null;
   /** A text read with another line's recording: a line, or lines tried in order. */
   "narration.reuse": Record<string, string | string[]> | null;
   "narration.retakes": Record<string, number> | null;
@@ -57,11 +57,14 @@ export type Take = { take: number; seconds: number; pitch: (number | null)[]; sh
 export type PreviewLine = { id: string; locale: string; at: string; offset: number; say: string; caption: string; split: boolean; parts: PreviewPart[] };
 export type KanjiPreview =
   | { char: string; found: false }
-  | { char: string; found: true; problem: string }
+  | { char: string; found: true; problem: string;
+      /** When the problem is a name it does not have: the names it can be called by, and the one set. */
+      nameChoices?: NameChoice[]; badName?: string }
   | { char: string; found: true; meanings: string; jlpt: string | null; name: KanjiName; dataProblems: string[]; strokeLinesLeftOut: boolean;
       words: { word: string; ruby: string; meaning: string }[]; lines: PreviewLine[];
-      /** The readings it can be called by: its own word's, its on'yomi and kun'yomi. */
-      nameChoices: { kana: string; romaji: string; kind: "word" | "on" | "kun" }[] };
+      /** The readings it can be called by: its own word's and its on'yomi (a kun'yomi only when it has neither). */
+      nameChoices: NameChoice[] };
+export type NameChoice = { kana: string; romaji: string; kind: "word" | "on" | "kun" };
 
 export type ReleaseVersion = { version: number; releaseDir: string; createdAt: string; qa?: QaSummary | null };
 export type KanjiRelease = { char: string; folder: string; versions: ReleaseVersion[] };

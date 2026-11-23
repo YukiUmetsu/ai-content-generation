@@ -13,8 +13,6 @@ export type Draft = {
   nameFromKunyomi: boolean; reuse: Pairs; retakes: Pairs; speech: Pairs;
   /** The switch's entry as the file has it ("kunyomi", or the list), kept while the switch stays on. */
   savedNameLines: string | string[] | undefined;
-  /** The names chosen per kanji (set on each kanji's preview), kept as they are. */
-  names: Record<string, string> | null;
   maxWords: string; write: string; review: string;
   /** The switch, and the file's own bottom band, kept as it is while the switch is not changed. */
   aboveCaptions: boolean; savedBottom: number | undefined; otherInset: Record<string, number>;
@@ -22,7 +20,8 @@ export type Draft = {
 
 /** A map as rows; a list of lines shows as "kunyomi, onyomi". */
 const pairsOf = (map: Record<string, string | number | string[]> | null): Pairs => Object.entries(map ?? {}).map(([key, value]) => [key, Array.isArray(value) ? value.join(", ") : String(value)]);
-const isSwitchValue = (value: unknown) => value === "kunyomi" || (Array.isArray(value) && value.join() === NAME_LINES.join());
+// The switch is exactly its list; a file's own "kunyomi" stays a row the person can see.
+const isSwitchValue = (value: unknown) => Array.isArray(value) && value.join() === NAME_LINES.join();
 const numberOrNull = (text: string) => text.trim() === "" ? null : Number(text);
 
 export function draftFrom(settings: KanjiSettings): Draft {
@@ -33,7 +32,7 @@ export function draftFrom(settings: KanjiSettings): Draft {
   return {
     voiceId: settings["voice.voiceId"] ?? "", ja, en, otherVoiceIds, pace: settings["voice.pace"] ?? "",
     // Only the switch's own entry is the switch; "{name.kana}" read from another line stays a row.
-    nameFromKunyomi: switchOn, savedNameLines: switchOn ? saved[NAME_FROM_KUNYOMI] : undefined, names: settings.names ?? null,
+    nameFromKunyomi: switchOn, savedNameLines: switchOn ? saved[NAME_FROM_KUNYOMI] : undefined,
     reuse: pairsOf(settings["narration.reuse"]).filter(([key]) => !(switchOn && key === NAME_FROM_KUNYOMI)),
     retakes: pairsOf(settings["narration.retakes"]), speech: pairsOf(settings["narration.speech"]),
     maxWords: settings.maxWords?.toString() ?? "", write: settings["timing.write"]?.toString() ?? "", review: settings["timing.review"]?.toString() ?? "",
@@ -81,7 +80,6 @@ export function settingsFromDraft(draft: Draft): KanjiSettings {
     "voice.voiceId": draft.voiceId.trim() ? draft.voiceId : null,
     "voice.voiceIds": Object.keys(voiceIds).length ? voiceIds : null,
     "voice.pace": draft.pace || null,
-    names: draft.names,
     "narration.reuse": Object.keys(reuse).length ? reuse : null,
     "narration.retakes": map(draft.retakes, text => Number(text.trim())),
     "narration.speech": map(draft.speech, text => text),
@@ -96,8 +94,9 @@ export function settingsFromDraft(draft: Draft): KanjiSettings {
  * A value as text with its keys in order, so two maps that differ only in key order compare equal,
  * and an empty map is the same as none (the config treats {} and a missing map alike).
  */
+// A list of one line is that line (the config reads ["kunyomi"] as "kunyomi").
 const canonical = (value: unknown): string => JSON.stringify(value ?? null, (_key, inner: unknown) =>
-  inner && typeof inner === "object" && !Array.isArray(inner)
+  Array.isArray(inner) && inner.length === 1 ? inner[0] : inner && typeof inner === "object" && !Array.isArray(inner)
     ? Object.keys(inner).length ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : null
     : inner);
 export const sameSettings = (a: KanjiSettings, b: KanjiSettings) => canonical(a) === canonical(b);
@@ -108,7 +107,7 @@ export function changedSettings(base: KanjiSettings, next: KanjiSettings): Parti
 }
 
 /** Settings that are maps of entries: an edit changes entries, not the whole map. */
-const MAPS = new Set<keyof KanjiSettings>(["voice.voiceIds", "names", "narration.reuse", "narration.retakes", "narration.speech", "card.safeInset"]);
+const MAPS = new Set<keyof KanjiSettings>(["voice.voiceIds", "narration.reuse", "narration.retakes", "narration.speech", "card.safeInset"]);
 
 /**
  * What a save sends: the person's edits (from `base`, what the draft was made from, to `next`) made

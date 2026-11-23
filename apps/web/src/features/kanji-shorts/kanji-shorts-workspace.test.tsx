@@ -14,7 +14,7 @@ vi.mock("./kanji-shorts-api", async (original) => ({
 
 const SETTINGS: KanjiSettings = {
   "voice.voiceId": "34cfe2f12a8a4d9490e375fcb845642f", "voice.voiceIds": { ja: "34cfe2f12a8a4d9490e375fcb845642f", en: "59f85041c50240f08ba9b6fa2bff650d" },
-  "voice.pace": "slow", names: null, "narration.reuse": { ひと: "kunyomi" }, "narration.retakes": null, "narration.speech": null, maxWords: null, "card.safeInset": null,
+  "voice.pace": "slow", "narration.reuse": { ひと: "kunyomi" }, "narration.retakes": null, "narration.speech": null, maxWords: null, "card.safeInset": null,
   "timing.write": 6.6, "timing.review": 6.6,
 };
 const STATE: StudioState = {
@@ -423,7 +423,7 @@ describe("takes panel, second review", () => {
 });
 
 describe("the name a kanji is called by", () => {
-  it("is chosen from its readings on its preview; its first reading is the default and clears the setting", async () => {
+  it("is picked from its readings on its preview and applied with its button; its first reading is the default and clears the setting", async () => {
     const user = userEvent.setup();
     vi.mocked(setName).mockResolvedValue({ revision: "r2", settings: SETTINGS });
     render(<KanjiShortsWorkspace locale="en" />);
@@ -432,18 +432,32 @@ describe("the name a kanji is called by", () => {
     expect(called).toHaveValue("ひと");
     expect(screen.getByRole("option", { name: "じん (jin) · on'yomi" })).toBeInTheDocument();
     await user.selectOptions(called, "にん");
+    expect(setName).not.toHaveBeenCalled();                       // picking alone saves nothing
+    expect(called).toHaveValue("にん");
+    await user.click(screen.getByRole("button", { name: "Call it にん" }));
     expect(setName).toHaveBeenCalledWith("人", "にん");
-    await user.selectOptions(called, "ひと");
-    expect(setName).toHaveBeenLastCalledWith("人", "");
+    expect(called).toHaveFocus();
+    expect(called).toHaveValue("にん");                            // shown until the refreshed preview says it
   });
 
-  it("keeps names and a name switch saved as \"kunyomi\" as the file has them; lists of lines are rows", () => {
-    const saved: KanjiSettings = { ...SETTINGS, names: { 年: "ねん" }, "narration.reuse": { "{name.kana}": "kunyomi", "ひと": ["kunyomi", "onyomi"] } };
+  it("offers to go back to the default name when the set one is no longer a reading of the kanji", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [{ char: "人", found: true, problem: "人 has no reading ぬ to name it by (its readings: ひと, じん, にん)",
+      nameChoices: PREVIEW.nameChoices, badName: "ぬ" }] });
+    vi.mocked(setName).mockResolvedValue({ revision: "r2", settings: SETTINGS });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Call it ひと again" }));
+    expect(setName).toHaveBeenCalledWith("人", "");
+  });
+
+  it("reads a list of one line as that line, and a file's own \"kunyomi\" name entry as a row", () => {
+    const saved: KanjiSettings = { ...SETTINGS, "narration.reuse": { "{name.kana}": "kunyomi", ひと: ["kunyomi"], いま: ["kunyomi", "onyomi"] } };
     const draft = draftFrom(saved);
-    expect(draft.nameFromKunyomi).toBe(true);
-    expect(draft.reuse).toEqual([["ひと", "kunyomi, onyomi"]]);
+    expect(draft.nameFromKunyomi).toBe(false);
+    expect(draft.reuse).toEqual([["{name.kana}", "kunyomi"], ["ひと", "kunyomi"], ["いま", "kunyomi, onyomi"]]);
     expect(changedSettings(saved, settingsFromDraft(draft))).toEqual({});
-    // Switched off and on again: the file's own entry; switched on from scratch: kun'yomi, else on'yomi.
+    // Switched on from scratch: kun'yomi, else on'yomi.
     expect(settingsFromDraft({ ...draftFrom(SETTINGS), nameFromKunyomi: true })["narration.reuse"]).toEqual({ ひと: "kunyomi", "{name.kana}": ["kunyomi", "onyomi"] });
   });
 });

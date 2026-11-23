@@ -43,8 +43,8 @@ function problemText(problem: DraftProblem, say: Say) {
     "retake-number": say("A take is a whole number from 1 (the first recording) to 99.", "テイクは 1（最初の録音）〜99 の整数です。"),
     number: say("Words and passes must be numbers.", "ことば数と時間は数値で入力してください。"),
     duplicate: say("A text is listed twice in one list; keep one.", "同じテキストが一覧に 2 回あります。1 つにしてください。"),
-    "name-clash": say("The name switch reads {name.kana} from the kun'yomi line; remove the {name.kana} row or turn the switch off.",
-      "名前のスイッチは {name.kana} を訓読みの行から読みます。{name.kana} の行を削除するか、スイッチをオフにしてください。"),
+    "name-clash": say("The name switch reads {name.kana} from the reading lines; remove the {name.kana} row or turn the switch off.",
+      "名前のスイッチは {name.kana} を読みの行から読みます。{name.kana} の行を削除するか、スイッチをオフにしてください。"),
   }[problem];
 }
 

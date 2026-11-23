@@ -221,3 +221,14 @@ test("a reuse can try several lines in order, and katakana matches its hiragana"
   const none = reuseSources([{ ...name, text: "とん" }, kun, on]);
   assert.match([...none.values()][0].why, /line kunyomi does not say "とん" after a comma; line onyomi does not say "とん"/u);
 });
+
+test("a kanji's names are its own word's reading and its on'yomi: a kun'yomi with okurigana is no name for it alone", () => {
+  const ikiru = { char: "生", jlpt: "N5", card: { meanings: "LIFE", onyomi: "SEI (セイ), SHŌ (ショウ)", kunyomi: "ikiru (いきる)", jlpt: "N5" },
+    words: [{ word: "生きる", ruby: "いきる", romaji: "ikiru", meaning: "to live", reading: "kun" }, { word: "学生", ruby: "がくせい", romaji: "gakusei", meaning: "student", reading: "on" }] };
+  assert.deepEqual(kanjiShortContent(ikiru).nameChoices.map(c => c.kana), ["せい", "しょう"]);
+  assert.throws(() => kanjiShortContent(ikiru, { name: "いきる" }), /生 has no reading いきる/u);
+  // With no word of its own and no on'yomi, its first kun'yomi is its name.
+  const kunOnly = { char: "畑", jlpt: "N3", card: { meanings: "FIELD", onyomi: "", kunyomi: "hatake (はたけ)", jlpt: "N3" },
+    words: [{ word: "田畑", ruby: "たはた", romaji: "tahata", meaning: "fields", reading: "kun" }] };
+  assert.deepEqual(kanjiShortContent(kunOnly).nameChoices.map(c => [c.kana, c.kind]), [["はたけ", "kun"]]);
+});

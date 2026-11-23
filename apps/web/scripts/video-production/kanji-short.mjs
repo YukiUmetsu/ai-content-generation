@@ -72,8 +72,9 @@ export const plainRomaji = (romaji) => romaji.normalize("NFD").replace(/[\u0300-
  *   first `maxWords` other words of the entry, in the data's order.
  * - The character's spoken name is the reading of its own word when it has one (水 → mizu),
  *   otherwise its first on'yomi (学 → gaku), otherwise its first kun'yomi. `name` chooses another
- *   of its readings by its kana (年: "ねん" in place of とし); its romaji comes from the data.
- *   `nameChoices` lists the readings it can be called by.
+ *   reading by its kana (年: "ねん" in place of とし); its romaji comes from the data. `nameChoices`
+ *   lists the readings that name the kanji alone: its own word's and its on'yomi. A kun'yomi
+ *   such as いきる (生) belongs to a word with okurigana (生きる), so it is no name for 生 by itself.
  * - A word is spoken as written, so the voice reads it in context; an irregular reading (今日)
  *   is spoken from its kana. `speech` overrides the text for a word, for a voice that misreads it.
  */
@@ -85,7 +86,8 @@ export function kanjiShortContent(entry, { maxWords = 3, speech = {}, name: chos
   const onPairs = readingPairs(entry.card.onyomi), kunPairs = readingPairs(entry.card.kunyomi);
   const on = onPairs.map(p => p.kana), kun = kunPairs.map(p => p.kana);
   const choices = [];
-  for (const [kind, pair] of [...(own ? [["word", { romaji: own.romaji, kana: own.ruby }]] : []), ...onPairs.map(p => ["on", p]), ...kunPairs.map(p => ["kun", p])]) {
+  const fallback = own || onPairs.length ? [] : kunPairs.slice(0, 1).map(p => ["kun", p]);
+  for (const [kind, pair] of [...(own ? [["word", { romaji: own.romaji, kana: own.ruby }]] : []), ...onPairs.map(p => ["on", p]), ...fallback]) {
     const kana = toHiragana(pair.kana), romaji = plainRomaji(pair.romaji).toLowerCase();
     if (kana && romaji && !choices.some(c => c.kana === kana)) choices.push({ kana, romaji, kind });
   }

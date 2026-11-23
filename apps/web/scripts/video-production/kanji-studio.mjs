@@ -32,8 +32,10 @@ export async function readKanjiStudio(configPath) {
 export function kanjiCatalog(entries, { names = {} } = {}) {
   return [...entries.values()].map(entry => {
     try {
-      const content = kanjiShortContent(entry, { name: names[entry.char] });
-      return { char: content.char, jlpt: content.jlpt ?? null, meanings: content.meanings, name: content.name };
+      let content, nameProblem;
+      try { content = kanjiShortContent(entry, { name: names[entry.char] }); }
+      catch (error) { if (!names[entry.char]) throw error; content = kanjiShortContent(entry); nameProblem = String(error.message); }
+      return { char: content.char, jlpt: content.jlpt ?? null, meanings: content.meanings, name: content.name, ...(nameProblem ? { nameProblem } : {}) };
     } catch (error) {
       return { char: entry.char, jlpt: entry.jlpt ?? null, meanings: String(entry.card?.meanings ?? ""), name: { kana: "", romaji: "" }, problem: String(error.message) };
     }
@@ -54,7 +56,12 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
     if (!entry) { previews.push({ char, found: false }); continue; }
     let content;
     try { content = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3, name: config.names?.[char] }); }
-    catch (error) { previews.push({ char, found: true, problem: String(error.message) }); continue; }
+    catch (error) {
+      // A name the kanji does not have (the data changed): the problem, with the names it can be called by.
+      let nameChoices;
+      if (config.names?.[char]) try { nameChoices = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3 }).nameChoices; } catch { /* another problem too */ }
+      previews.push({ char, found: true, problem: String(error.message), ...(nameChoices ? { nameChoices, badName: config.names[char] } : {}) }); continue;
+    }
     let strokeCount = null;
     try {
       const planner = await (deps.loadKanjiPlanner ?? loadKanjiPlanner)();
@@ -190,7 +197,7 @@ export async function kanjiReleases(outputRoot, { chars } = {}) {
  * The settings the Studio page edits, by their path in the config file. Everything else in the
  * file (data, music, script, card look) stays as it is, edited by hand.
  */
-export const KANJI_STUDIO_SETTINGS = Object.freeze(["voice.voiceId", "voice.voiceIds", "voice.pace", "names", "narration.reuse", "narration.retakes", "narration.speech",
+export const KANJI_STUDIO_SETTINGS = Object.freeze(["voice.voiceId", "voice.voiceIds", "voice.pace", "narration.reuse", "narration.retakes", "narration.speech",
   "maxWords", "card.safeInset", "timing.write", "timing.review"]);
 const getPath = (object, path) => path.split(".").reduce((value, key) => value?.[key], object);
 
