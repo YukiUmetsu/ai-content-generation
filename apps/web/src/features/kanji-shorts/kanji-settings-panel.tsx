@@ -27,7 +27,7 @@ function PairsEditor({ title, help, pairs, onChange, keyLabel, valueLabel, value
       <input className={cell + " basis-full sm:basis-0 sm:flex-[3]"} value={key} onChange={e => set(i, 0, e.target.value)} maxLength={400} lang="ja"
         placeholder={keyLabel} aria-label={`${title} ${i + 1}: ${keyLabel}`} />
       <input className={cell + " flex-1 sm:flex-[2]"} value={value} onChange={e => set(i, 1, e.target.value)} type={valueType} placeholder={valueLabel}
-        aria-label={`${title} ${i + 1}: ${valueLabel}`} {...(valueType === "number" ? { min: 2, max: 99, step: 1 } : { maxLength: 60 })} />
+        aria-label={`${title} ${i + 1}: ${valueLabel}`} {...(valueType === "number" ? { min: 1, max: 99, step: 1 } : { maxLength: 60 })} />
       <Button variant="outline" size="icon" className="shrink-0" aria-label={say(`Remove ${title} entry ${i + 1}`, `${title}の${i + 1}件目を削除`)}
         icon={<Trash2 className="size-4" />} onClick={() => onChange(pairs.filter((_, k) => k !== i))} />
     </div>)}
@@ -40,7 +40,7 @@ function problemText(problem: DraftProblem, say: Say) {
     "reuse-row": say("Fill in both parts of each reuse, or remove it.", "読みの再利用は両方を入力するか、削除してください。"),
     "retakes-row": say("Fill in both parts of each retake, or remove it.", "読み直しは両方を入力するか、削除してください。"),
     "speech-row": say("Fill in both parts of each \"spoken as\" entry, or remove it.", "読み方の指定は両方を入力するか、削除してください。"),
-    "retake-number": say("A take is a whole number from 2 to 99.", "テイクは 2〜99 の整数です。"),
+    "retake-number": say("A take is a whole number from 1 (the first recording) to 99.", "テイクは 1（最初の録音）〜99 の整数です。"),
     number: say("Words and passes must be numbers.", "ことば数と時間は数値で入力してください。"),
     duplicate: say("A text is listed twice in one list; keep one.", "同じテキストが一覧に 2 回あります。1 つにしてください。"),
     "name-clash": say("The name switch reads {name.kana} from the kun'yomi line; remove the {name.kana} row or turn the switch off.",

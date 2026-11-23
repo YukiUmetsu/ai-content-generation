@@ -153,7 +153,8 @@ describe("settings the form cannot show", () => {
   it("names what stops a save instead of dropping a half-filled row", () => {
     const draft = draftFrom(SETTINGS);
     expect(draftProblems({ ...draft, retakes: [["ひと", ""]] })).toEqual(["retakes-row"]);
-    expect(draftProblems({ ...draft, retakes: [["ひと", "1"]] })).toEqual(["retake-number"]);
+    expect(draftProblems({ ...draft, retakes: [["ひと", "0"]] })).toEqual(["retake-number"]);
+    expect(draftProblems({ ...draft, retakes: [["くんよみ、", "1"]] })).toEqual([]);          // take 1, as choosing the first recording writes it
     expect(draftProblems({ ...draft, write: "six" })).toEqual(["number"]);
     expect(draftProblems(draft)).toEqual([]);
   });
@@ -295,12 +296,12 @@ describe("takes", () => {
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
     // The name is heard from the kun'yomi reading: its takes are that recording's.
     // The question's name part comes first; the kun'yomi line's own ひと。 part opens the same recording.
-    await user.click(await screen.findByRole("button", { name: "Takes of ひと。 (Question)" }));
+    await user.click(await screen.findByRole("button", { name: "Takes of ひと。 (Question, 人)" }));
     expect(await screen.findByText(/This part is heard from Kun'yomi's recording/u)).toBeInTheDocument();
     expect(loadTakes).toHaveBeenCalledWith({ text: "ひと。", written: "ひと。", locale: "ja", take: 1 });
     expect(await screen.findByText(/Pitch rises to the end, like a question/u)).toBeInTheDocument();
     expect(screen.getByLabelText("Play take 2")).toHaveAttribute("src", expect.stringContaining("take=2"));
-    await user.click(screen.getByRole("button", { name: "Use take 2" }));
+    await user.click(screen.getByRole("button", { name: "Use this take (take 2)" }));
     expect(chooseTake).toHaveBeenCalledWith("ひと。", 2);
     expect(await screen.findByText("Take 2 is now used. Make the short again to hear it.")).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Record a take" }));
@@ -315,7 +316,7 @@ describe("takes", () => {
     vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1, "level"), take(3, "falls")] });
     render(<KanjiShortsWorkspace locale="en" />);
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
-    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、 (Kun'yomi)" }));
+    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、 (Kun'yomi, 人)" }));
     expect(await screen.findByText("A phrase: the take you choose is used in every short made from now on.")).toBeInTheDocument();
     expect(screen.getByText("In use")).toBeInTheDocument();          // take 3 is the one in use
   });
@@ -333,7 +334,7 @@ describe("takes panel, after review", () => {
     vi.mocked(speakAs).mockResolvedValue({ revision: "r2", settings: SETTINGS });
     render(<KanjiShortsWorkspace locale="en" />);
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
-    await user.click(await screen.findByRole("button", { name: "Takes of 人。 (Question)" }));
+    await user.click(await screen.findByRole("button", { name: "Takes of 人。 (Question, 人)" }));
     const field = await screen.findByLabelText("Read “ひと。” as");
     expect(field).toHaveValue("人。");
     await user.clear(field);
@@ -349,11 +350,11 @@ describe("takes panel, after review", () => {
     vi.mocked(chooseTake).mockResolvedValue({ revision: "r2", settings: SETTINGS });
     render(<KanjiShortsWorkspace locale="en" />);
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
-    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、 (Kun'yomi)" }));
+    await user.click(await screen.findByRole("button", { name: "Takes of くんよみ、 (Kun'yomi, 人)" }));
     // The phrase's chosen take 3 has no recording yet.
     expect(await screen.findByText(/Take 3 is chosen but not recorded yet/u)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Record a take" }));
-    await user.click(screen.getByRole("button", { name: "Use take 1" }));
+    await user.click(screen.getByRole("button", { name: "Use this take (take 1)" }));
     expect(screen.getByRole("button", { name: "Record a take" })).toBeDisabled();
     await act(async () => { finishRecording(take(4)); });
     expect(recordTake).toHaveBeenCalledTimes(1);
@@ -364,10 +365,58 @@ describe("takes panel, after review", () => {
     vi.mocked(loadTakes).mockRejectedValueOnce(new KanjiApiError("unreachable", "down")).mockResolvedValueOnce({ takes: [take(1)] });
     render(<KanjiShortsWorkspace locale="ja" />);
     await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
-    await user.click(await screen.findByRole("button", { name: "「くんよみ、」のテイク（訓読み）" }));
+    await user.click(await screen.findByRole("button", { name: "「くんよみ、」のテイク（人・訓読み）" }));
     expect(await screen.findByText(/ローカルの Studio サーバーに接続できません/u)).toBeInTheDocument();
     expect(screen.queryByText("テイクを読み込んでいます…")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "再試行" }));
     expect(await screen.findByText("テイク 1")).toBeInTheDocument();
+  });
+});
+
+describe("takes panel, second review", () => {
+  const take = (n: number) => ({ take: n, seconds: .5, pitch: [140, 150, 155, null, 120], shape: "falls" as const, rise: -2, fall: -3 });
+
+  it("lists a take that could not be measured without breaking the page, and gives one note for an empty list", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadTakes).mockResolvedValueOnce({ takes: [take(1), { take: 2, seconds: 0, pitch: [], shape: null, rise: null, fall: null, unreadable: true }] })
+      .mockResolvedValueOnce({ takes: [] });
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Takes of ひと。 (Question, 人)" }));
+    expect(await screen.findByText(/This take could not be measured/u)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Takes of ひと。 (Question, 人)" }));
+    await user.click(screen.getByRole("button", { name: "Takes of Do you know how to write the kanji (Question, 人)" }));
+    expect(await screen.findByText(/Not recorded yet/u)).toBeInTheDocument();
+    expect(screen.queryByText(/is chosen but not recorded yet/u)).not.toBeInTheDocument();
+  });
+
+  it("follows the preview after a choice: a later change elsewhere shows, and a finished recording leaves the focus where the person is typing", async () => {
+    const user = userEvent.setup();
+    const withTake = (n: number) => ({ ...PREVIEW, lines: PREVIEW.lines.map(line => line.id !== "kunyomi" ? line : { ...line, parts: [line.parts[0], { ...line.parts[1], recording: { ...line.parts[1].recording, take: n } }] }) });
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [withTake(1)] });
+    vi.mocked(loadTakes).mockResolvedValue({ takes: [take(1), take(2)] });
+    vi.mocked(chooseTake).mockImplementation(async () => { vi.mocked(loadPreviews).mockResolvedValue({ previews: [withTake(2)] }); return { revision: "r2", settings: SETTINGS }; });
+    vi.mocked(loadStudio).mockImplementation(async () => ({ ...STATE, revision: `r${Math.random()}` }) as StudioState);
+    render(<KanjiShortsWorkspace locale="en" />);
+    await user.click(await screen.findByRole("button", { name: /^人 hito/u }));
+    await user.click(await screen.findByRole("button", { name: "Takes of ひと。 (Kun'yomi, 人)" }));
+    await user.click(await screen.findByRole("button", { name: "Use this take (take 2)" }));
+    // The refreshed preview says take 2 too.
+    expect(await screen.findByText("· take 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use this take (take 1)" })).toBeInTheDocument();
+    // The retake is removed elsewhere: Reload shows take 1 in use again, and the old message goes.
+    vi.mocked(loadPreviews).mockResolvedValue({ previews: [withTake(1)] });
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(await screen.findByRole("button", { name: "Use this take (take 2)" })).toBeInTheDocument();
+    expect(screen.queryByText(/Take 2 is now used/u)).not.toBeInTheDocument();
+    // Recording while typing elsewhere in the panel: the focus stays in the field.
+    let finish: (value: ReturnType<typeof take>) => void = () => {};
+    vi.mocked(recordTake).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Record a take" }));
+    const field = screen.getByLabelText("Read “ひと。” as");
+    await user.click(field);
+    await act(async () => { finish(take(3)); });
+    expect(await screen.findByText("Take 3 recorded.")).toBeInTheDocument();
+    expect(field).toHaveFocus();
   });
 });

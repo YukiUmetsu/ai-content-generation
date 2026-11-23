@@ -52,15 +52,21 @@ export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, sa
   const [savingAs, setSavingAs] = useState(false);
   // A choice shown at once, until the refreshed preview says the same (or something else).
   const [pending, setPending] = useState<{ take: number; was: number } | null>(null);
+  const [seenTake, setSeenTake] = useState(recording.take);
   const [done, setDone] = useState<{ kind: "recorded"; take: number } | { kind: "chosen"; take: number } | { kind: "read-as" } | null>(null);
   const written = recording.written;
   const [readAs, setReadAs] = useState(recording.text === written ? "" : recording.text);
   // Another text read (a "read as" saved here or elsewhere): its takes and its field follow it.
   const [shown, setShown] = useState(`${written}|${recording.text}`);
+  if (seenTake !== recording.take) {
+    // The preview now says which take is used: a choice made here has arrived (or was changed elsewhere).
+    setSeenTake(recording.take); setPending(null);
+    if (done?.kind === "chosen" && done.take !== recording.take) setDone(null);
+  }
   if (shown !== `${written}|${recording.text}`) {
     setShown(`${written}|${recording.text}`); setReadAs(recording.text === written ? "" : recording.text); setTakes(null); setPending(null);
   }
-  const doneRef = useRef<HTMLParagraphElement>(null), latest = useRef(0);
+  const doneRef = useRef<HTMLParagraphElement>(null), latest = useRef(0), actor = useRef<Element | null>(null);
   const ja = say("en", "ja") === "ja";
   const load = useCallback(() => {
     const request = ++latest.current;
@@ -69,27 +75,35 @@ export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, sa
       .catch(error => { if (request === latest.current) setFailure(error); });
   }, [recording]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (done) doneRef.current?.focus(); }, [done]);
+  useEffect(() => {
+    if (!done) return;
+    const now = document.activeElement;
+    if (now === actor.current || now === document.body || now === null) doneRef.current?.focus();
+  }, [done]);
+  // The newest load, for an action that finishes after the text read here changed.
+  const loadLatest = useRef(load);
+  useEffect(() => { loadLatest.current = load; }, [load]);
   const inUse = pending && pending.was === recording.take ? pending.take : recording.take;
 
   async function record() {
-    setRecording(true); setFailure(null); setDone(null);
-    try { const made = await recordTake(recording, provider); await load(); setDone({ kind: "recorded", take: made.take }); }
+    setRecording(true); setFailure(null); setDone(null); actor.current = document.activeElement;
+    try { const made = await recordTake(recording, provider); await loadLatest.current(); setDone({ kind: "recorded", take: made.take }); }
     catch (error) { setFailure(error); } finally { setRecording(false); }
   }
   async function choose(take: number) {
-    setChoosing(take); setFailure(null); setDone(null);
+    setChoosing(take); setFailure(null); setDone(null); actor.current = document.activeElement;
     try { await chooseTake(recording.text, take); setPending({ take, was: recording.take }); setDone({ kind: "chosen", take }); onChanged(); }
     catch (error) { setFailure(error); } finally { setChoosing(null); }
   }
   async function saveReadAs() {
-    setSavingAs(true); setFailure(null); setDone(null);
+    setSavingAs(true); setFailure(null); setDone(null); actor.current = document.activeElement;
     try { await speakAs(written, readAs); setDone({ kind: "read-as" }); onChanged(); }
     catch (error) { setFailure(error); } finally { setSavingAs(false); }
   }
-  const voiced = (takes ?? []).flatMap(take => take.pitch.filter((hz): hz is number => hz !== null)).map(hz => Math.log2(hz));
+  const voiced = (takes ?? []).flatMap(take => (take.pitch ?? []).filter((hz): hz is number => hz !== null)).map(hz => Math.log2(hz));
   const low = voiced.length ? Math.min(...voiced) : 0, high = voiced.length ? Math.max(...voiced) : 1;
-  const missing = takes && !takes.some(take => take.take === inUse);
+  // A chosen take with no recording yet: named, unless nothing is recorded and the first recording is the one in use.
+  const missing = takes !== null && !takes.some(take => take.take === inUse) && (takes.length > 0 || inUse > 1);
   const quote = (text: string) => ja ? `「${text}」` : `“${text}”`;
 
   return <div id={id} className="mt-2 flex min-w-0 flex-col gap-3 rounded-control border border-border bg-surface p-3 sm:ml-[6.5rem]">
@@ -109,11 +123,11 @@ export function KanjiTakesPanel({ id, recording, phrase, provider, onChanged, sa
           return <li key={take.take} className={"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-control border p-2 " + (used ? "border-primary bg-primary/5" : "border-border")}>
             <span className="w-16 shrink-0 text-sm font-semibold text-foreground">{say(`Take ${take.take}`, `テイク ${take.take}`)}</span>
             <audio controls preload="none" src={takeAudio(recording, take.take)} className="h-8 w-full min-w-0 max-w-[14rem]" aria-label={say(`Play take ${take.take}`, `テイク ${take.take} を再生`)} />
-            <PitchLine pitch={take.pitch} low={low} high={high} say={say} />
+            <PitchLine pitch={take.pitch ?? []} low={low} high={high} say={say} />
             <span className="min-w-0 flex-1 basis-40 text-xs text-muted-foreground">{take.seconds ? `${take.seconds} s · ` : ""}{shapeText(take, say)}</span>
             {used ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-status-success"><Check aria-hidden className="size-3.5" />{say("In use", "使用中")}</span>
               : <Button variant="outline" size="sm" isLoading={choosing === take.take} disabled={choosing !== null}
-                aria-label={say(`Use take ${take.take}`, `テイク ${take.take} を使う`)} onClick={() => void choose(take.take)}>{say("Use this take", "このテイクを使う")}</Button>}
+                aria-label={say(`Use this take (take ${take.take})`, `このテイクを使う（テイク ${take.take}）`)} onClick={() => void choose(take.take)}>{say("Use this take", "このテイクを使う")}</Button>}
           </li>;
         })}
       </ul>}

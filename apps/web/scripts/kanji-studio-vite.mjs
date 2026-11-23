@@ -246,7 +246,7 @@ export function createKanjiStudioApi(deps = {}) {
         if (!studio) return respond(res, 422, { error: problem });
         const part = takeText({ text: url.searchParams.get("text") ?? "", locale: url.searchParams.get("locale") ?? "" });
         const takes = await kanjiTakes(studio.config, part);
-        return respond(res, 200, { takes: await Promise.all(takes.map(async take => ({ take: take.take, ...(await takeMeasure(take.wavPath).catch(() => ({ unreadable: true }))) }))) });
+        return respond(res, 200, { takes: await Promise.all(takes.map(async take => ({ take: take.take, ...(await takeMeasure(take.wavPath).catch(() => ({ seconds: 0, pitch: [], shape: null, rise: null, fall: null, unreadable: true }))) }))) });
       }
       if (req.method === "GET" && route === "/take-audio") {
         const { studio, problem } = await loadStudio();

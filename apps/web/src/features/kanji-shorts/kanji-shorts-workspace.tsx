@@ -102,7 +102,7 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
               {part.reuse?.skipped && <span title={part.reuse.skipped}>· {say("read on its own", "単独で読む")}</span>}
               {part.recording.take > 1 && <span>· {say(`take ${part.recording.take}`, `テイク ${part.recording.take}`)}</span>}
               <button type="button" aria-expanded={open === key} aria-controls={panel} onClick={() => setOpen(open === key ? null : key)}
-                aria-label={say(`Takes of ${part.recording.text} (${lineName(line.id, say)})`, `「${part.recording.text}」のテイク（${lineName(line.id, say)}）`)}
+                aria-label={say(`Takes of ${part.recording.text} (${lineName(line.id, say)}, ${preview.char})`, `「${part.recording.text}」のテイク（${preview.char}・${lineName(line.id, say)}）`)}
                 className="ml-1 inline-flex min-h-9 items-center gap-1 rounded-control px-2 text-xs font-semibold text-primary hover:bg-primary/10 aria-expanded:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <Mic aria-hidden className="size-3.5" />{say("Takes", "テイク")}</button>
             </li>;
