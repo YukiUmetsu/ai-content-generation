@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { expandNarrationScript, placeOnAnchors, readNarrationScript, renderTemplate, scriptAnchors } from "./anchored-narration.mjs";
+import { expandNarrationScript, placeOnAnchors, readNarrationScript, renderTemplate, renderTemplateParts, scriptAnchors } from "./anchored-narration.mjs";
 
 const script = (steps, extra = {}) => ({ schemaVersion: 1, kind: "anchored-narration-script", locale: "ja", steps, ...extra });
 const DATA = { name: { kana: "みず", romaji: "mizu" }, on: "スイ", kun: "", words: [{ word: "水道", speech: "水道" }, { word: "今日", speech: "きょう" }], strokes: [{ n: 1 }, { n: 2 }] };
@@ -41,7 +41,8 @@ test("expands steps: conditions, one line per item, captions, locales, highlight
     { id: "stroke-{n}", forEach: "strokes", say: "{n}", at: "review.strokes", gap: .1 },
   ])), DATA);
   assert.deepEqual(lines.map(l => l.id), ["question", "on", "word-1", "word-2", "stroke-1", "stroke-2"]);   // empty kun'yomi: no line
-  assert.deepEqual(lines[0], { id: "question", say: "Do you know みず?", caption: "Do you know mizu?", locale: "en", at: "start", offset: .35, gap: .45, emphasizeAt: 12 / 15 });   // "Do you know " is 12 of 15 characters
+  assert.deepEqual(lines[0], { id: "question", say: "Do you know みず?", caption: "Do you know mizu?", locale: "en", at: "start", offset: .35, gap: .45, emphasizeAt: 12 / 15,   // "Do you know " is 12 of 15 characters
+    fields: [{ path: "name.kana", from: 12, to: 14 }], breaks: [] });
   assert.deepEqual(lines.slice(2, 4).map(l => [l.say, l.caption, l.index, l.list, l.highlight, l.locale]), [["水道。", "水道", 0, "words", true, "ja"], ["きょう。", "今日", 1, "words", true, "ja"]]);
   // The emphasized part is found where the template puts it, not at an earlier copy of its text.
   const ki = expandNarrationScript(readNarrationScript(script([{ id: "q", say: "き書き方は{name.kana}", at: "start", emphasize: "{name.kana}" }])), { name: { kana: "き" } });
@@ -136,4 +137,12 @@ test("a clamped highlight or cue keeps a positive hold even when the next line f
   const read = readNarrationScript(script([{ id: "w{n}", forEach: "words", say: "{item.speech}", at: "start", highlight: true, cue: "words", gap: 0 }], { highlightLead: .8 }));
   const placed = placeOnAnchors({ lines: expandNarrationScript(read, DATA), anchors: { start: 0 }, speech: { w1: .4, w2: .4 } });
   assert.ok(placed.highlights.every(h => h.hold >= .05) && placed.cues.every(c => c.hold >= .05));
+});
+
+test("a filled template says where each field lies and where its own commas end", () => {
+  const parts = renderTemplateParts("{labels.on}、{onyomi}。", { labels: { on: "おんよみ" }, onyomi: "ジン、ニン" });
+  assert.equal(parts.text, "おんよみ、ジン、ニン。");
+  assert.deepEqual(parts.fields, [{ path: "labels.on", from: 0, to: 4 }, { path: "onyomi", from: 5, to: 10 }]);
+  assert.deepEqual(parts.breaks, [5]);                 // the template's comma, not the one inside a reading
+  assert.deepEqual(renderTemplateParts("a、b、{x}", { x: "c" }), { text: "a、b、c", fields: [{ path: "x", from: 4, to: 5 }], breaks: [2, 4] });
 });

@@ -91,11 +91,32 @@ export function renderTemplate(template, data) {
     return value;
   });
 }
+/**
+ * A template filled in, with where each field's text lies in it (`fields`: { path, from, to }) and
+ * where the template's own commas (、) end (`breaks`): the points a line may be read in parts.
+ */
+export function renderTemplateParts(template, data) {
+  let text = "", last = 0;
+  const fields = [], breaks = [];
+  const literal = (chunk) => {
+    for (let i = chunk.indexOf("、"); i !== -1; i = chunk.indexOf("、", i + 1)) breaks.push(text.length + i + 1);
+    text += chunk;
+  };
+  for (const match of template.matchAll(/\{([^}]*)\}/gu)) {
+    literal(template.slice(last, match.index));
+    const value = renderTemplate(match[0], data);
+    fields.push({ path: match[1], from: text.length, to: text.length + value.length });
+    text += value; last = match.index + match[0].length;
+  }
+  literal(template.slice(last));
+  return { text, fields, breaks };
+}
 const empty = (value) => value === null || value === "" || (Array.isArray(value) && !value.length);
 
 /**
  * The lines of a script for one video's data, in spoken order: `{ id, say, caption, locale, at,
- * offset, gap, pauseAfter?, cue?, index?, highlight?, emphasizeAt? }` (`emphasizeAt` as a share 0..1 of the line's text).
+ * offset, gap, pauseAfter?, cue?, index?, highlight?, emphasizeAt?, fields, breaks }` (`emphasizeAt` as a
+ * share 0..1 of the line's text; `fields` and `breaks` as renderTemplateParts gives them for `say`).
  */
 export function expandNarrationScript(script, data) {
   const lines = [];
@@ -109,7 +130,7 @@ export function expandNarrationScript(script, data) {
     if (!Array.isArray(items)) fail(`${step.id}: forEach ${step.forEach} is not a list`);
     items.forEach((item, index) => {
       const scope = step.forEach === undefined ? data : { ...data, item, n: index + 1, index };
-      const say = renderTemplate(step.say, scope);
+      const { text: say, fields, breaks } = renderTemplateParts(step.say, scope);
       const line = {
         id: renderTemplate(step.id, scope), say, caption: renderTemplate(step.caption ?? step.say, scope), locale: step.locale ?? script.locale,
         at: step.at, offset: step.offset, gap: step.gap,
@@ -117,6 +138,7 @@ export function expandNarrationScript(script, data) {
         ...(step.pauseAfter === undefined || index !== items.length - 1 ? {} : { pauseAfter: step.pauseAfter }),
         ...(step.cue === undefined ? {} : { cue: step.cue }),
         ...(step.forEach === undefined ? {} : { index, list: step.forEach }), ...(step.highlight ? { highlight: true } : {}),
+        fields, breaks,
       };
       if (!ID.test(line.id)) fail(`${step.id}: the line id ${line.id} has characters other than letters, digits, - and _`);
       if (step.emphasize !== undefined) {

@@ -65,19 +65,21 @@ export const voiceFor = (locale, voiceIds, fallback) => voiceIds?.[primary(local
 
 /**
  * One take from the trimmed takes of a line's runs (`trimSpeech` results), with `gap` seconds of
- * extra silence between runs (whole milliseconds). Returns the joined `clip`, its `lead` and
+ * extra silence between runs (whole milliseconds; a take's own `gapBefore` replaces it before that
+ * take, for example a comma's pause between a phrase and the rest of its line). Returns the joined `clip`, its `lead` and
  * `speech` (from the first run's speech to the last run's end), `starts`: when each run's speech
  * starts, in seconds from the joined speech's start, and `durations`: each run's speech.
  */
 export function joinRunTakes(takes, { gap = .04, sampleRate = SAMPLE_RATE } = {}) {
   if (!takes.length) fail("a line needs at least one run");
-  const ms = sampleRate / 1000, pause = Math.round(gap * 1000) * ms;
-  const length = takes.reduce((n, t, i) => n + t.clip.length + (i ? pause : 0), 0);
+  const ms = sampleRate / 1000, pause = (take) => Math.round((take.gapBefore ?? gap) * 1000) * ms;
+  if (takes.some(take => take.gapBefore !== undefined && !(Number.isFinite(take.gapBefore) && take.gapBefore >= 0 && take.gapBefore <= 2))) fail("a gap before a run is 0 to 2 seconds");
+  const length = takes.reduce((n, t, i) => n + t.clip.length + (i ? pause(t) : 0), 0);
   const clip = new Int16Array(length), starts = [];
   let at = 0;
   takes.forEach((take, i) => {
     if (take.clip.length % ms) fail(`run ${i + 1} is not a whole number of milliseconds`);
-    if (i) at += pause;
+    if (i) at += pause(take);
     clip.set(take.clip, at);
     starts.push(at / sampleRate + take.lead);
     at += take.clip.length;

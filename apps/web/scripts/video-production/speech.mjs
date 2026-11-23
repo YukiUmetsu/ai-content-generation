@@ -62,6 +62,38 @@ function validateProbe(probe) {
 }
 
 /**
+ * What identifies one recording in the cache: its text, voice, speaker, take, direction and rights.
+ * The same signature is the same recording, so a phrase said in every video is recorded once.
+ */
+export function narrationSignature(job, beat, options) {
+  const voice = job.voice;
+  return {
+    schemaVersion: 1, text: beat.narration.trim().normalize("NFC"),
+    locale: job.locale, provider: options.provider, providerRevision: options.providerRevision,
+    modelId: voice.modelId, voiceId: beat.speaker?.voiceId ?? voice.voiceId, profileId: voice.profileId,
+    ...(beat.speaker ? { speakerId: beat.speaker.id ?? "narrator", speakerRole: beat.speaker.role ?? "narrator" } : {}),
+    ...(beat.take ? { take: beat.take } : {}),
+    direction: options.direction ?? { pace: "measured" }, encoding: "wav/pcm_s16le/mono/48000", approval: job.approval,
+    licenseStatus: voice.licenseStatus, commercialRightsVerified: job.policy?.commercialRightsVerified === true,
+  };
+}
+
+/**
+ * The cached recording of one beat, if there is a whole one: `{ key, wavPath, sha256, samples }`, or
+ * null. Looks only (no provider, no consent needed): a person can list the takes of a text.
+ */
+export async function cachedNarration(job, beat, options) {
+  const key = sha256(JSON.stringify(narrationSignature(job, beat, options)));
+  const dir = join(resolve(options.cacheRoot), "narration", key.slice(0, 2), key);
+  try {
+    const meta = JSON.parse(await readFile(join(dir, "metadata.json"), "utf8"));
+    const bytes = await readFile(join(dir, "speech.wav"));
+    if (meta.key !== key || meta.sha256 !== sha256(bytes) || meta.providerRevision !== options.providerRevision) return null;
+    return { key, wavPath: join(dir, "speech.wav"), sha256: meta.sha256, samples: meta.samples };
+  } catch { return null; }
+}
+
+/**
  * @param {object} job validated video-production-job v1
  * @param {{provider:string,providerRevision:string,cacheRoot:string,synthesize?:Function,normalizeWav?:Function,probeWav?:Function,ffmpeg?:string,ffprobe?:string,signal?:AbortSignal,apiKey?:string,allowNetwork?:boolean,voiceReferenceConsent?:boolean,textTransmissionApproved?:boolean,localVoiceAuthorized?:boolean,authorizedVoiceIds?:string[],paidUsageApproved?:boolean,budgetUsd?:number,direction?:object,skipInvalidPriorCache?:boolean}} options
  */
@@ -156,15 +188,7 @@ export async function synthesizeNarration(job, options) {
     const selectedVoiceId = beat.speaker?.voiceId ?? voice.voiceId;
     const speakerId = beat.speaker?.id ?? "narrator";
     const speakerRole = beat.speaker?.role ?? "narrator";
-    const signature = {
-      schemaVersion: 1, text: beat.narration.trim().normalize("NFC"),
-      locale: job.locale, provider: options.provider, providerRevision: options.providerRevision,
-      modelId: voice.modelId, voiceId: selectedVoiceId, profileId: voice.profileId,
-      ...(beat.speaker ? {speakerId,speakerRole} : {}),
-      ...(beat.take ? { take: beat.take } : {}),
-      direction, encoding: "wav/pcm_s16le/mono/48000", approval: job.approval,
-      licenseStatus: voice.licenseStatus, commercialRightsVerified: job.policy?.commercialRightsVerified === true,
-    };
+    const signature = narrationSignature(job, beat, { ...options, direction });
     const key = sha256(JSON.stringify(signature));
     const sceneAttempt=await options.sceneJobs?.beginScene({kind:"narration-scene",sceneId:beat.id,fingerprint:key});
     try {

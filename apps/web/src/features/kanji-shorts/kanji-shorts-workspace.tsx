@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Clapperboard, Film, Loader2, RefreshCw, Square, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clapperboard, Film, Loader2, Mic, RefreshCw, Square, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
@@ -8,6 +8,7 @@ import {
   type CatalogKanji, type KanjiPreview, type KanjiRelease, type KanjiSettings, type Run, type RunItem, type StudioState,
 } from "./kanji-shorts-api";
 import { KanjiSettingsPanel } from "./kanji-settings-panel";
+import { KanjiTakesPanel } from "./kanji-takes-panel";
 import { keptChoice } from "./kanji-drafts";
 import { errorText, languageName, lineName, phaseName, sayer, type Say } from "./kanji-text";
 
@@ -68,7 +69,9 @@ function KanjiPicker({ catalog, selected, onToggle, say }: { catalog: CatalogKan
   </div>;
 }
 
-function PreviewCard({ preview, settings, say }: { preview: KanjiPreview; settings: KanjiSettings; say: Say }) {
+function PreviewCard({ preview, settings, provider, onChanged, say }: { preview: KanjiPreview; settings: KanjiSettings; provider: "fish" | "local"; onChanged: () => void; say: Say }) {
+  // The part whose takes are open, by line and part: one at a time.
+  const [open, setOpen] = useState<string | null>(null);
   if (!preview.found || "problem" in preview) return <li className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm text-foreground">
     <span lang="ja" className="font-serif text-lg">{preview.char}</span>{" "}
     {preview.found ? say(`cannot be made: ${preview.problem}`, `は作成できません: ${preview.problem}`) : say("is not in the kanji data.", "は漢字データにありません。")}
@@ -87,15 +90,30 @@ function PreviewCard({ preview, settings, say }: { preview: KanjiPreview; settin
           <span className="text-xs font-semibold text-muted-foreground">{lineName(line.id, say)}</span>
           <span lang={line.locale} className="min-w-0 break-words text-foreground">{line.caption}</span>
         </div>
-        {(line.split || line.parts.some(part => part.reuse || part.retake)) && <ul className="mt-1 flex flex-wrap gap-1.5 sm:pl-[6.5rem]">
-          {line.parts.map((part, i) => <li key={i} className="flex min-w-0 flex-wrap items-center gap-x-1 rounded-control border border-border bg-surface px-2 py-0.5 text-xs text-muted-foreground">
-            <span lang={part.locale} className="font-medium text-foreground">{part.text}</span>
-            <span>· {voiceLabel(part.voiceId, settings, say)}</span>
-            {part.reuse && !part.reuse.skipped && <span className="text-status-success">· {say(`audio from ${lineName(part.reuse.from, say)}`, `${lineName(part.reuse.from, say)}の音声`)}</span>}
-            {part.reuse?.skipped && <span title={part.reuse.skipped}>· {say("read on its own", "単独で読む")}</span>}
-            {part.retake && <span>· {say(`take ${part.retake}`, `テイク ${part.retake}`)}</span>}
-          </li>)}
-        </ul>}
+        <ul className="mt-1 flex flex-wrap gap-1.5 sm:pl-[6.5rem]">
+          {line.parts.map((part, i) => {
+            const key = `${line.id}:${i}`, reused = !!part.reuse && !part.reuse.skipped, panel = `takes-${preview.char}-${line.id}-${i}`;
+            return <li key={i} className="flex min-w-0 flex-wrap items-center gap-x-1 rounded-control border border-border bg-surface py-0.5 pl-2 pr-0.5 text-xs text-muted-foreground">
+              <span lang={part.locale} className="font-medium text-foreground">{part.text}</span>
+              {part.spoken && <span lang={part.locale}>· {say(`read as ${part.spoken}`, `「${part.spoken}」と読む`)}</span>}
+              <span>· {voiceLabel(part.voiceId, settings, say)}</span>
+              {part.phrase && <span className="text-status-info">· {say("phrase, recorded once", "フレーズ（1 回だけ録音）")}</span>}
+              {reused && <span className="text-status-success">· {say(`audio from ${lineName(part.reuse!.from, say)}`, `${lineName(part.reuse!.from, say)}の音声`)}</span>}
+              {part.reuse?.skipped && <span title={part.reuse.skipped}>· {say("read on its own", "単独で読む")}</span>}
+              {part.recording.take > 1 && <span>· {say(`take ${part.recording.take}`, `テイク ${part.recording.take}`)}</span>}
+              <button type="button" aria-expanded={open === key} aria-controls={panel} onClick={() => setOpen(open === key ? null : key)}
+                aria-label={say(`Takes of ${part.recording.text} (${lineName(line.id, say)}, ${preview.char})`, `「${part.recording.text}」のテイク（${preview.char}・${lineName(line.id, say)}）`)}
+                className="ml-1 inline-flex min-h-9 items-center gap-1 rounded-control px-2 text-xs font-semibold text-primary hover:bg-primary/10 aria-expanded:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <Mic aria-hidden className="size-3.5" />{say("Takes", "テイク")}</button>
+            </li>;
+          })}
+        </ul>
+        {line.parts.map((part, i) => open === `${line.id}:${i}` && <div key={i}>
+          {part.reuse && !part.reuse.skipped && <p className="mt-2 text-xs text-muted-foreground sm:ml-[6.5rem]">{say(`This part is heard from ${lineName(part.reuse.from, say)}'s recording: its takes are these.`,
+            `この部分は${lineName(part.reuse.from, say)}の録音を使います。そのテイクです。`)}</p>}
+          <KanjiTakesPanel id={`takes-${preview.char}-${line.id}-${i}`}
+            recording={part.recording} phrase={part.phrase && !(part.reuse && !part.reuse.skipped)} provider={provider} onChanged={onChanged} say={say} />
+        </div>)}
       </li>)}
     </ol>
   </li>;
@@ -331,7 +349,8 @@ export function KanjiShortsWorkspace({ locale }: { locale: Locale }) {
               : tooMany ? <p className="text-sm text-status-danger">{say(`Choose at most ${MAX_KANJI} kanji to see their shorts.`, `内容を見るには ${MAX_KANJI} 字以内にしてください。`)}</p>
               : previewError ? <p role="alert" className={alertBox}><AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-status-danger" />{previewError}</p>
               : previewing && !previews.length ? <p role="status" className="text-sm text-muted-foreground">{say("Preparing the preview…", "プレビューを準備しています…")}</p>
-              : <ul className="flex flex-col gap-3">{previews.map(item => <PreviewCard key={item.char} preview={item} settings={studio.settings} say={say} />)}</ul>}
+              : <ul className="flex flex-col gap-3">{previews.map(item => <PreviewCard key={item.char} preview={item} settings={studio.settings} provider={studio.provider}
+                onChanged={() => void reload()} say={say} />)}</ul>}
           </div>
         </Surface>
       </div>

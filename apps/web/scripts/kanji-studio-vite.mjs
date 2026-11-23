@@ -18,6 +18,7 @@ import { sendVideo } from "./video-production/media-range.mjs";
 import { productionProviderKey } from "./video-production/provider-keychain.mjs";
 import { findChromium } from "./video-production/try.mjs";
 import { JobsUnavailableError, withWorkerJob } from "./video-production/worker-job.mjs";
+import { MAX_TAKE, kanjiTakes, recordKanjiTake, takeMeasure, takeText } from "./video-production/kanji-takes.mjs";
 
 export const KANJI_STUDIO_PREFIX = "/api/contentgen-kanji";
 /** The most kanji one run makes: each is a few minutes of rendering. */
@@ -61,6 +62,9 @@ export function kanjiFromText(text) {
   return chars;
 }
 
+/** A text setting without any key for this text (the config compares keys trimmed and in Unicode NFC). */
+const sameText = (a, b) => a.normalize("NFC").trim() === b.normalize("NFC").trim();
+const withoutText = (settings, text) => Object.fromEntries(Object.entries(settings ?? {}).filter(([key]) => !sameText(key, text)));
 const VERSION = /^v\d{1,5}$/u, STILL = /^frame-\d{6}\.png$/u;
 
 /**
@@ -183,6 +187,32 @@ export function createKanjiStudioApi(deps = {}) {
     } catch (error) { release(); throw error; }
   }
 
+  /**
+   * Record one more take of a text. Pressing the button is the consent for that one request, as
+   * Make is for a run; one take at a time.
+   */
+  let recording = false;
+  async function recordTake(body) {
+    if (recording) return [409, { error: "A take is being recorded. Wait for it." }];
+    const part = takeText(body);
+    recording = true;
+    try {
+      const { studio, problem } = await loadStudio();
+      if (!studio) return [422, { error: problem }];
+      const provider = studio.config.voice.provider ?? "fish", consent = body.consent ?? {};
+      if (provider === "fish" && !(consent.allowNetwork === true && consent.voiceConsent === true && consent.transmitText === true))
+        return [400, { error: "Recording a take with Fish sends this text to Fish Audio: confirm the network, the voice and the text." }];
+      if (provider === "local" && consent.localVoice !== true) return [400, { error: "Confirm the local voice to record a take." }];
+      let apiKey;
+      if (provider === "fish") {
+        apiKey = await (deps.providerKey ?? productionProviderKey)("fish", { env: process.env }).catch(() => undefined);
+        if (!apiKey) return [422, { error: "No Fish Audio key. Add it in Settings → Connections, then record again." }];
+      }
+      const made = await recordKanjiTake(studio.config, part, { apiKey, ...(deps.synthesize ? { synthesize: deps.synthesize } : {}) });
+      return [200, { take: made.take, ...(await takeMeasure(made.wavPath)) }];
+    } finally { recording = false; }
+  }
+
   /** A release file the page shows: the video, or its last still as the poster. Only real files under the output root. */
   async function releaseFile(outputRoot, folder, version, file) {
     if (!releaseChar(folder) || !VERSION.test(version)) return null;
@@ -210,6 +240,68 @@ export function createKanjiStudioApi(deps = {}) {
         if (!studio) return respond(res, 422, { error: problem });
         const chars = kanjiFromText(url.searchParams.get("kanji") ?? "");
         return respond(res, 200, { releases: await kanjiReleases(studio.config.outputRoot, { chars }) });
+      }
+      if (req.method === "GET" && route === "/takes") {
+        const { studio, problem } = await loadStudio();
+        if (!studio) return respond(res, 422, { error: problem });
+        const part = takeText({ text: url.searchParams.get("text") ?? "", locale: url.searchParams.get("locale") ?? "" });
+        const takes = await kanjiTakes(studio.config, part);
+        return respond(res, 200, { takes: await Promise.all(takes.map(async take => ({ take: take.take, ...(await takeMeasure(take.wavPath).catch(() => ({ seconds: 0, pitch: [], shape: null, rise: null, fall: null, unreadable: true }))) }))) });
+      }
+      if (req.method === "GET" && route === "/take-audio") {
+        const { studio, problem } = await loadStudio();
+        if (!studio) return respond(res, 422, { error: problem });
+        const part = takeText({ text: url.searchParams.get("text") ?? "", locale: url.searchParams.get("locale") ?? "" });
+        const number = Number(url.searchParams.get("take"));
+        const found = Number.isInteger(number) && number >= 1 && number <= MAX_TAKE ? (await kanjiTakes(studio.config, part)).find(take => take.take === number) : null;
+        if (!found) return respond(res, 404, { error: "That take does not exist." });
+        const info = await lstat(found.wavPath);
+        res.writeHead(200, { ...headers, "Content-Type": "audio/wav", "Content-Length": info.size });
+        createReadStream(found.wavPath).on("error", () => res.destroy()).pipe(res);
+        return;
+      }
+      if (req.method === "POST" && route === "/takes") {
+        const body = await readBody(req);
+        const [status, payload] = await recordTake(body);
+        return respond(res, status, payload);
+      }
+      if (req.method === "POST" && route === "/takes/use") {
+        const body = await readBody(req);
+        const part = takeText({ text: body.text, locale: "ja" });
+        if (!(Number.isInteger(body.take) && body.take >= 1 && body.take <= MAX_TAKE)) return respond(res, 400, { error: `A take is a whole number from 1 to ${MAX_TAKE}.` });
+        // The choice is a retake in the settings file: take 1 is the first recording, so no entry.
+        const saved = saving.then(async () => {
+          const { studio, problem } = await loadStudio();
+          if (!studio) return [422, { error: problem }];
+          const retakes = withoutText(studio.raw.narration?.retakes, part.text);
+          // Take 1 needs no entry, unless a key that names fields ({labels.kun}、) would choose another take for it.
+          const named = Object.keys(retakes).some(key => /\{[^}]*\}/u.test(key));
+          if (body.take > 1 || named) retakes[part.text] = body.take;
+          const next = applyKanjiStudioSettings(studio.raw, { "narration.retakes": Object.keys(retakes).length ? retakes : null }, configPath);
+          const revision = await saveKanjiConfig(configPath, next, studio.revision);
+          return [200, { revision, settings: kanjiStudioSettings(next) }];
+        });
+        saving = saved.catch(() => {});
+        const [status, payload] = await saved;
+        return respond(res, status, payload);
+      }
+      if (req.method === "POST" && route === "/speech") {
+        const body = await readBody(req);
+        const part = takeText({ text: body.text, locale: "ja" });
+        if (typeof body.as !== "string" || body.as.length > 40) return respond(res, 400, { error: "Send what the voice reads instead, up to 40 characters, or nothing to read the part as written." });
+        // "Spoken as" in the settings file: an empty text reads the part as written again.
+        const saved = saving.then(async () => {
+          const { studio, problem } = await loadStudio();
+          if (!studio) return [422, { error: problem }];
+          const speech = withoutText(studio.raw.narration?.speech, part.text);
+          if (body.as.trim() && body.as.trim() !== part.text.trim()) speech[part.text] = body.as.trim();
+          const next = applyKanjiStudioSettings(studio.raw, { "narration.speech": Object.keys(speech).length ? speech : null }, configPath);
+          const revision = await saveKanjiConfig(configPath, next, studio.revision);
+          return [200, { revision, settings: kanjiStudioSettings(next) }];
+        });
+        saving = saved.catch(() => {});
+        const [status, payload] = await saved;
+        return respond(res, status, payload);
       }
       const media = /^\/media\/([^/]+)\/([^/]+)\/(video\.mp4|poster\.png)$/u.exec(route);
       if (req.method === "GET" && media) {

@@ -8,9 +8,10 @@ import { lstat, open, readdir, readFile, realpath, rename, rm, stat, writeFile }
 import { basename, dirname, join } from "node:path";
 import { expandNarrationScript } from "./anchored-narration.mjs";
 import { readKanjiConfig } from "./kanji-config.mjs";
-import { kanjiScriptData, kanjiShortContent, kanjiTextSettings, readKanjiDataset, retakeFor, reuseFor, reuseSources } from "./kanji-short.mjs";
-import { kanjiNarrationScript, kanjiVgSvg, loadKanjiPlanner } from "./kanji-short-producer.mjs";
-import { scriptRuns, voiceFor } from "./voice-runs.mjs";
+import { kanjiScriptData, kanjiShortContent, kanjiTextSettings, readKanjiDataset, retakeFor, reuseFor, reuseSources, spokenAs } from "./kanji-short.mjs";
+import { kanjiNarrationScript, kanjiPartOptions, kanjiVgSvg, loadKanjiPlanner } from "./kanji-short-producer.mjs";
+import { kanjiSpokenParts } from "./kanji-short.mjs";
+import { voiceFor } from "./voice-runs.mjs";
 
 const fail = (message) => { throw new Error(message); };
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
@@ -63,10 +64,11 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
     const data = kanjiScriptData(content, { labels: config.narration.labels, strokeCount: strokeCount ?? 0 });
     const lines = expandNarrationScript(script, data);
     const voiceIds = config.voice.voiceIds;
-    // What one voice reads of a line: its runs with a voice per language, else the whole line.
-    const partsOf = (line) => voiceIds ? scriptRuns(line.say, line.locale) : [{ text: line.say, locale: line.locale }];
+    // What one recording reads: a line's parts, as the producer reads them (kanjiSpokenParts).
+    const partsOf = (line) => kanjiSpokenParts(line, kanjiPartOptions(config));
     const reuse = kanjiTextSettings(config.narration.reuse, data), retakes = kanjiTextSettings(config.narration.retakes, data);
-    const units = lines.flatMap(line => partsOf(line).map(run => ({ line: line.id, text: run.text, locale: run.locale, reusedFrom: reuseFor(run.text, reuse) })));
+    const units = lines.flatMap(line => partsOf(line).map(part => ({ line: line.id, text: spokenAs(part.text, config.narration.speech) ?? part.text, written: part.text,
+      locale: part.locale, phrase: part.phrase, reusedFrom: reuseFor(part.text, reuse) })));
     const reuses = reuseSources(units);
     previews.push({
       char, found: true, meanings: content.meanings, jlpt: content.jlpt ?? null, name: content.name,
@@ -78,13 +80,19 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
         return {
           id: line.id, locale: line.locale, at: line.at, offset: line.offset ?? 0, say: line.say, caption: line.caption,
           // Split: read in runs by more than one voice, or by a voice of another language than the line's.
-          split: !!voiceIds && (parts.length > 1 || parts[0]?.locale !== line.locale),
+          split: parts.length > 1 || parts[0]?.locale !== line.locale,
           parts: parts.map(unit => {
-            const found = reuses.get(unit), take = retakeFor(unit.text, retakes);
+            const found = reuses.get(unit), chosen = retakeFor(unit.text, retakes), take = chosen > 1 ? chosen : undefined;
             return {
-              text: unit.text, locale: unit.locale, voiceId: voiceFor(unit.locale, voiceIds, config.voice.voiceId),
-              ...(found?.cut ? { reuse: { from: unit.reusedFrom, whole: found.cut.whole } } : found ? { reuse: { from: unit.reusedFrom, skipped: found.why } } : {}),
+              text: unit.written, ...(unit.text !== unit.written ? { spoken: unit.text } : {}),
+              locale: unit.locale, voiceId: voiceFor(unit.locale, voiceIds, config.voice.voiceId), phrase: unit.phrase,
+              ...(found?.cut ? { reuse: { from: unit.reusedFrom, whole: found.cut.whole, source: found.source.text } } : found ? { reuse: { from: unit.reusedFrom, skipped: found.why } } : {}),
               ...(take && !found?.cut ? { retake: take } : {}),
+              // The recording this part is heard from: its own, or for a reused part the other line's part.
+              // `written` is the part as its line says it: the key a "read as" (narration.speech) is saved under.
+              recording: found?.cut ? { text: found.source.text, written: found.source.written ?? found.source.text, locale: found.source.locale,
+                take: Math.max(1, retakeFor(found.source.text, retakes) ?? 1) }
+                : { text: unit.text, written: unit.written, locale: unit.locale, take: take ?? 1 },
             };
           }),
         };
@@ -103,11 +111,13 @@ export function previewText(preview) {
   if (preview.strokeLinesLeftOut) out.push(`  (stroke lines are left out: ${preview.char}'s KanjiVG data is not cached yet)`);
   for (const line of preview.lines) {
     out.push(`  ${line.id.padEnd(9)} [${line.locale} @ ${line.at}${line.offset ? ` ${line.offset >= 0 ? "+" : ""}${line.offset} s` : ""}] ${line.say}${line.caption !== line.say ? `   (caption: ${line.caption})` : ""}`);
-    if (line.split) out.push(`            voices: ${line.parts.map(part => `"${part.text}" ${part.locale} (${part.voiceId.slice(0, 8)}…)`).join(" + ")}`);
+    if (!line.split && line.parts.length === 1 && line.parts[0].phrase) out.push("            phrase: one recording, used in every short");
+    if (line.split) out.push(`            parts: ${line.parts.map(part => `"${part.text}" ${part.locale} (${part.voiceId.slice(0, 8)}…)${part.phrase ? " phrase" : ""}`).join(" + ")}`);
     for (const part of line.parts) {
-      if (part.reuse && !part.reuse.skipped) out.push(`            reuse: "${part.text}" is read as ${part.reuse.whole ? "the whole" : "the part after the last comma"} of line ${part.reuse.from}`);
+      if (part.reuse && !part.reuse.skipped) out.push(`            reuse: "${part.text}" is read with line ${part.reuse.from}'s recording of "${part.reuse.source}"${part.reuse.whole ? "" : " (its part after the last comma)"}`);
       else if (part.reuse) out.push(`            reuse: not here (${part.reuse.skipped}); "${part.text}" is read on its own`);
-      if (part.retake) out.push(`            retake: "${part.text}" take ${part.retake}`);
+      if (part.spoken) out.push(`            spoken as: "${part.text}" is read as "${part.spoken}"`);
+      if (part.retake) out.push(`            retake: "${part.spoken ?? part.text}" take ${part.retake}`);
     }
   }
   out.push(`  words     ${preview.words.map(word => `${word.word} (${word.ruby}, ${word.meaning})`).join(" · ")}`);

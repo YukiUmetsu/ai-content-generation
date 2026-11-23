@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { expandNarrationScript, placeOnAnchors, readNarrationScript } from "./anchored-narration.mjs";
 import {
-  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, reuseSources, kanjiTextSettings, textKeyProblem, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
+  KANJI_CARD_ANCHORS, kanjiCardAnchors, kanjiCardInset, retakeFor, reuseCut, reuseFor, reuseSources, kanjiTextSettings, textKeyProblem, kanjiSpokenParts, spokenAs, PHRASE_GAP, kanjiIntro, kanjiScriptData, kanjiShortContent, kanjiShortTiming, readKanjiDataset, readingKana, readingPairs,
   readingRomaji,
 } from "./kanji-short.mjs";
 import { DEFAULT_KANJI_SCRIPT } from "./kanji-short-producer.mjs";
@@ -161,4 +161,44 @@ test("a reused text comes only from where the source line says exactly it after 
   assert.equal(kanjiTextSettings(undefined, hitoData), undefined);
   assert.equal(textKeyProblem("{name.kana}"), null);
   assert.match(textKeyProblem("{item.word}と{name}"), /names \{item\.word\}, \{name\}/u);
+});
+
+test("a line is read in parts at its template's commas: phrases said in every short are their own recordings", async () => {
+  const { expandNarrationScript } = await import("./anchored-narration.mjs");
+  const script = { steps: [
+    { id: "question", say: "Do you know how to write the kanji {name.kana}?", at: "start", locale: "en" },
+    { id: "onyomi", say: "{labels.on}、{onyomi}。", at: "write.firstStroke" },
+    { id: "intro", say: "Some common words using this kanji are", at: "review.end", locale: "en" },
+  ], locale: "ja" };
+  const data = { name: { kana: "ひと" }, labels: { on: "おんよみ" }, onyomi: "ジン、ニン" };
+  const [question, on, intro] = expandNarrationScript(script, data);
+  const voiceIds = { ja: "j".repeat(16), en: "e".repeat(16) };
+  assert.deepEqual(kanjiSpokenParts(on, { voiceIds }).map(p => [p.text, p.phrase, p.gapBefore]),
+    [["おんよみ、", true, undefined], ["ジン、ニン。", false, PHRASE_GAP]]);         // the reading's own comma does not split it
+  assert.deepEqual(kanjiSpokenParts(question, { voiceIds }).map(p => [p.text, p.locale, p.phrase, p.gapBefore]),
+    [["Do you know how to write the kanji", "en", true, undefined], ["ひと", "ja", false, undefined]]);
+  assert.deepEqual(kanjiSpokenParts(intro, { voiceIds }).map(p => [p.text, p.phrase]), [["Some common words using this kanji are", true]]);
+  // Without a voice per language a line still splits at its commas; with split: false it is read whole.
+  assert.deepEqual(kanjiSpokenParts(on, { phraseGap: .3 }).map(p => [p.text, p.gapBefore]), [["おんよみ、", undefined], ["ジン、ニン。", .3]]);
+  assert.deepEqual(kanjiSpokenParts(on, { split: false }).map(p => p.text), ["おんよみ、ジン、ニン。"]);
+  // Each part knows where it lies in the line (for the name's pulse).
+  assert.deepEqual(kanjiSpokenParts(on, { voiceIds }).map(p => [p.from, p.to]), [[0, 5], [5, 11]]);
+});
+
+test("a part can be spoken as another text (narration.speech), matched on what the line says", () => {
+  assert.equal(spokenAs("いま。", { "いま。": "今。" }), "今。");
+  assert.equal(spokenAs("いま。", { "水泳": "すいえい" }), undefined);
+  assert.equal(spokenAs("いま。", { "いま。": "  " }), undefined);
+  // A reuse is matched on what the lines say, so a reading spoken as its kanji still gives the name its audio.
+  const name = { line: "question", text: "いま", reusedFrom: "kunyomi" }, kun = { line: "kunyomi", text: "今。", written: "いま。" };
+  assert.deepEqual(reuseSources([name, kun]).get(name).cut, { whole: true, pauses: 0 });
+});
+
+test("a part of punctuation only is never read alone", async () => {
+  const { expandNarrationScript } = await import("./anchored-narration.mjs");
+  const [line] = expandNarrationScript({ steps: [{ id: "onyomi", say: "{labels.on}、{onyomi}。", at: "start" }], locale: "ja" },
+    { labels: { on: "On'yomi" }, onyomi: "コン" });
+  const parts = kanjiSpokenParts(line, { voiceIds: { ja: "j".repeat(16), en: "e".repeat(16) } });
+  assert.deepEqual(parts.map(p => [p.text, p.locale, p.gapBefore]), [["On'yomi", "en", undefined], ["、コン。", "ja", PHRASE_GAP]]);
+  assert.ok(parts.every(p => /[\p{L}\p{N}]/u.test(p.text)));
 });

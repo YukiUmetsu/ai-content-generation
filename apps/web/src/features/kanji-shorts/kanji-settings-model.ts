@@ -41,7 +41,7 @@ export function draftProblems(draft: Draft): DraftProblem[] {
   if (half(draft.reuse)) problems.push("reuse-row");
   if (half(draft.retakes)) problems.push("retakes-row");
   if (half(draft.speech)) problems.push("speech-row");
-  if (draft.retakes.some(([key, take]) => key.trim() && take.trim() && !(Number.isInteger(Number(take)) && Number(take) >= 2 && Number(take) <= 99))) problems.push("retake-number");
+  if (draft.retakes.some(([key, take]) => key.trim() && take.trim() && !(Number.isInteger(Number(take)) && Number(take) >= 1 && Number(take) <= 99))) problems.push("retake-number");
   if ([draft.maxWords, draft.write, draft.review].some(text => text.trim() !== "" && !Number.isFinite(Number(text)))) problems.push("number");
   const keys = (pairs: Pairs) => pairs.map(([key]) => key.trim()).filter(Boolean);
   if ([draft.reuse, draft.retakes, draft.speech].some(pairs => new Set(keys(pairs)).size !== keys(pairs).length)) problems.push("duplicate");

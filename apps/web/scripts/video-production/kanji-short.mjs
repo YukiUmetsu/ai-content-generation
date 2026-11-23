@@ -4,6 +4,7 @@
  * (default: kanji-short-script.json), so its wording, order and timing are data, not code.
  */
 import { renderTemplate } from "./anchored-narration.mjs";
+import { scriptRuns } from "./voice-runs.mjs";
 
 export const KANJI_FPS = 30;
 const LEVELS = new Set(["N5", "N4", "N3", "N2", "N1"]);
@@ -190,6 +191,45 @@ export function textSetting(text, settings) {
   return undefined;
 }
 
+/** The pause between a phrase and the rest of its line (with each clip's own silence, about a comma's 0.26 s). */
+export const PHRASE_GAP = 0.15;
+
+/**
+ * What one line is read as: its parts in order, `{ text, locale, from, to, phrase, gapBefore? }`.
+ * - At each of the template's own commas (おんよみ、{onyomi}。) a line is read in parts, so a part
+ *   that is the same in every short (a label, a fixed sentence: `phrase`) is one recording, made
+ *   once and used in every short, and only the kanji's own text is new. `split: false` reads a line whole.
+ * - With a voice per language, each part is read in runs by its language's voice (scriptRuns).
+ * - `gapBefore` is the pause before a part that follows a comma; runs of one sentence keep theirs.
+ * - A part is a phrase when none of the kanji's own fields falls in it (labels are settings, the same everywhere).
+ */
+export function kanjiSpokenParts(line, { voiceIds, split = true, phraseGap = PHRASE_GAP } = {}) {
+  const ends = split ? (line.breaks ?? []).filter(at => at > 0 && at < line.say.length) : [];
+  const bounds = [0, ...ends, line.say.length], parts = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const from = bounds[i], text = line.say.slice(from, bounds[i + 1]);
+    if (!text.trim()) continue;
+    const runs = voiceIds ? scriptRuns(text, line.locale) : [{ text, locale: line.locale, from: 0, to: text.length }];
+    runs.forEach((run, k) => {
+      const at = from + run.from, to = from + run.to;
+      const own = (line.fields ?? []).some(field => !field.path.startsWith("labels.") && field.from < to && field.to > at);
+      parts.push({ text: run.text, locale: run.locale, from: at, to, phrase: !own, ...(parts.length && k === 0 ? { gapBefore: phraseGap } : {}) });
+    });
+  }
+  // A part that is only punctuation (a "、" between an English label and its reading) is never read alone:
+  // it joins the part before it in its language, else the part after it.
+  const spoken = /[\p{L}\p{N}]/u;
+  for (let i = 0; i < parts.length; i++) {
+    if (spoken.test(parts[i].text) || parts.length === 1) continue;
+    const [lone] = parts.splice(i, 1);
+    const before = parts[i - 1], after = parts[i];
+    if (before && (before.locale === lone.locale || !after)) { before.text += lone.text; before.to = lone.to; }
+    else if (after) { after.text = lone.text + after.text; after.from = lone.from; after.phrase = after.phrase && lone.phrase; if (lone.gapBefore !== undefined) after.gapBefore = lone.gapBefore; }
+    i--;
+  }
+  return parts.length ? parts : [{ text: line.say, locale: line.locale, from: 0, to: line.say.length, phrase: !(line.fields ?? []).some(f => !f.path.startsWith("labels.")) }];
+}
+
 /** The fields a text setting's key may name, so one entry covers every kanji: { "{name.kana}": "kunyomi" }. */
 export const KANJI_TEXT_FIELDS = Object.freeze(["char", "name.kana", "name.romaji", "meanings", "jlpt", "onyomi", "kunyomi", "labels.on", "labels.kun"]);
 const FIELD = /\{([^}]*)\}/gu;
@@ -213,6 +253,12 @@ export function kanjiTextSettings(settings, data) {
     .filter(([text]) => text.trim() && !texts.has(text.normalize("NFC").trim()));
   return [...exact, ...filled];
 }
+
+/** The text a voice reads for a part that `narration.speech` reads as another text ({ "いま。": "今。" }), or undefined. */
+export const spokenAs = (text, speech) => {
+  const value = textSetting(text, speech);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+};
 
 /** The retake asked for a text one voice reads (`narration.retakes`, for example { "ひと": 5 }), or undefined. */
 export const retakeFor = (text, retakes) => textSetting(text, retakes);
@@ -251,7 +297,8 @@ export function reuseSources(units) {
   return new Map(asked.map(unit => {
     const from = unit.reusedFrom, source = units.filter(u => u.line === from).at(-1);
     const why = !source ? `this short has no line ${from}` : from === unit.line ? "it is the text's own line" : reusing.has(from) ? `line ${from} is itself reused` : null;
-    const cut = why ? null : reuseCut(source.text, unit.text);
+    // Matched on what the lines say, also where a part is spoken as another text.
+    const cut = why ? null : reuseCut(source.written ?? source.text, unit.written ?? unit.text);
     return [unit, cut ? { source, cut } : { why: why ?? `line ${from} does not say "${unit.text}" after a comma` }];
   }));
 }

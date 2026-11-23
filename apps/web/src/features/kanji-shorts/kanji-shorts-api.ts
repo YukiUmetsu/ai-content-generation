@@ -36,7 +36,21 @@ export type StudioState =
   | { configured: true; configPath: string; revision: string; provider: "fish" | "local"; outputRoot: string;
       settings: KanjiSettings; catalog: CatalogKanji[]; run: Run | null };
 
-export type PreviewPart = { text: string; locale: string; voiceId: string; reuse?: { from: string; whole?: boolean; skipped?: string }; retake?: number };
+/** The recording a part is heard from: its text as the voice reads it, its language and the take in use. */
+export type Recording = { text: string; locale: string; take: number; /** The part as its line says it: where a "read as" is saved. */ written: string };
+export type PreviewPart = {
+  text: string; locale: string; voiceId: string; reuse?: { from: string; whole?: boolean; skipped?: string; source?: string }; retake?: number;
+  /** Said in every short: one recording, made once. */
+  phrase: boolean;
+  /** The text the voice reads instead (narration.speech), when it differs. */
+  spoken?: string;
+  recording: Recording;
+};
+
+/** One take of a recording, measured: its pitch every few hundredths of a second (Hz, null unvoiced) and its shape. */
+export type Take = { take: number; seconds: number; pitch: (number | null)[]; shape: "rises" | "falls" | "level" | null; rise: number | null; fall: number | null;
+  /** The voice returned no speech; or the take could not be measured. */
+  silent?: boolean; unreadable?: boolean };
 export type PreviewLine = { id: string; locale: string; at: string; offset: number; say: string; caption: string; split: boolean; parts: PreviewPart[] };
 export type KanjiPreview =
   | { char: string; found: false }
@@ -90,6 +104,18 @@ export const startRun = (kanji: string, provider: "fish" | "local") => call<{ ru
   consent: provider === "fish" ? { allowNetwork: true, voiceConsent: true, transmitText: true } : { allowNetwork: true, localVoice: true },
 }, 60000);
 export const cancelRun = () => call<{ run: Run }>("/cancel", {});
+
+export const loadTakes = (recording: Pick<Recording, "text" | "locale">) =>
+  call<{ takes: Take[] }>(`/takes?text=${encodeURIComponent(recording.text)}&locale=${encodeURIComponent(recording.locale)}`, undefined, 30000);
+/** Record one more take. Pressing the button is the consent to send this text to the voice. */
+export const recordTake = (recording: Pick<Recording, "text" | "locale">, provider: "fish" | "local") => call<Take>("/takes", {
+  ...recording, consent: provider === "fish" ? { allowNetwork: true, voiceConsent: true, transmitText: true } : { localVoice: true },
+}, 120000);
+export const chooseTake = (text: string, take: number) => call<{ revision: string; settings: KanjiSettings }>("/takes/use", { text, take });
+/** Read a part as another text (narration.speech), or as itself again (`as` empty). */
+export const speakAs = (text: string, as: string) => call<{ revision: string; settings: KanjiSettings }>("/speech", { text, as });
+export const takeAudio = (recording: Pick<Recording, "text" | "locale">, take: number) =>
+  `${KANJI_API}/take-audio?text=${encodeURIComponent(recording.text)}&locale=${encodeURIComponent(recording.locale)}&take=${take}`;
 
 /** A run the server no longer knows: its unfinished shorts are unknown, never shown as still progressing. */
 export const lostRun = (run: Run): Run => ({ ...run, state: "lost",

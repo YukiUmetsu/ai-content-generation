@@ -64,3 +64,12 @@ test("each run knows where it lies in the line, so a pulse finds its run after p
   assert.ok(Math.abs(at("つき") * 2.8 - (1 + .8 * 3 / 8)) < .05);
   assert.deepEqual(scriptRuns("It's 'つき'.", "en"), [{ text: "It's", locale: "en" }, { text: "つき", locale: "ja" }]);
 });
+
+test("a run's own gap replaces the line's gap before it (a comma's pause after a phrase)", async () => {
+  const { joinRunTakes } = await import("./voice-runs.mjs");
+  const take = (ms) => ({ clip: new Int16Array(48 * ms).fill(1000), lead: 0, speech: ms / 1000 });
+  const joined = joinRunTakes([take(100), { ...take(100), gapBefore: .15 }, take(100)], { gap: .04 });
+  assert.equal(joined.clip.length, 48 * (100 + 150 + 100 + 40 + 100));
+  assert.deepEqual(joined.starts.map(s => Math.round(s * 1000)), [0, 250, 390]);
+  assert.throws(() => joinRunTakes([take(100), { ...take(100), gapBefore: 3 }]), /0 to 2 seconds/u);
+});

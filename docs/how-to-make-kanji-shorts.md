@@ -67,12 +67,25 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - Digits go with the text they touch (12月 is Japanese).
   - The Japanese voice does not read the English sentence's ASCII punctuation: a lone "つき?" came out as すき. The English run is read without the sentence's final "?"; the caption keeps it.
   - The question's pulse lands as the name's run starts. `--dry-run` shows which voice reads which part, and the release's manifest records each run's voice.
+- **Phrases said in every short are recorded once.** A line is read in parts at its template's own commas: in `{labels.on}、{onyomi}。` the label "おんよみ、" is one part and the reading "ネン。" another.
+  - A part with none of the kanji's own fields in it is a **phrase**: おんよみ、, くんよみ、, "Do you know how to write the kanji", "Some common words using this kanji are". It is one recording, made once and heard in every short. Each new short records only its own words and readings.
+  - The parts are joined with `narration.phraseGap` (0.15 s, default) between them. With each clip's own silence this is about the 0.26 s comma pause the voice makes inside a line.
+  - `narration.splitPhrases: false` reads every line whole again.
+  - `--dry-run` marks phrases. The release's manifest records `phrase: true` for each one.
 - **Words are spoken as written**, so the voice reads them in context. An irregular reading (今日, 大人) is spoken from its kana. `narration.speech` overrides the text for a word that the voice misreads, for example `{ "水泳": "すいえい" }`.
-- **A fresh take of a flubbed line.** A voice can flub one take (the Japanese voice once read the name ひと as ひとだ), and the cache would return that take every time. `narration.retakes` asks again for a text the voice reads, for example `{ "ひと": 5 }`; raise the number for another take.
-  - The key is the exact text one voice reads, punctuation included: with `voice.voiceIds` the question's name is its own run ("ひと"), and a word line is the word with its 。 ("人間。"). `--dry-run` shows each split line's runs and the retakes that apply; a key that matches nothing in a short is not used there.
+  - **Any part can be read as another text** too, keyed by the part as the line says it: `{ "いま。": "今。" }` gives the voice the kanji. In kana いま is also 居間 and came out rising; as 今 it falls from い to ま. The caption and the card keep the line's own text. The name that reuses this reading follows it.
+- **A fresh take of a flubbed line.** A voice can flub one take, and the cache would return that take every time. The Japanese voice once read the name ひと as ひとだ, and gave とし a rise at its end. `narration.retakes` chooses the take of a text, for example `{ "とし。": 3 }`.
+  - The key is the exact text one voice reads, punctuation included: a reading part ("とし。"), a phrase ("くんよみ、") or a word line ("人間。"). For a part read as another text, the key is that text ("今。").
+  - A phrase's take is heard in every short made from then on. A short already made keeps its recording until it is made again.
+  - `--dry-run` shows each line's parts and the retakes that apply. A key that matches nothing in a short is not used there.
+- **Takes: hear, compare and choose.**
+  - **In the Studio,** each part in "What each short says" has **Takes**. It lists the recorded takes. You can play each one and see its measured pitch line and shape, then **Use this take**, **Record another take**, or **Read as** another text.
+  - **The pitch is measured, not judged.** A take that *rises* climbs to its end like a question. One that *falls* drops after its peak (今: い high, ま low). A *level* take does neither. A devoiced し has too little voice to measure. Listen, then choose.
+  - **On the command line,** `pnpm video:kanji -- 年 --takes` lists every recording of the shorts with its takes and the take in use. `--new-take "とし。" --allow-network --voice-consent --transmit-text` records one more take.
+  - **After choosing,** make the short again to hear the new take in it.
   - Every take is cached on its own, so going back to an earlier number costs nothing; removing the entry goes back to the first take.
   - The release's QA report and manifest record the take of each line or run.
-- **Reuse a natural reading.** A word read alone can sound stilted, while the same word inside a line sounds natural. `narration.reuse` reads a text with the audio of another line of the same short, for example `{ "ひと": "kunyomi" }`: the question's name 人 is the very audio of "ひと" in "くんよみ、ひと。".
+- **Reuse a reading.** `narration.reuse` reads a text with the audio of another line of the same short. With `{ "{name.kana}": "kunyomi" }`, the question's name 人 is the very recording of the reading "ひと。" in the kun'yomi line. So the name and the reading sound the same, and one choice of take fixes both.
   - The key is the exact text one voice reads, as for retakes; the value is a line id (`question`, `onyomi`, `kunyomi`, `word-1`, …).
   - **One entry for every kanji:** a key may name the kanji's fields. `{ "{name.kana}": "kunyomi" }` reads each kanji's name with the audio of its kun'yomi line (人: ひと, 年: とし). This is the Studio's "Read each kanji's name with the audio of its kun'yomi line" switch. The fields are `{char}`, `{name.kana}`, `{name.romaji}`, `{meanings}`, `{jlpt}`, `{onyomi}`, `{kunyomi}`, `{labels.on}` and `{labels.kun}`; another field stops at config read. An exact text wins over a key that fills in to the same text, and a key that fills in empty (a kanji with no kun'yomi) does nothing. `narration.retakes` keys may name fields too.
   - It applies only where that line says exactly the text after its last comma (or is just that text). The config covers every kanji, so in a short whose line says something else (費: "くんよみ、ついやす。") the text is read on its own. `--dry-run` shows where it applies.
@@ -91,7 +104,13 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
 Make the folder `data/kanji-shorts/` (git ignores `data/`). Put `config.json` in it, after `apps/web/fixtures/kanji-short/config.example.json`:
 
 - `dataset`: the kanji study-card data (`{ kanji: [{ char, jlpt, words, card }] }`), for example `jlpt-n5-n3.json` from the private `kumiki-shodo` repository. Put its credit line in `credits`.
-- `narration`: optional `script` (a file or the script itself), `labels` (`{ "on", "kun" }`, the words the voice says before each reading) `speech` (the text the voice reads for a word it misreads), `retakes` (a fresh take of a text the voice flubbed) and `reuse` (a text read as the last phrase of another line).
+- `narration`: optional settings:
+  - `script`: a file, or the script itself.
+  - `labels`: `{ "on", "kun" }`, the words the voice says before each reading.
+  - `speech`: the text the voice reads for a word it misreads, or for any part of a line.
+  - `retakes`: the take of a text, from 1 (the first recording) to 99.
+  - `reuse`: a text read with another line's recording.
+  - `splitPhrases` and `phraseGap`: whether lines are read in parts, with phrases recorded once, and the pause between the parts.
 - `voice`:
   - `provider` is `fish` (default) or `local`.
   - **Fish:** `voiceId`, and `voiceIds` for a voice per language. Only the free model `s2.1-pro-free` is supported. The key comes from the macOS Keychain (Settings) or `FISH_AUDIO_API_KEY`. Make with `--allow-network --voice-consent --transmit-text`.
@@ -116,7 +135,8 @@ pnpm video:kanji -- 水 火 木 --allow-network --voice-consent --transmit-text 
 - Each kanji gets `<outputRoot>/<kanji>-<code point>/v1`, then `v2` on the next run. A release is never overwritten.
 - Fish speech and the KanjiVG stroke data are cached in `data/kanji-shorts/cache`, so a re-run costs no new Fish requests.
 - `--config <file>` and `--out <folder>` override the defaults.
-- `--dry-run --json` prints the same preview as JSON: each line, the voice of each part, and the reuses and retakes that apply.
+- `--dry-run --json` prints the same preview as JSON: each line, its parts with their voice, phrases and recording, and the reuses and retakes that apply.
+- `--takes` and `--new-take <text>` list and record takes (see "Takes" above).
 
 ### In the Studio
 
@@ -130,7 +150,8 @@ Open **Kanji shorts** in the Studio's navigation (`pnpm dev` from `apps/web`). T
    - A short that stops shows its error, and the run goes on to the next kanji.
    - With the local Rust server running, each short is a `video-kanji-short` job on the Jobs page, and cancelling it there stops it too. Without the server, the short is made anyway and says it is not tracked.
 4. **Watch.** The newest short of the chosen kanji plays with its earlier versions, its length, loudness, longest still, how its name was read, and any QA warnings. Nothing is published.
-5. **Settings.** The page edits the voices (Japanese, English, other languages), the pace, the name reuse, reuses, retakes, "spoken as" readings, the number of words, the band above the platforms' captions, and the writing and review passes.
+5. **Takes.** Each part of a line has its takes: play and compare them, choose one, record another, or have the voice read the part as another text. Recording a take sends that one text to Fish Audio when you press the button.
+6. **Settings.** The page edits the voices (Japanese, English, other languages), the pace, the name reuse, reuses, retakes, "spoken as" readings, the number of words, the band above the platforms' captions, and the writing and review passes.
    - Everything else in the file (data, music, script, the card's look, credits) stays as it is.
    - A save is checked like the CLI's config read, then written in one step, and only if the file has not changed since the page loaded it. A file edited meanwhile is never overwritten: reload, then make the change again.
 
