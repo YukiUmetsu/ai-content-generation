@@ -138,10 +138,10 @@ export function KanjiSettingsPanel({ settings, provider, onSave, onDirtyChange, 
         <legend className="mb-2 text-sm font-semibold text-foreground">{say("Narration", "ナレーション")}</legend>
         <label className="flex items-start gap-3 text-sm text-foreground">
           <input type="checkbox" className="mt-0.5 size-4 shrink-0" checked={draft.nameFromKunyomi} onChange={e => update({ nameFromKunyomi: e.target.checked })} />
-          <span>{say("Read each kanji's name with the audio of its kun'yomi line", "漢字の名前を訓読みの行と同じ音声で読む")}
+          <span>{say("Read each kanji's name with the audio of its reading line", "漢字の名前を読みの行と同じ音声で読む")}
             <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{say(
-              "A name read alone can sound stilted; in \"くんよみ、ひと。\" it sounds natural. Applies where the kun'yomi line ends with the name.",
-              "単独で読んだ名前は不自然になることがあります。「くんよみ、ひと。」の中の読みは自然です。訓読みの行が名前で終わる漢字に使います。")}</span>
+              "The question's name is the very recording of the reading: the kun'yomi line's (ひと for 人), else the on'yomi line's (ねん for 年 called nen).",
+              "問いかけの名前に、読みの録音をそのまま使います。訓読みの行（人なら ひと）、なければ音読みの行（年を ねん と呼ぶとき）。")}</span>
           </span>
         </label>
         <PairsEditor say={say} title={say("Reuse a reading", "読みの再利用")} pairs={draft.reuse} onChange={reuse => update({ reuse })}

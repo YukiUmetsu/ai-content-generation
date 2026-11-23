@@ -29,10 +29,10 @@ export async function readKanjiStudio(configPath) {
  * Every kanji of the data, in its order: what the Studio's picker lists. A kanji the producer
  * cannot make (no useful word, no reading) is listed with its `problem`, never dropped silently.
  */
-export function kanjiCatalog(entries) {
+export function kanjiCatalog(entries, { names = {} } = {}) {
   return [...entries.values()].map(entry => {
     try {
-      const content = kanjiShortContent(entry);
+      const content = kanjiShortContent(entry, { name: names[entry.char] });
       return { char: content.char, jlpt: content.jlpt ?? null, meanings: content.meanings, name: content.name };
     } catch (error) {
       return { char: entry.char, jlpt: entry.jlpt ?? null, meanings: String(entry.card?.meanings ?? ""), name: { kana: "", romaji: "" }, problem: String(error.message) };
@@ -53,7 +53,7 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
     const entry = entries.get(char);
     if (!entry) { previews.push({ char, found: false }); continue; }
     let content;
-    try { content = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3 }); }
+    try { content = kanjiShortContent(entry, { speech: config.narration.speech, maxWords: config.maxWords ?? 3, name: config.names?.[char] }); }
     catch (error) { previews.push({ char, found: true, problem: String(error.message) }); continue; }
     let strokeCount = null;
     try {
@@ -71,7 +71,7 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
       locale: part.locale, phrase: part.phrase, reusedFrom: reuseFor(part.text, reuse) })));
     const reuses = reuseSources(units);
     previews.push({
-      char, found: true, meanings: content.meanings, jlpt: content.jlpt ?? null, name: content.name,
+      char, found: true, meanings: content.meanings, jlpt: content.jlpt ?? null, name: content.name, nameChoices: content.nameChoices,
       dataProblems: problems.filter(problem => problem.includes(`(${char})`)),
       strokeLinesLeftOut: strokeCount === null && script.steps.some(step => step.forEach === "strokes"),
       words: content.words.map(word => ({ word: word.word, ruby: word.ruby, meaning: word.meaning })),
@@ -86,7 +86,7 @@ export async function previewKanjiShorts(studio, chars, deps = {}) {
             return {
               text: unit.written, ...(unit.text !== unit.written ? { spoken: unit.text } : {}),
               locale: unit.locale, voiceId: voiceFor(unit.locale, voiceIds, config.voice.voiceId), phrase: unit.phrase,
-              ...(found?.cut ? { reuse: { from: unit.reusedFrom, whole: found.cut.whole, source: found.source.text } } : found ? { reuse: { from: unit.reusedFrom, skipped: found.why } } : {}),
+              ...(found?.cut ? { reuse: { from: found.from, whole: found.cut.whole, source: found.source.text } } : found ? { reuse: { from: [unit.reusedFrom].flat().join(", "), skipped: found.why } } : {}),
               ...(take && !found?.cut ? { retake: take } : {}),
               // The recording this part is heard from: its own, or for a reused part the other line's part.
               // `written` is the part as its line says it: the key a "read as" (narration.speech) is saved under.
@@ -107,7 +107,8 @@ export function previewText(preview) {
   if (!preview.found) return [`${preview.char}: not in the kanji data`];
   if (preview.problem) return [`${preview.char}: ${preview.problem}`];
   const out = preview.dataProblems.map(problem => `${preview.char}: kanji data problem: ${problem}`);
-  out.push(`${preview.char}  ${preview.meanings} · JLPT ${preview.jlpt ?? "-"} · typed ${preview.name.kana} → ${preview.char}`);
+  out.push(`${preview.char}  ${preview.meanings} · JLPT ${preview.jlpt ?? "-"} · typed ${preview.name.kana} → ${preview.char}` +
+    (preview.nameChoices?.length > 1 ? `   (names it can be called by: ${preview.nameChoices.map(c => c.kana).join(", ")})` : ""));
   if (preview.strokeLinesLeftOut) out.push(`  (stroke lines are left out: ${preview.char}'s KanjiVG data is not cached yet)`);
   for (const line of preview.lines) {
     out.push(`  ${line.id.padEnd(9)} [${line.locale} @ ${line.at}${line.offset ? ` ${line.offset >= 0 ? "+" : ""}${line.offset} s` : ""}] ${line.say}${line.caption !== line.say ? `   (caption: ${line.caption})` : ""}`);
@@ -189,7 +190,7 @@ export async function kanjiReleases(outputRoot, { chars } = {}) {
  * The settings the Studio page edits, by their path in the config file. Everything else in the
  * file (data, music, script, card look) stays as it is, edited by hand.
  */
-export const KANJI_STUDIO_SETTINGS = Object.freeze(["voice.voiceId", "voice.voiceIds", "voice.pace", "narration.reuse", "narration.retakes", "narration.speech",
+export const KANJI_STUDIO_SETTINGS = Object.freeze(["voice.voiceId", "voice.voiceIds", "voice.pace", "names", "narration.reuse", "narration.retakes", "narration.speech",
   "maxWords", "card.safeInset", "timing.write", "timing.review"]);
 const getPath = (object, path) => path.split(".").reduce((value, key) => value?.[key], object);
 

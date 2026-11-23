@@ -60,6 +60,7 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
 
 - **Useful words** never include the bare kanji (水 is not a useful word for 水). The card takes the first three other words of the data, in order.
 - **The spoken name** is the reading of the kanji's own word (水 → mizu). Otherwise it is the first on'yomi (学 → gaku).
+  - **Any of its readings can be its name.** In the settings file, `names` maps a kanji to the reading it is called by, in kana: `{ "年": "ねん" }` makes the question "Do you know how to write the kanji nen?" and types ねん → 年. The romaji comes from the data, and a reading the kanji does not have is refused. In the Studio, each kanji's preview has **Called by**; choosing its first reading again goes back to the default. `--dry-run` lists the names each kanji can be called by.
   - The voice gets the name in kana inside the English question, because a voice reads romaji such as "hi" (日) as an English word.
   - The captions file shows romaji.
 - **A voice per language.** `voice.voiceIds` maps a language to a voice, for example `{ "ja": "<Japanese voice>", "en": "<English voice>" }`. A line that mixes scripts is read in runs, each by its language's voice, and joined into one line: "Do you know how to write the kanji" in the English voice, "つき" in the Japanese one.
@@ -85,7 +86,9 @@ All are passed to Kumiki's `shodo-kanji-card` and checked before any network req
   - **After choosing,** make the short again to hear the new take in it.
   - Every take is cached on its own, so going back to an earlier number costs nothing; removing the entry goes back to the first take.
   - The release's QA report and manifest record the take of each line or run.
-- **Reuse a reading.** `narration.reuse` reads a text with the audio of another line of the same short. With `{ "{name.kana}": "kunyomi" }`, the question's name 人 is the very recording of the reading "ひと。" in the kun'yomi line. So the name and the reading sound the same, and one choice of take fixes both.
+- **Reuse a reading.** `narration.reuse` reads a text with the audio of another line of the same short.
+  - With `{ "{name.kana}": ["kunyomi", "onyomi"] }`, the question's name is the very recording of the reading in the kun'yomi line (人: "ひと。"), or else in the on'yomi line (年 called nen: "ネン。"). So the name and the reading sound the same, and one choice of take fixes both.
+  - A list of lines is tried in order, and the first that says the text gives it. Katakana matches its hiragana, so ねん is found in "ネン。".
   - The key is the exact text one voice reads, as for retakes; the value is a line id (`question`, `onyomi`, `kunyomi`, `word-1`, …).
   - **One entry for every kanji:** a key may name the kanji's fields. `{ "{name.kana}": "kunyomi" }` reads each kanji's name with the audio of its kun'yomi line (人: ひと, 年: とし). This is the Studio's "Read each kanji's name with the audio of its kun'yomi line" switch. The fields are `{char}`, `{name.kana}`, `{name.romaji}`, `{meanings}`, `{jlpt}`, `{onyomi}`, `{kunyomi}`, `{labels.on}` and `{labels.kun}`; another field stops at config read. An exact text wins over a key that fills in to the same text, and a key that fills in empty (a kanji with no kun'yomi) does nothing. `narration.retakes` keys may name fields too.
   - It applies only where that line says exactly the text after its last comma (or is just that text). The config covers every kanji, so in a short whose line says something else (費: "くんよみ、ついやす。") the text is read on its own. `--dry-run` shows where it applies.

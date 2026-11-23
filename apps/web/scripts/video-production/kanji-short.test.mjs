@@ -137,7 +137,7 @@ test("a reused text comes only from where the source line says exactly it after 
   const unit = (line, text, reusedFrom) => ({ line, text, ...(reusedFrom ? { reusedFrom } : {}) });
   const name = unit("question", "ひと", "kunyomi"), kun = unit("kunyomi", "くんよみ、ひと。");
   const intro = unit("question", "Do you know how to write the kanji");
-  assert.deepEqual(reuseSources([intro, name, unit("onyomi", "おんよみ、ジン、ニン。"), kun]).get(name), { source: kun, cut: { whole: false, pauses: 1 } });
+  assert.deepEqual(reuseSources([intro, name, unit("onyomi", "おんよみ、ジン、ニン。"), kun]).get(name), { source: kun, cut: { whole: false, pauses: 1 }, from: "kunyomi" });
   assert.deepEqual(reuseSources([name, unit("onyomi", "おんよみ、ジン。")]).get(name), { why: "this short has no line kunyomi" });
   const own = unit("kunyomi", "ひと", "kunyomi");
   assert.deepEqual(reuseSources([own]).get(own), { why: "it is the text's own line" });
@@ -201,4 +201,23 @@ test("a part of punctuation only is never read alone", async () => {
   const parts = kanjiSpokenParts(line, { voiceIds: { ja: "j".repeat(16), en: "e".repeat(16) } });
   assert.deepEqual(parts.map(p => [p.text, p.locale, p.gapBefore]), [["On'yomi", "en", undefined], ["、コン。", "ja", PHRASE_GAP]]);
   assert.ok(parts.every(p => /[\p{L}\p{N}]/u.test(p.text)));
+});
+
+test("a kanji can be called by any of its readings; the romaji comes from the data", () => {
+  const nen = { char: "年", jlpt: "N5", card: { meanings: "YEAR", onyomi: "NEN (ネン)", kunyomi: "toshi (とし)", jlpt: "N5" },
+    words: [{ word: "年", ruby: "とし", romaji: "toshi", meaning: "year", reading: "kun" }, { word: "来年", ruby: "らいねん", romaji: "rainen", meaning: "next year", reading: "on" }] };
+  assert.deepEqual(kanjiShortContent(nen).name, { romaji: "toshi", kana: "とし" });                 // its own word's reading
+  assert.deepEqual(kanjiShortContent(nen).nameChoices.map(c => [c.kana, c.romaji, c.kind]), [["とし", "toshi", "word"], ["ねん", "nen", "on"]]);
+  assert.deepEqual(kanjiShortContent(nen, { name: "ねん" }).name, { romaji: "nen", kana: "ねん" });
+  assert.deepEqual(kanjiShortContent(nen, { name: "ネン" }).name, { romaji: "nen", kana: "ねん" });  // katakana is the same reading
+  assert.throws(() => kanjiShortContent(nen, { name: "ねんど" }), /年 has no reading ねんど to name it by \(its readings: とし, ねん\)/u);
+});
+
+test("a reuse can try several lines in order, and katakana matches its hiragana", () => {
+  const name = { line: "question", text: "ねん", reusedFrom: ["kunyomi", "onyomi"] };
+  const kun = { line: "kunyomi", text: "とし。" }, on = { line: "onyomi", text: "ネン。" };
+  const found = reuseSources([name, { line: "kunyomi", text: "くんよみ、" }, kun, { line: "onyomi", text: "おんよみ、" }, on]).get(name);
+  assert.deepEqual([found.source, found.from, found.cut], [on, "onyomi", { whole: true, pauses: 0 }]);
+  const none = reuseSources([{ ...name, text: "とん" }, kun, on]);
+  assert.match([...none.values()][0].why, /line kunyomi does not say "とん" after a comma; line onyomi does not say "とん"/u);
 });

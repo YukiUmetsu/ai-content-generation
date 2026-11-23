@@ -184,7 +184,7 @@ export async function produceKanjiShort(request, deps = {}) {
   const entry = entries.get(char);
   if (!entry) fail(`${char} is not in the kanji data${problems.length ? ` (${problems.length} entries had problems)` : ""}`);
   const ownProblems = problems.filter(problem => problem.includes(`(${char})`));
-  const content = kanjiShortContent(entry, { speech: config.narration?.speech, maxWords: config.maxWords ?? 3 });
+  const content = kanjiShortContent(entry, { speech: config.narration?.speech, maxWords: config.maxWords ?? 3, name: config.names?.[char] });
   // The script's templates, ids and conditions, checked before any download (strokes are counted later).
   expandNarrationScript(script, kanjiScriptData(content, { labels: config.narration?.labels, strokeCount: 1 }));
   // The card's text limits, before any download: a word the page would refuse stops here.
@@ -268,7 +268,8 @@ export async function produceKanjiShort(request, deps = {}) {
     // A reused text is heard as the last phrase of another line of this short (reuseSources); in a
     // short where that does not apply, the text is read on its own. It is still read on its own too,
     // as a fallback should the line's audio have no clear pause.
-    for (const [unit, found] of reuseSources(units)) if (found.cut) Object.assign(unit, found); else delete unit.reusedFrom;
+    // A reuse that applies names the one line it comes from (the first of a list that says the text).
+    for (const [unit, found] of reuseSources(units)) if (found.cut) Object.assign(unit, { source: found.source, cut: found.cut, reusedFrom: found.from }); else delete unit.reusedFrom;
     const reuseWarnings = [];
     const phrases = new Set(units.filter(unit => unit.phrase).map(unit => unit.text)).size;
     progress("narration", `Synthesizing ${units.length} parts (${provider}; ${phrases} are phrases said in every short, recorded once)…`);

@@ -425,3 +425,20 @@ test("choosing a take or a reading wins over keys that name fields or differ onl
   assert.equal(listed.status, 200);
   assert.deepEqual(listed.json().takes.map(take => [take.take, !!take.silent]), [[1, false], [2, true]]);
 });
+
+test("a kanji's name is one of its readings, saved in the settings file; another reading is refused", async (t) => {
+  const dir = await fixture(t), path = join(dir, "config.json"), studio = api(dir);
+  assert.equal((await call(studio, "POST", "/name", { char: "水", kana: "スイ" })).status, 200);
+  assert.deepEqual(JSON.parse(await readFile(path, "utf8")).names, { 水: "スイ" });
+  const { previews } = (await call(studio, "POST", "/preview", { kanji: "水" })).json();
+  assert.deepEqual(previews[0].name, { kana: "すい", romaji: "sui" });
+  assert.equal((await call(studio, "GET", "/state")).json().catalog.find(k => k.char === "水").name.kana, "すい");
+  const before = await readFile(path, "utf8");
+  const wrong = await call(studio, "POST", "/name", { char: "水", kana: "みずうみ" });
+  assert.equal(wrong.status, 422);
+  assert.match(wrong.json().error, /水 has no reading みずうみ/u);
+  assert.equal(await readFile(path, "utf8"), before);
+  assert.equal((await call(studio, "POST", "/name", { char: "水", kana: "" })).status, 200);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).names, undefined);
+  assert.equal((await call(studio, "POST", "/name", { char: "水火", kana: "すい" })).status, 400);
+});

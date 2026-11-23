@@ -64,9 +64,11 @@ export function readKanjiConfig(json, configPath) {
     if (problem) fail(`config: narration.${key}: ${problem}`);
   }
   // Read a text as the last phrase of another line: { "ひと": "kunyomi" } reads the name as in "くんよみ、ひと。".
+  const lineId = (line) => typeof line === "string" && /^[A-Za-z0-9_-]{1,60}$/u.test(line);
   if (narration.reuse !== undefined && !(narration.reuse && typeof narration.reuse === "object" && !Array.isArray(narration.reuse) &&
-    Object.entries(narration.reuse).every(([text, line]) => text.trim() && text.length <= 400 && typeof line === "string" && /^[A-Za-z0-9_-]{1,60}$/u.test(line))))
-    fail("config: narration.reuse maps a spoken text to the line whose last phrase it is read from, for example { \"ひと\": \"kunyomi\" }");
+    Object.entries(narration.reuse).every(([text, line]) => text.trim() && text.length <= 400 &&
+      (lineId(line) || (Array.isArray(line) && line.length >= 1 && line.length <= 4 && line.every(lineId))))))
+    fail("config: narration.reuse maps a spoken text to the line (or up to 4 lines, tried in order) whose last phrase it is read from, for example { \"{name.kana}\": [\"kunyomi\", \"onyomi\"] }");
   // A new take of a text the voice flubbed: { "ひと": 2 }; raise the number for another take.
   if (narration.retakes !== undefined && !(narration.retakes && typeof narration.retakes === "object" && !Array.isArray(narration.retakes) &&
     Object.entries(narration.retakes).every(([text, take]) => text.trim() && text.length <= 400 && Number.isInteger(take) && take >= 1 && take <= 99)))
@@ -81,6 +83,10 @@ export function readKanjiConfig(json, configPath) {
   if (narration.speech !== undefined && !(narration.speech && typeof narration.speech === "object" && !Array.isArray(narration.speech) &&
     Object.entries(narration.speech).every(([word, text]) => isText(word, 40) && isText(text, 40))))
     fail("config: narration.speech maps a word, or a part of a line, to the text the voice reads, for example { \"水泳\": \"すいえい\", \"いま。\": \"今。\" }");
+  // The name each kanji is called by: one of its readings, by its kana ({ "年": "ねん" }).
+  if (json.names !== undefined && !(isObject(json.names) && Object.entries(json.names).every(([char, kana]) =>
+    [...char].length === 1 && typeof kana === "string" && kana.trim() && kana.length <= 20 && /^[\p{Script=Hiragana}\p{Script=Katakana}ー]+$/u.test(kana.trim()))))
+    fail("config: names maps a kanji to the reading, in kana, it is called by, for example { \"年\": \"ねん\" }");
   const card = json.card ?? {};
   for (const key of Object.keys(card)) if (!["heading", "density", "labels", "theme", "brushStyle", "typeStep", "strokeNumbers", "safeInset"].includes(key))
     fail(`config: card.${key} is not a setting (heading, density, labels, theme, brushStyle, typeStep, strokeNumbers, safeInset)`);
@@ -114,7 +120,7 @@ export function readKanjiConfig(json, configPath) {
     dataset: path(json.dataset, "dataset"), outputRoot: path(json.outputRoot, "outputRoot"),
     cacheDir: json.cacheDir ? path(json.cacheDir, "cacheDir") : join(dirname(configPath), "cache"),
     destination, voice: { ...voice, provider }, music: { ...music, path: path(music.path, "music.path") }, narration, timing, card, credits: json.credits ?? [],
-    ...(json.maxWords !== undefined ? { maxWords: json.maxWords } : {}), qa, captions,
+    ...(json.maxWords !== undefined ? { maxWords: json.maxWords } : {}), qa, captions, names: json.names ?? {},
   };
 }
 

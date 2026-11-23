@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Surface } from "@/components/ui/surface-card";
 import type { Locale } from "@/features/registry";
 import {
-  RUN_PHASES, cancelRun, kanjiIn, lostRun, loadPreviews, loadReleases, loadStatus, loadStudio, releaseMedia, saveSettings, startRun,
+  RUN_PHASES, cancelRun, kanjiIn, lostRun, loadPreviews, loadReleases, loadStatus, loadStudio, releaseMedia, saveSettings, setName, startRun,
   type CatalogKanji, type KanjiPreview, type KanjiRelease, type KanjiSettings, type Run, type RunItem, type StudioState,
 } from "./kanji-shorts-api";
 import { KanjiSettingsPanel } from "./kanji-settings-panel";
@@ -72,6 +72,14 @@ function KanjiPicker({ catalog, selected, onToggle, say }: { catalog: CatalogKan
 function PreviewCard({ preview, settings, provider, onChanged, say }: { preview: KanjiPreview; settings: KanjiSettings; provider: "fish" | "local"; onChanged: () => void; say: Say }) {
   // The part whose takes are open, by line and part: one at a time.
   const [open, setOpen] = useState<string | null>(null);
+  const [naming, setNaming] = useState<{ busy: boolean; failure: unknown }>({ busy: false, failure: null });
+  async function callBy(kana: string) {
+    if (!preview.found || "problem" in preview) return;
+    setNaming({ busy: true, failure: null });
+    // The data's own choice (its first reading) is the default: choosing it again removes the setting.
+    try { await setName(preview.char, kana === preview.nameChoices[0]?.kana ? "" : kana); setNaming({ busy: false, failure: null }); onChanged(); }
+    catch (failure) { setNaming({ busy: false, failure }); }
+  }
   if (!preview.found || "problem" in preview) return <li className="rounded-control border border-status-warning bg-status-warning/5 p-3 text-sm text-foreground">
     <span lang="ja" className="font-serif text-lg">{preview.char}</span>{" "}
     {preview.found ? say(`cannot be made: ${preview.problem}`, `は作成できません: ${preview.problem}`) : say("is not in the kanji data.", "は漢字データにありません。")}
@@ -80,8 +88,17 @@ function PreviewCard({ preview, settings, provider, onChanged, say }: { preview:
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
       <span lang="ja" className="font-serif text-3xl leading-none text-foreground">{preview.char}</span>
       <span className="text-sm font-semibold text-foreground">{preview.meanings}</span>
-      <span className="text-xs text-muted-foreground">JLPT {preview.jlpt ?? "-"} · <span lang="ja">{preview.name.kana}</span> ({preview.name.romaji})</span>
+      <span className="text-xs text-muted-foreground">JLPT {preview.jlpt ?? "-"}</span>
+      {/* The reading the kanji is called by in its question and typed intro: any of its readings. */}
+      <label className="ml-auto flex items-center gap-2 text-xs font-semibold text-muted-foreground">{say("Called by", "呼び方")}
+        <select className="min-h-9 rounded-control border border-input bg-surface px-2 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={preview.name.kana} disabled={naming.busy || preview.nameChoices.length < 2} onChange={e => void callBy(e.target.value)} aria-busy={naming.busy || undefined}>
+          {preview.nameChoices.map(choice => <option key={choice.kana} value={choice.kana} lang="ja">
+            {choice.kana} ({choice.romaji}) · {{ word: say("its word", "単語の読み"), on: say("on'yomi", "音読み"), kun: say("kun'yomi", "訓読み") }[choice.kind]}</option>)}
+        </select>
+      </label>
     </div>
+    {naming.failure != null && <p role="alert" className="mt-2 text-xs text-status-danger">{errorText(naming.failure, say)}</p>}
     {preview.dataProblems.map(problem => <p key={problem} className="mt-2 text-xs text-status-warning">{problem}</p>)}
     {preview.strokeLinesLeftOut && <p className="mt-2 text-xs text-muted-foreground">{say("Stroke lines appear once the kanji's stroke data is cached.", "筆順データを取得すると画数の行が表示されます。")}</p>}
     <ol className="mt-3 flex flex-col gap-2">
